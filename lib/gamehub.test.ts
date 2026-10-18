@@ -10,6 +10,7 @@ import {
   HUB_TAGS,
   hubPath,
   hubTagOf,
+  inGenre,
   primaryGenre,
   storedTagWeights,
   TAGS_PER_GAME,
@@ -137,6 +138,31 @@ describe('главный жанр игры', () => {
   test('пустые и нулевые теги — null', () => {
     expect(primaryGenre({})).toBeNull()
     expect(primaryGenre({ Roguelike: 0 })).toBeNull()
+  })
+})
+
+/*
+ * «Стоит ли на странице жанра» — правило, которым выдача «Подобрать рогалики
+ * из своей библиотеки» отбирает свои (genre в lib/candidates). Не только
+ * главный: у игры может быть два жанра, и на обеих страницах она стоит.
+ */
+describe('игра в жанре', () => {
+  test('не легче половины главного и среди двенадцати — в жанре', () => {
+    expect(inGenre({ Action: 1000, Roguelike: 900 }, 'Roguelike')).toBe(true)
+    expect(inGenre({ Action: 1000, Roguelike: 499 }, 'Roguelike')).toBe(false)
+    // тот же порог, что у главного жанра: CS2 — не «тактика»
+    expect(inGenre({ Shooter: 1000, Tactical: 453 }, 'Tactical')).toBe(false)
+    // двенадцать тегов тяжелее — Roguelike уходит за край game_tags
+    const tail: Record<string, number> = { Roguelike: 990 }
+    for (let i = 0; i < TAGS_PER_GAME; i++) tail[`Heavy${i}`] = 1000 + i
+    expect(inGenre(tail, 'Roguelike')).toBe(false)
+    expect(inGenre(undefined, 'Roguelike')).toBe(false)
+    expect(inGenre({}, 'Roguelike')).toBe(false)
+  })
+
+  test('главный жанр игры — всегда и её жанр', () => {
+    const tags = { Action: 2000, Roguelike: 1800, 'Action Roguelike': 1700, Indie: 900 }
+    expect(inGenre(tags, primaryGenre(tags)!)).toBe(true)
   })
 })
 

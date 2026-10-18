@@ -8,6 +8,7 @@ import { clip } from '@/lib/clip'
 import { HUB_GENRES, HUB_MIN_SHELF, HUB_TAGS, hubPath } from '@/lib/gamehub'
 import { genreBreadcrumbLd, genreItemListLd, ldScript } from '@/lib/jsonld'
 import { plural } from '@/lib/plural'
+import { quizHref } from '@/lib/presets'
 import { appBaseUrl } from '@/lib/server'
 import { OG_SITE } from '@/lib/site'
 import { tagRu } from '@/lib/tagsru'
@@ -109,9 +110,18 @@ export default async function GenrePage({ params }: Params) {
           </p>
           <div>
             {/* Квиз, а не /play: страница статическая и про сессию не знает,
-                а квиз открыт любому — гостя он сам доведёт до входа или демо */}
-            <Link href="/quiz" className="btn-ember px-6 py-3">
-              Подобрать из своей библиотеки <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
+                а квиз открыт любому — гостя он сам доведёт до входа или демо.
+
+                С жанром (quizHref → /quiz?genre=<slug>): человек пришёл из
+                поиска «лучшие рогалики», и голый квиз терял жанр ровно на
+                входе в продукт — кнопка обещала «из своей библиотеки», а
+                выдача была обо всём подряд. Теперь квиз спросит настроение и
+                подберёт рогалики, сначала свои; своих нет — магазинные того
+                же жанра, и выдача скажет об этом (genreLine в lib/playflow).
+                Адрес один на всех — разметка ISR от смотрящего не зависит. */}
+            <Link href={quizHref(null, null, slug)} className="btn-ember px-6 py-3">
+              Подобрать {title.charAt(0).toLowerCase() + title.slice(1)} из своей библиотеки{' '}
+              <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
             </Link>
           </div>
         </header>

@@ -44,7 +44,7 @@ import { parseEveningPlan, PLAN_HOLD_MS } from './eveningplan'
 import { createLocalStore } from './localstore'
 import { parseLean, type Lean } from './mood'
 import { parseNudge } from './nudge'
-import { parseSeedRef, type Deal, type PlayPick } from './playflow'
+import { parseGenreRef, parseSeedRef, type Deal, type PlayPick } from './playflow'
 import type { ContinueGame, Focus } from './recommend'
 import type { Mood } from './types'
 import { forgetsWith, PLAY_BANS_KEY, PLAY_DEAL_KEY } from './playforget'
@@ -110,6 +110,11 @@ export type PlayCache = {
  * X», о которых человек только что попросил со страницы игры. Пятой частью и
  * только когда она есть: ключ без затравки — тот же, что до неё, и записи,
  * уже лежащие во вкладках, по-прежнему узнаются.
+ *
+ * Жанр с адреса (/play?…&genre=, см. parseGenreParam) — по той же причине:
+ * обычная выдача не должна вставать на месте рогаликов, о которых просили со
+ * страницы жанра. Своей частью с меткой «g:» — с затравкой её не спутать, — и
+ * тоже только когда он есть.
  */
 export function playCacheKey(q: {
   mood: Mood
@@ -117,6 +122,7 @@ export function playCacheKey(q: {
   roulette: boolean
   lean: Lean | null
   seed?: number | null
+  genre?: string | null
 }): string {
   return [
     `${q.mood.time}.${q.mood.vibe}.${q.mood.social}`,
@@ -124,6 +130,7 @@ export function playCacheKey(q: {
     q.roulette ? 'roulette' : '',
     q.lean ?? '',
     ...(q.seed ? [String(q.seed)] : []),
+    ...(q.genre ? [`g:${q.genre}`] : []),
   ].join('|')
 }
 
@@ -177,6 +184,8 @@ function parseDeal(x: unknown): Deal | null {
     scope: d.scope,
     // Записи до «Как «X», но…» поля не несут — это обычная выдача
     seed: parseSeedRef(d.seed),
+    // Записи до жанра со страницы /games — тоже: выдача без него
+    genre: parseGenreRef(d.genre),
     // Записи до подталкиваний — тоже: выдача без него
     nudge: parseNudge(d.nudge),
     nowSec: d.nowSec,

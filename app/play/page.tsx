@@ -56,11 +56,13 @@ import {
   burnoutInvite,
   burnoutOffer,
   dealFrom,
+  genreLine,
   landingIndex,
   nextStep,
   parseSeedRef,
   switchLine,
   type Deal,
+  type GenreRef,
   type Miss,
   type PlayPick,
   type SeedRef,
@@ -80,7 +82,7 @@ import {
   whoAmI,
 } from '@/lib/playcache'
 import { timeHiddenStore } from '@/lib/playtime'
-import { parseSeedParam, quizHref, roomBridgeHref } from '@/lib/presets'
+import { parseGenreParam, parseSeedParam, quizHref, roomBridgeHref } from '@/lib/presets'
 import { moodCaption } from '@/lib/quiz'
 import type { ContinueGame, Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE, SOURCE_BADGE_SHORT, suggestsInstall } from '@/lib/sources'
@@ -393,6 +395,16 @@ function Player({ say }: { say: (line: string) => void }) {
   const search = useSearchParams()
   const roulette = search.get('roulette') === '1'
   const focus: Focus | null = search.get('from') === 'untouched' ? 'untouched' : null
+  /*
+   * Жанр со страницы /games — адресом (/play?…&genre=roguelike, quizHref →
+   * квиз → playHref). Как mood и focus, из строки запроса и в рамках
+   * страницы неизменен: едет с каждым запросом выдачи, а сервер решает,
+   * применился ли он (при затравке — нет), и говорит это эхом (genre ниже).
+   * В рулетке и «нераспакованном» его нет — по той же причине, что затравки.
+   * Здесь — только форма адреса (parseGenreParam): словарь жанров /play не
+   * везёт, название приходит с эхом.
+   */
+  const askGenre = roulette || focus ? null : parseGenreParam(search.get('genre'))
   // Дефолты — из NEUTRAL_MOOD, а не выписаны здесь: третья копия того же
   // настроения разошлась бы с квизом и «Игрой дня» при первой правке
   const mood: Mood = {
@@ -499,6 +511,8 @@ function Player({ say }: { say: (line: string) => void }) {
    * как переключатели. null — обычная выдача.
    */
   const [seed, setSeed] = useState<SeedRef | null>(null)
+  /** Жанр, под который собрана выдача на экране, — только из эха, как seed */
+  const [genre, setGenre] = useState<GenreRef | null>(null)
   /**
    * Затравка, с которой ИДТИ за выдачей, — адресом (/play?…&seed=).
    *
@@ -542,7 +556,7 @@ function Player({ say }: { say: (line: string) => void }) {
    * выдачу под ключом нового настроения.
    */
   const [cacheKey] = useState(() =>
-    playCacheKey({ mood, focus, roulette, lean: parseLean(search.get('lean')), seed: askSeed }),
+    playCacheKey({ mood, focus, roulette, lean: parseLean(search.get('lean')), seed: askSeed, genre: askGenre }),
   )
   /** На экране выдача с прошлого захода — рядом «Подобрать заново» */
   const [restored, setRestored] = useState(false)
@@ -800,6 +814,7 @@ function Player({ say }: { say: (line: string) => void }) {
             scope: next.scope,
             ...(next.lean ? { lean: next.lean } : {}),
             ...(next.seed ? { seed: next.seed } : {}),
+            ...(askGenre ? { genre: askGenre } : {}),
             ...(next.nudge ? { nudge: next.nudge } : {}),
             ...(next.exclude?.length ? { exclude: next.exclude } : {}),
           }),
@@ -894,8 +909,8 @@ function Player({ say }: { say: (line: string) => void }) {
         return { miss: 'failed', code: null }
       }
     },
-    // mood, focus, askedMood и roulette собираются из строки запроса и в рамках
-    // страницы неизменны
+    // mood, focus, askedMood, roulette и askGenre собираются из строки запроса
+    // и в рамках страницы неизменны
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   )
@@ -937,6 +952,7 @@ function Player({ say }: { say: (line: string) => void }) {
       setScope(deal.scope)
       setLean(deal.lean)
       setSeed(deal.seed)
+      setGenre(deal.genre)
       setNudge(deal.nudge)
       // Серверные часы — по ним подпись онлайна решает, имеет ли право
       // сказать «сейчас». См. докблок в components/PlayersNow. У выдачи с
@@ -989,6 +1005,7 @@ function Player({ say }: { say: (line: string) => void }) {
         lean,
         scope,
         seed,
+        genre,
         nudge,
         nowSec: meta.nowSec,
         viewer: meta.viewer,
@@ -1002,7 +1019,7 @@ function Player({ say }: { say: (line: string) => void }) {
       // (heldPlanned): время выдачи (meta.at) старит цены, а не план
       seenAt: Date.now(),
     })
-  }, [phase, picks, discoveries, continueGame, plan, timeHidden, engine, lean, scope, seed, nudge, index, liked, planned, cacheKey])
+  }, [phase, picks, discoveries, continueGame, plan, timeHidden, engine, lean, scope, seed, genre, nudge, index, liked, planned, cacheKey])
 
   useEffect(() => {
     /*
@@ -2611,12 +2628,15 @@ function Player({ say }: { say: (line: string) => void }) {
                 приходит и адресом — со страницы игры и из библиотеки (askSeed):
                 подпись и «Вернуть обычную выдачу» у неё те же.
               */}
-              {(seed || (!roulette && !focus && pick.tags.length > 0)) && (
+              {(seed || genre || (!roulette && !focus && pick.tags.length > 0)) && (
                 <m.div
                   variants={STEP}
                   className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm"
                 >
                   {seed && <span className="text-faint">Похожие на «{seed.name}»</span>}
+                  {/* Жанр со страницы /games — подписью, как затравка: подо что
+                      собрана выдача и есть ли в ней свои (genreLine) */}
+                  {genre && <span className="text-faint">{genreLine(genre)}</span>}
                   {!roulette && !focus && pick.tags.length > 0 && (
                     <button
                       type="button"

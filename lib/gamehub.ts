@@ -156,6 +156,17 @@ export function primaryGenre(tags: Readonly<Record<string, number>>): string | n
   return hit ? hit.tag : null
 }
 
+/**
+ * Стоит ли игра на странице этого жанра — то же правило, что у primaryGenre
+ * и у самой страницы: тег среди её двенадцати в game_tags и не легче
+ * HUB_MIN_WEIGHT. Им же выдача «Рогалики из твоей библиотеки» (genre в
+ * lib/candidates) отбирает свои: игра, которую страница жанра не показала бы,
+ * не должна приехать и в выдачу, позванную с неё.
+ */
+export function inGenre(tags: Readonly<Record<string, number>> | undefined, tag: string): boolean {
+  return !!tags && storedTagWeights(tags).some((t) => t.tag === tag && t.weight >= HUB_MIN_WEIGHT)
+}
+
 /** Игр на странице жанра — верх по отзывам, для которых жанр главный */
 export const HUB_PAGE = 40
 

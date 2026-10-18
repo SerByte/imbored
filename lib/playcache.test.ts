@@ -77,6 +77,7 @@ function entry(over: Partial<PlayCache> = {}): PlayCache {
       lean: 'fresh',
       scope: 'library',
       seed: null,
+      genre: { title: 'Рогалики', own: true },
       nudge: null,
       nowSec: Math.floor(NOW / 1000),
       viewer: ME,
@@ -119,6 +120,17 @@ describe('playCacheKey', () => {
     expect(playCacheKey({ ...base, seed: 1145360 })).not.toBe(playCacheKey({ ...base, seed: 620 }))
     expect(playCacheKey({ ...base, seed: null })).toBe(KEY)
     expect(KEY).toBe('medium.chill.solo|||')
+  })
+
+  // /play?…&genre= — рогалики со страницы жанра: ни обычная выдача, ни
+  // «похожие на X» на их место не встают, и жанр с затравкой не путаются
+  test('жанр с адреса меняет ключ; без него ключ прежний', () => {
+    const base = { mood: NEUTRAL_MOOD, focus: null, roulette: false, lean: null } as const
+    const genred = playCacheKey({ ...base, genre: 'roguelike' })
+    expect(genred).toBe('medium.chill.solo||||g:roguelike')
+    expect(genred).not.toBe(playCacheKey({ ...base, genre: 'cozy' }))
+    expect(playCacheKey({ ...base, seed: 620, genre: 'roguelike' })).not.toBe(playCacheKey({ ...base, seed: 620 }))
+    expect(playCacheKey({ ...base, genre: null })).toBe(KEY)
   })
 })
 
@@ -258,6 +270,19 @@ describe('parsePlayCache', () => {
     expect(parsePlayCache({ ...entry(), deal: old })?.deal.seed).toBeNull()
     for (const seed of ['Hades', { appid: '1', name: 'Hades' }, { appid: 0, name: 'X' }, { appid: 5, name: '' }]) {
       expect(parsePlayCache({ ...entry(), deal: { ...entry().deal, seed } })?.deal.seed).toBeNull()
+    }
+  })
+
+  // Выдача по жанру со страницы /games: после «Подробнее» → «Назад» подпись
+  // «Только рогалики» обязана вернуться вместе с ней
+  test('выдача по жанру возвращается с эхом; запись до жанра и мусор — без него', () => {
+    const e = entry()
+    expect(parsePlayCache(JSON.parse(JSON.stringify(e)))?.deal.genre).toEqual({ title: 'Рогалики', own: true })
+    const old: Record<string, unknown> = { ...e.deal }
+    delete old.genre
+    expect(parsePlayCache({ ...e, deal: old })?.deal.genre).toBeNull()
+    for (const genre of ['Рогалики', { title: '' }, { own: true }, 7]) {
+      expect(parsePlayCache({ ...e, deal: { ...e.deal, genre } })?.deal.genre, JSON.stringify(genre)).toBeNull()
     }
   })
 

@@ -4,6 +4,7 @@ import { buildCandidates } from '@/lib/candidates'
 import { buildPickContext, cardView, heroMediaView, scoreView } from '@/lib/cards'
 import { getGamesMetaLite, getHeroMedia, latestEveningPlan } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
+import { HUB_GENRES, hubTagOf } from '@/lib/gamehub'
 import { claudePicks, heuristicPicks, llmAvailable, reasonPrice, topUpPicks } from '@/lib/llm'
 import { llmDailyCap, takeLlmBudgetForIp } from '@/lib/llmcap'
 import { parseLean, parseMood } from '@/lib/mood'
@@ -26,6 +27,7 @@ import {
   pickContinue,
 } from '@/lib/recommend'
 import { shareView } from '@/lib/pickshare'
+import { parseGenreParam } from '@/lib/presets'
 import { shareText } from '@/lib/sharedpick'
 import { currentMutes, currentSession, getDb, isDemoId, isWriter, nowSec, sessionSecret } from '@/lib/server'
 import { recordTelemetryLater } from '@/lib/telemetry'
@@ -102,6 +104,7 @@ export async function POST(req: Request) {
     scope?: unknown
     lean?: unknown
     seed?: unknown
+    genre?: unknown
     nudge?: unknown
     exclude?: unknown
   }
@@ -113,6 +116,10 @@ export async function POST(req: Request) {
   const lean = parseLean(body.lean)
   // «Как «X», но…» — по тому же правилу: мусор значит «без затравки»
   const seed = parseSeed(body.seed)
+  // Жанр со страницы /games/<slug> — адресом страницы (parseGenreParam), и
+  // страница должна быть: незнакомый адрес — «без жанра», как опечатка в lean
+  const genreSlug = typeof body.genre === 'string' ? parseGenreParam(body.genre) : null
+  const genre = genreSlug ? hubTagOf(genreSlug) : null
   // Подталкивание после выдачи (lib/nudge.ts) — и снова мусор значит «без
   // него». Настроение и источник оно меняет до подбора: «Покороче» — это то
   // же настроение, только на ступень короче, и объяснять карточку надо им
@@ -161,6 +168,7 @@ export async function POST(req: Request) {
     lean,
     focus,
     seed,
+    genre,
     nudge: plan,
     // Что уже на экране — только «Что-то другое»: остальным подталкиваниям
     // показанная игра, подошедшая под поправку, не помеха
@@ -214,12 +222,18 @@ export async function POST(req: Request) {
   // модель обратно в тот же день, гости, заходившие при выключенной, сутки
   // получали бы эвристику.
   //
-  // Выдача из соседей («Как «X», но…») и по подталкиванию к модели не ходит
-  // вовсе: правило владельца — никакого нового расхода на модель, а это новые
-  // поводы её звать. Эвристика с якорем и причинами по тегам здесь и так
-  // говорит по делу. Такой запрос не тратит ни одной квоты ниже.
+  // Выдача из соседей («Как «X», но…»), по жанру со страницы /games и по
+  // подталкиванию к модели не ходит вовсе: правило владельца — никакого
+  // нового расхода на модель, а это новые поводы её звать. Эвристика с якорем
+  // и причинами по тегам здесь и так говорит по делу. Такой запрос не тратит
+  // ни одной квоты ниже.
   const wantsModel =
-    seedRef === null && nudge === null && heroPool.length > 0 && llmAvailable() && llmDailyCap() > 0
+    seedRef === null &&
+    set.genre === null &&
+    nudge === null &&
+    heroPool.length > 0 &&
+    llmAvailable() &&
+    llmDailyCap() > 0
 
   // Дальше — по очереди, как в checkRatesInOrder: личная квота демо, доля
   // адреса в суточном бюджете, сам бюджет (lib/llmcap, takeLlmBudgetForIp).
@@ -394,6 +408,11 @@ export async function POST(req: Request) {
     lean,
     // Эхо затравки «Как «X», но…»: чьи соседи на экране. null — обычная выдача
     seed: seedRef,
+    // Эхо жанра со страницы /games: название — для подписи «Только рогалики»,
+    // own — есть ли в пятёрке свои. Нет своих — подпись скажет, что эти из
+    // магазина: «рогалики из твоей библиотеки» без единой своей были бы
+    // неправдой. null — без жанра, в том числе при затравке и мусоре в поле
+    genre: set.genre ? { title: HUB_GENRES[set.genre].title, own: picks.some((p) => p.source !== 'new') } : null,
     // Эхо подталкивания: какой чипс под героем нажат. null — без него, в том
     // числе при мусоре в поле
     nudge,
