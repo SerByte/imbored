@@ -3067,6 +3067,55 @@ describe('«Не предлагать»: namesMutedTaste', () => {
   })
 
   /*
+   * Ключи тегов — латиница, как и имена игр в английской причине: подстрока
+   * нашла бы «Competitive» в «Competitive Chess» и «Horror» в якоре «Horror
+   * Tycoon». Вкусом английская причина называет тег только пунктом списка в
+   * скобках — шаблоны lib/llm иначе тегов не пишут.
+   */
+  test('английская причина: тег в имени игры или якоря — не вкус, нет', () => {
+    const competitiveChess =
+      "You've never launched “Competitive Chess” — zero minutes — but it's closest to “Stardew Valley”, " +
+      "where you've spent 40 h. Today's a good day to fix that."
+    expect(
+      namesMutedTaste({ sharedTags: ['Puzzle', 'Competitive'], reasonBase: anchored, en: { reasonBase: competitiveChess } }, pvp),
+    ).toBe(false)
+    const horrorAnchor =
+      "“Pixel Farm” is already in your library, and it's closest to “Horror Tycoon”, where you've spent 12 h."
+    expect(
+      namesMutedTaste(
+        { sharedTags: ['Puzzle', 'Horror'], reasonBase: anchored, en: { reasonBase: horrorAnchor } },
+        parseMutes('horror'),
+      ),
+    ).toBe(false)
+    // скобки в самом названии — часть имени, а не список тегов
+    const parenName =
+      "You've never launched “Chess (Competitive)” — zero minutes. Going by its tag (Puzzle), it's right up your alley; " +
+      "today's a good day to fix that."
+    expect(
+      namesMutedTaste({ sharedTags: ['Puzzle', 'Competitive'], reasonBase: anchored, en: { reasonBase: parenName } }, pvp),
+    ).toBe(false)
+  })
+
+  test('английская причина: тег пунктом списка в скобках — да, где бы он в списке ни стоял', () => {
+    const shared = ['Puzzle', 'Competitive', 'Football (American)']
+    const reasons = [
+      "You've never launched “Chess Club” — zero minutes. Going by its tags (Puzzle, Competitive), it's right up your alley; " +
+        "today's a good day to fix that.",
+      "You opened “Chess Club” and closed it before figuring it out — but its tag (Competitive) is right up your alley. " +
+        'Give it another shot.',
+      "“Chess Club” isn't in your library, but its tags (Competitive, Football (American)) match what you play the most.",
+      "You already have 12 h in “Chess Club”. Its tags (Football (American), Competitive) are still your kind of thing — " +
+        "go back and see what it's like now.",
+    ]
+    for (const reasonBase of reasons) {
+      expect(namesMutedTaste({ sharedTags: shared, reasonBase: anchored, en: { reasonBase } }, pvp), reasonBase).toBe(true)
+    }
+    // та же причина без запретного в списке — нет
+    const clean = "“Chess Club” isn't in your library, but its tags (Puzzle, Football (American)) match what you play the most."
+    expect(namesMutedTaste({ sharedTags: shared, reasonBase: anchored, en: { reasonBase: clean } }, pvp)).toBe(false)
+  })
+
+  /*
    * Договор с причиной (matchedTags в lib/llm): по каждому тегу каждого
    * набора, каждому источнику, с якорем и без — да ровно тогда, когда
    * причина правда называет его вкусом. Шире — браузер платил бы отбором

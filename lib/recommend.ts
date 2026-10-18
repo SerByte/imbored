@@ -299,11 +299,16 @@ export function mutedTaste(
  * сразу.
  *
  * Английские причины записи (written.en — та же запись для /en, если она
- * есть) судятся тем же правилом, но своей подписью: по-английски причина
- * называет тег его ключом Steam (tagLabel на en), и «Competitive» в ней —
- * ровно то, что запретили. Язык здесь не параметр: годность записи одна на
- * браузер, а какую причину он увидит, решает язык страницы, — поэтому
- * судятся обе.
+ * есть) судятся своей подписью: по-английски причина называет тег его ключом
+ * Steam (tagLabel на en), и «Competitive» в ней — ровно то, что запретили.
+ * Но не подстрокой, а пунктом списка в скобках (enTasteList): ключи тегов —
+ * латиница, как и почти все имена игр, и «Competitive Chess» или якорь
+ * «Horror Tycoon» в той же причине давали бы ложное «да» — отбор заново и
+ * спрятанную запасную игру дня там, где запретного вкусом не названо. У
+ * русской причины этого почти не бывает: русская подпись тега с латинским
+ * именем не совпадёт, — и её правило прежнее. Язык здесь не параметр:
+ * годность записи одна на браузер, а какую причину он увидит, решает язык
+ * страницы, — поэтому судятся обе.
  */
 export function namesMutedTaste(
   written: {
@@ -317,13 +322,36 @@ export function namesMutedTaste(
   if (!mutes.length) return false
   const muted = new Set(mutes.flatMap((p) => p.tags))
   const reasons = [written.reasonBase, written.reasonPatched ?? '']
-  const reasonsEn = [written.en?.reasonBase ?? '', written.en?.reasonPatched ?? ''].filter(Boolean)
+  const listedEn = new Set([written.en?.reasonBase, written.en?.reasonPatched].flatMap((r) => (r ? enTasteList(r) : [])))
   return written.sharedTags.some(
     (t) =>
       muted.has(t) &&
       !GENERIC_TAGS.has(t) &&
-      (reasons.some((r) => r.includes(tagRu(t))) || reasonsEn.some((r) => r.includes(tagLabel(t, 'en')))),
+      (reasons.some((r) => r.includes(tagRu(t))) || listedEn.has(tagLabel(t, 'en'))),
   )
+}
+
+/** Имя игры или якоря в английской причине: шаблоны берут его в “…” */
+const QUOTED_EN = /“[^”]*”/g
+
+/**
+ * Скобки со списком внутри: уровень вложенности — ради ключей вроде
+ * «Football (American)», чьи скобки иначе разорвали бы список пополам.
+ */
+const PARENS = /\(((?:[^()]|\([^()]*\))*)\)/g
+
+/**
+ * Теги, которые английская причина называет вкусом: пункты списков в скобках.
+ *
+ * Шаблоны английских причин (lib/llm) пишут теги только так — «going by its
+ * tags (Puzzle, Competitive)», «its tag (Horror) is», — через «, », как их
+ * склеивает matchedTags. Имена игр и якорей сначала вырезаются: скобки в
+ * имени игры Chess (Competitive) — часть названия, а не вкус. Пересказ патча
+ * в причине тегов не перечисляет — он встаёт вместо них.
+ */
+function enTasteList(reason: string): string[] {
+  const text = reason.replace(QUOTED_EN, '')
+  return [...text.matchAll(PARENS)].flatMap((m) => m[1]!.split(', ').map((item) => item.trim()))
 }
 
 /**
