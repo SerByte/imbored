@@ -1,3 +1,4 @@
+import { fmtDate, pl, tr, type Locale } from './i18n'
 import { plural } from './plural'
 import type { GameMeta } from './types'
 
@@ -22,7 +23,11 @@ export type Discount = {
   initialCents: number
   /** unix-секунды конца распродажи, если Steam назвал срок */
   endsAt?: number
-  /** «до 17 августа» — считается на сервере, чтобы не разъезжалась гидратация */
+  /**
+   * «до 17 августа» — считается на сервере, чтобы не разъезжалась гидратация.
+   * Язык — того запроса, который её посчитал (discountView, opts.locale):
+   * клиент её не переводит, он рисует готовую строку.
+   */
   endsLabel?: string
 }
 
@@ -87,19 +92,34 @@ const MONTHS_GEN = [
  * в кэше дольше суток (карточка игры, см. GAME_PAGE_REVALIDATE_SEC): отсчёт
  * там был бы неправдой уже назавтра, а каждая его новая цифра — новым
  * выводом страницы, то есть лишней записью ISR. Дата верна весь срок акции.
+ *
+ * locale — язык подписи, по умолчанию русский. Английская — «1 day left»,
+ * «last day today», «until Nov 24»: месяц сокращением, как в глоссарии, —
+ * подпись стоит рядом с ценой, и полное «November» её бы раздвинуло.
  */
 export function discountEndsLabel(
   endsAt: number,
   nowSec: number,
-  opts: { calendar?: boolean } = {},
+  opts: { calendar?: boolean; locale?: Locale } = {},
 ): string | null {
   const left = endsAt - nowSec
   if (left <= 0) return null
+  const locale = opts.locale ?? 'ru'
+  const en = locale === 'en'
   if (!opts.calendar) {
-    if (left < 24 * 3600) return 'сегодня последний день'
+    if (left < 24 * 3600) return tr(locale, { ru: 'сегодня последний день', en: 'last day today' })
     const days = Math.floor(left / 86_400)
-    if (days <= 3) return `${plural(days, 'остался', 'осталось', 'осталось')} ${days} ${plural(days, 'день', 'дня', 'дней')}`
+    if (days <= 3) {
+      // Русская фраза склоняет и глагол («остался 1 день»), английская — только
+      // существительное: у каждого языка своя целая фраза, а не общая склейка
+      if (en) return `${days} ${pl('en', days, { ru: ['день', 'дня', 'дней'], en: ['day', 'days'] })} left`
+      return `${plural(days, 'остался', 'осталось', 'осталось')} ${days} ${plural(days, 'день', 'дня', 'дней')}`
+    }
   }
+  // Английская дата — через Intl, в той же зоне UTC, что и русская ниже: сервер
+  // и браузер обязаны сойтись в дне. Русская остаётся своей таблицей
+  // родительного падежа — так она печаталась всегда
+  if (en) return `until ${fmtDate('en', endsAt, { month: 'short', day: 'numeric', timeZone: 'UTC' })}`
   const d = new Date(endsAt * 1000)
   return `до ${d.getUTCDate()} ${MONTHS_GEN[d.getUTCMonth()]}`
 }
@@ -161,15 +181,18 @@ export function trustedPrice(
  *
  * calendar: true — срок только датой (см. discountEndsLabel): для страниц,
  * которые живут в кэше дольше суток.
+ *
+ * locale — язык endsLabel, по умолчанию русский: подпись уезжает клиенту
+ * готовой строкой, поэтому язык решает тот, кто её считает, — язык запроса.
  */
 export function discountView(
   meta: Parameters<typeof discountOf>[0],
   nowSec: number,
-  opts: { urgency?: boolean; calendar?: boolean } = {},
+  opts: { urgency?: boolean; calendar?: boolean; locale?: Locale } = {},
 ): Discount | null {
   const d = discountOf(meta, nowSec)
   if (!d) return null
   if (d.endsAt === undefined || opts.urgency === false) return d
-  const label = discountEndsLabel(d.endsAt, nowSec, { calendar: opts.calendar })
+  const label = discountEndsLabel(d.endsAt, nowSec, { calendar: opts.calendar, locale: opts.locale })
   return label ? { ...d, endsLabel: label } : d
 }
