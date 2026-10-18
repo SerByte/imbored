@@ -146,12 +146,13 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
           под чужой вечер. «Того, кто прислал», а не «чужой»: страница одна на
           всех, и автор, открывший свою же ссылку, читает её тоже. «По твоей»,
           а не «из твоей»: выдача берёт и игры магазина, которых в библиотеке
-          ещё нет (sourceLine выше).
+          ещё нет (sourceLine выше). По-английски так же — based on, а не
+          from: «pick from yours» обещало бы выбор только из библиотеки.
         */}
         <p className="max-w-md text-sm leading-relaxed text-dim">
           {tr(locale, {
             ru: 'Этот выбор — по библиотеке того, кто прислал ссылку. Тебе imbored выберет по твоей — одну игру на вечер, с объяснением, почему она. Без Steam — есть демо, это минута.',
-            en: "This pick is based on the library of whoever sent the link. imbored will pick from yours — one game for tonight, with why it's the one. No Steam? There's a demo; it takes a minute.",
+            en: "This pick is based on the library of whoever sent the link. imbored will pick one for you based on yours — one game for tonight, and why it's the one. No Steam? There's a demo; it takes a minute.",
           })}
         </p>
         <div className="flex flex-wrap items-center gap-4">
@@ -168,12 +169,14 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
             lib/destination), — и выдача будет из соседей этой игры, под свой
             вкус. Та же ссылка, что на странице игры, и по той же мерке: только
             когда соседи есть (pickHasNear), иначе она вела бы к «похожих не
-            нашлось». Серверная ссылка, ни байта скрипта.
+            нашлось». Серверная ссылка, ни байта скрипта. «По моей», а не «из
+            моей» и на английском (based on): соседи затравки берут и игры
+            магазина, которых в библиотеке нет (newPool в lib/candidates).
           */}
           {near && (
             <Link href={quizHref(null, meta.appid)} className="tap link-more">
               {locale === 'en' ? (
-                <>Similar to “{meta.name}” — from my library</>
+                <>Similar to {quoted(meta.name, locale)} — based on my library</>
               ) : (
                 <>Похожее на «{meta.name}» — по моей библиотеке</>
               )}

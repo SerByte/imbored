@@ -243,6 +243,23 @@ describe('/en/pick: причина — только на своём языке',
     expect(meta.description).toBe(reason)
   })
 
+  /*
+   * «По твоей», а не «из твоей» — и по-английски: выдача по ссылке берёт и
+   * игры магазина (соседи затравки, newPool в lib/candidates), так что
+   * «from yours» / «from my library» обещали бы то, чего не будет.
+   */
+  test('/en: приглашение и мост к своей библиотеке — based on, а не from', async () => {
+    await shareIn('mnpqrstuvwxy', game(33, { name: 'Hades', tags: { Roguelike: 900 } }), 'ru', 'Потому что')
+    await upsertGameMeta(db, game(34, { tags: { Roguelike: 800 } }), nowSec())
+    await replaceGameTags(db, 34, [{ tag: 'Roguelike', weight: 800 }])
+    const tree = flightOf(await PickPage(en('mnpqrstuvwxy')), ISLANDS)
+    const text = textOf(tree)
+    expect(text).toContain('imbored will pick one for you based on yours')
+    expect(text).not.toMatch(/from yours|from my library/)
+    const seed = islandsOf(tree, 'Link').filter((l) => l.href === quizHref(null, 33))
+    expect(seed.map((l) => textOf(l.children))).toEqual(['Similar to “Hades” — based on my library'])
+  })
+
   test('английский выбор на русской странице — без английской цитаты, русская страница прежняя', async () => {
     await shareIn('kmnpqrstuvwx', game(32, { name: 'Hades' }), 'en', 'Because it fits tonight.')
     const params = { params: Promise.resolve({ id: 'kmnpqrstuvwx' }) }
