@@ -66,7 +66,7 @@ function PrivacyPanel({ retryHref, onRetry, retrying = false }: PrivacyHelpProps
   return (
     <div className="panel-lift p-5 text-sm leading-relaxed anim-rise">
       <p className="font-semibold text-ink mb-2">
-        {tr(locale, { ru: 'Библиотека скрыта настройками Steam', en: 'Your library is hidden by Steam privacy settings' })}
+        {tr(locale, { ru: 'Библиотека скрыта настройками Steam', en: 'Steam is hiding your library' })}
       </p>
       <p className="text-dim">
         {tr(locale, {
