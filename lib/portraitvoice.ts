@@ -256,15 +256,20 @@ export function portraitFallbackText(
     // Ни часов, ни нераспакованного, ни любимой игры по доле — только то, что
     // известно: сколько игр и почему про время молчим. «Похоже» — признак
     // угадан по нулям (lib/playtime.ts) и бывает ложным: десять подаренных и
-    // ни разу не запущенных игр выглядят так же, а текст публичный
+    // ни разу не запущенных игр выглядят так же, а текст публичный.
+    // По-английски — «hidden by … privacy settings»: «скрыто настройками»
+    // значит «настройки скрыли», а «hidden in settings» читалось бы как «время
+    // лежит где-то в настройках». Privacy — потому что в английском Steam эта
+    // галочка («Game details», docs/i18n.md) живёт на странице Privacy Settings.
+    // Гостю — «Their library»: тот же singular they, что в «They've logged»
     const n = facts.gamesCount
     const games = `${count(n)} ${pl(locale, n, { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] })}`
     parts.push(
       tr(locale, {
         ru: `В библиотеке ${games}, а время в них, похоже, скрыто настройками Steam.`,
         en: you
-          ? `Your library has ${games}, but your playtime seems to be hidden in Steam settings.`
-          : `The library has ${games}, but the playtime seems to be hidden in Steam settings.`,
+          ? `Your library has ${games}, but your playtime seems to be hidden by your Steam privacy settings.`
+          : `Their library has ${games}, but their playtime seems to be hidden by Steam privacy settings.`,
       }),
     )
     return parts.join(' ')

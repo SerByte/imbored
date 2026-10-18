@@ -237,10 +237,14 @@ describe('голос портрета по-английски', () => {
     const hidden = { gamesCount: 1240, totalHours: 0, unplayedCount: 0, topGame: null, playtimeHidden: true }
     expect(portraitFallbackText('Anya', ARCH_EN, hidden, 'you', 'en')).toBe(
       "Anya, you're 46% factory builder and 30% strategist. Your library has 1,240 games, but your " +
-        'playtime seems to be hidden in Steam settings.',
+        'playtime seems to be hidden by your Steam privacy settings.',
+    )
+    expect(portraitFallbackText('Anya', ARCH_EN, hidden, 'them', 'en')).toBe(
+      'Anya is 46% factory builder and 30% strategist. Their library has 1,240 games, but their ' +
+        'playtime seems to be hidden by Steam privacy settings.',
     )
     expect(portraitFallbackText('Anya', [], { ...hidden, gamesCount: 1 }, 'them', 'en')).toBe(
-      'The library has 1 game, but the playtime seems to be hidden in Steam settings.',
+      'Their library has 1 game, but their playtime seems to be hidden by Steam privacy settings.',
     )
   })
 
