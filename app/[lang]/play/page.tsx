@@ -30,13 +30,15 @@ import { HeroTitle } from '@/components/HeroTitle'
 import { HeroTrailer } from '@/components/HeroTrailer'
 import { HeroPoster } from '@/components/TypeCover'
 import { Icon } from '@/components/Icon'
-import { freshLine, playLine } from '@/lib/announce'
-import { EDGE_BADGE, edgeLine } from '@/lib/badges'
+import { useLocale } from '@/components/LocaleProvider'
+import { freshLine, playLine as announce, type PlayEvent } from '@/lib/announce'
+import { edgeBadge, edgeLine } from '@/lib/badges'
 import { entryLine } from '@/lib/entry'
 import { closesPlan, planBeside, planLine, writesPlan, type EveningPlan } from '@/lib/eveningplan'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
-import { reviewsBrief } from '@/lib/gametraits'
+import { reviewsBrief, sessionPhrase } from '@/lib/gametraits'
+import { fmtNumber, lp, pl, tr, withLang, type Locale } from '@/lib/i18n'
 import { rememberMood } from '@/lib/lastmood'
 import {
   dueLaunchNow,
@@ -48,7 +50,7 @@ import {
 } from '@/lib/launchmemo'
 import { createLocalStore, parseFlag } from '@/lib/localstore'
 import { COZY_TAGS, NEUTRAL_MOOD, parseLean, type Lean } from '@/lib/mood'
-import { NUDGE_LABEL, NUDGES, type Nudge } from '@/lib/nudge'
+import { nudgeLabel, NUDGES, type Nudge } from '@/lib/nudge'
 import { EASE } from '@/lib/motion'
 import {
   BURNOUT_AFTER_SKIPS,
@@ -84,9 +86,9 @@ import { timeHiddenStore } from '@/lib/playtime'
 import { parseSeedParam, quizHref, roomBridgeHref } from '@/lib/presets'
 import { moodCaption } from '@/lib/quiz'
 import type { ContinueGame, Focus, Scope } from '@/lib/recommend'
-import { SOURCE_BADGE, SOURCE_BADGE_SHORT, suggestsInstall } from '@/lib/sources'
+import { sourceBadge, sourceBadgeShort, suggestsInstall } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
-import { tagRu } from '@/lib/tagsru'
+import { tagLabel } from '@/lib/tagsru'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import { isDemoId } from '@/lib/demoid'
 import { focusAdrift } from '@/lib/focushandoff'
@@ -106,9 +108,10 @@ type Pick = PlayPick
  * «Откладывал 3 дня назад». Сегодняшнее «не сейчас» сюда попадает, только
  * когда без него не набралась выдача, — и «0 дней назад» читалось бы сбоем.
  */
-function deferredLabel(days: number): string {
-  if (days < 1) return 'Откладывал сегодня'
-  return `Откладывал ${days} ${plural(days, 'день', 'дня', 'дней')} назад`
+function deferredLabel(days: number, locale: Locale): string {
+  if (days < 1) return tr(locale, { ru: 'Откладывал сегодня', en: 'Put off today' })
+  const word = pl(locale, days, { ru: ['день', 'дня', 'дней'], en: ['day', 'days'] })
+  return tr(locale, { ru: `Откладывал ${days} ${word} назад`, en: `Put off ${days} ${word} ago` })
 }
 
 /** Ссылка на игру в магазине: у не-Steam игр она своя, у Steam собирается */
@@ -120,13 +123,24 @@ function storeHref(p: Pick): string {
  * Причины «Не то — дальше» с подписями. Ключи — из lib/feedbackkinds.ts, где
  * их пускает роут: опечатка здесь — красный tsc, а не молча выброшенная
  * причина. Не все ключи: 'spin', 'done' и 'explore' ставят свои кнопки.
+ *
+ * По языку — целым списком: подписи короткие, и пара tr у каждой весила бы
+ * больше самих слов (/play у потолка bundle-budget.json).
  */
-const SKIP_REASONS: Array<{ key: SkipReason; label: string }> = [
-  { key: 'genre', label: 'Не тот жанр' },
-  { key: 'hard', label: 'Слишком сложная' },
-  { key: 'tired', label: 'Надоела' },
-  { key: 'notnow', label: 'Просто не сейчас' },
-]
+const SKIP_REASONS = {
+  ru: [
+    { key: 'genre', label: 'Не тот жанр' },
+    { key: 'hard', label: 'Слишком сложная' },
+    { key: 'tired', label: 'Надоела' },
+    { key: 'notnow', label: 'Просто не сейчас' },
+  ],
+  en: [
+    { key: 'genre', label: 'Wrong genre' },
+    { key: 'hard', label: 'Too hard' },
+    { key: 'tired', label: 'Tired of it' },
+    { key: 'notnow', label: 'Just not now' },
+  ],
+} satisfies Record<Locale, Array<{ key: SkipReason; label: string }>>
 
 /**
  * На сколько должен вырасти разобранный каталог, чтобы предлагать пересчёт.
@@ -144,10 +158,16 @@ const REWARM_MIN_GROWTH = 50
  * уже заплачено. Кому нужен старый разговор строго про свою полку — вторая
  * кнопка возвращает его в один тап.
  */
-const SCOPES: Array<{ key: Scope; label: string }> = [
-  { key: 'all', label: 'Любые игры' },
-  { key: 'library', label: 'Только моё' },
-]
+const SCOPES = {
+  ru: [
+    { key: 'all', label: 'Любые игры' },
+    { key: 'library', label: 'Только моё' },
+  ],
+  en: [
+    { key: 'all', label: 'Any games' },
+    { key: 'library', label: 'Only mine' },
+  ],
+} satisfies Record<Locale, Array<{ key: Scope; label: string }>>
 
 /**
  * Ось состояния на самой выдаче: «хочется знакомого / нового». Два из трёх
@@ -155,10 +175,18 @@ const SCOPES: Array<{ key: Scope; label: string }> = [
  * здесь человек уже смотрит на игру и понимает, чего ему НЕ хватило в ней —
  * узнавания или новизны. Нажатая кнопка отжимается обратно в «без оси».
  */
-const LEAN_CHIPS: Array<{ key: Lean; label: string }> = [
-  { key: 'familiar', label: 'знакомого' },
-  { key: 'fresh', label: 'нового' },
-]
+const LEAN_CHIPS = {
+  ru: [
+    { key: 'familiar', label: 'знакомого' },
+    { key: 'fresh', label: 'нового' },
+  ],
+  // Подпись группы — «craving»: «хочется знакомого» по-английски не
+  // складывается из кусков, а ряд стоит рядом с источником и не шире русского
+  en: [
+    { key: 'familiar', label: 'familiar' },
+    { key: 'fresh', label: 'new' },
+  ],
+} satisfies Record<Locale, Array<{ key: Lean; label: string }>>
 
 /*
  * ОДНА ИГРА ПО УМОЛЧАНИЮ.
@@ -251,31 +279,57 @@ const STEP = {
  */
 type FailCard = { title: string; text: string; retry?: boolean; seedless?: boolean }
 
-const FAIL: Record<string, FailCard> = {
-  nocandidates: {
-    title: 'Подбирать не из чего',
-    text: 'Под это настроение не прошла ни одна игра: часть могла уехать в бан, часть не годится под запрос. Смени настроение или верни что-нибудь из бана.',
+/*
+ * По языку — целыми карточками, а не парой у каждой строки: разбор кода
+ * («  nocandidates: {») и флаги согласия (retry, seedless) у каждой карточки
+ * свои, и сторож экранов отказа (lib/failscreens.test.ts) читает их так же.
+ */
+const FAIL: Record<Locale, Record<string, FailCard>> = {
+  ru: {
+    nocandidates: {
+      title: 'Подбирать не из чего',
+      text: 'Под это настроение не прошла ни одна игра: часть могла уехать в бан, часть не годится под запрос. Смени настроение или верни что-нибудь из бана.',
+    },
+    nolibrary: {
+      title: 'Библиотека не доехала',
+      text: 'Steam не отдал список игр. Чаще всего его прячут настройки профиля — и это чинится за минуту.',
+    },
+    badmood: {
+      title: 'Настроение не разобрать',
+      text: 'Адрес пришёл с непонятными параметрами — собери запрос заново.',
+    },
+    // Кандидаты были, но все под «Не предлагать» (lib/mutetags.ts): «верни
+    // из бана» тут чужой совет. Фильтр живёт на квизе — туда ведёт «Изменить
+    // настроение» под текстом, а «Посмотреть библиотеку» не встаёт: банов нет.
+    // «Смени настроение» здесь нет намеренно: у «Как «X», но…» соседи X под
+    // фильтром при любом настроении, и выход там — «Подобрать без «похожих»».
+    // Коротко — ради потолка /play (bundle-budget.json): что случилось, говорит
+    // заголовок, где чинится — текст, а ссылка «Изменить настроение» под ним
+    // ведёт на квиз, где фильтр и стоит
+    muted: {
+      title: 'Всё под «Не предлагать»',
+      text: 'Фильтр — по ссылке.',
+      seedless: true,
+    },
   },
-  nolibrary: {
-    title: 'Библиотека не доехала',
-    text: 'Steam не отдал список игр. Чаще всего его прячут настройки профиля — и это чинится за минуту.',
-  },
-  badmood: {
-    title: 'Настроение не разобрать',
-    text: 'Адрес пришёл с непонятными параметрами — собери запрос заново.',
-  },
-  // Кандидаты были, но все под «Не предлагать» (lib/mutetags.ts): «верни
-  // из бана» тут чужой совет. Фильтр живёт на квизе — туда ведёт «Изменить
-  // настроение» под текстом, а «Посмотреть библиотеку» не встаёт: банов нет.
-  // «Смени настроение» здесь нет намеренно: у «Как «X», но…» соседи X под
-  // фильтром при любом настроении, и выход там — «Подобрать без «похожих»».
-  // Коротко — ради потолка /play (bundle-budget.json): что случилось, говорит
-  // заголовок, где чинится — текст, а ссылка «Изменить настроение» под ним
-  // ведёт на квиз, где фильтр и стоит
-  muted: {
-    title: 'Всё под «Не предлагать»',
-    text: 'Фильтр — по ссылке.',
-    seedless: true,
+  en: {
+    nocandidates: {
+      title: 'Nothing to pick from',
+      text: "No game made it through for this mood: some may be hidden for good, the rest don't fit. Change the mood or bring something back from Hidden.",
+    },
+    nolibrary: {
+      title: "Your library didn't come through",
+      text: "Steam didn't send your game list. Usually your profile's privacy settings hide it — a one-minute fix.",
+    },
+    badmood: {
+      title: "Can't read the mood",
+      text: 'The link came with odd parameters — pick your mood again.',
+    },
+    muted: {
+      title: "Everything is under “Don't suggest”",
+      text: 'Change the filter via the link.',
+      seedless: true,
+    },
   },
 }
 
@@ -289,20 +343,32 @@ const FAIL: Record<string, FailCard> = {
  * кнопкой под текстом — или сменить настроение, сохранив затравку. Повтор
  * того же запроса вернёт тот же отказ — без retry, как у nocandidates.
  */
-function seedFail(name: string | null): FailCard {
+function seedFail(name: string | null): Record<Locale, FailCard> {
   return {
-    title: 'Похожих не нашлось',
-    text: `Под это настроение не прошла ни одна игра, похожая на ${name ? `«${name}»` : 'выбранную'}. Можно подобрать без «похожих» или сменить настроение.`,
-    seedless: true,
+    ru: {
+      title: 'Похожих не нашлось',
+      text: `Под это настроение не прошла ни одна игра, похожая на ${name ? `«${name}»` : 'выбранную'}. Можно подобрать без «похожих» или сменить настроение.`,
+      seedless: true,
+    },
+    en: {
+      title: 'No similar games found',
+      text: `No game like ${name ? `“${name}”` : 'that one'} fits this mood. Try regular picks or change the mood.`,
+      seedless: true,
+    },
   }
 }
 
 /**
  * Отказ «Уже прошёл» — у героя и у строки «Продолжить» одними словами, но
  * со своей игрой: обе кнопки бывают на экране разом, и «не получилось
- * отметить игру» не говорило, какую. Слова — те же, что у components/MarkFinished.
+ * отметить игру» не говорило, какую. Слова — те же, что у components/MarkFinished,
+ * на обоих языках.
  */
-const DONE_MISS = (name: string) => `Не получилось отметить «${name}» пройденной — нажми ещё раз.`
+const DONE_MISS = (name: string, locale: Locale) =>
+  tr(locale, {
+    ru: `Не получилось отметить «${name}» пройденной — нажми ещё раз.`,
+    en: `Couldn't mark “${name}” as finished — try again.`,
+  })
 
 /**
  * Сколько ждать /api/recommend. С запасом над худшим живым ответом: восемь
@@ -311,18 +377,29 @@ const DONE_MISS = (name: string) => `Не получилось отметить 
 const RECOMMEND_WAIT_MS = 25_000
 
 /** Сеть, пятисотка, оборванный ответ: здесь повтор осмыслен. */
-const FAIL_UNKNOWN = {
-  title: 'Не получилось собрать рекомендации',
-  text: 'Возможно, каталог ещё прогревается — попробуй ещё раз через минуту.',
-  retry: true,
+const FAIL_UNKNOWN: Record<Locale, FailCard> = {
+  ru: {
+    title: 'Не получилось собрать рекомендации',
+    text: 'Возможно, каталог ещё прогревается — попробуй ещё раз через минуту.',
+    retry: true,
+  },
+  en: {
+    title: "Couldn't put your picks together",
+    text: 'The catalog may still be warming up — try again in a minute.',
+    retry: true,
+  },
 }
 
 /**
  * Первая строка экрана ожидания. Одна на два места — начальное состояние
  * Player и фолбэк границы Suspense внизу файла: пререндер обязан показать то
- * же, с чего клиент продолжит, иначе на гидратации подпись моргнёт.
+ * же, с чего клиент продолжит, иначе на гидратации подпись моргнёт. На
+ * каждом языке своя, и оба места берут её по одному языку страницы.
  */
-const PREPARE_MESSAGE = 'Изучаю твою библиотеку…'
+const PREPARE_MESSAGE = {
+  ru: 'Изучаю твою библиотеку…',
+  en: 'Looking through your library…',
+} satisfies Record<Locale, string>
 
 /**
  * «Из многих — одна»: сколько экран ожидания держится после ответа, пока
@@ -391,6 +468,13 @@ const launchIntent = (via: LaunchVia): CtxIntent => (via === 'store' ? 'store' :
 
 function Player({ say }: { say: (line: string) => void }) {
   const router = useLocaleRouter()
+  const locale = useLocale()
+  /*
+   * Строка живой области — на языке страницы. Связана здесь один раз, а не
+   * вторым аргументом у каждого события: их на странице полтора десятка, и
+   * забытый язык у одного молча говорил бы на /en по-русски.
+   */
+  const playLine = useCallback((e: PlayEvent) => announce(e, locale), [locale])
   const search = useSearchParams()
   const roulette = search.get('roulette') === '1'
   const focus: Focus | null = search.get('from') === 'untouched' ? 'untouched' : null
@@ -424,7 +508,7 @@ function Player({ say }: { say: (line: string) => void }) {
    * под «Не предлагать», lib/mutetags.ts) или null.
    */
   const [reason, setReason] = useState<string | null>(null)
-  const [progress, setProgress] = useState<string>(PREPARE_MESSAGE)
+  const [progress, setProgress] = useState<string>(PREPARE_MESSAGE[locale])
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
   /** Обложка последнего ответа квиза, если человек пришёл оттуда */
   // Откуда пришла следующая игра — задаёт направление смены героя.
@@ -543,7 +627,7 @@ function Player({ say }: { say: (line: string) => void }) {
    * выдачу под ключом нового настроения.
    */
   const [cacheKey] = useState(() =>
-    playCacheKey({ mood, focus, roulette, lean: parseLean(search.get('lean')), seed: askSeed }),
+    playCacheKey({ mood, focus, roulette, lean: parseLean(search.get('lean')), seed: askSeed, locale }),
   )
   /** На экране выдача с прошлого захода — рядом «Подобрать заново» */
   const [restored, setRestored] = useState(false)
@@ -792,7 +876,9 @@ function Player({ say }: { say: (line: string) => void }) {
       // ошибки, что был в цикле прогрева до переезда в lib/warmup.ts.
       // Возвращаем отказ, и вызывающий покажет экран ошибки.
       try {
-        const res = await fetch('/api/recommend', {
+        // Язык — адресом (withLang): причины, подписи и текст «Отправить
+        // другу» сервер пишет на нём
+        const res = await fetch(withLang('/api/recommend', locale), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -841,6 +927,8 @@ function Player({ say }: { say: (line: string) => void }) {
           // До чтения тела, а не после: статус уже известен, а await тела —
           // ещё одно окно, за которое человек успевал уйти, и разворот на вход
           // догонял его на чужой странице мимо проверки сигнала выше.
+          // Язык лендинга ставит сам роутер (useLocaleRouter): '/?next=…'
+          // на /en уходит на '/en?next=…', как bounceTo('/en/play', …).
           if (res.status === 401) {
             router.replace(bounceTo('/play', search))
             return { miss: 'gone' }
@@ -1031,10 +1119,10 @@ function Player({ say }: { say: (line: string) => void }) {
       // «ни разу не запускал» было бы обещанием, которого выдача не сдержит
       setProgress(
         !focus
-          ? 'Подбираю игру под твоё состояние…'
+          ? tr(locale, { ru: 'Подбираю игру под твоё состояние…', en: 'Finding a game for your mood…' })
           : timeHiddenStore.fresh()
-            ? 'Ищу в твоей библиотеке…'
-            : 'Ищу то, что ты ни разу не запускал…',
+            ? tr(locale, { ru: 'Ищу в твоей библиотеке…', en: 'Searching your library…' })
+            : tr(locale, { ru: 'Ищу то, что ты ни разу не запускал…', en: "Looking for what you've never launched…" }),
       )
       /*
        * Ушёл со страницы, пока модель думала, — ответ всё равно доезжает:
@@ -1162,7 +1250,7 @@ function Player({ say }: { say: (line: string) => void }) {
           // Факты прогрева — со свежего снимка: приходят раньше выдачи, и
           // строка ожидания reveal() читает признак уже по ним
           if (p.library) timeHiddenStore.set(p.library.timeHidden ? true : null)
-          if (p.remaining > 0) setProgress(remainingLine(p.remaining))
+          if (p.remaining > 0) setProgress(remainingLine(p.remaining, locale))
         },
         onYield: (p) => {
           // Данных уже хватает на пять карточек — показываем их, а цикл пусть
@@ -1265,7 +1353,7 @@ function Player({ say }: { say: (line: string) => void }) {
     setRestored(false)
     setWarming('off')
     setPrep(null)
-    setProgress(PREPARE_MESSAGE)
+    setProgress(PREPARE_MESSAGE[locale])
     // Отказ прошлой выдачи — не про эту: 429 переключателя на восстановленной
     // выдаче иначе встретил бы экраном «Слишком часто» сбой прогрева нового захода
     setLimitedFor(null)
@@ -1277,7 +1365,7 @@ function Player({ say }: { say: (line: string) => void }) {
     focusHero(false)
     roundNow.current += 1
     setRound(roundNow.current)
-  }, [focusHero, seed, roulette, focus])
+  }, [focusHero, seed, roulette, focus, locale])
 
   /** Смена режима: тот же прогрев, другой вопрос к движку — и выдача с начала */
   /*
@@ -1340,7 +1428,7 @@ function Player({ say }: { say: (line: string) => void }) {
     } finally {
       setRetrying(false)
     }
-  }, [retrying, askSeed, fetchPicks, applyDeal, scope, lean, roulette, say, focusHero])
+  }, [retrying, askSeed, fetchPicks, applyDeal, scope, lean, roulette, say, playLine, focusHero])
 
   /*
    * Переключатели уже показанной выдачи: источник, ось состояния, затравка
@@ -1401,7 +1489,7 @@ function Player({ say }: { say: (line: string) => void }) {
         if ('miss' in got) {
           // Выдача прежняя — и об этом надо сказать, а не просто отжать кнопку:
           // чаще всего это потолок частоты, и у него есть срок (switchLine)
-          const line = switchLine(got)
+          const line = switchLine(got, locale)
           if (from === 'hero') setHeroMiss(line)
           else setSwitchMiss(line)
           return null
@@ -1422,7 +1510,7 @@ function Player({ say }: { say: (line: string) => void }) {
         setSwitching(false)
       }
     },
-    [scope, lean, seedAppid, nudge, switching, fetchPicks, applyDeal, say],
+    [scope, lean, seedAppid, nudge, switching, fetchPicks, applyDeal, say, playLine, locale],
   )
 
   /*
@@ -1474,7 +1562,7 @@ function Player({ say }: { say: (line: string) => void }) {
       say(playLine({ kind: 'next', name: picks[to].name }))
       focusHero(to === from)
     },
-    [skipCount, picks, roulette, say, focusHero],
+    [skipCount, picks, roulette, say, playLine, focusHero],
   )
 
   /*
@@ -1575,18 +1663,22 @@ function Player({ say }: { say: (line: string) => void }) {
    * объявление ниже. Потолок частоты остаётся отдельной веткой: у него есть
    * СРОК, и назвать его точнее, чем «через минуту», может только Retry-After.
    */
+  const waitMin = Math.ceil((limitedFor ?? 0) / 60)
   const fail =
     limitedFor !== null
       ? {
-          title: 'Слишком часто',
-          text: `Подбор — дорогая операция, и на неё стоит потолок. Вернись через ${Math.ceil(limitedFor / 60)} ${plural(Math.ceil(limitedFor / 60), 'минуту', 'минуты', 'минут')}.`,
+          title: tr(locale, { ru: 'Слишком часто', en: 'Too many tries' }),
+          text: tr(locale, {
+            ru: `Подбор — дорогая операция, и на неё стоит потолок. Вернись через ${waitMin} ${plural(waitMin, 'минуту', 'минуты', 'минут')}.`,
+            en: `Picking is expensive, so there's a limit. Come back in ${waitMin} ${waitMin === 1 ? 'minute' : 'minutes'}.`,
+          }),
           // Повтор остаётся: окно бывает и десятисекундным, и тогда
           // единственной дорогой назад была бы перезагрузка страницы.
           retry: true,
         }
       : reason === 'nocandidates' && askSeed !== null
-        ? seedFail(failSeed)
-        : (FAIL[reason ?? ''] ?? FAIL_UNKNOWN)
+        ? seedFail(failSeed)[locale]
+        : (FAIL[locale][reason ?? ''] ?? FAIL_UNKNOWN[locale])
 
   /*
    * ЭКРАН ОШИБКИ ЗВУЧИТ.
@@ -1607,14 +1699,14 @@ function Player({ say }: { say: (line: string) => void }) {
     if (!wantFailFocus.current) return
     wantFailFocus.current = false
     if (focusAdrift(document)) failHead.current?.focus({ preventScroll: true })
-  }, [phase, failTick, fail.title, fail.text, say])
+  }, [phase, failTick, fail.title, fail.text, say, playLine])
 
   if (phase === 'prepare') {
     return (
       <WarmupScreen
         progress={prep}
         message={progress}
-        caption={askedMood ? moodCaption(mood) : undefined}
+        caption={askedMood ? moodCaption(mood, locale) : undefined}
         chosen={chosen}
         leaving={leaving}
         memo={wallMemo}
@@ -1627,7 +1719,7 @@ function Player({ say }: { say: (line: string) => void }) {
       <div className="relative flex-1 flex flex-col items-center justify-center gap-8 px-5 overflow-hidden">
         <Ambient className="anim-breathe" />
         <div aria-hidden className="grain" />
-        <p className="relative text-sm text-dim">Крутим…</p>
+        <p className="relative text-sm text-dim">{tr(locale, { ru: 'Крутим…', en: 'Spinning…' })}</p>
         <SpinWheel
           items={picks.map((p) => p.name)}
           landOn={index}
@@ -1657,7 +1749,9 @@ function Player({ say }: { say: (line: string) => void }) {
             проверкой: её дверь — «Подключить заново» ниже. */}
         {reason === 'nolibrary' && limitedFor === null && (
           <div className="max-w-md text-left">
-            <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor(`/play?${search}`)} />
+            {/* Путь — на языке страницы: steamLoginFor берёт язык из него и
+                везёт его через вход, и возврат ведёт на ту же /en/play */}
+            <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor(lp(locale, `/play?${search}`))} />
           </div>
         )}
 
@@ -1670,7 +1764,9 @@ function Player({ say }: { say: (line: string) => void }) {
             aria-disabled={retrying}
             className="tap cursor-pointer text-sm text-ember-text hover:underline aria-disabled:opacity-50"
           >
-            {retrying ? 'Пробую…' : 'Попробовать снова'}
+            {retrying
+              ? tr(locale, { ru: 'Пробую…', en: 'Trying…' })
+              : tr(locale, { ru: 'Попробовать снова', en: 'Try again' })}
           </button>
         )}
         {/* Соседей X под это настроение нет — та же выдача без затравки, тем
@@ -1686,7 +1782,9 @@ function Player({ say }: { say: (line: string) => void }) {
             aria-disabled={retrying}
             className="btn-ember px-6 py-3"
           >
-            {retrying ? 'Подбираю…' : 'Подобрать без «похожих»'}
+            {retrying
+              ? tr(locale, { ru: 'Подбираю…', en: 'Picking…' })
+              : tr(locale, { ru: 'Подобрать без «похожих»', en: 'Show regular picks' })}
           </button>
         )}
 
@@ -1697,7 +1795,7 @@ function Player({ say }: { say: (line: string) => void }) {
             настроения (quizHref) */}
         {reason !== 'nolibrary' && (
           <Link href={quizHref(focus, askSeed)} className="tap link-more">
-            Изменить настроение
+            {tr(locale, { ru: 'Изменить настроение', en: 'Change mood' })}
             <Icon name="arrow" size={16} />
           </Link>
         )}
@@ -1706,13 +1804,13 @@ function Player({ say }: { say: (line: string) => void }) {
             выход, когда кандидатов не осталось из-за банов. */}
         {reason === 'nocandidates' && (
           <Link href="/library" className="tap link-more">
-            Посмотреть библиотеку
+            {tr(locale, { ru: 'Посмотреть библиотеку', en: 'Open your library' })}
             <Icon name="arrow" size={16} />
           </Link>
         )}
         {reason === 'nolibrary' && (
           <Link href={reconnectHref()} className="btn-ember px-6 py-3">
-            Подключить заново
+            {tr(locale, { ru: 'Подключить заново', en: 'Reconnect' })}
           </Link>
         )}
       </div>
@@ -1756,22 +1854,29 @@ function Player({ say }: { say: (line: string) => void }) {
           {/* Сюда приходят только нажатием («Не то — дальше» в пятый раз), и
               нажатая кнопка при этом исчезает — фокус забирает заголовок */}
           <h1 ref={focusOnMount} tabIndex={-1} className="font-display text-display-sm outline-none">
-            Похоже, сегодня не игровой вечер
+            {tr(locale, { ru: 'Похоже, сегодня не игровой вечер', en: "Looks like tonight isn't a gaming night" })}
           </h1>
+          {/* Абзац — целыми фразами на язык: русская склейка «уже N игр — дело
+              не в играх» по-английски строится своим порядком слов */}
           <p className="text-dim leading-relaxed">
-            Ты пролистал уже {BURNOUT_AFTER_SKIPS}{' '}
-            {plural(BURNOUT_AFTER_SKIPS, 'игру', 'игры', 'игр')} — дело, скорее всего, не в играх. Это
-            нормально. {burnoutInvite(offer)}
+            {tr(locale, {
+              ru: `Ты пролистал уже ${BURNOUT_AFTER_SKIPS} ${plural(BURNOUT_AFTER_SKIPS, 'игру', 'игры', 'игр')} — дело, скорее всего, не в играх. Это нормально.`,
+              en: `You've skipped ${BURNOUT_AFTER_SKIPS} games already — it's probably not the games. That's okay.`,
+            })}{' '}
+            {burnoutInvite(offer, locale)}
           </p>
           {offer === 'familiar' && familiar ? (
             <button onClick={() => showPick(familiar)} className="btn-ember is-block py-3">
-              Ладно, покажи «{familiar.name}» — там всё знакомо
+              {tr(locale, {
+                ru: `Ладно, покажи «${familiar.name}» — там всё знакомо`,
+                en: `Okay, show me “${familiar.name}” — it's familiar ground`,
+              })}
             </button>
           ) : offer === 'continue' && cont ? (
             <SteamLaunch
               appid={cont.appid}
-              label={`Просто продолжить «${cont.name}»`}
-              mobileLabel={`Открыть «${cont.name}» в Steam`}
+              label={tr(locale, { ru: `Просто продолжить «${cont.name}»`, en: `Just keep playing “${cont.name}”` })}
+              mobileLabel={tr(locale, { ru: `Открыть «${cont.name}» в Steam`, en: `Open “${cont.name}” in Steam` })}
               // По ветке нажатия, как у строки «Продолжить»: под пальцем это
               // магазин, а не запуск, и план на вечер он не закрывает (launchIntent)
               onClick={(via) =>
@@ -1783,7 +1888,10 @@ function Player({ say }: { say: (line: string) => void }) {
             offer === 'cozy' &&
             cozy && (
               <button onClick={() => showPick(cozy)} className="btn-ember is-block py-3">
-                Ладно, покажи «{cozy.name}» — она спокойная
+                {tr(locale, {
+                  ru: `Ладно, покажи «${cozy.name}» — она спокойная`,
+                  en: `Okay, show me “${cozy.name}” — it's a calm one`,
+                })}
               </button>
             )
           )}
@@ -1797,17 +1905,17 @@ function Player({ say }: { say: (line: string) => void }) {
               }}
               className="tap text-dim hover:text-ink transition-colors"
             >
-              Всё равно листать
+              {tr(locale, { ru: 'Всё равно листать', en: 'Keep going anyway' })}
             </button>
             <Link href="/" className="tap text-dim hover:text-ink transition-colors">
-              На сегодня всё
+              {tr(locale, { ru: 'На сегодня всё', en: "That's it for today" })}
             </Link>
           </div>
           {/* Третий путь для вечера, когда выбирать не хочется: колода без
               вопросов и без последствий (app/explore) — посмотреть, что
               вообще есть, и, может быть, зацепиться за одну */}
           <Link href="/explore" className="tap link-more">
-            Просто полистать, без обязательств
+            {tr(locale, { ru: 'Просто полистать, без обязательств', en: 'Just browse, no strings attached' })}
             <Icon name="arrow" size={16} />
           </Link>
         </div>
@@ -1857,19 +1965,34 @@ function Player({ say }: { say: (line: string) => void }) {
   // Якорь — только если причина сама его не назвала: шаблон эвристики говорит
   // о нём словами, а Claude может выбрать другой довод. Дважды одно и то же
   // на одном экране — заполнитель, а не объяснение.
+  // Каждый кусок — целой фразой на язык страницы: склеиваются они только
+  // точкой-разделителем, и порядок слов внутри у каждого языка свой
   if (pick.via && !pick.reason.includes(pick.via.name)) {
     const h = pick.via.hours
-    whyParts.push(`ближе всего к «${pick.via.name}» (${h} ${plural(h, 'час', 'часа', 'часов')})`)
+    const hours = pl(locale, h, { ru: ['час', 'часа', 'часов'], en: ['hour', 'hours'] })
+    whyParts.push(
+      tr(locale, {
+        ru: `ближе всего к «${pick.via.name}» (${h} ${hours})`,
+        en: `closest to “${pick.via.name}” (${fmtNumber(locale, h)} ${hours})`,
+      }),
+    )
   }
   if (pick.signals) {
-    if (pick.signals.matchPercent !== null)
-      whyParts.push(`совпадение со вкусом ${pick.signals.matchPercent}%`)
+    const { matchPercent } = pick.signals
+    if (matchPercent !== null)
+      whyParts.push(tr(locale, { ru: `совпадение со вкусом ${matchPercent}%`, en: `${matchPercent}% taste match` }))
     // Слова из семантики точнее тегов: «спокойная, короткие сессии» говорит,
-    // ПОЧЕМУ игра под настроение, а «под вайб: Уютная» — только что тег есть
+    // ПОЧЕМУ игра под настроение, а «под вайб: Уютная» — только что тег есть.
+    // Слова сервер пишет на языке запроса (explainMatch), теги подписывает tagLabel
     if (pick.signals.moodWords?.length)
-      whyParts.push(`под настроение: ${pick.signals.moodWords.join(', ')}`)
+      whyParts.push(
+        tr(locale, { ru: 'под настроение: ', en: 'fits the mood: ' }) + pick.signals.moodWords.join(', '),
+      )
     else if (pick.signals.moodTags.length)
-      whyParts.push(`под вайб: ${pick.signals.moodTags.map(tagRu).join(', ')}`)
+      whyParts.push(
+        tr(locale, { ru: 'под вайб: ', en: 'vibe: ' }) +
+          pick.signals.moodTags.map((t) => tagLabel(t, locale)).join(', '),
+      )
   }
 
   /*
@@ -1879,7 +2002,7 @@ function Player({ say }: { say: (line: string) => void }) {
    * настроение и правда спрашивали (askedMood): цитировать дефолты как его
    * слова нельзя.
    */
-  const caption = askedMood ? moodCaption(mood) : ''
+  const caption = askedMood ? moodCaption(mood, locale) : ''
   /*
    * Мост в пати — только когда человек сам сказал «с друзьями»: выдача выше
    * собрана из одной его библиотеки, а комната учтёт библиотеки всех. Ссылкой
@@ -1902,25 +2025,25 @@ function Player({ say }: { say: (line: string) => void }) {
           onClick={redeal}
           className="tap text-dim hover:text-ink transition-colors cursor-pointer"
         >
-          Подобрать заново
+          {tr(locale, { ru: 'Подобрать заново', en: 'Pick again' })}
         </button>
       )}
       {/* Только настроение: «нераспакованное» и «похожие на X» едут в квиз
           и обратно (quizHref) — затравка та, под которую собрана выдача */}
       <Link href={quizHref(focus, seedAppid)} className="tap link-more">
-        Изменить настроение
+        {tr(locale, { ru: 'Изменить настроение', en: 'Change mood' })}
         <Icon name="arrow" size={16} />
       </Link>
       {/* Колода исследователя — для того, кому сейчас не до вопросов */}
       <Link href="/explore" className="tap link-more">
-        Просто полистать
+        {tr(locale, { ru: 'Просто полистать', en: 'Just browse' })}
         <Icon name="arrow" size={16} />
       </Link>
       {/* Мост в пати — последним: пара «подпись → Изменить настроение» не
           разрывается, а другой путь стоит тихо в хвосте строки */}
       {party && (
         <Link href={party} prefetch={false} className="tap link-more">
-          Позвать друзей выбрать вместе
+          {tr(locale, { ru: 'Позвать друзей выбрать вместе', en: 'Invite friends to pick together' })}
           <Icon name="arrow" size={16} />
         </Link>
       )}
@@ -1933,7 +2056,7 @@ function Player({ say }: { say: (line: string) => void }) {
           месте экрана, и прогрев подождёт, пока человек не ответит */}
       <StopAsk
         game={stopDue}
-        reasons={SKIP_REASONS}
+        reasons={SKIP_REASONS[locale]}
         // Плашка исчезает вместе с нажатой кнопкой, и фокус без присмотра
         // упал бы в body — отдаём его герою, как после любого ответа
         onReason={(key) => {
@@ -1989,7 +2112,7 @@ function Player({ say }: { say: (line: string) => void }) {
             // «Подобрать заново» за время запроса — как у reshape: ответ не про этот экран
             if (roundNow.current !== ofRound) return
             if ('miss' in got) {
-              setHeroMiss(switchLine(got))
+              setHeroMiss(switchLine(got, locale))
               if (got.miss !== 'gone') setWarming('ready')
               return
             }
@@ -2036,7 +2159,7 @@ function Player({ say }: { say: (line: string) => void }) {
           {/* Демо называет себя здесь, в момент ценности, и даёт дверь к своей
               библиотеке. Поверх верха кадра, вне потока: признак клиентский,
               и полоса в потоке двигала бы героя (см. DemoBar). */}
-          {demo && <DemoBar from={`/play?${search}`} overlay />}
+          {demo && <DemoBar from={lp(locale, `/play?${search}`)} overlay />}
 
           <m.div
             variants={LADDER}
@@ -2055,23 +2178,27 @@ function Player({ say }: { say: (line: string) => void }) {
                   будем, а «почему она здесь» — ровно то, что он заменяет. */}
               <m.div variants={STEP} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                 <span className="font-extrabold text-ember-text">
-                  {pick.store ? `${STORE_LABEL[pick.store] ?? pick.store}` : SOURCE_BADGE[pick.source]}
+                  {pick.store ? `${STORE_LABEL[pick.store] ?? pick.store}` : sourceBadge(pick.source, locale)}
                 </span>
                 {pick.hoursPlayed !== null && pick.hoursPlayed > 0 && (
-                  <span className="text-dim tabular-nums">{pick.hoursPlayed} ч наиграно</span>
-                )}
-                {/* Сколько уходит на заход — рядом с тем, сколько уже наиграно:
-                    оба числа про время, и «хватит ли вечера» решается здесь */}
-                {pick.session && (
-                  <span className="text-dim">
-                    {pick.session.label.toLowerCase()} {pick.session.value}
+                  <span className="text-dim tabular-nums">
+                    {tr(locale, {
+                      ru: `${pick.hoursPlayed} ч наиграно`,
+                      en: `${fmtNumber(locale, pick.hoursPlayed)} h played`,
+                    })}
                   </span>
                 )}
+                {/* Сколько уходит на заход — рядом с тем, сколько уже наиграно:
+                    оба числа про время, и «хватит ли вечера» решается здесь.
+                    Одной фразой (sessionPhrase): «сессия ~40 мин», но
+                    «~40 min sessions» — по-английски склейка ярлыка и значения
+                    дала бы «session ~40 min» */}
+                {pick.session && <span className="text-dim">{sessionPhrase(pick.session, locale)}</span>}
                 {/* «русские субтитры» / «без русского» — готовой фразой с
                     сервера (ruLangLine в lib/gametraits, считается в
                     lib/cards): не знаем — молчим */}
                 {pick.russian && <span className="text-dim">{pick.russian}</span>}
-                {pick.deferred && <span className="text-dim">{deferredLabel(pick.deferred.daysAgo)}</span>}
+                {pick.deferred && <span className="text-dim">{deferredLabel(pick.deferred.daysAgo, locale)}</span>}
                 <PlayersNow ccu={pick.ccu} ccuAt={pick.ccuAt} nowSec={nowSec} />
               </m.div>
 
@@ -2093,7 +2220,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   соседняя»: без неё пять подходящих карточек снова выбор с нуля. */}
               {pick.edge && (
                 <m.p variants={STEP} className="-mt-2 text-sm text-dim">
-                  {edgeLine(pick.edge, timeHidden)}
+                  {edgeLine(pick.edge, timeHidden, locale)}
                 </m.p>
               )}
 
@@ -2102,7 +2229,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   играешь». Строка есть, только когда отзывы или жанр это знают */}
               {pick.entry && (
                 <m.p variants={STEP} className="-mt-2 text-sm text-dim">
-                  {entryLine(pick.entry)}
+                  {entryLine(pick.entry, locale)}
                 </m.p>
               )}
 
@@ -2110,7 +2237,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   причина не говорят, что это вообще такое (lib/cards aboutLine) */}
               {pick.about && (
                 <m.p variants={STEP} className="-mt-2 line-clamp-3 text-sm text-dim">
-                  <span className="font-bold text-ink">О чём: </span>
+                  <span className="font-bold text-ink">{tr(locale, { ru: 'О чём: ', en: 'About: ' })}</span>
                   {pick.about}
                 </m.p>
               )}
@@ -2129,7 +2256,8 @@ function Player({ say }: { say: (line: string) => void }) {
                   aria-controls="play-why"
                   className="tap text-dim hover:text-ink transition-colors cursor-pointer"
                 >
-                  Почему она? <Icon name={showWhy ? 'up' : 'down'} className="inline-block align-[-0.15em]" />
+                  {tr(locale, { ru: 'Почему она?', en: 'Why this one?' })}{' '}
+                  <Icon name={showWhy ? 'up' : 'down'} className="inline-block align-[-0.15em]" />
                 </button>
                 <AnimatePresence initial={false}>
                   {showWhy && (
@@ -2178,9 +2306,9 @@ function Player({ say }: { say: (line: string) => void }) {
                 className="flex flex-wrap items-center gap-2 mt-2"
               >
                 <span id="play-ask" className="text-sm text-dim mr-1">
-                  Почему не то?
+                  {tr(locale, { ru: 'Почему не то?', en: "What's off?" })}
                 </span>
-                {SKIP_REASONS.map((r, i) => (
+                {SKIP_REASONS[locale].map((r, i) => (
                   <button
                     key={r.key}
                     ref={i === 0 ? focusOnMount : undefined}
@@ -2203,7 +2331,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   }}
                   className="text-sm text-dim hover:text-ink p-2 transition-colors"
                 >
-                  пропустить
+                  {tr(locale, { ru: 'пропустить', en: 'skip' })}
                 </button>
               </m.div>
             ) : (
@@ -2245,8 +2373,15 @@ function Player({ say }: { say: (line: string) => void }) {
                     className="btn-ember px-6 py-3"
                   >
                     {pick.source === 'new'
-                      ? `Смотреть в ${STORE_LABEL[pick.store ?? ''] ?? 'Steam'}`
-                      : `Открыть в ${STORE_LABEL[pick.store ?? ''] ?? 'магазине'}`}
+                      ? tr(locale, {
+                          ru: `Смотреть в ${STORE_LABEL[pick.store ?? ''] ?? 'Steam'}`,
+                          en: `View on ${STORE_LABEL[pick.store ?? ''] ?? 'Steam'}`,
+                        })
+                      : tr(locale, {
+                          ru: `Открыть в ${STORE_LABEL[pick.store ?? ''] ?? 'магазине'}`,
+                          // Без названия магазина — «Open store page» (глоссарий), а не «Open in store»
+                          en: STORE_LABEL[pick.store ?? ''] ? `Open in ${STORE_LABEL[pick.store ?? '']}` : 'Open store page',
+                        })}
                   </a>
                 ) : (
                   <SteamLaunch
@@ -2296,7 +2431,7 @@ function Player({ say }: { say: (line: string) => void }) {
                         className="btn-glass no-lift"
                       >
                         <Icon name="refresh" size={18} />
-                        Крутить ещё
+                        {tr(locale, { ru: 'Крутить ещё', en: 'Spin again' })}
                       </button>
                     </ClickSpark>
                   </Magnet>
@@ -2316,7 +2451,7 @@ function Player({ say }: { say: (line: string) => void }) {
                     className="btn-glass"
                   >
                     <Icon name="next" size={18} />
-                    Не то — дальше
+                    {tr(locale, { ru: 'Не то — дальше', en: 'Not it — next' })}
                   </button>
                 )}
                 <Link
@@ -2326,11 +2461,11 @@ function Player({ say }: { say: (line: string) => void }) {
                   }
                   // Кругом, как ⓘ у стриминга: подпись — для скринридера и
                   // подсказкой под курсором
-                  title="Подробнее об игре"
+                  title={tr(locale, { ru: 'Подробнее об игре', en: 'Game details' })}
                   className="btn-circle"
                 >
                   <Icon name="info" size={20} />
-                  <span className="sr-only">Подробнее</span>
+                  <span className="sr-only">{tr(locale, { ru: 'Подробнее', en: 'Details' })}</span>
                 </Link>
                 {!readOnly && (
                   <button
@@ -2348,7 +2483,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       // /play у самого потолка bundle-budget.json; отчёт о
                       // куске шлёт островок «Сыграю вечером»
                       // (components/TonightLazy)
-                      if (heartOn) return void heroTail().then((t) => t.undoLike('play', pick, setLiked, setHeroMiss), () => setHeroMiss('Обнови страницу'))
+                      if (heartOn) return void heroTail().then((t) => t.undoLike('play', pick, setLiked, setHeroMiss, locale), () => setHeroMiss(tr(locale, { ru: 'Обнови страницу', en: 'Reload the page' })))
                       // «Зашло» после запуска — уже ответ на «не зацепило?»:
                       // спрашивать про неё больше незачем
                       forgetLaunch(pick.appid)
@@ -2359,11 +2494,15 @@ function Player({ say }: { say: (line: string) => void }) {
                     // для скринридера — та же, что была текстом кнопки, и
                     // не меняется с нажатием: тумблер называет aria-pressed
                     aria-pressed={heartOn}
-                    title={heartOn ? 'Зашло — нажми, чтобы снять' : 'Зашло'}
+                    title={
+                      heartOn
+                        ? tr(locale, { ru: 'Зашло — нажми, чтобы снять', en: 'Liked it — tap to undo' })
+                        : tr(locale, { ru: 'Зашло', en: 'Liked it' })
+                    }
                     className="btn-circle"
                   >
                     <Icon name={heartOn ? 'check' : 'heart'} size={20} />
-                    <span className="sr-only">Зашло</span>
+                    <span className="sr-only">{tr(locale, { ru: 'Зашло', en: 'Liked it' })}</span>
                   </button>
                 )}
                 {/* Отправить выбор другу — /pick/<id>; пишет строку, поэтому не читателю */}
@@ -2462,10 +2601,13 @@ function Player({ say }: { say: (line: string) => void }) {
                     aria-disabled={banning}
                     title={
                       finished
-                        ? 'Прошёл — больше не предлагать'
+                        ? tr(locale, { ru: 'Прошёл — больше не предлагать', en: "Finished — don't suggest it again" })
                         : owned
-                          ? 'Убрать с полки. Бросать игры — нормально'
-                          : 'Больше не показывать эту игру'
+                          ? tr(locale, {
+                              ru: 'Убрать с полки. Бросать игры — нормально',
+                              en: 'Take it off your shelf. Dropping games is fine',
+                            })
+                          : tr(locale, { ru: 'Больше не показывать эту игру', en: 'Never show this game again' })
                     }
                     className={
                       finished
@@ -2497,24 +2639,41 @@ function Player({ say }: { say: (line: string) => void }) {
                     */}
                     {finished ? (
                       banning ? (
-                        'Отмечаю…'
+                        tr(locale, { ru: 'Отмечаю…', en: 'Marking…' })
                       ) : (
-                        <>
-                          Уже прошёл<span className="sr-only"> «{pick.name}»</span>
-                        </>
+                        tr(locale, {
+                          ru: (
+                            <>
+                              Уже прошёл<span className="sr-only"> «{pick.name}»</span>
+                            </>
+                          ),
+                          en: (
+                            <>
+                              Already finished<span className="sr-only"> “{pick.name}”</span>
+                            </>
+                          ),
+                        })
                       )
                     ) : (
                       <>
                         <Icon name="hide" size={20} />
                         <span aria-hidden className="hidden pointer-coarse:inline text-sm font-bold">
-                          {banning ? 'Скрываю…' : 'Скрыть насовсем'}
+                          {banning
+                            ? tr(locale, { ru: 'Скрываю…', en: 'Hiding…' })
+                            : tr(locale, { ru: 'Скрыть насовсем', en: 'Hide for good' })}
                         </span>
                         <span className="sr-only">
                           {banning
-                            ? 'Скрываю насовсем…'
+                            ? tr(locale, { ru: 'Скрываю насовсем…', en: 'Hiding for good…' })
                             : owned
-                              ? 'Скрыть насовсем: убрать с полки. Бросать игры — нормально'
-                              : 'Скрыть насовсем: больше никогда не показывать эту игру'}
+                              ? tr(locale, {
+                                  ru: 'Скрыть насовсем: убрать с полки. Бросать игры — нормально',
+                                  en: 'Hide for good: take it off your shelf. Dropping games is fine',
+                                })
+                              : tr(locale, {
+                                  ru: 'Скрыть насовсем: больше никогда не показывать эту игру',
+                                  en: 'Hide for good: never show this game again',
+                                })}
                         </span>
                       </>
                     )}
@@ -2522,7 +2681,7 @@ function Player({ say }: { say: (line: string) => void }) {
                 )}
               </m.div>
               {/* Вместо спрятанных «Зашло» и бана — почему их нет и как вернуть */}
-              {readOnly && <NeedSteam from={`/play?${search}`} why="launch" className="-mt-1" />}
+              {readOnly && <NeedSteam from={lp(locale, `/play?${search}`)} why="launch" className="-mt-1" />}
               {!readOnly && sharePick.panel}
               {/*
                 Отказ бана виден, потому что бан необратим. Формулировка ведёт
@@ -2536,8 +2695,11 @@ function Player({ say }: { say: (line: string) => void }) {
                   banFailed !== pick.appid
                     ? null
                     : finished
-                      ? DONE_MISS(pick.name)
-                      : 'Не получилось убрать игру насовсем — нажми ещё раз.'
+                      ? DONE_MISS(pick.name, locale)
+                      : tr(locale, {
+                          ru: 'Не получилось убрать игру насовсем — нажми ещё раз.',
+                          en: "Couldn't hide the game for good — try again.",
+                        })
                 }
                 className="-mt-1 text-sm text-danger"
               />
@@ -2565,7 +2727,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   же, что у развилки SteamLaunch, — pointer, а не ширина. */}
               {pick.source !== 'new' && (
                 <m.p variants={STEP} className="hidden pointer-fine:block -mt-1 text-xs text-faint">
-                  {stopRuleLine(mood.time)}
+                  {stopRuleLine(mood.time, locale)}
                 </m.p>
               )}
               {/* План на вечер начинается с загрузки: своя нетронутая или
@@ -2579,7 +2741,10 @@ function Player({ say }: { say: (line: string) => void }) {
                   <SteamLaunch
                     appid={pick.appid}
                     mode="install"
-                    label="Ещё не установлена? Поставь на загрузку заранее"
+                    label={tr(locale, {
+                      ru: 'Ещё не установлена? Поставь на загрузку заранее',
+                      en: 'Not installed yet? Start the download now',
+                    })}
                     onClick={() =>
                       void sendFeedback(pick.appid, 'opened', undefined, ctxOf(pick, heroFrom, 'install'))
                     }
@@ -2617,7 +2782,11 @@ function Player({ say }: { say: (line: string) => void }) {
                   variants={STEP}
                   className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm"
                 >
-                  {seed && <span className="text-faint">Похожие на «{seed.name}»</span>}
+                  {seed && (
+                    <span className="text-faint">
+                      {tr(locale, { ru: `Похожие на «${seed.name}»`, en: `Similar to “${seed.name}”` })}
+                    </span>
+                  )}
                   {!roulette && !focus && pick.tags.length > 0 && (
                     <button
                       type="button"
@@ -2630,10 +2799,13 @@ function Player({ say }: { say: (line: string) => void }) {
                         if (hero !== null && hero !== was) focusHero(false)
                       }}
                       aria-disabled={switching}
-                      title="Похожие на эту игру — под то же настроение"
+                      title={tr(locale, {
+                        ru: 'Похожие на эту игру — под то же настроение',
+                        en: 'Games like this one — for the same mood',
+                      })}
                       className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-50"
                     >
-                      Как «{pick.name}», но…
+                      {tr(locale, { ru: `Как «${pick.name}», но…`, en: `Like “${pick.name}”, but…` })}
                     </button>
                   )}
                   {seed && (
@@ -2649,7 +2821,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       aria-disabled={switching}
                       className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-50"
                     >
-                      Вернуть обычную выдачу
+                      {tr(locale, { ru: 'Вернуть обычную выдачу', en: 'Back to regular picks' })}
                     </button>
                   )}
                 </m.div>
@@ -2675,7 +2847,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   className="flex flex-wrap items-center gap-3 text-xs"
                 >
                   <span id="play-nudge-label" className="text-faint">
-                    Подправить выдачу:
+                    {tr(locale, { ru: 'Подправить выдачу:', en: 'Tweak picks:' })}
                   </span>
                   {NUDGES.map((n) => (
                     <button
@@ -2688,7 +2860,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       aria-pressed={n === 'different' ? undefined : nudge === n}
                       className="tap pill aria-disabled:opacity-50"
                     >
-                      {NUDGE_LABEL[n]}
+                      {nudgeLabel(n, locale)}
                     </button>
                   ))}
                 </m.div>
@@ -2731,14 +2903,14 @@ function Player({ say }: { say: (line: string) => void }) {
       {planRow && (
         <LaunchRow
           appid={planRow.appid}
-          label="Запустить"
+          label={tr(locale, { ru: 'Запустить', en: 'Launch' })}
           fineOnly
           onLaunch={() => {
             focusHero(true)
             void sendFeedback(planRow.appid, 'launched', undefined, ctxOf(null, 'plan', 'launch'))
           }}
         >
-          {planLine(planRow)}
+          {planLine(planRow, locale)}
         </LaunchRow>
       )}
 
@@ -2761,8 +2933,20 @@ function Player({ say }: { say: (line: string) => void }) {
                   tabIndex={cont.appid === seedAppid ? -1 : undefined}
                   className="text-dim outline-none"
                 >
-                  <span className="font-extrabold text-ink">«{cont.name}»</span> пройдена — больше не
-                  предложу
+                  {tr(locale, {
+                    ru: (
+                      <>
+                        <span className="font-extrabold text-ink">«{cont.name}»</span> пройдена — больше не
+                        предложу
+                      </>
+                    ),
+                    en: (
+                      <>
+                        <span className="font-extrabold text-ink">“{cont.name}”</span> finished — won&apos;t
+                        suggest it again
+                      </>
+                    ),
+                  })}
                 </span>
                 {/* «Уже прошёл» ушла из-под пальца — фокус встаёт сюда. Удачная
                     выдача уносит и эту кнопку: фокус едет на героя — на
@@ -2780,16 +2964,32 @@ function Player({ say }: { say: (line: string) => void }) {
                     aria-disabled={switching}
                     className="tap font-extrabold text-ember-text hover:underline cursor-pointer aria-disabled:opacity-50"
                   >
-                    Дальше — в духе «{cont.name}»
+                    {tr(locale, { ru: <>Дальше — в духе «{cont.name}»</>, en: <>Next: more like “{cont.name}”</> })}
                   </button>
                 )}
               </>
             ) : (
               <>
                 <span className="text-dim">
-                  Или продолжи <span className="font-extrabold text-ink">«{cont.name}»</span>
+                  {tr(locale, {
+                    ru: (
+                      <>
+                        Или продолжи <span className="font-extrabold text-ink">«{cont.name}»</span>
+                      </>
+                    ),
+                    en: (
+                      <>
+                        Or keep playing <span className="font-extrabold text-ink">“{cont.name}”</span>
+                      </>
+                    ),
+                  })}
                   {cont.recentHours > 0 && (
-                    <span className="tabular-nums text-faint"> · {cont.recentHours} ч за две недели</span>
+                    <span className="tabular-nums text-faint">
+                      {tr(locale, {
+                        ru: ` · ${cont.recentHours} ч за две недели`,
+                        en: ` · ${fmtNumber(locale, cont.recentHours)} h in the last two weeks`,
+                      })}
+                    </span>
                   )}
                 </span>
                 <span className="flex flex-wrap items-center gap-x-5 gap-y-2">
@@ -2803,21 +3003,28 @@ function Player({ say }: { say: (line: string) => void }) {
                       type="button"
                       onClick={() => void finishCont()}
                       aria-disabled={finishing}
-                      title="Прошёл — больше не предлагать"
+                      title={tr(locale, { ru: 'Прошёл — больше не предлагать', en: "Finished — don't suggest it again" })}
                       className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-60"
                     >
-                      {finishing ? (
-                        'Отмечаю…'
-                      ) : (
-                        <>
-                          Уже прошёл<span className="sr-only"> «{cont.name}»</span>
-                        </>
-                      )}
+                      {finishing
+                        ? tr(locale, { ru: 'Отмечаю…', en: 'Marking…' })
+                        : tr(locale, {
+                            ru: (
+                              <>
+                                Уже прошёл<span className="sr-only"> «{cont.name}»</span>
+                              </>
+                            ),
+                            en: (
+                              <>
+                                Already finished<span className="sr-only"> “{cont.name}”</span>
+                              </>
+                            ),
+                          })}
                     </button>
                   )}
                   <SteamLaunch
                     appid={cont.appid}
-                    label="Продолжить"
+                    label={tr(locale, { ru: 'Продолжить', en: 'Continue' })}
                     onClick={(via) =>
                       void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', launchIntent(via)))
                     }
@@ -2830,7 +3037,7 @@ function Player({ say }: { say: (line: string) => void }) {
           {/* Отказ «Уже прошёл» — под панелью, тем же приёмом, что у героя:
               строка стоит всегда, меняется только текст */}
           <StatusLine
-            text={contFailed === cont.appid ? DONE_MISS(cont.name) : null}
+            text={contFailed === cont.appid ? DONE_MISS(cont.name, locale) : null}
             className="mt-2 text-sm text-danger"
           />
         </div>
@@ -2850,11 +3057,23 @@ function Player({ say }: { say: (line: string) => void }) {
               >
                 {/* При скрытом времени нераспакованного не узнать: сервер
                     отдаёт тогда всё своё, и подпись говорит ровно это */}
+                {/* Целыми шаблонами на язык: у русского причастие согласуется
+                    с числом («похожий / похожих»), у английского число и
+                    слово стоят своим порядком («4 more unopened games») */}
                 {focus
-                  ? `Не то? Ещё ${others.length} ${plural(others.length, 'игра', 'игры', 'игр')} ${timeHidden ? 'из твоей библиотеки' : 'из нераспакованного'}`
+                  ? tr(locale, {
+                      ru: `Не то? Ещё ${others.length} ${plural(others.length, 'игра', 'игры', 'игр')} ${timeHidden ? 'из твоей библиотеки' : 'из нераспакованного'}`,
+                      en: `Not it? ${others.length} more ${timeHidden ? '' : 'unopened '}${others.length === 1 ? 'game' : 'games'}${timeHidden ? ' from your library' : ''}`,
+                    })
                   : seed
-                    ? `Не то? Ещё ${others.length} ${plural(others.length, 'вариант, похожий', 'варианта, похожих', 'вариантов, похожих')} на «${seed.name}»`
-                    : `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')} под это настроение`}{' '}
+                    ? tr(locale, {
+                        ru: `Не то? Ещё ${others.length} ${plural(others.length, 'вариант, похожий', 'варианта, похожих', 'вариантов, похожих')} на «${seed.name}»`,
+                        en: `Not it? ${others.length} more ${others.length === 1 ? 'option' : 'options'} like “${seed.name}”`,
+                      })
+                    : tr(locale, {
+                        ru: `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')} под это настроение`,
+                        en: `Not it? ${others.length} more ${others.length === 1 ? 'option' : 'options'} for this mood`,
+                      })}{' '}
                 {/* Иконка — для глаза: состояние уже в aria-expanded */}
                 <Icon name={moreOpen ? 'up' : 'down'} className="inline-block align-[-0.12em]" />
               </button>
@@ -2873,7 +3092,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   <div className="flex flex-wrap items-center gap-3">
                     <div
                       role="group"
-                      aria-label="Откуда брать игры"
+                      aria-label={tr(locale, { ru: 'Откуда брать игры', en: 'Where to pick from' })}
                       /* gap-3, а не gap-1, и это не про воздух. Зона .tap на кнопках
                          ниже вылезает на 6 px вбок с каждой стороны; при зазоре в
                          4 px соседние зоны перекрылись бы на 8 px и воровали бы друг
@@ -2881,7 +3100,7 @@ function Player({ say }: { say: (line: string) => void }) {
                          занимает, и ни пикселем больше. */
                       className="seg-group"
                     >
-                      {SCOPES.map((s) => (
+                      {SCOPES[locale].map((s) => (
                         <button
                           key={s.key}
                           onClick={() =>
@@ -2912,13 +3131,13 @@ function Player({ say }: { say: (line: string) => void }) {
                         перекрываться. */}
                     <div
                       role="group"
-                      aria-label="Чего хочется"
+                      aria-label={tr(locale, { ru: 'Чего хочется', en: "What you're craving" })}
                       className="seg-group"
                     >
                       <span aria-hidden className="pl-2.5 text-faint">
-                        хочется
+                        {tr(locale, { ru: 'хочется', en: 'craving' })}
                       </span>
-                      {LEAN_CHIPS.map((l) => (
+                      {LEAN_CHIPS[locale].map((l) => (
                         <button
                           key={l.key}
                           onClick={() =>
@@ -2948,7 +3167,11 @@ function Player({ say }: { say: (line: string) => void }) {
                     способа что-то с этим сделать. По тегам подбор и идёт, а сами
                     теги человек видит чипсами строкой выше.
                   */}
-                  {switching ? 'пересобираю…' : engine === 'claude' ? 'подбор: ИИ' : 'подбор: по тегам'}
+                  {switching
+                    ? tr(locale, { ru: 'пересобираю…', en: 'rebuilding…' })
+                    : engine === 'claude'
+                      ? tr(locale, { ru: 'подбор: ИИ', en: 'picked by: AI' })
+                      : tr(locale, { ru: 'подбор: по тегам', en: 'picked by: tags' })}
                 </span>
               </div>
               {/* Отказ переключателя — под ним же, где смотрят после нажатия.
@@ -2996,10 +3219,10 @@ function Player({ say }: { say: (line: string) => void }) {
                               герою, а «чем лучше соседних» — только здесь */}
                           <span className={`truncate ${p.edge ? 'text-ember-text' : ''}`}>
                             {p.edge
-                              ? EDGE_BADGE[p.edge]
+                              ? edgeBadge(p.edge, locale)
                               : p.store
                                 ? (STORE_LABEL[p.store] ?? p.store)
-                                : SOURCE_BADGE_SHORT[p.source]}
+                                : sourceBadgeShort(p.source, locale)}
                           </span>
                           {/* Цена — только у не купленного: у своей игры она уже
                               ничего не решает, а место в строке занимает */}
@@ -3040,7 +3263,7 @@ function Player({ say }: { say: (line: string) => void }) {
                   aria-controls="play-shelf"
                   className="tap hover:text-ink transition-colors cursor-pointer text-left"
                 >
-                  Нет в библиотеке · {discoveries.length}{' '}
+                  {tr(locale, { ru: 'Нет в библиотеке', en: 'Not in your library' })} · {discoveries.length}{' '}
                   <Icon name={shelfOpen ? 'up' : 'down'} className="inline-block align-[-0.12em]" />
                 </button>
               </SectionLabel>
@@ -3051,21 +3274,23 @@ function Player({ say }: { say: (line: string) => void }) {
                   rel="noreferrer"
                   className="tap link-more shrink-0"
                 >
-                  Все скидки Steam <Icon name="arrow" size={14} />
+                  {tr(locale, { ru: 'Все скидки Steam', en: 'All Steam sales' })} <Icon name="arrow" size={14} />
                 </a>
               )}
             </div>
             {shelfOpen && (
               <div id="play-shelf" className="mt-1">
                 <p className="text-xs text-faint mb-4 max-w-md">
-                  Подобрано по твоему вкусу среди актуального. Ничего покупать не нужно — это просто
-                  на будущее.
+                  {tr(locale, {
+                    ru: 'Подобрано по твоему вкусу среди актуального. Ничего покупать не нужно — это просто на будущее.',
+                    en: "Picked for your taste from what's out now. No need to buy anything — it's just for later.",
+                  })}
                 </p>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-6">
                   {discoveries.map((p, i) => {
                     // Отзывы — ответ на «а стоит ли покупать», поэтому только на
                     // полке покупок: у своей игры этот вопрос уже решён
-                    const reviews = reviewsBrief(p.reviewsPercent, p.reviewsTotal)
+                    const reviews = reviewsBrief(p.reviewsPercent, p.reviewsTotal, locale)
                     return (
                       <m.a
                         key={p.appid}
@@ -3154,6 +3379,7 @@ export default function PlayPage() {
    * первым текстом — а такую скринридер не объявляет. Эта же живёт с
    * первого кадра страницы, пустой, и звучит на каждой смене героя.
    */
+  const locale = useLocale()
   const [said, setSaid] = useState('')
   const say = useCallback((line: string) => setSaid((prev) => freshLine(prev, line)), [])
   return (
@@ -3161,7 +3387,7 @@ export default function PlayPage() {
       <p role="status" className="sr-only">
         {said}
       </p>
-      <Suspense fallback={<WarmupScreen progress={null} message={PREPARE_MESSAGE} />}>
+      <Suspense fallback={<WarmupScreen progress={null} message={PREPARE_MESSAGE[locale]} />}>
         <Player say={say} />
       </Suspense>
     </>

@@ -42,7 +42,9 @@ describe('«Зашло» у героя снимается тем же нажат
     // Не пришёл кусок (деплой сменил хеш, а вкладка старая) — не мёртвое
     // нажатие: та же строка под героем говорит, что делать
     expect(play).toContain(
-      flat("if (heartOn) return void heroTail().then((t) => t.undoLike('play', pick, setLiked, setHeroMiss), () => setHeroMiss('Обнови страницу'))"),
+      flat(
+        "if (heartOn) return void heroTail().then((t) => t.undoLike('play', pick, setLiked, setHeroMiss, locale), () => setHeroMiss(tr(locale, { ru: 'Обнови страницу', en: 'Reload the page' })))",
+      ),
     )
     // Кусок — тот, что уже грузит «Сыграю вечером»: своего загрузчика /play не заводит
     expect(play).not.toContain(flat("import('@/lib/unlike')"))
@@ -74,10 +76,17 @@ describe('«Зашло» у героя снимается тем же нажат
   })
 
   test('имя кнопки не меняется с нажатием, обратимость — в подсказке', () => {
-    for (const [file, code, on] of [
-      ['app/[lang]/play/page.tsx', play, 'heartOn'],
-      ['app/[lang]/daily/page.tsx', daily, 'liked.has(hero.appid)'],
-    ] as const) {
+    // /play — на языке страницы: те же подписи парами tr, английская — своя
+    expect(play).toContain(flat('aria-pressed={heartOn}'))
+    expect(play).toContain(
+      flat(
+        "title={ heartOn ? tr(locale, { ru: '" +
+          PRESSED_TITLE +
+          "', en: 'Liked it — tap to undo' }) : tr(locale, { ru: 'Зашло', en: 'Liked it' }) }",
+      ),
+    )
+    expect(play).toContain(flat(`<span className="sr-only">{tr(locale, { ru: 'Зашло', en: 'Liked it' })}</span>`))
+    for (const [file, code, on] of [['app/[lang]/daily/page.tsx', daily, 'liked.has(hero.appid)']] as const) {
       expect(code, file).toContain(flat('aria-pressed={' + on + '}'))
       expect(code, file).toContain(flat('title={' + on + " ? '" + PRESSED_TITLE + "' : 'Зашло'}"))
       expect(code, file).toContain(flat('<span className="sr-only">Зашло</span>'))

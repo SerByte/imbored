@@ -185,7 +185,7 @@ describe('кнопка запуска', () => {
     expect(tonight, 'обещание только тому, чьё нажатие запишется').toMatch(/writer !== true \|\| demo\) return null/)
 
     const play = code(read('app', '[lang]', 'play', 'page.tsx'))
-    const at = play.indexOf('{planLine(planRow)}')
+    const at = play.indexOf('{planLine(planRow, locale)}')
     expect(at).toBeGreaterThan(-1)
     // строка плана — LaunchRow с fineOnly, а fineOnly — это тот самый признак
     expect(play.slice(play.lastIndexOf('<LaunchRow', at), at)).toMatch(/\bfineOnly\b/)
@@ -232,7 +232,7 @@ describe('кнопка запуска', () => {
     expect(play).toMatch(/const planRow = roulette \? null : planBeside\(plan, \[pick\.appid, cont\?\.appid\]\)/)
     expect(play).toMatch(/if \(r\.ok && closesPlan\(action, reason, ctx\?\.intent\)\) \{\s*setPlan\(\(p\) => \(p\?\.appid === appid \? null : p\)\)/)
     // кнопка строки уходит вместе с ней — фокус заранее к герою, а не в body
-    const row = play.slice(play.indexOf('{planRow && ('), play.indexOf('{planLine(planRow)}'))
+    const row = play.slice(play.indexOf('{planRow && ('), play.indexOf('{planLine(planRow, locale)}'))
     expect(row).toMatch(/onLaunch=\{\(\) => \{\s*focusHero\(true\)/)
   })
 

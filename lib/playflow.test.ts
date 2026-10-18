@@ -516,7 +516,7 @@ describe('/play: пути вокруг выдачи', () => {
     expect(refresh).toContain('nudge: keptNudge')
     expect(refresh).toContain('setSwitching(true)')
     expect(refresh).toContain('finally')
-    expect(refresh).toContain('setHeroMiss(switchLine(got))')
+    expect(refresh).toContain('setHeroMiss(switchLine(got, locale))')
   })
 
   /*
@@ -684,7 +684,7 @@ describe('/play: пути вокруг выдачи', () => {
     const fin = code.slice(code.indexOf('const finishCont = async'), code.indexOf('const contFocus = useCallback('))
     expect(fin).not.toContain('setBanFailed')
     expect(fin).toContain('setContFailed(c.appid)')
-    expect(code).toContain('text={contFailed === cont.appid ? DONE_MISS(cont.name) : null}')
+    expect(code).toContain('text={contFailed === cont.appid ? DONE_MISS(cont.name, locale) : null}')
   })
 
   /*
@@ -698,12 +698,18 @@ describe('/play: пути вокруг выдачи', () => {
    * и в отказе: тот же приём, что у components/MarkFinished.
    */
   test('обе «Уже прошёл» называют свою игру — и в имени кнопки, и в отказе', () => {
-    expect(code).toMatch(/const DONE_MISS = \(name: string\) =>\s*`Не получилось отметить «\$\{name\}» пройденной — нажми ещё раз\.`/)
+    // Отказ — парой на язык страницы (tr), слова — те же, что у MarkFinished
+    expect(code).toMatch(
+      /const DONE_MISS = \(name: string, locale: Locale\) =>\s*tr\(locale, \{\s*ru: `Не получилось отметить «\$\{name\}» пройденной — нажми ещё раз\.`,\s*en: `Couldn't mark “\$\{name\}” as finished — try again\.`,/,
+    )
     expect(code).toContain('Уже прошёл<span className="sr-only"> «{pick.name}»</span>')
     expect(code).toContain('Уже прошёл<span className="sr-only"> «{cont.name}»</span>')
+    expect(code).toContain('Already finished<span className="sr-only"> “{pick.name}”</span>')
+    expect(code).toContain('Already finished<span className="sr-only"> “{cont.name}”</span>')
     // голой подписи без игры не осталось ни у одной
     expect(code).not.toContain("'Уже прошёл'")
-    expect(code).toMatch(/banFailed !== pick\.appid\s*\? null\s*: finished\s*\? DONE_MISS\(pick\.name\)/)
+    expect(code).not.toContain("'Already finished'")
+    expect(code).toMatch(/banFailed !== pick\.appid\s*\? null\s*: finished\s*\? DONE_MISS\(pick\.name, locale\)/)
   })
 
   /*
@@ -756,7 +762,7 @@ describe('/play: пути вокруг выдачи', () => {
    */
   test('у подталкиваний своя видимая подпись', () => {
     expect(code).toMatch(/aria-labelledby="play-nudge-label"/)
-    expect(code).toMatch(/<span id="play-nudge-label"[^>]*>\s*Подправить выдачу:/)
+    expect(code).toMatch(/<span id="play-nudge-label"[^>]*>\s*\{tr\(locale, \{ ru: 'Подправить выдачу:', en: 'Tweak picks:' \}\)\}/)
     expect(code).not.toMatch(/aria-label="Подправить выдачу"/)
   })
 
@@ -767,11 +773,17 @@ describe('/play: пути вокруг выдачи', () => {
    */
   test('«Скрыть насовсем» видно под пальцем, и имя кнопки начинается с этих слов', () => {
     const ban = between('aria-disabled={banning}', '</button>')
-    expect(ban).toMatch(/pointer-coarse:inline[^>]*>\s*\{banning \? 'Скрываю…' : 'Скрыть насовсем'\}/)
+    // Подписи — парами на язык страницы (tr), и у английской то же правило
+    expect(ban).toMatch(
+      /pointer-coarse:inline[^>]*>\s*\{banning\s*\? tr\(locale, \{ ru: 'Скрываю…', en: 'Hiding…' \}\)\s*: tr\(locale, \{ ru: 'Скрыть насовсем', en: 'Hide for good' \}\)\}/,
+    )
     const names = ban.match(/'Скры[^']*'/g) ?? []
     expect(names.length).toBeGreaterThanOrEqual(4)
     for (const name of names) expect(name).toMatch(/^'Скры(ть насовсем|ваю)/)
     expect(ban).toContain("'Скрыть насовсем: больше никогда не показывать эту игру'")
+    const namesEn = ban.match(/en: 'Hid[^']*'/g) ?? []
+    expect(namesEn.length).toBeGreaterThanOrEqual(4)
+    for (const name of namesEn) expect(name).toMatch(/^en: 'Hid(e for good|ing)/)
   })
 
   /*
