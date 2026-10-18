@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { DEMO_METAS } from './demo'
-import { descriptionFor, storeUrlFor } from './gamedesc'
+import { descriptionFor, isEnglishText, storeUrlFor } from './gamedesc'
 import { OTHER_STORE_EN, OTHER_STORE_GAMES } from './otherstores'
 import type { GameMeta } from './types'
 
@@ -37,6 +37,21 @@ describe('descriptionFor', () => {
     // текст студии не на английском — тоже не английский: блок молчит
     expect(descriptionFor(meta({ shortDescription: '传送门续作，年度解谜游戏。' }), 'en')).toBeNull()
     expect(descriptionFor(meta({ shortDescriptionEn: '  ' , shortDescription: RU }), 'en')).toBeNull()
+  })
+
+  test('en — смешанный текст студии и русский с латиницей не проходят ни слотом, ни своим описанием', () => {
+    const чужие = [
+      '一款以三国为背景的 RPG 游戏，支持 Steam 创意工坊。',
+      'これはアクションRPGです。Steam版。',
+      '한국어 MMORPG 게임 PvP',
+      "Tom Clancy's Rainbow Six® Siege X — тактический шутер.",
+      'Ein düsteres Abenteuer in einer Welt voller Gefahren und Geheimnisse.',
+    ]
+    for (const text of чужие) {
+      expect(descriptionFor(meta({ shortDescription: text }), 'en'), text).toBeNull()
+      // слот проверяется тем же правилом: его пишут несколько дорог
+      expect(descriptionFor(meta({ shortDescriptionEn: text }), 'en'), text).toBeNull()
+    }
   })
 
   test('en — пул других магазинов по наложению, без пересева базы', () => {
@@ -81,5 +96,34 @@ describe('наложение OTHER_STORE_EN', () => {
   test('пара — у каждой записи пула и ни у кого больше', () => {
     const pool = OTHER_STORE_GAMES.map((g) => String(g.appid)).sort()
     expect(Object.keys(OTHER_STORE_EN).sort()).toEqual(pool)
+  })
+})
+
+describe('isEnglishText', () => {
+  test('английское описание магазина — да, с именами собственными и знаками', () => {
+    for (const text of [
+      EN,
+      'Counter-Strike 2 is the largest technical leap in Counter-Strike history, ensuring new features and updates for years to come.',
+      'Explore the sunny metropolis of Los Santos with your crew.',
+      'Pokémon-style monster taming in an open world.',
+      "Baldur's Gate 3 — a story-rich, party-based RPG.",
+    ])
+      expect(isEnglishText(text), text).toBe(true)
+  })
+
+  test('нет — русская буква, мало латиницы, соседний латинский язык, ни одной буквы', () => {
+    for (const text of [
+      'Counter-Strike 2: Free-to-play, Premier, CS Rating и новые карты.',
+      '传送门续作，年度解谜游戏。',
+      '一款 RPG 游戏',
+      'アクションRPG',
+      'Una aventura épica en un mundo abierto lleno de peligros y secretos.',
+      'Un jeu de rôle avec des combats et une histoire pour vous.',
+      '1.0.3',
+      '   ',
+      null,
+      undefined,
+    ])
+      expect(isEnglishText(text), String(text)).toBe(false)
   })
 })

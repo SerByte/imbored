@@ -425,6 +425,11 @@ export async function runPageSlice(
       const merged = mergeMeta(existing, fresh)
       // теги из GetItems точнее, чем из appdetails: не даём их перетереть
       if (existing && Object.keys(existing.tags).length) merged.tags = existing.tags
+      // Английский слот — тоже из GetItems (пачка медиа выше ходит
+      // по-английски), а не из appdetails: тот просит l=russian, и его
+      // английский текст — лишь запасной текст магазина там, где перевода
+      // нет. Слить его можно только в пустой слот
+      if (existing?.shortDescriptionEn) merged.shortDescriptionEn = existing.shortDescriptionEn
 
       // Цена в этом ответе только что из магазина — датируем замер, иначе
       // скидка приедет и тут же будет отброшена как «неизвестной свежести».

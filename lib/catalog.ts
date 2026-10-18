@@ -2,9 +2,9 @@ import { parseStoreAssets, type StoreAssets } from './art'
 import { hasCyrillic } from './cyrillic'
 import { getGamesMeta, getStaleAppids, upsertGamesMeta, type Db } from './db'
 import { logSwallowed } from './errlog'
+import { isEnglishText } from './gamedesc'
 import { pace } from './pace'
 import { META_CC, priceRegion, regionCurrency } from './steamregion'
-import { textLang } from './textlang'
 import {
   parseStoreScreenshots,
   parseStoreTrailer,
@@ -338,13 +338,15 @@ export type StoreMedia = {
 }
 
 /**
- * Английское ли описание — то, чем /en вправе его показать (lib/gamedesc).
- * Не «нет кириллицы»: китайский текст студии кириллицы не содержит, но и
- * английским не станет. Большинство букв — латиница (textLang).
+ * Английское ли описание — тем же правилом, каким /en его показывает
+ * (isEnglishText в lib/gamedesc): ни одной русской буквы, латиница — почти
+ * все буквы, и не немецкий с испанским. Одно правило на запись и на показ:
+ * иначе в слот ложилось бы то, что /en потом прячет, а скрипт доливки
+ * (backfill-descriptions --lang=en) считал бы такую игру готовой и не чинил.
  */
 export function englishDescription(text: string | null | undefined): string | undefined {
   const t = text?.trim()
-  return t && textLang(t) === 'en' ? t : undefined
+  return t && isEnglishText(t) ? t : undefined
 }
 
 function mediaOf(it: StoreItem): StoreMedia {

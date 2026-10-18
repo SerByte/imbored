@@ -18,6 +18,7 @@ import {
   ensureMeta,
   parseStoreDescriptions,
   resetTagDictCache,
+  englishDescription,
 } from './catalog'
 import type { GameMeta } from './types'
 
@@ -1067,6 +1068,46 @@ describe('описание по-английски', () => {
   test('текст студии не по-английски в слот не идёт', () => {
     expect(mergeMeta(null, с({ shortDescription: '反恐精英：全球攻势的续作。' }))).not.toHaveProperty(
       'shortDescriptionEn',
+    )
+  })
+
+  test('русское описание с латинскими именами — не английское, и слот оно не затирает', () => {
+    // appdetails ходит с l=russian, и его русский текст по большинству букв
+    // бывает латиницей: названия, студии, режимы. Раньше такое описание
+    // ложилось в английский слот поверх настоящего и уезжало на /en
+    const латинские = [
+      "Tom Clancy's Rainbow Six® Siege X — тактический шутер.",
+      'Warhammer 40,000: Space Marine 2 — экшен от Saber Interactive и Focus Entertainment.',
+      'Counter-Strike 2: Free-to-play, Premier, CS Rating и новые карты.',
+    ]
+    for (const text of латинские) {
+      expect(englishDescription(text), text).toBeUndefined()
+      const merged = mergeMeta(с({ shortDescription: РУС, shortDescriptionEn: АНГ }), с({ shortDescription: text }))
+      expect(merged.shortDescriptionEn, text).toBe(АНГ)
+    }
+  })
+
+  test('китайский, японский, корейский и немецкий текст студии — не английский', () => {
+    const чужие = [
+      '一款以三国为背景的 RPG 游戏，支持 Steam 创意工坊。',
+      'これはアクションRPGです。Steam版。',
+      '한국어 MMORPG 게임 PvP',
+      'Ein düsteres Abenteuer in einer Welt voller Gefahren und Geheimnisse.',
+      'Una aventura épica en un mundo abierto lleno de peligros y secretos.',
+    ]
+    for (const text of чужие) {
+      expect(englishDescription(text), text).toBeUndefined()
+      expect(mergeMeta(с({ shortDescription: РУС }), с({ shortDescription: text })), text).not.toHaveProperty(
+        'shortDescriptionEn',
+      )
+      const media = parseStoreMedia({
+        response: { store_items: [{ appid: 99, visible: true, basic_info: { short_description: text } }] },
+      })
+      expect(media.get(99)?.shortDescriptionEn, text).toBeUndefined()
+    }
+    // а английский с именами собственными — английский
+    expect(englishDescription('Explore the sunny metropolis of Los Santos with your crew.')).toBe(
+      'Explore the sunny metropolis of Los Santos with your crew.',
     )
   })
 

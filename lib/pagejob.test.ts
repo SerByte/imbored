@@ -1552,6 +1552,29 @@ describe('карточка по-английски', () => {
     expect(await getGameJson(db, 20, 'pros_cons_json')).toEqual({ pros: ['Старое'], cons: [], source: 'claude' })
   })
 
+  test('английский слот из GetItems не перетирается запасным текстом appdetails', async () => {
+    // appdetails ходит с l=russian: где перевода нет, он отдаёт текст магазина
+    // по умолчанию. Слот пишет пачка GetItems, она ходит по-английски
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await runPageSlice(
+      db,
+      stubs({
+        fetchMediaFn: async () => new Map([[10, { shortDescriptionEn: 'The English store text.' }]]),
+        fetchDetails: async (appid: number) => meta(appid, { shortDescription: 'A fallback store text for everyone.' }),
+      }),
+    )
+    expect((await getGamesMeta(db, [10])).get(10)?.shortDescriptionEn).toBe('The English store text.')
+    // пустой слот запасной английский текст заполняет — он всё же английский
+    const db2 = await freshDb()
+    await addGame(db2, 10, 100)
+    await runPageSlice(
+      db2,
+      stubs({ fetchDetails: async (appid: number) => meta(appid, { shortDescription: 'A fallback store text for everyone.' }) }),
+    )
+    expect((await getGamesMeta(db2, [10])).get(10)?.shortDescriptionEn).toBe('A fallback store text for everyone.')
+  })
+
   test('appdetails не ответил — в промпт уходит имя из базы, а не русская заглушка', async () => {
     const db = await freshDb()
     await upsertGameMeta(db, meta(10, { name: 'Portal 2', reviewsTotal: 100 }), NOW)
