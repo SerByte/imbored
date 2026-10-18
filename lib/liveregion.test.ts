@@ -389,8 +389,9 @@ describe('квиз: номер вопроса звучит', () => {
   })
 
   test('номер вопроса — в имени заголовка, на который переезжает фокус', () => {
+    // Номер — целым шаблоном на языке страницы (tr): «Вопрос N из 3.» / «Question N of 3.»
     expect(step).toMatch(
-      /<m\.h1\s+ref=\{stepHeadRef\}[^>]*>\s*<span className="sr-only">\s*Вопрос \{stepIndex \+ 1\} из \{STEPS\.length\}\.(?:\s|\{' '\})*<\/span>\s*\{step\.question\}\s*<\/m\.h1>/,
+      /<m\.h1\s+ref=\{stepHeadRef\}[^>]*>\s*<span className="sr-only">\s*\{tr\(locale, \{\s*ru: `Вопрос \$\{stepIndex \+ 1\} из \$\{steps\.length\}\. `,\s*en: `Question \$\{stepIndex \+ 1\} of \$\{steps\.length\}\. `,?\s*\}\)\}\s*<\/span>\s*\{step\.question\}\s*<\/m\.h1>/,
     )
   })
 })

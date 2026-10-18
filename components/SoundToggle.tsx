@@ -1,6 +1,8 @@
 'use client'
 
 import { useSyncExternalStore } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
+import { tr } from '@/lib/i18n'
 import { isSoundOn, setSoundOn, soundOffSnapshot, subscribeSound } from '@/lib/quizsound'
 
 /**
@@ -22,6 +24,7 @@ import { isSoundOn, setSoundOn, soundOffSnapshot, subscribeSound } from '@/lib/q
  * подпись начинается с имени: голосовое «нажми Звук» находит кнопку.
  */
 export function SoundToggle() {
+  const locale = useLocale()
   const on = useSyncExternalStore(subscribeSound, isSoundOn, soundOffSnapshot)
 
   return (
@@ -47,9 +50,11 @@ export function SoundToggle() {
       </svg>
       {/* Подпись — одним флекс-элементом. Голые «Звук» и <span> рядом были бы
           двумя, и пробел в начале span схлопывался как пробел в начале строки:
-          между словами вставал gap-1.5 (6 px) вместо пробела */}
+          между словами вставал gap-1.5 (6 px) вместо пробела. По-английски —
+          «Sound on / off» (глоссарий), та же форма */}
       <span>
-        Звук<span aria-hidden> {on ? 'вкл.' : 'выкл.'}</span>
+        {tr(locale, { ru: 'Звук', en: 'Sound' })}
+        <span aria-hidden> {on ? tr(locale, { ru: 'вкл.', en: 'on' }) : tr(locale, { ru: 'выкл.', en: 'off' })}</span>
       </span>
     </button>
   )
