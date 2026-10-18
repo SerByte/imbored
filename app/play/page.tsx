@@ -59,6 +59,7 @@ import {
   genreLine,
   landingIndex,
   nextStep,
+  parseGenreRef,
   parseSeedRef,
   switchLine,
   type Deal,
@@ -249,8 +250,11 @@ const STEP = {
  * настроение нет (seedFail), и у «Всё под «Не предлагать»», где соседи есть,
  * но все под фильтром при любом настроении. Кнопка встаёт, только если
  * затравка и правда была: «Не предлагать» бывает и у обычной выдачи.
+ *
+ * `genreless` — тот же выход для жанра со страницы /games («Подобрать без
+ * жанра», genreFail ниже).
  */
-type FailCard = { title: string; text: string; retry?: boolean; seedless?: boolean }
+type FailCard = { title: string; text: string; retry?: boolean; seedless?: boolean; genreless?: boolean }
 
 const FAIL: Record<string, FailCard> = {
   nocandidates: {
@@ -295,6 +299,22 @@ function seedFail(name: string | null): FailCard {
     title: 'Похожих не нашлось',
     text: `Под это настроение не прошла ни одна игра, похожая на ${name ? `«${name}»` : 'выбранную'}. Можно подобрать без «похожих» или сменить настроение.`,
     seedless: true,
+  }
+}
+
+/**
+ * nocandidates у выдачи по жанру со страницы /games (название — из тела
+ * отказа, как имя затравки). Общий текст винил бы баны, а пусто чаще всего
+ * от самого жанра: «с друзьями» оставляет из своих только сетевые
+ * (fitsSocial), а пул магазина того же жанра — только мультиплеер, и у
+ * визуальных новелл или головоломок там не остаётся ничего. Выход —
+ * та же выдача без жанра (кнопкой) или другое настроение.
+ */
+function genreFail(title: string): FailCard {
+  return {
+    title: 'В этом жанре ничего не нашлось',
+    text: `Под это настроение не прошла ни одна игра жанра «${title}» — ни своя, ни из магазина. Можно подобрать без жанра или сменить настроение.`,
+    genreless: true,
   }
 }
 
@@ -397,14 +417,21 @@ function Player({ say }: { say: (line: string) => void }) {
   const focus: Focus | null = search.get('from') === 'untouched' ? 'untouched' : null
   /*
    * Жанр со страницы /games — адресом (/play?…&genre=roguelike, quizHref →
-   * квиз → playHref). Как mood и focus, из строки запроса и в рамках
-   * страницы неизменен: едет с каждым запросом выдачи, а сервер решает,
-   * применился ли он (при затравке — нет), и говорит это эхом (genre ниже).
-   * В рулетке и «нераспакованном» его нет — по той же причине, что затравки.
-   * Здесь — только форма адреса (parseGenreParam): словарь жанров /play не
-   * везёт, название приходит с эхом.
+   * квиз → playHref). Как mood и focus, из строки запроса: едет с каждым
+   * запросом выдачи, а сервер решает, применился ли он (при затравке — нет),
+   * и говорит это эхом (genre ниже). В рулетке и «нераспакованном» его нет —
+   * по той же причине, что затравки. Здесь — только форма адреса
+   * (parseGenreParam): словарь жанров /play не везёт, название приходит с
+   * эхом.
+   *
+   * askGenre — с адреса и для ключа выдачи (снят с первого рендера, как и
+   * всё в cacheKey), а запрос читает genreAsk: «Подобрать без жанра» на
+   * экране отказа (genreFail) снимает жанр насовсем, как «без «похожих»» —
+   * затравку. Ref, а не состояние: fetchPicks собран один раз и иначе
+   * помнил бы жанр первого рендера.
    */
   const askGenre = roulette || focus ? null : parseGenreParam(search.get('genre'))
+  const genreAsk = useRef(askGenre)
   // Дефолты — из NEUTRAL_MOOD, а не выписаны здесь: третья копия того же
   // настроения разошлась бы с квизом и «Игрой дня» при первой правке
   const mood: Mood = {
@@ -533,6 +560,8 @@ function Player({ say }: { say: (line: string) => void }) {
   )
   /** Чьих соседей не нашлось — имя из тела отказа nocandidates, для экрана отказа */
   const [failSeed, setFailSeed] = useState<string | null>(null)
+  /** Какого жанра не нашлось — название оттуда же: роут кладёт его, только если жанр применился */
+  const [failGenre, setFailGenre] = useState<string | null>(null)
   /**
    * Подталкивание под героем (lib/nudge.ts), под которое собрана выдача на
    * экране, — тоже только из эха. null — обычная выдача.
@@ -814,7 +843,7 @@ function Player({ say }: { say: (line: string) => void }) {
             scope: next.scope,
             ...(next.lean ? { lean: next.lean } : {}),
             ...(next.seed ? { seed: next.seed } : {}),
-            ...(askGenre ? { genre: askGenre } : {}),
+            ...(genreAsk.current ? { genre: genreAsk.current } : {}),
             ...(next.nudge ? { nudge: next.nudge } : {}),
             ...(next.exclude?.length ? { exclude: next.exclude } : {}),
           }),
@@ -865,13 +894,14 @@ function Player({ say }: { say: (line: string) => void }) {
            * осталось», — и советы у них противоположные. Там же — чьих соседей
            * не нашлось у «Как «X», но…» (seed у nocandidates, см. роут).
            */
-          const d = (await res.json().catch(() => null)) as { error?: unknown; seed?: unknown } | null
+          const d = (await res.json().catch(() => null)) as { error?: unknown; seed?: unknown; genre?: unknown } | null
           const code = d && typeof d.error === 'string' ? d.error : null
           // Ушёл, пока читалось тело, — причину писать уже некуда
           if (signal?.aborted) return { miss: 'gone' }
           setLimitedFor(null)
           setReason(code)
           setFailSeed(parseSeedRef(d?.seed)?.name ?? null)
+          setFailGenre(parseGenreRef(d?.genre)?.title ?? null)
           return { miss: 'failed', code }
         }
         const body: unknown = await res.json()
@@ -909,8 +939,8 @@ function Player({ say }: { say: (line: string) => void }) {
         return { miss: 'failed', code: null }
       }
     },
-    // mood, focus, askedMood, roulette и askGenre собираются из строки запроса
-    // и в рамках страницы неизменны
+    // mood, focus, askedMood и roulette собираются из строки запроса и в рамках
+    // страницы неизменны, а жанр читается из ref (genreAsk)
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   )
@@ -1333,9 +1363,14 @@ function Player({ say }: { say: (line: string) => void }) {
    * и снимает её насовсем: «Подобрать заново» потом её не вернёт. Снимает
    * после ответа, а не до: экран отказа читает askSeed, и на время запроса
    * он подменился бы общим текстом, а нажатая кнопка ушла бы из-под фокуса.
+   *
+   * genreless — «Подобрать без жанра»: снимает жанр насовсем (genreAsk).
+   * Здесь — до запроса: экран отказа читает не его, а эхо отказа (failGenre),
+   * и оно меняется только с новым ответом.
    */
-  const retry = useCallback(async (withSeed: number | null = askSeed) => {
+  const retry = useCallback(async (withSeed: number | null = askSeed, genreless = false) => {
     if (retrying) return
+    if (genreless) genreAsk.current = null
     setRetrying(true)
     try {
       const got = await fetchPicks({ scope, lean, seed: withSeed })
@@ -1602,7 +1637,9 @@ function Player({ say }: { say: (line: string) => void }) {
         }
       : reason === 'nocandidates' && askSeed !== null
         ? seedFail(failSeed)
-        : (FAIL[reason ?? ''] ?? FAIL_UNKNOWN)
+        : reason === 'nocandidates' && failGenre !== null
+          ? genreFail(failGenre)
+          : (FAIL[reason ?? ''] ?? FAIL_UNKNOWN)
 
   /*
    * ЭКРАН ОШИБКИ ЗВУЧИТ.
@@ -1703,6 +1740,17 @@ function Player({ say }: { say: (line: string) => void }) {
             className="btn-ember px-6 py-3"
           >
             {retrying ? 'Подбираю…' : 'Подобрать без «похожих»'}
+          </button>
+        )}
+        {/* Жанра под это настроение нет — та же выдача без него, тем же
+            повтором (genreFail). Затравки тут нет: при ней экран — seedFail */}
+        {fail.genreless && (
+          <button
+            onClick={() => void retry(null, true)}
+            aria-disabled={retrying}
+            className="btn-ember px-6 py-3"
+          >
+            {retrying ? 'Подбираю…' : 'Подобрать без жанра'}
           </button>
         )}
 

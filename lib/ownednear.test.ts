@@ -69,6 +69,27 @@ describe('«Похожее уже есть у тебя» — тем же зап�
     expect(src).toMatch(/if \(near\) ownedNearStore\.set\(\{ appid, games: parseOwnedNear\(d\.near\) \}\)/)
   })
 
+  /*
+   * Хранилище модульное: выход и «Удалить всё обо мне» уходят на главную
+   * переходом роутера, и без явного сброса «Назад» на ту же карточку
+   * показал бы вышедшему гостю чужую полку — OwnedLaunch гостю ничего не
+   * спрашивает и список не перезапишет. Второй замок — в самой строке.
+   */
+  test('выход и «Удалить всё обо мне» стирают список до перехода, а строка встаёт только у пишущей сессии', () => {
+    for (const [file, gate] of [
+      ['SignOut.tsx', "if (reply === 'failed')"],
+      ['ForgetMe.tsx', "if (reply !== 'done')"],
+    ] as const) {
+      const src = code(read('components', file))
+      const at = src.indexOf('ownedNearStore.set(null)')
+      expect(at, file).toBeGreaterThan(src.indexOf(gate))
+      expect(at, file).toBeLessThan(src.indexOf("router.replace('/')"))
+    }
+    const near = code(read('components', 'OwnedNear.tsx'))
+    expect(near).toContain('useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server)')
+    expect(near).toMatch(/if \(writer !== true \|\| !near \|\|/)
+  })
+
   test('страница просит near только при готовых соседях и ставит строку над «Похожими»', () => {
     const page = code(read('app', 'game', '[appid]', 'page.tsx'))
     expect(page).toMatch(

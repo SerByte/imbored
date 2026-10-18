@@ -7,9 +7,10 @@ import {
   upsertNeighbors,
   type Db,
 } from '@/lib/db'
+import { resetSwallowed } from '@/lib/errlog'
 import { NEAR_SHOWN } from '@/lib/ownednear'
 import { nowSec } from '@/lib/server'
-import { freshDb, signInAs, signOut } from '@/lib/testing/route'
+import { breakDbOn, freshDb, signInAs, signOut } from '@/lib/testing/route'
 import type { LibraryGame } from '@/lib/types'
 import { GET } from './route'
 
@@ -310,6 +311,28 @@ describe('/api/session/owns', () => {
       const me = await signInAs(db, 'openid')
       await saveLibrarySnapshot(db, me, libWith({ 730: 60 }), nowSec())
       expect(await (await askNear(1000)).json()).toEqual({ owned: false })
+    })
+
+    /*
+     * Сбой чтения соседей — «нет» без near, как у гостя, а не 500: строка —
+     * подсказка. Но не молча: без строки лога сломанный запрос гасил бы
+     * «Похожее уже есть у тебя» у всех, и это выглядело бы как «своих нет».
+     */
+    test('сбой чтения соседей — «нет» без near и строка лога owns:near', async () => {
+      await neighbors()
+      const me = await signInAs(db, 'openid')
+      await saveLibrarySnapshot(db, me, libWith({ 1001: 25 }), nowSec())
+      resetSwallowed()
+      breakDbOn(db, 'FROM game_neighbors')
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const res = await askNear(1000)
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual({ owned: false })
+        expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain('"where":"owns:near"')
+      } finally {
+        warn.mockRestore()
+      }
     })
   })
 

@@ -13,6 +13,7 @@ import {
   type ForgetMiss,
 } from '@/lib/forgetreply'
 import { markForgot } from '@/lib/forgotnotice'
+import { ownedNearStore } from '@/lib/ownednear'
 import { forgetPlay } from '@/lib/playforget'
 import { timeHiddenStore } from '@/lib/playtime'
 import { forgetSessionHint } from '@/lib/sessionhint'
@@ -170,6 +171,9 @@ export function ForgetMe() {
     forgetSessionHint()
     forgetPlay()
     timeHiddenStore.set(null)
+    // Своё у соседей карточки — тоже след (см. SignOut): стёртую полку «Назад»
+    // не должен вернуть из памяти вкладки
+    ownedNearStore.set(null)
     // Строку «всё удалено» главная покажет по метке этой вкладки — один раз
     // (lib/forgotnotice), а не по адресу, который пережил бы удаление
     markForgot()

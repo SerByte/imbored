@@ -187,6 +187,14 @@ describe('quizHref', () => {
     expect(quiz).toContain('{!seed && !genre && (')
     expect(quiz).toContain('{!focus && !seed && !genre && (')
   })
+
+  // Подпись ряда квиза не обещает «из твоей библиотеки»: магазинные в
+  // пятёрке бывают и при своих, а следующий экран честно скажет, откуда они
+  test('квиз с жанром обещает «сначала свои», а не «из твоей библиотеки»', () => {
+    const quiz = fs.readFileSync(path.join(__dirname, '..', 'app', 'quiz', 'page.tsx'), 'utf8')
+    expect(quiz).toContain('`${genre.title} — сначала свои, одним тапом:`')
+    expect(quiz).not.toMatch(/\$\{genre\.title\}[^`]*из твоей библиотеки/)
+  })
 })
 
 /**

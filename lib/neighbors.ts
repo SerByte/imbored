@@ -9,8 +9,12 @@
  * «Как «X», но…» на /play читают готовые двенадцать строк по первичному
  * ключу (getNeighbors).
  *
- * Мера — weightedCosineTo с весом редкости (lib/tagweight): та же, которой
- * ранжируют подбор, якоря и колода пати. Не tasteCosine из lib/compat: тот
+ * Основа меры — weightedCosineTo с весом редкости (lib/tagweight), тем же
+ * откатом за сторону целиком, что у подбора, якорей и колоды пати. Но вес у
+ * соседей свой, и косинусом общей меры их счёт уже не назвать: тема в нём
+ * приглушена (THEME_DAMP, themeDampedWeight), а общие предупреждения
+ * сближают слабее (CONTENT_SHARE — только в скалярном произведении, не в
+ * длинах), и поверх — множители ниже. Не tasteCosine из lib/compat: тот
  * сделан для пары «человек — человек» и при нулевом весе одной из сторон
  * откатывается на сырой косинус, а сырые оценки на порядок больше вычтенных —
  * игра из одних Singleplayer, Indie и Action попала бы в соседи почти каждой.
@@ -155,8 +159,12 @@ export const THEME_DAMP = 0.35
  * Вес тега для соседей: редкость, а у темы — ещё и THEME_DAMP. Одна функция
  * на вектор пары и на подпись плитки (sharedTags): подпись «общее — гномы»
  * у пары кооперативных шутеров врала бы о том, почему они рядом.
+ *
+ * Не playWeight: так в lib/recommend зовётся вес игры библиотеки по
+ * наигранному, и докблоки профиля (lib/badges, lib/llm, lib/wrapped)
+ * ссылаются на него по голому имени.
  */
-export function playWeight(w: TagWeight): TagWeight {
+export function themeDampedWeight(w: TagWeight): TagWeight {
   return (tag) => (THEME_TAGS.has(tag) ? w(tag) * THEME_DAMP : w(tag))
 }
 
@@ -345,8 +353,8 @@ function postingsOf(sides: readonly Side[], share: boolean): Postings {
 /**
  * Соседи для всех игр разом.
  *
- * Счёт пары — weightedCosineTo(a, playWeight(w))(b), умноженный на поправки:
- * за суть (coreMultiplier), за режим (modeMultiplier), за ощущение
+ * Счёт пары — weightedCosineTo(a, themeDampedWeight(w))(b), умноженный на
+ * поправки: за суть (coreMultiplier), за режим (modeMultiplier), за ощущение
  * (feelMultiplier) и за отзывы соседа (qualityMultiplier). Поправка, для
  * которой у одной из сторон нет данных, равна единице: игра без категорий,
  * доли отзывов и семантики меряется ровно как раньше. У стороны a, которая с
@@ -379,7 +387,7 @@ export function buildNeighbors(
   const n = games.length
 
   const raw = games.map((g) => sideOf(g.tags))
-  const pw = w && playWeight(w)
+  const pw = w && themeDampedWeight(w)
   const weighted = pw ? games.map((g) => sideOf(weighTags(g.tags, pw))) : raw
   const keys = games.map((g) => editionKey(g.name))
   const cores = games.map((g) => coreTags(g.tags, w))
@@ -460,7 +468,7 @@ export function buildNeighbors(
  * Общие теги пары по вкладу в сходство — чем сильнее тег держит пару вместе,
  * тем раньше. Общие места (GENERIC_TAGS: Singleplayer, Great Soundtrack…) в
  * подпись не идут: «общее — Action» ничего не объясняет. Вклад считается по
- * тем же сторонам, что и счёт, — тема в них приглушена (playWeight), и
+ * тем же сторонам, что и счёт, — тема в них приглушена (themeDampedWeight), и
  * подпись называет сначала механику, ради которой пара рядом.
  */
 function sharedTags(a: Side, b: Side): string[] {

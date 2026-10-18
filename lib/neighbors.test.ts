@@ -12,12 +12,12 @@ import {
   NEIGHBORS_K,
   NO_CORE_MULT,
   playModeOf,
-  playWeight,
   QUALITY_MULT,
   qualityMultiplier,
   SAME_CORE_MULT,
   THEME_DAMP,
   THEME_TAGS,
+  themeDampedWeight,
   type NeighborGame,
 } from './neighbors'
 import { tagWeightFrom, weightedCosineTo } from './tagweight'
@@ -97,8 +97,8 @@ describe('coreMultiplier', () => {
 })
 
 describe('тема весит меньше механики', () => {
-  test('playWeight приглушает только тему', () => {
-    const pw = playWeight(W)
+  test('themeDampedWeight приглушает только тему', () => {
+    const pw = themeDampedWeight(W)
     expect(pw('Dwarves')).toBeCloseTo(W('Dwarves') * THEME_DAMP, 12)
     expect(pw('PvE')).toBe(W('PvE'))
   })
@@ -187,12 +187,12 @@ describe('общие предупреждения сближают слабее'
 
 describe('buildNeighbors', () => {
   test('счёт пары — weightedCosineTo с приглушённой темой и поправкой за суть', () => {
-    // Вес — playWeight(W), а не W: у Hades тема Mythology идёт с THEME_DAMP.
+    // Вес — themeDampedWeight(W), а не W: у Hades тема Mythology идёт с THEME_DAMP.
     // Категорий, отзывов и семантики у этих игр нет — других поправок тоже
     const games = [HADES, HADES2, ROGUE, FARM]
     const out = buildNeighbors(games, W)
     for (const a of games) {
-      const taste = weightedCosineTo(a.tags, playWeight(W))
+      const taste = weightedCosineTo(a.tags, themeDampedWeight(W))
       for (const nb of out.get(a.appid) ?? []) {
         const b = games.find((g) => g.appid === nb.neighbor)!
         const mult = coreMultiplier(coreTags(a.tags, W), coreTags(b.tags, W))
@@ -218,7 +218,7 @@ describe('buildNeighbors', () => {
     const [nb] = out.get(9) ?? []
     expect(nb?.neighbor).toBe(10)
     const mult = coreMultiplier(coreTags(lonely.tags, W), coreTags(other.tags, W))
-    expect(nb.score).toBeCloseTo(weightedCosineTo(lonely.tags, playWeight(W))(other.tags) * mult, 10)
+    expect(nb.score).toBeCloseTo(weightedCosineTo(lonely.tags, themeDampedWeight(W))(other.tags) * mult, 10)
     // а наоборот — нет: со взвешенной стороны у неё ноль, и соседом она не становится
     expect(ids(out.get(10))).toEqual([])
   })
@@ -269,7 +269,7 @@ describe('buildNeighbors', () => {
     const [nb] = buildNeighbors([a, b], W).get(30) ?? []
     // Great Soundtrack — похвала, а не суть; Action весит почти ноль, но и он
     // в подпись не идёт — он из общих мест. Mythology редкостью выше, но она
-    // тема и приглушена (playWeight): подпись называет сначала механику
+    // тема и приглушена (themeDampedWeight): подпись называет сначала механику
     expect(nb.shared).toEqual(['Hack and Slash', 'Mythology'])
   })
 

@@ -427,13 +427,18 @@ function Quiz() {
       <div className="relative w-full max-w-3xl flex flex-col items-center gap-10">
         {stepIndex === 0 && (
           <div className="w-full flex flex-col items-center gap-3 anim-rise">
+            {/* С жанром — «сначала свои», а не «из твоей библиотеки»: до двух
+                мест пятёрки магазинные и при своих, а своих нет — все пять
+                (genreLine в lib/playflow). Квиз, обещавший «рогалики из твоей
+                библиотеки», спорил бы со следующим экраном — «своих таких не
+                нашлось — эти из магазина» */}
             <span className="text-xs text-faint">
               {focus
                 ? 'Только нераспакованное — одним тапом:'
                 : seed
                   ? 'Похожее на выбранную игру — одним тапом:'
                   : genre
-                    ? `${genre.title} из твоей библиотеки — одним тапом:`
+                    ? `${genre.title} — сначала свои, одним тапом:`
                     : 'Одним тапом:'}
             </span>
             {/*

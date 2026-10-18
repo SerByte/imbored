@@ -5,6 +5,7 @@ import { GameLink } from '@/components/GameLink'
 import { SectionLabel } from '@/components/Labels'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { nearPlayedLabel, ownedNearStore } from '@/lib/ownednear'
+import { writerStore } from '@/lib/writer'
 
 /**
  * «Похожее уже есть у тебя» — над «Похожими» на странице игры.
@@ -19,10 +20,20 @@ import { nearPlayedLabel, ownedNearStore } from '@/lib/ownednear'
  * игра своя, и довод «сначала её» исполняется одним нажатием. На тач-
  * устройствах запуска нет (mobileLabel={null}, как у OwnedLaunch): steam://
  * там не работает, а карточка по ссылке рядом.
+ *
+ * Только при пишущей сессии (writerStore === true) — той единственной, которой
+ * роут вообще отдаёт near. Хранилище модульное и переживает переход роутера,
+ * а гостю OwnedLaunch ничего не спрашивает — значит, и список не перезапишет.
+ * Выход и «Удалить всё обо мне» его стирают (SignOut, ForgetMe), а это —
+ * второй замок на случай, который они не видят: сессия стала гостевой
+ * (writer null) или только читающей (false — во второй вкладке вставили
+ * ссылку на профиль, может быть, чужой). «Назад» на эту карточку тогда не
+ * покажет прежнюю полку с наигранным и «Запустить» тому, кто сейчас смотрит.
  */
 export function OwnedNear({ appid }: { appid: number }) {
   const near = useSyncExternalStore(ownedNearStore.subscribe, ownedNearStore.get, ownedNearStore.server)
-  if (!near || near.appid !== appid || !near.games.length) return null
+  const writer = useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server)
+  if (writer !== true || !near || near.appid !== appid || !near.games.length) return null
   return (
     <section>
       <SectionLabel className="mb-3">Похожее уже есть у тебя</SectionLabel>

@@ -602,6 +602,30 @@ describe('/api/recommend: жанр genre', () => {
     }
   })
 
+  /*
+   * «С друзьями» жанр пустеет чаще всего: свои — только сетевые (fitsSocial),
+   * пул магазина — только мультиплеер (requireMultiplayer). Отказ называет
+   * жанр, как называет затравку: иначе /play показал бы общее «верни
+   * что-нибудь из бана», а пусто — от жанра.
+   */
+  test('жанр «с друзьями» без сетевых — 409 nocandidates с названием жанра', async () => {
+    await genreLibrary()
+    const friends = { ...MOOD, social: 'friends' }
+    const res = await POST(post('/api/recommend', { mood: friends, genre: 'roguelike' }))
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'nocandidates', genre: { title: 'Рогалики' } })
+  })
+
+  // Жанр, который не применился, не называется: при затравке пусто от неё
+  test('с затравкой отказ — про затравку, без жанра', async () => {
+    await genreLibrary()
+    // без тегов соседей нет ни готовых, ни по полке тега
+    await upsertGamesMeta(db, [{ appid: 30, name: 'Одинокая', tags: {}, genres: [], categories: [2] }], nowSec())
+    const res = await POST(post('/api/recommend', { mood: MOOD, seed: 30, genre: 'roguelike' }))
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'nocandidates', seed: { appid: 30, name: 'Одинокая' } })
+  })
+
   test('с затравкой жанр не применяется: эхо — затравки', async () => {
     await genreLibrary()
     await upsertNeighbors(db, new Map([[10, [21].map((neighbor) => ({ neighbor, score: 0.9, shared: ['Puzzle'] }))]]))

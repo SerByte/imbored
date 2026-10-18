@@ -189,10 +189,21 @@ export async function POST(req: Request) {
      * «подбирать не из чего» у выдачи, которую просили «в духе Hades», звучит
      * как поломка. Имя — одним чтением и только на этом отказе. Незнакомой
      * затравке назвать нечего — тогда поля нет, и экран скажет общими словами.
+     *
+     * То же у жанра со страницы /games: «верни что-нибудь из бана» у выдачи
+     * визуальных новелл «с друзьями» — чужой совет, пусто там от жанра
+     * (свои — только сетевые, пул магазина — только мультиплеер). Название —
+     * из словаря, без чтения базы, и только если жанр применился: при
+     * затравке его нет (buildCandidates), и экран тогда про затравку.
      */
     const seedName = seed === null ? undefined : (await getGamesMetaLite(db, [seed])).get(seed)?.name
+    const genreTitle = seed === null && genre !== null ? HUB_GENRES[genre].title : null
     return NextResponse.json(
-      { error: 'nocandidates', ...(seedName ? { seed: { appid: seed, name: seedName } } : {}) },
+      {
+        error: 'nocandidates',
+        ...(seedName ? { seed: { appid: seed, name: seedName } } : {}),
+        ...(genreTitle ? { genre: { title: genreTitle } } : {}),
+      },
       { status: 409 },
     )
   }

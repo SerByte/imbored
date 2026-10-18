@@ -256,13 +256,13 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     guards: [['app/play/page.tsx', /next\.nudge !== 'different'\s+if \(same \|\| switching\) return/]],
   },
   {
-    // «Попробовать снова» и «Подобрать без «похожих»» — один повтор
+    // «Попробовать снова», «Подобрать без «похожих»» и «без жанра» — один повтор
     file: 'app/play/page.tsx',
     expr: 'retrying',
     guards: [
       [
         'app/play/page.tsx',
-        /const retry = useCallback\(async \(withSeed: number \| null = askSeed\) => \{\s*if \(retrying\) return/,
+        /const retry = useCallback\(async \(withSeed: number \| null = askSeed, genreless = false\) => \{\s*if \(retrying\) return/,
       ],
     ],
   },
