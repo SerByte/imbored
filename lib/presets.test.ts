@@ -180,7 +180,8 @@ describe('quizHref', () => {
   test('страница жанра зовёт квиз с жанром, квиз несёт его в выдачу', () => {
     const root = path.join(__dirname, '..')
     const read = (...p: string[]) => fs.readFileSync(path.join(root, ...p), 'utf8')
-    expect(read('app', 'games', '[tag]', 'page.tsx')).toContain('href={quizHref(null, null, slug)}')
+    // У жанра — в ветке Onward для kind 'genre' (у подборки жанра нет)
+    expect(read('app', 'games', '[tag]', 'page.tsx')).toContain('href={quizHref(null, null, genre.slug)}')
     const quiz = read('app', 'quiz', 'page.tsx')
     expect(quiz).toMatch(/playHref\(mood, \{[^}]*genre: genre\?\.slug,/)
     // рулетка и «нераспакованное» жанра не несут — при жанре их кнопок нет
