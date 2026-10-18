@@ -667,7 +667,7 @@ export async function claudePicks(args: {
     // промпт не идёт и русский пересказ — по той же причине, что в
     // patchSentence: английского пересказа нет, значит, нет и факта
     const raw = c.source === 'comeback' ? (args.patchOf?.(c.appid) ?? null) : null
-    const patch = raw && !patchHasDeadline(raw) && !(locale === 'en' && CYRILLIC.test(raw)) ? raw : null
+    const patch = raw && !patchHasDeadline(raw, locale) && !(locale === 'en' && CYRILLIC.test(raw)) ? raw : null
     if (patch) patched = true
     const since = patch ? copy.since(fenceData(patch, PATCH_TLDR_MAX)) : ''
     return `${copy.line(c.appid, fenceData(c.name, 100), src, priceNote(meta, c.source, now, locale), tags)}${near}${since}`
@@ -1454,22 +1454,28 @@ function lowerLead(s: string): string {
 /*
  * ТО ЖЕ ДЛЯ АНГЛИЙСКОГО ПЕРЕСКАЗА (tldr_en) — то же правило «строчной
  * делается только предсказуемое», но предсказуемое здесь другое:
- *   • глагол на -ed («Added», «Reworked», «Fixed») — им модель начинает
- *     английский пересказ так же охотно, как русский «Добавили»;
- *   • служебное слово или частый зачин («A», «The», «In», «Now», «New»).
- * И у обоих — условие, которого у русского нет: следующее слово строчное.
+ *   • глагол из закрытого списка — прошедшее или настоящее время («Added»,
+ *     «Reworked», «Fixes», «Adds», «Introduces»): им модель начинает
+ *     английский пересказ так же охотно, как русский «Добавили». Список, а не
+ *     «любое слово на -ed»: пересказ о самой игре начинается и с её имени, а
+ *     «Grounded», «Unturned» и «Overcooked» — имена, и «grounded 1.4 adds…»
+ *     было бы ошибкой в имени;
+ *   • служебное слово или частый зачин («A», «The», «In», «Now», «New»), а
+ *     «Update» и «Patch» — перед номером или именем апдейта («update 1.5 adds…»).
+ * И у всех — условие, которого у русского нет: следующее слово строчное.
  * Английские имена пишутся каждым словом с заглавной, и только так «The
  * Witcher», «It Takes Two», «New Vegas» и «Wicked Isles» остаются именами, а
  * «The new map» и «Added a biome» становятся строчными. Цена записана:
  * «Added Steam Deck support» останется с заглавной — мелочь стиля, а не
  * ошибка в имени.
  */
-const LOWER_WORD_EN = /^[A-Z][a-z]{2,}ed(?=\s+[a-z0-9])/
+const LOWER_VERB_EN =
+  /^(?:Added|Adds|Reworked|Reworks|Fixed|Fixes|Improved|Improves|Introduced|Introduces|Updated|Updates|Removed|Removes|Reduced|Reduces|Increased|Increases|Rebalanced|Rebalances|Redesigned|Redesigns|Expanded|Expands|Overhauled|Overhauls|Released|Launched|Adjusted|Adjusts|Changed|Changes|Tweaked|Tweaks|Buffed|Buffs|Nerfed|Nerfs|Enabled|Enables|Disabled|Disables|Optimi[sz]ed|Optimi[sz]es|Revamped|Revamps|Replaced|Replaces|Refined|Refines|Polished|Upgraded|Upgrades|Unlocked|Unlocks|Extended|Extends|Lowered|Lowers|Raised|Raises|Boosted|Boosts|Doubled|Doubles|Restored|Restores|Simplified|Simplifies|Streamlined|Implemented|Patched|Resolved|Addressed|Rebuilt|Rewrote|Brought|Brings|Delivers|Includes|Lets|Makes|Gives|Allows)(?=\s+[a-z0-9])/
 const LOWER_LEAD_EN =
-  /^(?:A|An|The|In|On|At|With|For|To|From|After|Now|New|More|Also|Finally|Plus|Better|Several|Many|Lots|Various|Two|Three|Four|Five|Fixes|Players|There|It|Its|This|You|Your)(?=\s+[a-z0-9])/
+  /^(?:(?:A|An|The|In|On|At|With|For|To|From|After|Now|New|More|Also|Finally|Plus|Better|Several|Many|Lots|Various|Two|Three|Four|Five|Players|There|It|Its|This|You|Your)(?=\s+[a-z0-9])|(?:Update|Patch)(?=\s+(?:v?\d|[“"‘«])))/
 
 function lowerLeadEn(s: string): string {
-  return LOWER_WORD_EN.test(s) || LOWER_LEAD_EN.test(s) ? s[0]!.toLowerCase() + s.slice(1) : s
+  return LOWER_VERB_EN.test(s) || LOWER_LEAD_EN.test(s) ? s[0]!.toLowerCase() + s.slice(1) : s
 }
 
 /*
@@ -1486,38 +1492,85 @@ const NAMED_UPDATE =
 const STARTS_AS_UPDATE = /^(?:вышл[а-яё]*\s+)?(?:(?:крупн|больш|нов)[а-яё]*\s+)?(?:обновлени|патч|апдейт)/i
 
 /*
- * Английские двойники: «Update 1.5: a new biome», «A major update “Frontier”:
- * a new map», «Patch 2.0 — co-op». «Updated the UI» и «Patched the exploit»
- * сюда не попадают (\b после update|patch): это глагол, а не имя апдейта.
+ * АНГЛИЙСКИЙ ПЕРЕСКАЗ, КОТОРЫЙ САМ НАЗЫВАЕТ ОБНОВЛЕНИЕ, разбирается иначе,
+ * потому что иначе устроена сама фраза. По глоссарию (docs/i18n.md) она —
+ * «Since you last played, a major update came out for “{игра}”: {пересказ}»:
+ * слота под имя апдейта в ней нет, «came out (1.5)» читалось телеграммой, а
+ * вставить имя внутрь вводной нельзя — по ней /pick узнаёт факт. Поэтому:
+ *   • ярлык перед двоеточием или тире снимается целиком, вместе с именем:
+ *     «Update 1.5: a new biome», «A major update “Frontier”: a new map»,
+ *     «The Frontier update — co-op». Хвост статуса — часть ярлыка: «Update
+ *     1.5 is out:», «is live», «is here» не делают ярлык фразой;
+ *   • если в «ярлыке» целая фраза со строчными словами («Patch 2.0 adds co-op
+ *     — plus three maps»), это не ярлык, а пересказ, и он остаётся целиком;
+ *   • начало «Update 1.5 adds a biome» без двоеточия — тоже пересказ: «…for
+ *     “Shapez”: update 1.5 adds a biome» читается, в отличие от русского
+ *     «обновление: Обновление 1.5 добавило…». Без номера или имени апдейта
+ *     («A new update with a map») фразы нет: «came out: a new update…».
+ * «Updated the UI» и «Patched the exploit» сюда не попадают (\b после
+ * update|patch): это глагол, а не апдейт.
  */
-const NAMED_UPDATE_EN =
-  /^(?:(?:the|a|an)\s+)?(?:(?:major|big|huge|large|new)\s+)?(?:update|patch)\b((?:[^:—–.!?]|(?<=\d)\.(?=\d)){0,40}?)\s*(?::|\s[—–-])\s*/i
-const STARTS_AS_UPDATE_EN = /^(?:(?:the|a|an)\s+)?(?:(?:major|big|huge|large|new)\s+)?(?:update|patch)\b/i
+const UPDATE_LABEL_EN =
+  /^(?:(?:the|a|an)\s+)?(?:(?:major|big|huge|large|massive|new|latest|next|first|free)\s+){0,3}(?:update|patch)\b((?:[^:—–.!?]|(?<=\d)\.(?=\d)){0,40}?)\s*(?::|\s[—–-])\s*/i
+/** Имя первым: «The Frontier update: …», «Season 3 Update — …» — каждое слово имени с заглавной или цифрой */
+const NAME_FIRST_LABEL_EN = /^(?:[Tt]he\s+)?(?:[A-Z0-9“"‘«][^\s:—–]*\s+){1,4}(?:[Uu]pdate|[Pp]atch|UPDATE|PATCH)\s*(?::|\s[—–-])\s*/
+/** «is out», «is live now», «arrives» в конце ярлыка — статус, а не часть имени */
+const LABEL_STATUS_EN =
+  /\s+(?:(?:is|has)\s+(?:now\s+)?(?:out|live|here|available|arrived|landed|released|dropped)|arrives|drops|lands|launches|goes\s+live)(?:\s+(?:now|today))?\s*$/i
+/** Строчное слово в имени, кроме служебных: «2.0 adds co-op» — фраза, а не имя */
+const LABEL_CLAUSE_EN = /(?:^|\s)(?!(?:of|and|the|for|in|a|an|to|with|on)\b)[a-z][a-z'’-]+/
+const STARTS_AS_UPDATE_EN =
+  /^(?:(?:the|a|an)\s+)?(?:(?:major|big|huge|large|massive|new|latest|next|first|free)\s+){0,3}(?:update|patch)\b/i
+/** За словом апдейта — его номер или имя: «Update 1.5 adds…», «Patch “Frontier” brings…» */
+const NAMED_HEAD_EN =
+  /^(?:(?:[Tt]he|[Aa]n?)\s+)?(?:(?:[Mm]ajor|[Bb]ig|[Hh]uge|[Ll]arge|[Mm]assive|[Nn]ew|[Ll]atest|[Nn]ext|[Ff]irst|[Ff]ree)\s+){0,3}(?:[Uu]pdate|[Pp]atch|UPDATE|PATCH)\s+(?:v?\d|[“"‘«]|[A-Z])/
 
+/** Имя апдейта и сам пересказ без ярлыка; null — склеить с вводной без повтора нельзя */
+type PatchSplit = { name: string; fact: string } | null
+
+function splitPatchRu(text: string): PatchSplit {
+  const named = NAMED_UPDATE.exec(text)
+  if (named) return { name: named[1]!.trim(), fact: text.slice(named[0].length).trim() }
+  return STARTS_AS_UPDATE.test(text) ? null : { name: '', fact: text }
+}
+
+function splitPatchEn(text: string): PatchSplit {
+  const first = UPDATE_LABEL_EN.exec(text)
+  if (first && !LABEL_CLAUSE_EN.test(first[1]!.replace(LABEL_STATUS_EN, ''))) {
+    return { name: '', fact: text.slice(first[0].length).trim() }
+  }
+  const nameFirst = NAME_FIRST_LABEL_EN.exec(text)
+  if (nameFirst) return { name: '', fact: text.slice(nameFirst[0].length).trim() }
+  if (STARTS_AS_UPDATE_EN.test(text)) return NAMED_HEAD_EN.test(text) ? { name: '', fact: text } : null
+  return { name: '', fact: text }
+}
 
 /**
  * Правила фразы о патче по языкам. Вводная — неизменный префикс (см.
- * PATCH_SINCE_LEADS): имя апдейта встаёт после неё. По-русски — через пробел
- * («обновление 1.5: …»), по-английски — в скобках: «a major update came out
- * (1.5): …» — «came out 1.5» не читается, а вставить имя внутрь вводной
- * нельзя, по ней ссылка /pick узнаёт факт.
+ * PATCH_SINCE_LEADS): всё остальное встаёт после неё. По-русски за ней — имя
+ * апдейта через пробел («обновление 1.5: …»), а игра названа в предложении
+ * перед ней. По-английски — по глоссарию « for “{игра}”: {пересказ}», без
+ * имени апдейта (см. UPDATE_LABEL_EN). Без названия игры — просто «…came
+ * out: …».
  */
 const PATCH_RULES = {
   ru: {
-    named: NAMED_UPDATE,
-    startsAsUpdate: STARTS_AS_UPDATE,
+    split: splitPatchRu,
     lowerLead,
     lead: (name: string) => `${PATCH_SINCE_LEAD}${name ? ` ${name}` : ''}: `,
   },
   en: {
-    named: NAMED_UPDATE_EN,
-    startsAsUpdate: STARTS_AS_UPDATE_EN,
+    split: splitPatchEn,
     lowerLead: lowerLeadEn,
-    lead: (name: string) => `${PATCH_SINCE_LEADS.en}${name ? ` (${name})` : ''}: `,
+    lead: (_name: string, game: string) => `${PATCH_SINCE_LEADS.en}${game ? ` for “${game}”` : ''}: `,
   },
 } satisfies Record<
   Locale,
-  { named: RegExp; startsAsUpdate: RegExp; lowerLead: (s: string) => string; lead: (name: string) => string }
+  {
+    split: (text: string) => PatchSplit
+    lowerLead: (s: string) => string
+    lead: (name: string, game: string) => string
+  }
 >
 
 /**
@@ -1534,30 +1587,31 @@ const PATCH_RULES = {
  *
  * locale — язык причины, и tldr обязан быть на нём же: на 'en' — английский
  * пересказ (tldr_en). Фраза тогда — «Since you last played, a major update
- * came out: …» (PATCH_SINCE_LEADS), со своими правилами имени апдейта и
- * строчной буквы (PATCH_RULES).
+ * came out for “{game}”: …» (PATCH_SINCE_LEADS, глоссарий), со своими
+ * правилами ярлыка апдейта и строчной буквы (PATCH_RULES). game нужен только
+ * ей: русская фраза название игры не повторяет, оно стоит в предложении перед
+ * ней. Название входит в budget: у длинного имени на пересказ остаётся
+ * меньше, и при нехватке фраза прежняя.
  */
-export function patchSentence(tldr: string, budget = Infinity, locale: Locale = 'ru'): string | null {
-  let text = tldr.trim()
-  if (!text || patchHasDeadline(text)) return null
+export function patchSentence(
+  tldr: string,
+  budget = Infinity,
+  locale: Locale = 'ru',
+  game?: string | null,
+): string | null {
+  const text = tldr.trim()
+  if (!text || patchHasDeadline(text, locale)) return null
   // Русский пересказ в английской причине — то, чего на /en быть не должно
   // (docs/i18n.md, «Тексты модели»): английского нет — фраза прежняя, как
   // без пересказа вовсе. Вызывающий и так обязан дать tldr_en, это страховка
   if (locale === 'en' && CYRILLIC.test(text)) return null
   const rules = PATCH_RULES[locale]
-  let name = ''
-  const named = rules.named.exec(text)
-  if (named) {
-    name = named[1]!.trim()
-    text = text.slice(named[0].length).trim()
-  } else if (rules.startsAsUpdate.test(text)) {
-    return null
-  }
-  if (!text) return null
-  const lead = rules.lead(name)
+  const split = rules.split(text)
+  if (!split || !split.fact) return null
+  const lead = rules.lead(split.name, game?.trim() ?? '')
   const room = Math.min(PATCH_TLDR_MAX, budget - lead.length - 1)
   if (room < PATCH_TLDR_MIN) return null
-  const cut = trimTldr(rules.lowerLead(text), room)
+  const cut = trimTldr(rules.lowerLead(split.fact), room)
   return `${lead}${cut}${/[.!?…]$/.test(cut) ? '' : '.'}`
 }
 
@@ -1780,7 +1834,7 @@ const SOURCE_TEMPLATES_EN: Templates = {
   comeback: (name, tags, { hours, entry, patch }) => {
     const known = hours ? `You already have ${hours} h in “${name}”` : `You've already started “${name}”`
     const recall = entry?.level === 'high' ? RECALL.en : ''
-    const fact = patch ? patchSentence(patch, REASON_MAX - known.length - 2 - recall.length, 'en') : null
+    const fact = patch ? patchSentence(patch, REASON_MAX - known.length - 2 - recall.length, 'en', name) : null
     if (fact) return `${known}. ${fact}${recall}`
     return tags
       ? `${known}. ${tags.n === 1 ? `Its tag (${tags.text}) is` : `Its tags (${tags.text}) are`} still your kind of thing — go back and see what it's like now.${recall}`

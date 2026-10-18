@@ -1557,6 +1557,63 @@ describe('заброшенная: крупное обновление после
  * без, с высоким порогом входа, — потому что «ты» пролезает ровно в той
  * ветке, которую не проверили.
  */
+/*
+ * Регресс, который ловил дифференциальный прогон против базы: английские
+ * правила срока на русском пересказе гасили факт о патче — «на 1/3» читалось
+ * датой, «режим Until Dawn» — словом срока. Русский путь — прежний до буквы.
+ */
+describe('русский факт о патче: латиница и дроби в пересказе — не срок', () => {
+  const TLDRS = [
+    'Урон дробовика снижен на 1/3, добавили карту «Завод».',
+    'Добавили режим Until Dawn и новую карту.',
+    'Добавили ивент Last Chance и новые квесты.',
+    'Добавлен персонаж June и новая глава.',
+  ]
+
+  test('шаблон заброшенной несёт факт', () => {
+    for (const tldr of TLDRS) {
+      const [pick] = heuristicPicks([{ appid: 2, name: 'Old Flame', source: 'comeback', score: 0.8 }], metaOf, 1, NOW, {}, {
+        hoursOf: () => 40,
+        patchOf: () => tldr,
+      })
+      expect(pick.reason, tldr).toContain('У тебя в «Old Flame» уже 40 ч. С твоего последнего захода вышло крупное обновление: ')
+      expect(pick.reason, tldr).toContain(tldr.slice(1))
+    }
+    const [one] = heuristicPicks([{ appid: 2, name: 'Old Flame', source: 'comeback', score: 0.8 }], metaOf, 1, NOW, {}, {
+      hoursOf: () => 40,
+      patchOf: () => 'Добавили режим Until Dawn и новую карту.',
+    })
+    expect(one.reason).toBe(
+      'У тебя в «Old Flame» уже 40 ч. С твоего последнего захода вышло крупное обновление: добавили режим Until Dawn и новую карту.',
+    )
+  })
+
+  test('промпт модели несёт факт и оговорку про пересказы', async () => {
+    const key = process.env.ANTHROPIC_API_KEY
+    process.env.ANTHROPIC_API_KEY = 'test-key'
+    create.mockReset()
+    create.mockResolvedValue({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"picks":[]}' }] })
+    try {
+      for (const tldr of TLDRS) {
+        create.mockClear()
+        await claudePicks({
+          candidates: CANDS,
+          metaOf,
+          library: [],
+          mood: MOOD,
+          patchOf: (id) => (id === 2 ? tldr : null),
+        })
+        const prompt = (create.mock.calls[0][0] as { messages: Array<{ content: string }> }).messages[0].content
+        expect(prompt, tldr).toContain(`; с его последнего захода вышло крупное обновление: «${tldr}»`)
+        expect(prompt, tldr).toContain(', пересказы обновлений — по текстам издателей')
+      }
+    } finally {
+      if (key === undefined) delete process.env.ANTHROPIC_API_KEY
+      else process.env.ANTHROPIC_API_KEY = key
+    }
+  })
+})
+
 describe('причина в третьем лице — для демо главной', () => {
   /** «ты» во всех падежах и формах «твой», плюс повелительное «ты»-шаблонов */
   const SECOND_PERSON =
@@ -1721,8 +1778,9 @@ describe('английская причина', () => {
       patchOf: () => 'Reworked combat and added a new biome.',
     })
     expect(pick.reason).toBe(
-      'You already have 40 h in “Shapez”. Since you last played, a major update came out: reworked combat and added a new biome.',
+      'You already have 40 h in “Shapez”. Since you last played, a major update came out for “Shapez”: reworked combat and added a new biome.',
     )
+    expect(pick.reason).not.toMatch(CYR)
   })
 
   test('русский пересказ в английскую причину не попадает — фраза прежняя', () => {
@@ -1742,6 +1800,20 @@ describe('английская причина', () => {
       'Reworked the whole crafting system, added two biomes, a new boss, four-player co-op, daily challenges, ' +
       'a level editor and forty more balance changes to weapons and enemies across the game.'
     const [pick] = heuristicPicks(
+      [{ appid: 7, name: 'Shapez: Space Age Edition', source: 'comeback', score: 0.9 }],
+      hard,
+      1,
+      NOW,
+      { Puzzle: 1 },
+      { ...en, hoursOf: () => 1234, patchOf: () => long },
+    )
+    expect(pick.reason).toContain('Since you last played, a major update came out for “Shapez: Space Age Edition”: reworked')
+    expect(pick.reason).toContain('remembering the controls')
+    expect(pick.reason.length).toBeLessThanOrEqual(REASON_MAX)
+    expect(pick.reason).not.toMatch(CYR)
+    // Название входит в бюджет фразы: у очень длинного на пересказ не остаётся
+    // места — и тогда фраза прежняя, а не огрызок пересказа
+    const [longName] = heuristicPicks(
       [{ appid: 7, name: 'A Very Long Game Title: The Complete Edition With All DLC', source: 'comeback', score: 0.9 }],
       hard,
       1,
@@ -1749,10 +1821,9 @@ describe('английская причина', () => {
       { Puzzle: 1 },
       { ...en, hoursOf: () => 1234, patchOf: () => long },
     )
-    expect(pick.reason).toContain('Since you last played, a major update came out: reworked')
-    expect(pick.reason).toContain('remembering the controls')
-    expect(pick.reason.length).toBeLessThanOrEqual(REASON_MAX)
-    expect(pick.reason).not.toMatch(CYR)
+    expect(longName.reason).not.toContain('Since you last played')
+    expect(longName.reason).toContain("go back and see what it's like now")
+    expect(longName.reason.length).toBeLessThanOrEqual(REASON_MAX)
   })
 
   test('ценовой хвост: бесплатная, цена, скидка — по-английски и ровно тем хвостом, что даёт reasonPrice', () => {
@@ -1810,13 +1881,52 @@ describe('patchSentence: английский пересказ', () => {
     expect(patchSentence('Added a mode', 80, 'en')).toBeNull()
   })
 
-  test('пересказ, называющий обновление: имя — в скобках после неизменной вводной', () => {
-    expect(patchSentence('Update 1.5: a new biome.', Infinity, 'en')).toBe(`${lead} (1.5): a new biome.`)
-    expect(patchSentence('A major update “Frontier”: a new map', Infinity, 'en')).toBe(`${lead} (“Frontier”): a new map.`)
+  test('по глоссарию: « for “{игра}”: {пересказ}» — название игры после неизменной вводной', () => {
+    expect(patchSentence('Added a new biome', Infinity, 'en', 'Shapez')).toBe(
+      'Since you last played, a major update came out for “Shapez”: added a new biome.',
+    )
+    expect(patchSentence('Update 1.5 adds a biome.', Infinity, 'en', 'Shapez')).toBe(
+      'Since you last played, a major update came out for “Shapez”: update 1.5 adds a biome.',
+    )
+    // пустое имя — просто вводная с двоеточием
+    expect(patchSentence('Added a new biome', Infinity, 'en', '  ')).toBe(`${lead}: added a new biome.`)
+    // русская фраза имени игры не берёт: оно стоит в предложении перед ней
+    expect(patchSentence('Добавили биом', Infinity, 'ru', 'Shapez')).toBe(patchSentence('Добавили биом'))
+  })
+
+  test('ярлык апдейта перед двоеточием или тире снимается целиком: слота под имя апдейта во фразе нет', () => {
+    expect(patchSentence('Update 1.5: a new biome.', Infinity, 'en')).toBe(`${lead}: a new biome.`)
+    expect(patchSentence('A major update “Frontier”: a new map', Infinity, 'en')).toBe(`${lead}: a new map.`)
     expect(patchSentence('Major update — reworked combat', Infinity, 'en')).toBe(`${lead}: reworked combat.`)
-    expect(patchSentence('Patch 2.0 — The game gets co-op', Infinity, 'en')).toBe(`${lead} (2.0): the game gets co-op.`)
-    // склеить без повтора нельзя — фразы нет
-    expect(patchSentence('Update 1.5 adds a biome.', Infinity, 'en')).toBeNull()
+    expect(patchSentence('Patch 2.0 — The game gets co-op', Infinity, 'en')).toBe(`${lead}: the game gets co-op.`)
+    // имя первым — обычный английский порядок
+    expect(patchSentence('The Frontier update: a new map and a sniper rifle.', Infinity, 'en')).toBe(
+      `${lead}: a new map and a sniper rifle.`,
+    )
+    expect(patchSentence('Season 3 Update — new ranked mode', Infinity, 'en')).toBe(`${lead}: new ranked mode.`)
+    // статус в ярлыке — часть ярлыка, а не имя апдейта
+    expect(patchSentence('Update 1.5 is out: a new biome', Infinity, 'en')).toBe(`${lead}: a new biome.`)
+    expect(patchSentence('Update 1.5 is live: two bosses', Infinity, 'en')).toBe(`${lead}: two bosses.`)
+    expect(patchSentence('Patch 2.0 is here — co-op and three maps', Infinity, 'en')).toBe(`${lead}: co-op and three maps.`)
+    for (const tldr of [
+      'The Frontier update: a new map.',
+      'Update 1.5 is out: a new biome',
+      'Patch 2.0 adds co-op — plus three new maps.',
+    ]) {
+      const out = patchSentence(tldr, Infinity, 'en')!
+      // ни повтора «update … update:», ни двух двоеточий подряд
+      expect(out.match(/:/g), tldr).toHaveLength(1)
+      expect(out, tldr).not.toMatch(/\(|is out|is here/)
+    }
+  })
+
+  test('«ярлык» с целой фразой — это пересказ: остаётся целиком', () => {
+    expect(patchSentence('Patch 2.0 adds co-op — plus three new maps.', Infinity, 'en')).toBe(
+      `${lead}: patch 2.0 adds co-op — plus three new maps.`,
+    )
+    // начало с номером апдейта без двоеточия читается: «…: update 1.5 adds…»
+    expect(patchSentence('Update 1.5 adds a biome.', Infinity, 'en')).toBe(`${lead}: update 1.5 adds a biome.`)
+    // без номера или имени апдейта склеить без повтора нельзя — фразы нет
     expect(patchSentence('A new update with a new map', Infinity, 'en')).toBeNull()
     expect(patchSentence('Update:', Infinity, 'en')).toBeNull()
     // «Updated» и «Patched» — глаголы, а не имя апдейта
@@ -1824,10 +1934,36 @@ describe('patchSentence: английский пересказ', () => {
     expect(patchSentence('New season: map and mode', Infinity, 'en')).toBe(`${lead}: new season: map and mode.`)
   })
 
+  test('строчная — у глаголов из списка, а не у любого слова на -ed: имя игры остаётся именем', () => {
+    expect(patchSentence('Adds the Siege mode and 5 maps.', Infinity, 'en')).toBe(`${lead}: adds the Siege mode and 5 maps.`)
+    expect(patchSentence('Introduces ranked play.', Infinity, 'en')).toBe(`${lead}: introduces ranked play.`)
+    expect(patchSentence('Brings back co-op.', Infinity, 'en')).toBe(`${lead}: brings back co-op.`)
+    expect(patchSentence('Fixes crashes on start.', Infinity, 'en')).toBe(`${lead}: fixes crashes on start.`)
+    for (const tldr of [
+      'Grounded 1.4 adds a new biome and co-op fixes.',
+      'Unturned gets a new map.',
+      'Overcooked gets a new kitchen.',
+      'Wicked Isles got a boss.',
+    ]) {
+      expect(patchSentence(tldr, Infinity, 'en'), tldr).toBe(`${lead}: ${tldr}`)
+    }
+  })
+
   test('срок и кириллица — фразы нет', () => {
-    for (const tldr of ['The Halloween season runs until November 5', 'Event ends Nov 5', 'Новый режим']) {
+    for (const tldr of [
+      'The Halloween season runs until November 5',
+      'Event ends Nov 5',
+      'The Halloween event is ending soon: new skins and a boss.',
+      'Новый режим',
+    ]) {
       expect(patchSentence(tldr, Infinity, 'en'), tldr).toBeNull()
     }
+  })
+
+  test('дробь в балансной правке — не срок: факт на месте', () => {
+    expect(patchSentence('Reduced shotgun damage by 1/3 and added a new map.', Infinity, 'en')).toBe(
+      `${lead}: reduced shotgun damage by 1/3 and added a new map.`,
+    )
   })
 
   test('вводная — всегда в начале: по ней shareText узнаёт факт', () => {

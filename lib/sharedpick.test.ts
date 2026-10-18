@@ -267,8 +267,12 @@ describe('shareText: английская причина', () => {
     expect(shareText(`${known} ${fact} ${recall}`, '', tldr)).toBe(`${known} ${recall}`)
     expect(shareText(`${known} ${fact}`, '')).not.toContain('Since you last played')
     const named = patchSentence('Update 1.5: a new biome and two bosses', Infinity, 'en')!
-    expect(named).toContain(`${patchSinceLead('en')} (1.5):`)
+    expect(named).toBe(`${patchSinceLead('en')}: a new biome and two bosses.`)
     expect(shareText(`${known} ${named}`, '', 'Update 1.5: a new biome and two bosses')).toBe(known)
+    // По глоссарию — с названием игры: вводная по-прежнему в самом начале
+    const forGame = patchSentence(tldr, Infinity, 'en', 'Hades')!
+    expect(forGame.startsWith(`${patchSinceLead('en')} for “Hades”: `)).toBe(true)
+    expect(shareText(`${known} ${forGame} ${recall}`, '', tldr)).toBe(`${known} ${recall}`)
   })
 
   test('модель пересказала факт своими словами — выпадает и так', () => {
