@@ -1,6 +1,7 @@
 import { ImageResponse } from 'next/og'
 import { OG_BG, OG_INK } from '@/lib/og'
 import { CardImage, fonts, loadCardData } from './share-card'
+import { isLocale } from '@/lib/i18n'
 
 export const alt = 'Портрет игрока — imbored'
 export const size = { width: 1200, height: 630 }
@@ -34,8 +35,10 @@ export async function generateStaticParams(): Promise<Array<Record<string, strin
   return []
 }
 
-export default async function Image({ params }: { params: Promise<{ steamid: string }> }) {
-  const { steamid } = await params
+export default async function Image({ params }: { params: Promise<{ lang: string; steamid: string }> }) {
+  const { lang, steamid } = await params
+  // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
+  if (!isLocale(lang)) return new Response('Not found', { status: 404 })
   const data = await loadCardData(steamid)
 
   if (!data) {

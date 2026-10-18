@@ -5,6 +5,7 @@ import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { rssFeed } from '@/lib/rss'
 import { appBaseUrl, getDb, isDemoId, nowSec } from '@/lib/server'
 import { resolveWhatsNew } from '@/lib/whatsnewfeed'
+import { isLocale } from '@/lib/i18n'
 
 /**
  * Личная RSS-лента по секретной ссылке: крупные патчи игр из твоей
@@ -72,8 +73,10 @@ function miss(): Response {
   })
 }
 
-export async function GET(_req: Request, ctx: { params: Promise<{ token: string }> }): Promise<Response> {
-  const { token } = await ctx.params
+export async function GET(_req: Request, ctx: { params: Promise<{ lang: string; token: string }> }): Promise<Response> {
+  const { lang, token } = await ctx.params
+  // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
+  if (!isLocale(lang)) return miss()
   if (!isFeedToken(token)) return miss()
 
   const db = await getDb()

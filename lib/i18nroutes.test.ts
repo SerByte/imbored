@@ -55,6 +55,34 @@ describe('разделы под app/[lang]', () => {
     expect(dynamic).toEqual(['[...missing]'])
   })
 
+  /**
+   * Корневой layout отвечает на чужой язык notFound(), но route handler и
+   * файловая карточка рендерятся мимо layout. А адрес под чужим «языком»
+   * маршрут находит: /_x/portrait/<id>/card.png доходил до обработчика и
+   * отдавал PNG без noindex, под сколько угодно ключами ISR. Поэтому каждый
+   * обработчик под app/[lang] либо закрыт dynamicParams = false (тогда язык
+   * решает сборка), либо сам проверяет isLocale.
+   */
+  test('каждый route handler и файловая карточка под [lang] отвечают на чужой язык 404', () => {
+    const handlers: string[] = []
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name)
+        if (e.isDirectory()) walk(p)
+        else if (/^(route|opengraph-image|twitter-image|icon|apple-icon)\.(tsx|ts|jsx|js)$/.test(e.name)) handlers.push(p)
+      }
+    }
+    walk(LANG_DIR)
+    expect(handlers.length, 'обработчики не найдены — сторож ослеп').toBeGreaterThan(10)
+    const open = handlers
+      .filter((p) => {
+        const src = fs.readFileSync(p, 'utf8')
+        return !/export const dynamicParams = false/.test(src) && !/if \(!isLocale\(lang\)\) return /.test(src)
+      })
+      .map((p) => path.relative(ROOT, p).split(path.sep).join('/'))
+    expect(open, 'добавь в начало обработчика: if (!isLocale(lang)) return 404').toEqual([])
+  })
+
   test('в корне app/ не осталось страниц: их бы не нашёл ни один язык', () => {
     const pages: string[] = []
     const walk = (dir: string) => {

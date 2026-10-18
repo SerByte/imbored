@@ -4,6 +4,7 @@ import { ArtBackdrop, ogArt } from '@/lib/ogcard'
 import { CANVAS_WIDE } from '@/lib/ogwall'
 import { inviteCopy } from '@/lib/roominvite'
 import { loadRoomInvite, ROOM_ID_RE } from './invite'
+import { isLocale } from '@/lib/i18n'
 
 export const alt = 'Приглашение в пати — imbored'
 export const size = { width: 1200, height: 630 }
@@ -61,8 +62,10 @@ export async function generateStaticParams(): Promise<Array<Record<string, strin
   return []
 }
 
-export default async function Image({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params
+export default async function Image({ params }: { params: Promise<{ lang: string; id: string }> }) {
+  const { lang, id } = await params
+  // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
+  if (!isLocale(lang)) return new Response('Not found', { status: 404 })
   const code = id.toUpperCase()
   // Без потолка room-peek, в отличие от заголовка страницы, — сознательно:
   // headers() выбил бы карточку из ISR. Почему это терпимо — lib/roompeek

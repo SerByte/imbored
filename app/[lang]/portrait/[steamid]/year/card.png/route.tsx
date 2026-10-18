@@ -1,5 +1,6 @@
 import { ImageResponse } from 'next/og'
 import { YearCardImage, fonts, loadYearCardData } from '../share-card'
+import { isLocale } from '@/lib/i18n'
 
 /**
  * Итоги года на скачивание — формат сторис, как у карточки портрета.
@@ -16,9 +17,11 @@ export async function generateStaticParams(): Promise<Array<Record<string, strin
 
 export async function GET(
   _req: Request,
-  { params }: { params: Promise<{ steamid: string }> },
+  { params }: { params: Promise<{ lang: string; steamid: string }> },
 ): Promise<Response> {
-  const { steamid } = await params
+  const { lang, steamid } = await params
+  // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
+  if (!isLocale(lang)) return new Response('Not found', { status: 404 })
   const data = await loadYearCardData(steamid)
   if (!data) return new Response('Not found', { status: 404 })
 

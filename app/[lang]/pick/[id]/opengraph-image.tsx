@@ -5,6 +5,7 @@ import { ArtBackdrop, ogArt } from '@/lib/ogcard'
 import { CANVAS_WIDE } from '@/lib/ogwall'
 import { pickCopy, quoted } from '@/lib/sharedpick'
 import { loadSharedPick } from './load'
+import { isLocale } from '@/lib/i18n'
 
 export const alt = 'Выбор на вечер — imbored'
 export const size = { width: 1200, height: 630 }
@@ -26,8 +27,10 @@ export async function generateStaticParams(): Promise<Array<Record<string, strin
  * мне на вечер», название и начало объяснения. Цены нет — ссылка живёт
  * месяц. Выбора нет (истёк, удалён) — приглашение без игры.
  */
-export default async function Image({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params
+export default async function Image({ params }: { params: Promise<{ lang: string; id: string }> }) {
+  const { lang, id } = await params
+  // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
+  if (!isLocale(lang)) return new Response('Not found', { status: 404 })
   const got = await loadSharedPick(id)
   const copy = pickCopy(got ? { name: got.meta.name, reason: got.pick.reason, kind: got.pick.kind } : null)
   const art = got ? await ogArt(got.meta) : null

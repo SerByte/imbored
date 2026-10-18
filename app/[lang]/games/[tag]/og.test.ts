@@ -29,7 +29,7 @@ function queriesFail(): void {
   db.batch = timeout as Db['batch']
 }
 
-const render = (tag: string) => Image({ params: Promise.resolve({ tag }) })
+const render = (tag: string) => Image({ params: Promise.resolve({ lang: 'ru', tag }) })
 
 describe('карточка жанра и осечка базы', () => {
   /*

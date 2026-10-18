@@ -6,6 +6,7 @@ import { ogArt } from '@/lib/ogcard'
 import { getDb } from '@/lib/server'
 import { plural } from '@/lib/plural'
 import { tagRu } from '@/lib/tagsru'
+import { isLocale } from '@/lib/i18n'
 
 export const alt = 'Стоит ли играть — imbored'
 export const size = { width: 1200, height: 630 }
@@ -88,8 +89,10 @@ export async function generateStaticParams(): Promise<Array<Record<string, strin
   return []
 }
 
-export default async function Image({ params }: { params: Promise<{ appid: string }> }) {
-  const { appid: raw } = await params
+export default async function Image({ params }: { params: Promise<{ lang: string; appid: string }> }) {
+  const { lang, appid: raw } = await params
+  // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
+  if (!isLocale(lang)) return new Response('Not found', { status: 404 })
   const appid = Number(raw)
   const row = Number.isInteger(appid) && appid !== 0 ? await getGamePageRow(await getDb(), appid) : null
 

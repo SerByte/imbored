@@ -97,7 +97,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-const poll = (token: string) => GET(new Request(`http://localhost/whatsnew/feed/${token}`), params({ token }))
+const poll = (token: string) => GET(new Request(`http://localhost/whatsnew/feed/${token}`), params({ lang: 'ru', token }))
 
 describe('/whatsnew/feed/[token]: что в ленте', () => {
   test('вкладка «В твоих играх»: свежий патч своей игры — без старья и без чужих', async () => {
@@ -184,6 +184,19 @@ describe('/whatsnew/feed/[token]: что в ленте', () => {
     const xml = await res.text()
     expect(xml).toContain('<channel>')
     expect(xml).not.toContain('<item>')
+  })
+})
+
+describe('/whatsnew/feed/[token]: язык', () => {
+  /**
+   * notFound() корневого layout до обработчика не доходит, а адрес под
+   * чужим языком (/_x/whatsnew/feed/<ключ>) маршрут находит: лента
+   * отдавалась бы и там — без noindex и с записью кэша на каждый «язык».
+   */
+  test('под чужим языком — 404, даже с живым ключом', async () => {
+    const res = await GET(new Request(`http://localhost/_x/whatsnew/feed/${key}`), params({ lang: '_x', token: key }))
+    expect(res.status).toBe(404)
+    expect((await poll(key)).status).toBe(200)
   })
 })
 

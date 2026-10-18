@@ -4,6 +4,7 @@ import { PosterWall, postersOf, WallShade, WALL_POSTERS } from '@/lib/ogcard'
 import { CANVAS_WIDE, WALL_WIDE } from '@/lib/ogwall'
 import { plural } from '@/lib/plural'
 import { loadGenre } from './load'
+import { isLocale } from '@/lib/i18n'
 
 export const alt = 'Жанр — imbored'
 export const size = { width: 1200, height: 630 }
@@ -32,8 +33,10 @@ export async function generateStaticParams(): Promise<Array<Record<string, strin
   return []
 }
 
-export default async function Image({ params }: { params: Promise<{ tag: string }> }) {
-  const { tag } = await params
+export default async function Image({ params }: { params: Promise<{ lang: string; tag: string }> }) {
+  const { lang, tag } = await params
+  // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
+  if (!isLocale(lang)) return new Response('Not found', { status: 404 })
   // null — незнакомый адрес: карточка без стены, с общим заголовком
   const genre = await loadGenre(tag)
   const games = genre?.games ?? []

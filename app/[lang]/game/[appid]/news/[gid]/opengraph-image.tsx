@@ -6,6 +6,7 @@ import { ogFonts, ogGlow, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { ArtBackdrop, ogArt } from '@/lib/ogcard'
 import { CANVAS_WIDE } from '@/lib/ogwall'
 import { loadPatch } from './load'
+import { isLocale } from '@/lib/i18n'
 
 export const alt = 'Что изменилось в патче — imbored'
 export const size = { width: 1200, height: 630 }
@@ -38,8 +39,10 @@ export async function generateStaticParams(): Promise<Array<Record<string, strin
   return []
 }
 
-export default async function Image({ params }: { params: Promise<{ appid: string; gid: string }> }) {
-  const { appid, gid } = await params
+export default async function Image({ params }: { params: Promise<{ lang: string; appid: string; gid: string }> }) {
+  const { lang, appid, gid } = await params
+  // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
+  if (!isLocale(lang)) return new Response('Not found', { status: 404 })
   const page = await loadPatch(appid, gid)
   const item = page?.item ?? null
   const game = page?.game ?? null
