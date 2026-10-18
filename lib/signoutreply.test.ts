@@ -91,7 +91,9 @@ describe('SignOut: ответ выхода решает, уходить ли с 
     const at = src.indexOf("if (reply === 'partial') {")
     const branch = src.slice(at, src.indexOf("router.replace('/')"))
     expect(branch).toContain("{feedLink ? ' — и ссылка на RSS ещё работает' : ''}")
-    expect(branch).toContain("href={steamLoginFor('/library')}")
+    expect(branch).toContain("{feedLink ? ' — and your RSS link still works' : ''}")
+    // адрес входа — на языке страницы: на /en он везёт lang=en через Steam
+    expect(branch).toContain("href={steamLoginFor(lp(locale, '/library'))}")
     expect(branch).not.toContain('router.')
   })
 
@@ -111,6 +113,6 @@ describe('SignOut: ответ выхода решает, уходить ли с 
       /useEffect\(\(\) => \{\s*if \(partial && focusAdrift\(document, homeRef\.current\)\) retryRef\.current\?\.focus\(\)\s*\}, \[partial\]\)/,
     )
     // цель — та самая ссылка входа из строки partial
-    expect(branch).toMatch(/<a\s+ref=\{retryRef\}\s+href=\{steamLoginFor\('\/library'\)\}/)
+    expect(branch).toMatch(/<a\s+ref=\{retryRef\}\s+href=\{steamLoginFor\(lp\(locale, '\/library'\)\)\}/)
   })
 })
