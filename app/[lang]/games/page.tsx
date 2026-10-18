@@ -14,9 +14,10 @@ import {
   hubPath,
   type HubShelf,
 } from '@/lib/gamehub'
+import { toLocale, tr, type Locale } from '@/lib/i18n'
 import { getDb } from '@/lib/server'
 import { ownAddress } from '@/lib/site'
-import { tagRu } from '@/lib/tagsru'
+import { tagLabel } from '@/lib/tagsru'
 
 /**
  * Хаб игр: тридцать жанров, по двенадцать игр в каждом.
@@ -32,11 +33,11 @@ import { tagRu } from '@/lib/tagsru'
  */
 export const revalidate = 86_400
 
-export const generateMetadata = ownAddress('/games', {
-  title: 'Игры по жанрам',
-  description:
-    'Открытый мир, соулслайки, рогалики, градостроение и ещё два десятка жанров — по двенадцать игр, для которых жанр главный, с отзывами и патчами на русском.',
-})
+/**
+ * Адрес — свой, на языке страницы. title и description по языку ставит
+ * layout.tsx рядом: у ownAddress подпись одна на оба языка (почему — там).
+ */
+export const generateMetadata = ownAddress('/games')
 
 /**
  * Полки или пустой список — но пустой только на сборке.
@@ -71,19 +72,26 @@ async function loadHub(): Promise<HubShelf[]> {
  */
 export const dynamicParams = false
 
-export default async function GamesHubPage() {
+/**
+ * Язык — из params маршрута, а не из next/root-params: у страницы тесты, а
+ * там root-params бросает при импорте. Без params (тест зовёт страницу
+ * голой) — русский.
+ */
+export default async function GamesHubPage({ params }: Partial<PageProps<'/[lang]/games'>> = {}) {
+  const locale = toLocale(params ? (await params).lang : undefined)
   const shelves = await loadHub()
 
   return (
     <div className="flex-1">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-safe pt-28 pb-16">
         <header className="flex max-w-2xl flex-col gap-4 anim-rise">
-          <Eyebrow>Каталог</Eyebrow>
-          <h1 className="font-display text-display-lg">Игры по жанрам</h1>
+          <Eyebrow>{tr(locale, { ru: 'Каталог', en: 'Catalog' })}</Eyebrow>
+          <h1 className="font-display text-display-lg">{tr(locale, { ru: 'Игры по жанрам', en: 'Games by genre' })}</h1>
           <p className="leading-relaxed text-dim">
-            По двенадцать игр на жанр — из тех, для кого он главный, а не метка в хвосте
-            списка тегов. Порядок — по числу отзывов в Steam, и каждая игра стоит только на
-            одной полке: под каждым жанром свои находки, а не одни и те же хиты.
+            {tr(locale, {
+              ru: 'По двенадцать игр на жанр — из тех, для кого он главный, а не метка в хвосте списка тегов. Порядок — по числу отзывов в Steam, и каждая игра стоит только на одной полке: под каждым жанром свои находки, а не одни и те же хиты.',
+              en: "Twelve games per genre, picked from those where it's the main genre, not a tag buried at the end of the list. Sorted by number of Steam reviews, and each game sits on one shelf only: every genre gets its own finds, not the same hits over and over.",
+            })}
           </p>
           {/* Полки показывают по двенадцать игр на жанр, а в каталоге их
               тысячи: тот, кто пришёл за конкретной, ищет её по названию,
@@ -97,7 +105,7 @@ export default async function GamesHubPage() {
             {shelves.map((s, i) => (
               // Первая полка грузится сразу: это обложки над сгибом, и
               // ленивая загрузка только отложила бы их показ
-              <Shelf key={s.tag} shelf={s} eager={i === 0} />
+              <Shelf key={s.tag} shelf={s} eager={i === 0} locale={locale} />
             ))}
           </div>
         ) : (
@@ -105,7 +113,12 @@ export default async function GamesHubPage() {
             <span aria-hidden className="grid size-12 shrink-0 place-items-center rounded-full bg-ink/10 text-dim">
               <Icon name="grid" size={22} />
             </span>
-            <p className="text-dim">Полки собираются — загляни чуть позже.</p>
+            <p className="text-dim">
+              {tr(locale, {
+                ru: 'Полки собираются — загляни чуть позже.',
+                en: 'The shelves are still coming together — check back soon.',
+              })}
+            </p>
           </div>
         )}
 
@@ -113,7 +126,8 @@ export default async function GamesHubPage() {
           {/* Тот же выход, что внизу карточки игры: гостю /play не откроется,
               а квиз работает любому */}
           <Link href="/quiz" className="btn-ember px-6 py-3">
-            Подобрать игру под настроение <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
+            {tr(locale, { ru: 'Подобрать игру под настроение ', en: 'Find a game for your mood ' })}
+            <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
           </Link>
         </div>
       </div>
@@ -153,7 +167,7 @@ export default async function GamesHubPage() {
  * перегенерации. Запасной цепочки по onError у серверной капсулы нет, но на
  * хабе только игры каталога с разрешённым артом — ей она и не нужна.
  */
-function Shelf({ shelf, eager }: { shelf: HubShelf; eager: boolean }) {
+function Shelf({ shelf, eager, locale }: { shelf: HubShelf; eager: boolean; locale: Locale }) {
   const headingId = `shelf-${shelf.tag.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
   const path = hubPath(shelf.tag)
   return (
@@ -162,13 +176,13 @@ function Shelf({ shelf, eager }: { shelf: HubShelf; eager: boolean }) {
           «одна игра — одна полка», с отзывами и тем, за что любят */}
       <div className="flex items-baseline justify-between gap-4">
         <h2 id={headingId} className="section-title">
-          {tagRu(shelf.tag)}
+          {tagLabel(shelf.tag, locale)}
         </h2>
         {path && (
           <Link href={path} prefetch={false} className="tap link-more shrink-0">
-            Весь жанр
+            {tr(locale, { ru: 'Весь жанр', en: 'See all' })}
             <Icon name="arrow" size={16} />
-            <span className="sr-only">: {tagRu(shelf.tag)}</span>
+            <span className="sr-only">: {tagLabel(shelf.tag, locale)}</span>
           </Link>
         )}
       </div>

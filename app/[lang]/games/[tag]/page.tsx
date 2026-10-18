@@ -7,11 +7,10 @@ import { StaticGameCardBody } from '@/components/StaticGameCard'
 import { clip } from '@/lib/clip'
 import { HUB_GENRES, HUB_MIN_SHELF, HUB_TAGS, hubPath } from '@/lib/gamehub'
 import { genreBreadcrumbLd, genreItemListLd, ldScript } from '@/lib/jsonld'
-import { plural } from '@/lib/plural'
 import { appBaseUrl } from '@/lib/server'
-import { lp, toLocale } from '@/lib/i18n'
+import { lp, pl, toLocale, tr, type Locale } from '@/lib/i18n'
 import { localeAlternates, ogSite } from '@/lib/site'
-import { tagRu } from '@/lib/tagsru'
+import { tagLabel } from '@/lib/tagsru'
 import { loadGenre, type GenreGame } from './load'
 
 /**
@@ -31,6 +30,11 @@ import { loadGenre, type GenreGame } from './load'
  * Карточки серверные (StaticGameCardBody) — по тому же доводу, что на хабе:
  * сорок островков GameArt везли по объекту арта каждый, а страница живёт в
  * ISR, и её вес — это ещё и ISR Writes.
+ *
+ * Язык — из params маршрута (у страницы тесты, next/root-params там не
+ * работает). /en/games/<slug> под dynamicParams = false существует, потому
+ * что язык приходит от корневого layout: Next зовёт generateStaticParams
+ * ниже на каждый его язык, и тридцать адресов собираются для обоих.
  */
 export const revalidate = 86_400
 export const dynamicParams = false
@@ -44,16 +48,27 @@ type Params = { params: Promise<{ tag: string; lang?: string }> }
 /** Полка короче этого — страница есть, но в поиск её не пускаем: список из трёх игр — не ответ */
 const thin = (games: readonly GenreGame[]) => games.length < HUB_MIN_SHELF
 
+/** «40 игр» / «40 games» — счёт игр жанра в описании и на странице */
+const gamesWord = (locale: Locale, n: number) => pl(locale, n, { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] })
+
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { tag: slug, lang } = await params
   const locale = toLocale(lang)
-  const genre = await loadGenre(slug)
+  const genre = await loadGenre(slug, locale)
   if (!genre) return {}
   const { title, games } = genre
   const n = games.length
   const canonical = `/games/${slug}`
-  const heading = `${title} — лучшие в Steam по отзывам`
-  const description = `${title}: ${n} ${plural(n, 'игра', 'игры', 'игр')}, для которых жанр главный, — с долей положительных отзывов, длиной захода и тем, за что их любят.`
+  // Заголовок жанра — как есть, с заглавной: hubTitle уже в нужном регистре,
+  // и по-английски он встаёт внутрь фразы («The best Roguelikes on Steam…»)
+  const heading = tr(locale, {
+    ru: `${title} — лучшие в Steam по отзывам`,
+    en: `The best ${title} on Steam, by reviews`,
+  })
+  const description = tr(locale, {
+    ru: `${title}: ${n} ${gamesWord(locale, n)}, для которых жанр главный, — с долей положительных отзывов, длиной захода и тем, за что их любят.`,
+    en: `${title}: ${n} ${gamesWord(locale, n)} where it's the main genre, with the share of positive reviews, session length and what players love about them.`,
+  })
   return {
     title: heading,
     description,
@@ -67,7 +82,7 @@ export default async function GenrePage({ params }: Params) {
   const { tag: slug, lang } = await params
   // Адреса в разметке — на языке страницы, как её canonical
   const locale = toLocale(lang)
-  const genre = await loadGenre(slug)
+  const genre = await loadGenre(slug, locale)
   if (!genre) notFound()
   const { tag, title, games } = genre
   const path = `/games/${slug}`
@@ -91,9 +106,9 @@ export default async function GenrePage({ params }: Params) {
         <header className="flex max-w-2xl flex-col gap-4 anim-rise">
           {/* Путь — тот же, что в разметке крошек (genreBreadcrumbLd): разметка
               не говорит больше, чем страница */}
-          <nav aria-label="Путь по разделу" className="flex flex-wrap items-center gap-1.5">
+          <nav aria-label={tr(locale, { ru: 'Путь по разделу', en: 'Breadcrumb' })} className="flex flex-wrap items-center gap-1.5">
             <Link href="/games" className="tap tap-tight link-more">
-              Игры по жанрам
+              {tr(locale, { ru: 'Игры по жанрам', en: 'Games by genre' })}
             </Link>
             <Icon name="arrow" size={14} className="text-faint" />
             <span aria-current="page" className="text-sm font-semibold text-ink">
@@ -102,20 +117,27 @@ export default async function GenrePage({ params }: Params) {
           </nav>
           <h1 className="font-display text-display-lg">{title}</h1>
           <p className="leading-relaxed text-dim">
-            {n > 0 ? (
+            {/* По-английски — своим порядком слов, целой фразой, а не склейкой русской */}
+            {n === 0 ? (
+              tr(locale, { ru: 'Список собирается — загляни чуть позже.', en: 'The list is still coming together — check back soon.' })
+            ) : locale === 'en' ? (
               <>
-                {n} {plural(n, 'игра', 'игры', 'игр')}, для которых «{tagRu(tag)}» — один из главных
-                тегов, а не метка в хвосте списка. Порядок — по числу отзывов в Steam.
+                {n} {gamesWord(locale, n)} where “{tagLabel(tag, locale)}” is one of the main tags, not one buried at the
+                end of the list. Sorted by number of Steam reviews.
               </>
             ) : (
-              'Список собирается — загляни чуть позже.'
+              <>
+                {n} {gamesWord(locale, n)}, для которых «{tagLabel(tag, locale)}» — один из главных
+                тегов, а не метка в хвосте списка. Порядок — по числу отзывов в Steam.
+              </>
             )}
           </p>
           <div>
             {/* Квиз, а не /play: страница статическая и про сессию не знает,
                 а квиз открыт любому — гостя он сам доведёт до входа или демо */}
             <Link href="/quiz" className="btn-ember px-6 py-3">
-              Подобрать из своей библиотеки <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
+              {tr(locale, { ru: 'Подобрать из своей библиотеки ', en: 'Pick from your library ' })}
+              <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
             </Link>
           </div>
         </header>
@@ -158,22 +180,27 @@ export default async function GenrePage({ params }: Params) {
                     }
                   />
                 </GameLink>
-                <Why game={g} />
+                <Why game={g} locale={locale} />
               </li>
             ))}
           </ol>
         )}
         {anyLoved && (
-          <p className="-mt-4 text-xs text-faint">«За что любят» собрано ИИ из самых полезных отзывов Steam.</p>
+          <p className="-mt-4 text-xs text-faint">
+            {tr(locale, {
+              ru: '«За что любят» собрано ИИ из самых полезных отзывов Steam.',
+              en: '“Loved for” is summarized by AI from the most helpful Steam reviews.',
+            })}
+          </p>
         )}
 
-        <nav aria-label="Другие жанры" className="flex flex-col gap-4">
-          <h2 className="section-title">Другие жанры</h2>
+        <nav aria-label={tr(locale, { ru: 'Другие жанры', en: 'Other genres' })} className="flex flex-col gap-4">
+          <h2 className="section-title">{tr(locale, { ru: 'Другие жанры', en: 'Other genres' })}</h2>
           <ul className="flex flex-wrap gap-2">
             {HUB_TAGS.filter((t) => t !== tag).map((t) => (
               <li key={t}>
                 <Link href={hubPath(t) ?? '/games'} prefetch={false} className="pill">
-                  {tagRu(t)}
+                  {tagLabel(t, locale)}
                 </Link>
               </li>
             ))}
@@ -186,14 +213,16 @@ export default async function GenrePage({ params }: Params) {
 
 /**
  * Строка под карточкой: за что игру любят — или, пока это не собрано, её
- * описание витрины, если оно по-русски. Английский абзац посреди русской
- * страницы хуже, чем ничего.
+ * описание витрины на языке страницы (loadGenre отдаёт только такое). Чужой
+ * абзац посреди страницы хуже, чем ничего: английский — на русской, русский —
+ * на английской.
  */
-function Why({ game }: { game: GenreGame }) {
+function Why({ game, locale }: { game: GenreGame; locale: Locale }) {
   if (game.loved.length) {
     return (
       <p className="mt-2 text-sm leading-snug text-dim">
-        <span className="font-semibold text-ink">За что любят:</span> {game.loved.slice(0, 2).join('; ')}
+        <span className="font-semibold text-ink">{tr(locale, { ru: 'За что любят:', en: 'Loved for:' })}</span>{' '}
+        {game.loved.slice(0, 2).join('; ')}
       </p>
     )
   }

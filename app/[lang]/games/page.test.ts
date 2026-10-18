@@ -4,9 +4,10 @@ import { GameArt } from '@/components/GameArt'
 import { SearchLauncher } from '@/components/SearchLauncher'
 import { TilePending } from '@/components/TilePending'
 import { replaceGameTags, upsertGameMeta, type Db } from '@/lib/db'
-import { flight as flightOf, islandsOf } from '@/lib/testing/flight'
+import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
-import GenrePage from './[tag]/page'
+import GenrePage, { generateMetadata as generateGenreMetadata } from './[tag]/page'
+import { generateMetadata as generateHubMetadata } from './layout'
 import GamesHubPage from './page'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -110,5 +111,51 @@ describe('страница жанра /games/<slug>', () => {
     expect(text).toContain('"className":"lib-badge badge-line tabular-nums","children":1')
     expect(text).toMatch(/90%/)
     expect(text.match(/"loading":"eager"/g)).toHaveLength(3)
+  })
+})
+
+/**
+ * Английские хаб и жанр: /en/games и /en/games/open-world — те же полки и
+ * те же игры, подписи — на языке params. Названия игр — данные, и в
+ * фикстуре они латиницей: кириллица на /en осталась бы только недоведённой
+ * строкой интерфейса.
+ */
+describe('английские хаб и страница жанра', () => {
+  const CYR = /[А-Яа-яЁё]/
+  const en = <T extends object>(p: T) => ({ params: Promise.resolve({ ...p, lang: 'en' }) })
+  const latin = () => db.execute({ sql: "UPDATE games SET name = 'Game ' || appid", args: [] })
+
+  test('хаб: подписи по-английски, полка — подпись тега Steam', async () => {
+    await latin()
+    const page = flight(await GamesHubPage(en({})))
+    const text = textOf(page)
+    for (const s of ['Catalog', 'Games by genre', 'Open World', 'See all', 'Find a game for your mood']) {
+      expect(text, s).toContain(s)
+    }
+    expect(text).not.toMatch(CYR)
+  })
+
+  test('хаб: title и description — у layout, на языке страницы', async () => {
+    expect(await generateHubMetadata(en({}))).toMatchObject({ title: 'Games by genre' })
+    expect(JSON.stringify(await generateHubMetadata(en({})))).not.toMatch(CYR)
+    expect(await generateHubMetadata({ params: Promise.resolve({ lang: 'ru' }) })).toMatchObject({
+      title: 'Игры по жанрам',
+    })
+  })
+
+  test('жанр: заголовок с заглавной внутри фразы, строки карточек и описание без кириллицы', async () => {
+    await latin()
+    const meta = await generateGenreMetadata(en({ tag: 'open-world' }))
+    expect(meta.title).toBe('The best Open-world games on Steam, by reviews')
+    expect(meta.description).toMatch(/^Open-world games: 8 games where it's the main genre/)
+    expect(JSON.stringify(meta)).not.toMatch(CYR)
+
+    const page = flight(await GenrePage(en({ tag: 'open-world' })))
+    const text = textOf(page)
+    expect(text).toContain('8 games where “Open World” is one of the main tags')
+    expect(text).toContain('Other genres')
+    expect(text).toMatch(/90% of 10K/)
+    expect(text).not.toMatch(CYR)
+    expect(JSON.stringify(page)).not.toMatch(CYR)
   })
 })
