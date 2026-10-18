@@ -1,8 +1,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
-import { PrivacyHelp } from '../components/PrivacyHelp'
+import { LocaleProvider } from '../components/LocaleProvider'
+import { PlaytimeHiddenNote, PrivacyHelp } from '../components/PrivacyHelp'
 
 /**
  * «Я открыл — проверить» в панели скрытой библиотеки.
@@ -20,9 +22,17 @@ const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 const code = (src: string) =>
   src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 
-// Вызовом, а не createElement: хуков у панели нет, а у createElement с
-// пропсами, где всё необязательно, TS не находит перегрузки
+// Вызовом, а не createElement: у самой PrivacyHelp хуков нет (язык читает
+// панель под ней), а у createElement с пропсами, где всё необязательно, TS не
+// находит перегрузки
 const html = (props: Parameters<typeof PrivacyHelp>[0] = {}) => renderToStaticMarkup(PrivacyHelp(props))
+/** То же на /en: язык — из контекста страницы, как его ставит корневой layout */
+const htmlEn = (props: Parameters<typeof PrivacyHelp>[0] = {}) =>
+  renderToStaticMarkup(createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, PrivacyHelp(props))).replace(
+    /&#x27;/g,
+    "'",
+  )
+const CYRILLIC = /[А-Яа-яЁё]/
 
 describe('панель скрытой библиотеки', () => {
   test('без действия — прежний последний шаг и никакой кнопки', () => {
@@ -61,6 +71,38 @@ describe('панель скрытой библиотеки', () => {
     expect(busy).toMatch(/<button[^>]*class="[^"]*aria-disabled:opacity-60/)
     // шаг инструкции по-прежнему называет кнопку её настоящим именем
     expect(busy).toContain('нажми «Я открыл — проверить»')
+  })
+})
+
+/*
+ * Шаги описывают чужой интерфейс, поэтому по-английски — подписи английского
+ * клиента Steam дословно: человек ищет глазами ровно эти слова. И шаг
+ * по-прежнему называет кнопку её настоящим именем.
+ */
+describe('панель скрытой библиотеки по-английски', () => {
+  test('шаги — словами английского Steam, кнопка — тем же именем, что в шаге', () => {
+    const out = htmlEn({ retryHref: '/api/auth/steam?next=%2Flibrary&lang=en' })
+    expect(out).toContain('“Game details” → <span class="text-ink">Public</span>')
+    expect(out).toContain('Uncheck “Always keep my total playtime private even if users can see my game details”')
+    expect(out).toContain('Come back here and press “Done — check again”')
+    expect(out).toMatch(/<a href="\/api\/auth\/steam\?next=%2Flibrary&amp;lang=en"[^>]*>Done — check again<\/a>/)
+    expect(out).not.toMatch(CYRILLIC)
+  })
+
+  test('без действия, повтор ссылки и проверка — без русских слов', () => {
+    expect(htmlEn()).toContain('Come back here and try again')
+    expect(htmlEn({ onRetry: () => {}, retrying: true })).toMatch(/<button type="button"[^>]*>Checking…<\/button>/)
+    for (const props of [{}, { onRetry: () => {} }, { onRetry: () => {}, retrying: true }]) {
+      expect(htmlEn(props)).not.toMatch(CYRILLIC)
+    }
+  })
+
+  test('строка о скрытом времени — тот же шаг и ссылка на подключение на /en', () => {
+    const out = renderToStaticMarkup(createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, createElement(PlaytimeHiddenNote)))
+    expect(out).toContain('Looks like Steam is hiding your playtime')
+    expect(out).toContain('Uncheck “Always keep my total playtime private even if users can see my game details”')
+    expect(out).toMatch(/<a [^>]*href="\/en\?reconnect=1"[^>]*>reconnect your library<\/a>/)
+    expect(out).not.toMatch(CYRILLIC)
   })
 })
 
