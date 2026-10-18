@@ -3,7 +3,9 @@
 import { useReducedMotion } from 'framer-motion'
 import dynamic from 'next/dynamic'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { webglAvailable } from '@/components/morph/gl'
+import { tr } from '@/lib/i18n'
 import { pickShotSize, shotUrl, type ShotSize } from '@/lib/shots'
 
 /**
@@ -62,6 +64,7 @@ const SLIDES = 6
 type Env = { gl: boolean; size: ShotSize }
 
 export function GameShots({ images, name }: { images: string[]; name: string }) {
+  const locale = useLocale()
   const shots = useMemo(() => images.slice(0, SLIDES), [images])
   const wrapRef = useRef<HTMLDivElement>(null)
 
@@ -153,7 +156,7 @@ export function GameShots({ images, name }: { images: string[]; name: string }) 
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={shotUrl(shots[0], 'small')}
-          alt={`Скриншот — ${name}`}
+          alt={tr(locale, { ru: `Скриншот — ${name}`, en: `${name} screenshot` })}
           loading="lazy"
           className="absolute inset-0 h-full w-full object-cover"
         />
@@ -166,7 +169,7 @@ export function GameShots({ images, name }: { images: string[]; name: string }) 
               autoplay={visible && !reduced}
               autoplayDelay={4.5}
               showCaptions={false}
-              label={`Скриншоты — ${name}`}
+              label={tr(locale, { ru: `Скриншоты — ${name}`, en: `${name} screenshots` })}
               onChange={setCurrent}
               onActivate={() => setOpen(current)}
               // Лайтбокс накрывает слайдер, но с экрана его не убирает:
