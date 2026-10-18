@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { GameArt } from '@/components/GameArt'
 import { Icon } from '@/components/Icon'
 import { Eyebrow, SectionLabel } from '@/components/Labels'
+import { LinkPending } from '@/components/LinkPending'
 import { NewsBody } from '@/components/NewsBody'
 import { NewsDate, ScaleBadge } from '@/components/NewsMeta'
 import { PatchShare } from '@/components/PatchShare'
@@ -16,6 +17,7 @@ import {
   newsPath,
 } from '@/lib/newspage'
 import { patchArticleLd, patchBreadcrumbLd, ldScript } from '@/lib/jsonld'
+import { navPrefetch } from '@/lib/nav'
 import { appBaseUrl, getDb } from '@/lib/server'
 import { OG_SITE } from '@/lib/site'
 import { textLang } from '@/lib/textlang'
@@ -173,16 +175,28 @@ export default async function PatchPage({ params }: Params) {
         <section className="flex flex-col gap-4">
           <SectionLabel as="h2">Патч целиком</SectionLabel>
           {item.imageUrl && (
-            // Кадр поста из RSS Steam, как в ленте (PatchRow, Cover). Не
-            // next/image по той же причине, что в NewsBody: пришлось бы
-            // открывать remotePatterns на весь CDN
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={item.imageUrl}
-              alt=""
-              decoding="async"
-              className="w-full rounded-[var(--radius-card)] border border-edge object-cover"
-            />
+            /*
+              Кадр поста из RSS Steam, как в ленте (PatchRow, Cover). Не
+              next/image по той же причине, что в NewsBody: пришлось бы
+              открывать remotePatterns на весь CDN.
+
+              В <picture> — чтобы префетч страницы не тащил кадр туда, где
+              стоит ссылка. Серверный <img> без lazy Flight превращает в
+              подсказку предзагрузки, а страницу патча префетчит «Читать
+              патч» на обложке /whatsnew: на телефоне кадр 138 КБ качался
+              вперёд героя ленты, рядом с которым его не показывают вовсе
+              (подробно — у StaticGameCardBody). lazy здесь не годится: под
+              коротким «Коротко» кадр бывает над сгибом, и его ждали бы до
+              раскладки. Сторож — imageHints в page.test.ts.
+            */
+            <picture className="contents">
+              <img
+                src={item.imageUrl}
+                alt=""
+                decoding="async"
+                className="w-full rounded-[var(--radius-card)] border border-edge object-cover"
+              />
+            </picture>
           )}
           {item.blocks.length > 0 ? (
             <NewsBody blocks={item.blocks} />
@@ -228,14 +242,22 @@ export default async function PatchPage({ params }: Params) {
           а над общей лентой сам зовёт подключить Steam. «Крупные» — потому что
           лента берёт только их; «твоих игр», а не «всех»: у ленты потолок
           библиотеки (LIBRARY_CAP).
+
+          Без префетча: /whatsnew собирается на каждый запрос (lib/nav,
+          DYNAMIC_SECTIONS), и префетч будил функцию на каждом просмотре
+          патча, докрученного до низа, — MISS и private, no-store на проде,
+          а пришедших из поиска и по ссылкам на ~530 патчей много больше,
+          чем нажавших. Паузу перехода закрывает мерцание подписи
+          (LinkPending) — как у той же ссылки в шапке.
         */}
         <p className="text-sm leading-relaxed text-dim">
           А что изменилось в твоих играх?{' '}
           <Link
             href="/whatsnew"
+            prefetch={navPrefetch('/whatsnew')}
             className="tap tap-tight font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
           >
-            Что нового
+            <LinkPending>Что нового</LinkPending>
           </Link>{' '}
           — крупные патчи твоей библиотеки одной лентой.
         </p>

@@ -38,6 +38,7 @@ import { isReplayable } from '@/lib/recommend'
 import { refundEligible } from '@/lib/refund'
 import { seedable } from '@/lib/roomseed'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
+import { shotUrl } from '@/lib/shots'
 import { STORE_LABEL } from '@/lib/stores'
 import { tagRu } from '@/lib/tagsru'
 import { heroTitleClass } from '@/lib/titlesize'
@@ -803,7 +804,14 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         {meta.trailer && (
           <section>
             <SectionLabel className="mb-4">В движении</SectionLabel>
-            <TrailerPreview trailer={meta.trailer} name={meta.name} className="max-w-3xl" />
+            <TrailerPreview
+              trailer={meta.trailer}
+              name={meta.name}
+              // Телефону — кадр 600×338 вместо movie_full 1920×1080: тот же
+              // файл, что берёт блок «Скриншоты» ниже (см. TrailerPreview)
+              smallPoster={meta.screenshots?.[0] ? shotUrl(meta.screenshots[0], 'small') : undefined}
+              className="max-w-3xl"
+            />
           </section>
         )}
 

@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GameArt } from '@/components/GameArt'
 import { SearchLauncher } from '@/components/SearchLauncher'
 import { TilePending } from '@/components/TilePending'
+import { SHELF_RAIL_SIZES } from '@/lib/art'
 import { replaceGameTags, upsertGameMeta, type Db } from '@/lib/db'
-import { flight as flightOf, islandsOf } from '@/lib/testing/flight'
+import { flight as flightOf, imageHints, islandsOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
 import GenrePage from './[tag]/page'
 import GamesHubPage from './page'
@@ -102,6 +103,47 @@ describe('хаб /games', () => {
     expect(text.match(/"loading":"eager"/g)).toHaveLength(5)
     expect(text.match(/"loading":"lazy"/g)).toHaveLength(3)
   })
+
+  /*
+   * «Каталог» в шапке, ссылка в подвале и крошки каждой карточки игры
+   * префетчат хаб, и подсказки предзагрузки из его RSC-части браузер
+   * исполнял на той странице, где стоит ссылка: пять обложек первой полки
+   * (215 КБ, на ретине 401 КБ) на /support, на /privacy, на каждой
+   * карточке игры и каждом патче — мимо экрана. Капсулы eager, и Flight
+   * ставил на каждую `:HL[…,"image"]` (см. StaticGameCardBody).
+   */
+  test('префетч хаба не тащит его обложки на чужую страницу', async () => {
+    expect(imageHints(flight(await GamesHubPage()))).toEqual([])
+  })
+
+  /*
+   * Обёртка <picture> нужна только eager-обложкам: ленивым подсказку React не
+   * ставит и так. На всех 360 капсулах хаба она стоила бы ~20 КБ RSC-части и
+   * столько же HTML на каждую перегенерацию.
+   */
+  test('<picture> — только у eager-обложек', async () => {
+    const text = JSON.stringify(flight(await GamesHubPage()))
+    expect(text.match(/"tag":"picture"/g)).toHaveLength(5)
+  })
+
+  /*
+   * LCP хаба на телефоне — первая капсула, и в очереди она стояла Low рядом
+   * с четырьмя eager-соседями (3.7–3.8 с на проде). Высокий приоритет —
+   * ей одной: у всех сразу он не значил бы ничего.
+   */
+  test('высокий приоритет — только у первой капсулы первой полки', async () => {
+    const text = JSON.stringify(flight(await GamesHubPage()))
+    expect(text.match(/"fetchPriority":"high"/g)).toHaveLength(1)
+    const first = text.indexOf('"loading":"eager"')
+    expect(text.indexOf('"fetchPriority":"high"')).toBeGreaterThan(first)
+    expect(text.indexOf('"fetchPriority":"high"')).toBeLessThan(text.indexOf('"loading":"eager"', first + 1))
+  })
+
+  test('sizes капсулы — ширина ряда на каждом экране, а не одно число', async () => {
+    const text = JSON.stringify(flight(await GamesHubPage()))
+    expect(text).toContain(`"sizes":"${SHELF_RAIL_SIZES}"`)
+    expect(text).not.toMatch(/"sizes":"\d+px"/)
+  })
 })
 
 describe('страница жанра /games/<slug>', () => {
@@ -118,5 +160,14 @@ describe('страница жанра /games/<slug>', () => {
     expect(text).toMatch(/91% из 30 тыс\./)
     expect(text).not.toMatch(/90%/)
     expect(text.match(/"loading":"eager"/g)).toHaveLength(3)
+  })
+
+  /*
+   * Страницу жанра префетчит крошка «Игры по жанрам → <жанр>» наверху
+   * каждой карточки игры: три eager-обложки уезжали подсказками на телефон,
+   * который смотрел совсем другую игру.
+   */
+  test('префетч страницы жанра не тащит её обложки на карточку игры', async () => {
+    expect(imageHints(flight(await GenrePage(params)))).toEqual([])
   })
 })

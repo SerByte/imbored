@@ -11,6 +11,19 @@ import { Icon } from '@/components/Icon'
 type State = 'idle' | 'loading' | 'playing' | 'failed'
 
 /**
+ * Экраны, где постеру хватает кадра 600×338 (smallPoster).
+ *
+ * Порог — тот же, что у слайдера скриншотов (lib/shots, pickShotSize):
+ * маленький кадр, пока бокс × DPR (не больше двух) укладывается в 900
+ * физических пикселей. Бокс на карточке игры — окно минус поля px-5
+ * (40 px), значит при DPR 2 — до 490 px окна: это любой телефон в
+ * портрете. Шире — планшет, телефон боком, десктоп: там остаётся полный
+ * кадр ролика. Медиа-условие, а не srcSet с шириной: по дескрипторам
+ * телефон с DPR 2.6 сам выбрал бы 1920 — ровно то, от чего уходим.
+ */
+export const SMALL_POSTER_MEDIA = '(max-width: 490px)'
+
+/**
  * Микротрейлер Steam прямо на карточке: секунды геймплея без ухода на YouTube
  * и без вкладки магазина.
  *
@@ -43,12 +56,27 @@ export function TrailerPreview({
   trailer,
   name,
   compact = false,
+  smallPoster,
   className = '',
 }: {
   trailer: Trailer
   name: string
   /** Свёрнут в строку-кнопку до нажатия: герой /play, где место под текст */
   compact?: boolean
+  /**
+   * Постер для телефона — кадр 600×338 из скриншотов игры.
+   *
+   * Постер ролика — movie_full, 1920×1080 на 110–453 КБ, а на телефоне бокс
+   * шириной ~370 CSS px. «Ленивость» его не спасала: блок стоит сразу под
+   * героем, в пределах дистанции ленивой загрузки Chrome, и файл качался
+   * со стартом страницы рядом с LCP-картинкой героя (замер на проде:
+   * 426 КБ на /game/1086940, и ещё 453 КБ на /game/1245620). Кадр игры, а
+   * не ролика — честный размен: «В движении» нажимает меньшинство, а
+   * маленький первый скриншот страница всё равно берёт для своего блока
+   * «Скриншоты» (components/GameShots), так что на телефоне он ещё и из
+   * кэша. Без скриншотов — полный кадр, как раньше.
+   */
+  smallPoster?: string
   className?: string
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -135,14 +163,18 @@ export function TrailerPreview({
         {state !== 'playing' && (
           <div className="absolute inset-0">
             {open && trailer.poster && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={trailer.poster}
-                alt=""
-                loading="lazy"
-                decoding="async"
-                className="absolute inset-0 h-full w-full object-cover"
-              />
+              // display: contents — <picture> не создаёт бокса, картинка
+              // ложится на тот же absolute-слой, что и без обёртки
+              <picture className="contents">
+                {smallPoster && <source media={SMALL_POSTER_MEDIA} srcSet={smallPoster} />}
+                <img
+                  src={trailer.poster}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+              </picture>
             )}
             <div className="absolute inset-0 flex items-center justify-center p-4">
               {/*
