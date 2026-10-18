@@ -114,15 +114,14 @@ export function newsPageTitle(
   const rest = withoutGameName(heading, gameName)
   const spelled = withoutGameName(heading, gameName, { caseSensitive: true }) !== heading
   const named = gameName && !spelled ? `${gameName}: ${heading}` : heading
-  if (locale === 'en') {
-    const date =
-      publishedAt !== undefined && !/\d/.test(rest)
-        ? ` (${fmtDate('en', publishedAt, { month: 'short', day: 'numeric', year: 'numeric' })})`
-        : ''
-    return `${named}${date} — what changed`
-  }
   const dated = publishedAt !== undefined && !/\d/.test(rest)
-  return `${named}${dated ? ` от ${dateLabel(publishedAt, { year: true })}` : ''} — что изменилось`
+  const date = dated
+    ? tr(locale, {
+        ru: ` от ${dateLabel(publishedAt, { year: true })}`,
+        en: ` (${fmtDate('en', publishedAt, { month: 'short', day: 'numeric', year: 'numeric' })})`,
+      })
+    : ''
+  return `${named}${date}${tr(locale, { ru: ' — что изменилось', en: ' — what changed' })}`
 }
 
 /**
