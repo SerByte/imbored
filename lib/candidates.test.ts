@@ -5,7 +5,7 @@ import { logFeedback, migrateDb, saveLibrarySnapshot, upsertGamesMeta, upsertNei
 import { NEUTRAL_MOOD } from './mood'
 import { parseMutes } from './mutetags'
 import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
-import type { GameMeta, LibraryGame } from './types'
+import type { GameMeta, LibraryGame, Mood } from './types'
 
 /**
  * Конвейер кандидатов — один на /play и «Игру дня». Здесь то, что раньше
@@ -267,6 +267,59 @@ describe('buildCandidates: игры, которых нет в магазине �
       args: [NOW],
     })
     expect(await newOnes(db)).not.toContain(99)
+  })
+})
+
+/**
+ * «Один — только я и игра»: кооп без одиночного режима с пустым онлайном не
+ * доходит до выдачи того, кто сам сказал, что играет один. Режимы и онлайн —
+ * с продакшна: Never Split the Party (кооп и PvP на четверых, 6 игроков на весь
+ * мир) стояла героем у гостя, ответившего «Один», а Dota 2 ([1, 9] — для
+ * Steam тоже «кооп») с толпой в сотни тысяч из такой выдачи уходить не должна.
+ */
+describe('buildCandidates: «Один» и кооп, где напарника не найти', () => {
+  const ALONE: Mood = { time: 'long', vibe: 'engaged', social: 'solo' }
+  const FRIENDS: Mood = { ...ALONE, social: 'friends' }
+  const NEVER_SPLIT = 97
+  const DOTA = 96
+
+  /** Своё — одиночное; две находки каталога ближе всего к вкусу */
+  async function seedCoop(db: Db): Promise<void> {
+    await seed(db)
+    await upsertGamesMeta(
+      db,
+      [
+        { ...meta(NEVER_SPLIT, { Puzzle: 120, Casual: 80 }), categories: [1, 49, 36, 9, 38, 27], ccu: 6 },
+        { ...meta(DOTA, { Puzzle: 110, Casual: 70 }), categories: [1, 9], ccu: 896_573 },
+      ],
+      NOW,
+    )
+  }
+
+  async function actualIds(opts: { mood: Mood; moodless?: boolean }): Promise<number[]> {
+    const db = await freshDb()
+    await seedCoop(db)
+    const set = await buildCandidates(db, ME, opts.mood, 'all', { nowSec: NOW, moodless: opts.moodless })
+    if (typeof set === 'string') throw new Error(set)
+    // обе находки дошли до кандидатов — отсев ниже решает живость, а не пул
+    expect(set.candidates.map((c) => c.appid)).toEqual(expect.arrayContaining([NEVER_SPLIT, DOTA]))
+    return set.actual.map((c) => c.appid)
+  }
+
+  test('«Один»: мёртвый кооп снят, живой — на месте', async () => {
+    const ids = await actualIds({ mood: ALONE })
+    expect(ids).not.toContain(NEVER_SPLIT)
+    expect(ids).toContain(DOTA)
+  })
+
+  test('«С друзьями» кооп не гейтится онлайном — друзей приводишь своих', async () => {
+    expect(await actualIds({ mood: FRIENDS })).toEqual(expect.arrayContaining([NEVER_SPLIT, DOTA]))
+  })
+
+  test('колода «Полистать» — без настроения, и кооп в ней остаётся', async () => {
+    // Колода — не «во что сесть сейчас»: кооп в ней — находка на вечер с
+    // друзьями, о котором здесь не спрашивали
+    expect(await actualIds({ mood: NEUTRAL_MOOD, moodless: true })).toContain(NEVER_SPLIT)
   })
 })
 

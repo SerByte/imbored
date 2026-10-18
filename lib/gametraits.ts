@@ -44,24 +44,84 @@ function sessionWords(minutes: number): string {
 }
 
 /**
+ * Против людей: 36 Online PvP, 37 Shared/Split Screen PvP, 47 LAN PvP, 49 PvP.
+ * Шире, чем PVP_CATEGORIES в lib/recommend, и это разные вопросы: там —
+ * «нет финала» (PvP-режим рядом с кампанией её бесконечной не делает), здесь —
+ * «есть ли противник-человек», а он есть и за одним экраном, и по LAN.
+ */
+const VERSUS_CATEGORIES: ReadonlySet<number> = new Set([36, 37, 47, 49])
+
+/** Теги, которые выдают игру против людей там, где Steam PvP-категорию не поставил */
+const VERSUS_TAGS: ReadonlySet<string> = new Set([
+  'PvP',
+  'Online PvP',
+  'Competitive',
+  'eSports',
+  'MOBA',
+  'Battle Royale',
+  'Fighting',
+  '2D Fighter',
+  '3D Fighter',
+  'Arena Shooter',
+])
+
+/**
+ * Среди скольких первых по голосам тегов искать. Замер на каталоге продакшна
+ * (75 живых коопов без одиночного режима и без PvP-категории): у настоящих
+ * матчей такой тег стоит в первой десятке — MOBA у Dota 2 вторым, PvP у
+ * REMATCH четвёртым, у GunZ 2 девятым, — а у PvE-коопов с заблудшим «PvP» он
+ * в хвосте: Dragonheir — одиннадцатым, Star Trek Online — семнадцатым,
+ * MIMESIS — девятнадцатым из двадцати. Промах один — Insurgency (Competitive
+ * четырнадцатым): ей достаётся «Сессия», то есть осторожная сторона.
+ */
+const VERSUS_TAG_WINDOW = 10
+
+/** Есть ли у игры противник-человек: PvP-категория или такой тег среди главных */
+function isVersus(meta: { categories?: number[]; tags?: Record<string, number> }): boolean {
+  if ((meta.categories ?? []).some((c) => VERSUS_CATEGORIES.has(c))) return true
+  return Object.entries(meta.tags ?? {})
+    .filter(([, v]) => Number.isFinite(v) && v > 0)
+    // ничьи — по имени: порядок ключей tags_json решать не должен
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .slice(0, VERSUS_TAG_WINDOW)
+    .some(([tag]) => VERSUS_TAGS.has(tag))
+}
+
+/**
  * «Сессия» или «Матч» — из семантики игры (lib/semantics), без модели.
  *
- * Матч — у сетевой игры без одиночного режима (playMode не solo-capable),
- * которую посреди не бросить (canStopAnytime false) и у которой заход не на
- * вечер. Все три условия нужны: у Rust нет одиночного режима, но «матча» там
- * нет — вайп на недели, и строка остаётся «Сессия: на вечер»; у асинхронной
- * партии можно выйти в любой момент — это тоже не матч. У матча минуты
- * называются числом: для него длина и есть главный вопрос («успею до ужина?»),
- * а оценка по отзывам про матчи обычно и говорит конкретно.
+ * Матч — у игры против людей без одиночного режима (playMode не
+ * solo-capable), которую посреди не бросить (canStopAnytime false) и у
+ * которой заход не на вечер. Все условия нужны: у Rust нет одиночного режима,
+ * но «матча» там нет — вайп на недели, и строка остаётся «Сессия: на вечер»; у
+ * асинхронной партии можно выйти в любой момент — это тоже не матч. У матча
+ * минуты называются числом: для него длина и есть главный вопрос («успею до
+ * ужина?»), а оценка по отзывам про матчи обычно и говорит конкретно.
+ *
+ * «Против людей» — не то же, что «без одиночного режима». Сетевая игра без
+ * коопа (playMode 'online': CS2, TF2 — [1, 27]) иначе как с незнакомцами не
+ * играется, и она матч, как прежде. А кооп без одиночного ('coop') — это и
+ * Dota 2 ([1, 9]), и It Takes Two ([1, 9, 38, 39, 24]): прежнее правило звало
+ * матчем обе, и /game/1426210 писал «Матч: ~30 мин» у десятичасовой кампании
+ * на двоих — та же строка ехала на героя /play, в колоду пати и на полки
+ * жанров. Поэтому коопу нужен противник: PvP-категория или тег среди главных
+ * (isVersus). Требовать одну PvP-категорию нельзя — у Dota 2 её нет, матч у
+ * неё выдают теги MOBA и eSports.
+ *
+ * Без тегов кооп судится по одним категориям: «Сессия» — осторожная сторона,
+ * «Матч» обещал бы противника, которого, может, и нет.
  *
  * null — семантики нет или она недостаточно уверена (SESSION_MIN_CONFIDENCE).
  */
-export function sessionTrait(meta: Pick<GameMeta, 'semantics' | 'categories'>): GameTrait | null {
+export function sessionTrait(
+  meta: Pick<GameMeta, 'semantics' | 'categories'> & Partial<Pick<GameMeta, 'tags'>>,
+): GameTrait | null {
   const s = meta.semantics
   if (!s || s.confidence < SESSION_MIN_CONFIDENCE) return null
   const { minutes, bucket, canStopAnytime } = s.session
-  const match =
-    playMode(meta.categories ?? []) !== 'solo-capable' && !canStopAnytime && bucket !== 'long'
+  const mode = playMode(meta.categories ?? [])
+  const versus = mode === 'online' || (mode === 'coop' && isVersus(meta))
+  const match = versus && !canStopAnytime && bucket !== 'long'
   return match
     ? { label: 'Матч', value: `~${minutes} мин` }
     : { label: 'Сессия', value: sessionWords(minutes) }

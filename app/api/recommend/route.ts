@@ -19,6 +19,7 @@ import {
   continueView,
   hasTaste,
   mutedHit,
+  ownFirst,
   parseFocus,
   parseScope,
   parseSeed,
@@ -273,10 +274,17 @@ export async function POST(req: Request) {
       patchOf,
     })
   // Модель могла вернуть меньше пятёрки (отсеяла validatePicks) — недостающее
-  // добирает та же эвристика из кандидатов, которых модель не взяла
-  const picks = fromClaude
-    ? topUpPicks(fromClaude, heroPool, PICK_COUNT, byHeuristic)
-    : byHeuristic(heroPool.length ? heroPool : actual, PICK_COUNT)
+  // добирает та же эвристика из кандидатов, которых модель не взяла.
+  //
+  // «Своё идёт первым» — одним местом для всех трёх путей (модель, её добор,
+  // эвристика): и модель, и скор ставили первой покупку со скидкой, хотя
+  // главная обещает обратное (ownFirst в lib/recommend). Где покупок в
+  // пятёрке нет (scope 'library', фокус), ничего не меняет
+  const picks = ownFirst(
+    fromClaude
+      ? topUpPicks(fromClaude, heroPool, PICK_COUNT, byHeuristic)
+      : byHeuristic(heroPool.length ? heroPool : actual, PICK_COUNT),
+  )
 
   // В режиме «разгрести своё» список покупок — прямое противоречие запросу.
   // Уехавшее наверх из нижнего блока убираем: одна и та же игра дважды на

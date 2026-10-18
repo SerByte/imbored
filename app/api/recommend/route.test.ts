@@ -651,6 +651,133 @@ describe('/api/recommend: доля адреса в бюджете модели',
 })
 
 /**
+ * «Своё идёт первым» — обещание главной (components/landing/scenes/Engine.tsx)
+ * и докблока MAX_NEW_PICKS: ответ на «во что поиграть сейчас» играбелен
+ * сегодня же, без похода в магазин. На проде героем трижды из трёх стояла
+ * покупка со скидкой: mixHeroPool держит потолок покупок, но пятёрку и
+ * эвристика, и модель упорядочивают по скору, а скидка (dealMultiplier) и
+ * доверие к отзывам (confidenceMultiplier) поднимают покупку над своим.
+ * Демо-данные главной этого не ловят — скидок в DEMO_METAS нет.
+ */
+describe('/api/recommend: своё идёт первым', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  /** Своя наигранная задаёт вкус, свои нетронутые — мимо вкуса; две покупки — точно в него и со скидкой */
+  async function storeBeatsLibrary(answer: ((url: string) => Response | null) | null): Promise<string[]> {
+    vi.stubEnv('ANTHROPIC_API_KEY', answer ? 'test-key' : '')
+    const calls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        const url = input instanceof Request ? input.url : String(input)
+        calls.push(url)
+        return answer?.(url) ?? new Response('', { status: 404 })
+      }),
+    )
+    await signIn(db, STEAMID, { verified: true })
+    const now = nowSec()
+    await saveLibrarySnapshot(
+      db,
+      STEAMID,
+      [
+        { appid: 10, name: 'Игра 10', playtimeForever: 3000, playtime2Weeks: 0 },
+        ...[11, 12, 13].map((appid) => ({ appid, name: `Игра ${appid}`, playtimeForever: 0, playtime2Weeks: 0 })),
+      ],
+      now,
+    )
+    const onSale = {
+      priceInitial: 2000,
+      priceFinal: 200,
+      discountPercent: 90,
+      discountEndsAt: now + 7 * 86_400,
+      priceAt: now,
+      reviewsTotal: 50_000,
+      reviewsPercent: 96,
+    }
+    await upsertGamesMeta(
+      db,
+      [
+        { appid: 10, name: 'Игра 10', tags: { Puzzle: 100, Casual: 60 }, genres: [], categories: [2] },
+        ...[11, 12, 13].map((appid) => ({
+          appid,
+          name: `Игра ${appid}`,
+          tags: { Racing: 100, Sports: 60 },
+          genres: [],
+          categories: [2],
+        })),
+        ...[20, 21].map((appid) => ({
+          appid,
+          name: `Игра ${appid}`,
+          tags: { Puzzle: 100, Casual: 60 },
+          genres: [],
+          categories: [2],
+          ...onSale,
+        })),
+      ],
+      now,
+    )
+    return calls
+  }
+
+  type Body = { picks: Array<{ appid: number; source: string; rank: number }>; engine: string }
+
+  function expectOwnFirst(body: Body): void {
+    const sources = body.picks.map((p) => p.source)
+    // покупки в пятёрке есть — значит, проверка порядка что-то проверяет
+    expect(sources).toContain('new')
+    expect(sources[0], 'герой — покупка').not.toBe('new')
+    const firstBought = sources.indexOf('new')
+    expect(sources.slice(firstBought), 'своя после покупки').toEqual(sources.slice(firstBought).map(() => 'new'))
+    // место в снимке к оценке — по тому, что на экране
+    body.picks.forEach((p, i) => expect(p.rank).toBe(i))
+  }
+
+  test('эвристика: покупка со скидкой обгоняет своё по скору, но стоит после него', async () => {
+    await storeBeatsLibrary(null)
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body
+    expect(body.engine).toBe('heuristic')
+    expectOwnFirst(body)
+  })
+
+  test('модель поставила покупку первой — герой всё равно свой, её выбор внутри групп сохранён', async () => {
+    const calls = await storeBeatsLibrary((url) =>
+      url.includes('anthropic')
+        ? Response.json({
+            id: 'msg_test',
+            type: 'message',
+            role: 'assistant',
+            model: 'claude-haiku-4-5',
+            stop_reason: 'end_turn',
+            stop_sequence: null,
+            usage: { input_tokens: 1, output_tokens: 1 },
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  picks: [21, 12, 20, 11, 10].map((appid) => ({ appid, reason: `Причина для ${appid}.` })),
+                }),
+              },
+            ],
+          })
+        : null,
+    )
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body
+    expect(calls.some((u) => u.includes('anthropic'))).toBe(true)
+    expect(body.engine).toBe('claude')
+    expectOwnFirst(body)
+    // своё — в порядке модели, покупки — тоже в её порядке
+    expect(body.picks.map((p) => p.appid)).toEqual([12, 11, 10, 21, 20])
+  })
+})
+
+/**
  * Подталкивания после выдачи (lib/nudge.ts): модель не зовётся ни при каком
  * ключе, эхо nudge говорит /play, какой чипс нажат, «Что-то другое» не
  * повторяет показанное, «Знакомое» — только своё.
