@@ -154,7 +154,11 @@ export function newsIndexable(tldr: string | null | undefined, listed: boolean):
  *
  * Ссылку получает страница, которая есть и идёт в поиск:
  *  - есть — то же, что пропускает loadPatch: патч, а не распродажа, appid
- *    Steam, gid под GID;
+ *    Steam, gid под GID. «Патч» здесь — записанный kind: тела у строки нет,
+ *    и сверить её с нынешним правилом классификатора, как loadPatch
+ *    (isStoredPatch в lib/news), этот модуль не может. Карточка игры такие
+ *    строки отсеивает раньше, в loadGamePage; лента /whatsnew — после
+ *    переопроса игры;
  *  - в поиске — newsIndexable. «Игра в каталоге» здесь — rank > 0, тот же
  *    признак, по которому патч попадает в карту сайта и в IndexNow: вес
  *    (getGameRanks) получают только игры ALIVE_POOL.

@@ -3609,6 +3609,66 @@ describe('очередь пересказа: экономия на мелочи'
   })
 })
 
+/*
+ * Модель пересказа отвечает scale 'none', когда пост не про вышедшее в игре:
+ * дорожная карта, превью, анонс стрима, бета-анонс, пост про сиквел на
+ * странице первой части (lib/llm, claudeNewsDigest). Классификатор такое
+ * пропускает, если заголовок молчит, — Battlefield 6 «Community Update — Top
+ * Gun Incoming» со списком будущих правок.
+ */
+describe('вердикт модели «не патч» (scale = none)', () => {
+  async function rejected(db: Db) {
+    await upsertNewsItems(db, [newsItem({ scale: null })], NOW)
+    const verdict = { tldr: 'Планы на сезон 5: Rapid Royale и баланс техники.', scale: 'none' as const }
+    await setNewsDigest(db, 730, '1', verdict, NOW + 10)
+  }
+
+  test('пропадает отовсюду, где показывают патчи, и из очереди пересказа', async () => {
+    const db = await freshDb()
+    await rejected(db)
+    expect(await getGameNews(db, 730)).toEqual([])
+    expect(await getGamePatchHeads(db, 730)).toEqual([])
+    expect(await getMajorFeed(db)).toEqual([])
+    expect(await sitemapNews(db, NOW - 86_400, 10)).toEqual([])
+    expect(await freshlyDigestedPatches(db, NOW - 86_400, 0, 10)).toEqual([])
+    expect(await latestMajorPatchSince(db, [[730, NOW - 100]])).toEqual(new Map())
+    // второй раз за тот же вердикт не платим
+    expect(await getUnsummarized(db)).toEqual([])
+  })
+
+  test('по ключу читается как новость, и текст модели не хранится', async () => {
+    // getNewsPage читает строку по ключу, мимо фильтров списков: её вид
+    // решает rowToNews, и для страницы патча это 404, как у распродажи.
+    // Пересказ вердикта не публикуется нигде — пустая строка, а не текст,
+    // чтобы забытый где-то фильтр не вывел «Планы на сезон» строкой патча
+    const db = await freshDb()
+    await rejected(db)
+    const page = await getNewsPage(db, 730, '1')
+    expect(page?.item).toMatchObject({ kind: 'news', scale: null })
+    expect(page?.item.tldr).toBeUndefined()
+  })
+
+  test('переопрос с тем же телом вердикт не отменяет', async () => {
+    // Ловушка, ради которой вердикт живёт в scale, а не в kind: kind опрос
+    // переписывает каждый раз (эвристика снова скажет «патч»), а scale и
+    // пересказ держатся, пока тело то же (upsertNewsItems)
+    const db = await freshDb()
+    await rejected(db)
+    await upsertNewsItems(db, [newsItem({ scale: 'major', rank: 9000 })], NOW + 86_400)
+    expect(await getGameNews(db, 730)).toEqual([])
+    expect(await getUnsummarized(db)).toEqual([])
+  })
+
+  test('переписанное тело — новый пост: снова патч и снова к модели', async () => {
+    // дорожную карту издатель мог дописать до патчноута — решать заново
+    const db = await freshDb()
+    await rejected(db)
+    await upsertNewsItems(db, [newsItem({ bodyHash: 'h2' })], NOW + 86_400)
+    expect((await getGameNews(db, 730)).map((n) => n.gid)).toEqual(['1'])
+    expect((await getUnsummarized(db)).map((n) => n.gid)).toEqual(['1'])
+  })
+})
+
 describe('лента не даёт одной игре себя захватить', () => {
   test('в общей ленте не больше одного патча на игру', async () => {
     // Valve выкатывает движковый апдейт разом во всю линейку, Warhammer

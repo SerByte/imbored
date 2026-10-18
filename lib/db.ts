@@ -4541,7 +4541,8 @@ export async function claimPageEnrichBatch(
  * Патчноут — именно kind = 'patch', то есть ровно то, что карточка рисует
  * (getGameNews). news_items хранит и распродажи, ивенты, анонсы (kind =
  * 'news'), и без фильтра каждая «Weekend Deal» двигала lastmod карточки, на
- * которой её нет, — тот же шум, от которого правило выше и защищает. Цена
+ * которой её нет, — тот же шум, от которого правило выше и защищает. По той
+ * же причине и без вердикта модели «не патч» (scale = 'none', NewsVerdict). Цена
  * фильтра: kind в idx_news_app не входит, но MAX по индексу (appid,
  * published_at DESC) SQLite обрывает на первой подходящей строке (проверено
  * по байткоду: Goto после AggStep), то есть читает посты от свежего до
@@ -4564,7 +4565,8 @@ export async function sitemapGames(
                    g.updated_at,
                    COALESCE(g.page_at, 0),
                    COALESCE((SELECT MAX(n.published_at) FROM news_items n
-                             WHERE n.appid = g.appid AND n.kind = 'patch'), 0)
+                             WHERE n.appid = g.appid AND n.kind = 'patch'
+                               AND n.scale IS NOT 'none'), 0)
                  ) AS updated_at
           FROM games g
           -- живая игра с алиасом таблицы: подзапрос по news_items требует
@@ -7042,6 +7044,28 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
 export type NewsKind = 'patch' | 'news'
 export type NewsScale = 'major' | 'hotfix'
 
+/**
+ * Ответ модели пересказа: масштаб патча или 'none' — «это не патч» (дорожная
+ * карта, превью, анонс стрима, бета-анонс, пост про другую игру; см.
+ * claudeNewsDigest в lib/llm).
+ *
+ * 'none' живёт в колонке scale, но в NewsScale его нет намеренно: дальше
+ * rowToNews такая строка не уходит патчем вовсе — её kind читается как
+ * 'news', а scale как null. Ни бейджу, ни ленте, ни странице патча третье
+ * значение масштаба знать незачем.
+ *
+ * Почему scale, а не kind: kind переписывает каждый опрос (upsertNewsItems,
+ * kind = excluded.kind), и эвристика вернула бы «патч» на следующие же
+ * сутки — с прежним пересказом, раз тело то же. scale и пересказ при том же
+ * теле опрос не трогает; новое тело — новый пост, и модель решает заново.
+ *
+ * Обратная сторона той же стойкости: ошибочный 'none' сам не уходит. Список
+ * таких постов — в npm run news:report (раздел D) и в плане news:reclass, а
+ * вернуть вердикт модели — news:reclass -- --apply --renone
+ * (scripts/newsreclass.ts).
+ */
+export type NewsVerdict = NewsScale | 'none'
+
 export type StoredNews = {
   appid: number
   gid: string
@@ -7116,7 +7140,10 @@ function rowToNews(r: NewsRow): StoredNews {
     title: r.title,
     url: r.url,
     publishedAt: r.published_at,
-    kind: r.kind === 'patch' ? 'patch' : 'news',
+    // Вердикт модели «не патч» (NewsVerdict) — это новость, что бы ни сказала
+    // эвристика: списки отсекают его в SQL, а здесь — всё, что читает строку
+    // по ключу (getNewsPage → 404 страницы патча, как у распродажи)
+    kind: r.kind === 'patch' && r.scale !== 'none' ? 'patch' : 'news',
     scale: r.scale === 'major' || r.scale === 'hotfix' ? r.scale : null,
     blocks,
     bodyHash: r.body_hash,
@@ -7257,12 +7284,19 @@ export async function getNewsBlocks(
   }
 }
 
-/** Страница игры: тут показываем и мелкие патчи тоже */
+/**
+ * Страница игры: тут показываем и мелкие патчи тоже.
+ *
+ * scale IS NOT 'none' — без вердикта модели «не патч» (NewsVerdict). Не в
+ * памяти, а в запросе: строка, отсечённая после LIMIT, съедала бы место
+ * настоящего патча. IS NOT, а не <>: scale бывает NULL, и <> молча выкинул
+ * бы патч, которому масштаб ещё не назначен.
+ */
 export async function getGameNews(db: Db, appid: number, limit = 8): Promise<StoredNews[]> {
   if (appid <= 0) return []
   const res = await db.execute({
     sql: `SELECT ${NEWS_COLS} FROM news_items
-          WHERE appid = ? AND kind = 'patch'
+          WHERE appid = ? AND kind = 'patch' AND scale IS NOT 'none'
           ORDER BY published_at DESC LIMIT ?`,
     args: [appid, limit],
   })
@@ -7343,13 +7377,14 @@ export type NewsHead = {
  *
  * Не getGameNews: та везёт blocks_json каждой строки, а здесь нужны только
  * заголовок и дата. Идёт по idx_news_app (appid, published_at DESC), порядок
- * приходит из индекса.
+ * приходит из индекса. Вердикт модели «не патч» отсекается тем же условием,
+ * что у getGameNews: ссылка на него вела бы на 404.
  */
 export async function getGamePatchHeads(db: Db, appid: number, limit = 8): Promise<NewsHead[]> {
   if (appid <= 0) return []
   const res = await db.execute({
     sql: `SELECT gid, title, published_at, scale FROM news_items
-          WHERE appid = ? AND kind = 'patch'
+          WHERE appid = ? AND kind = 'patch' AND scale IS NOT 'none'
           ORDER BY published_at DESC LIMIT ?`,
     args: [appid, limit],
   })
@@ -7726,19 +7761,28 @@ export async function getUnsummarized(db: Db, limit = 12): Promise<StoredNews[]>
 /**
  * tldr = null засчитывает попытку, но не выжигает запись: три неудачи подряд
  * (нет ключа, отказ модели, битый JSON) — и запись выпадает из очереди.
+ *
+ * Вердикт 'none' («не патч», NewsVerdict) пишется с пустым пересказом, что бы
+ * модель ни написала в tldr. Пустая строка, а не NULL: NULL вернул бы запись
+ * в очередь (getUnsummarized), и за тот же вердикт платили бы трижды. А
+ * пустая, а не текст модели: пересказ поста, который не патч, не должен
+ * всплыть строкой патча ни через один запрос, где фильтр scale забудут, —
+ * idx_news_app_major, newsIndexable и описание страницы считают его
+ * отсутствующим. Цена — объяснение модели не сохраняется, и вердикт
+ * проверяют глазами по заголовку (news-report, раздел D).
  */
 export async function setNewsDigest(
   db: Db,
   appid: number,
   gid: string,
-  digest: { tldr: string; scale: NewsScale } | null,
+  digest: { tldr: string; scale: NewsVerdict } | null,
   nowSec: number,
 ): Promise<void> {
   if (digest) {
     await db.execute({
       sql: `UPDATE news_items SET tldr = ?, scale = ?, tldr_at = ?, tldr_tries = tldr_tries + 1
             WHERE appid = ? AND gid = ?`,
-      args: [digest.tldr, digest.scale, nowSec, appid, gid],
+      args: [digest.scale === 'none' ? '' : digest.tldr, digest.scale, nowSec, appid, gid],
     })
     return
   }

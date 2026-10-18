@@ -175,6 +175,42 @@ describe('runDigestSlice: пересказы отдельно от опроса'
     expect(res.cards).toEqual([730])
   })
 
+  test('вердикт «не патч» убирает строку с карточки — и карточку сбрасываем', async () => {
+    // Карточка игры живёт неделю (lib/gamecache): без сброса «дорожная
+    // карта» стояла бы на ней патчем до конца срока
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+
+    const res = await runDigestSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async () => ({ tldr: '', scale: 'none' as const }),
+    })
+
+    expect(res.cards).toEqual([730])
+    expect(await getGameNews(db, 730)).toEqual([])
+    expect(await getUnsummarized(db)).toEqual([])
+  })
+
+  test('переопрос того же поста вердикт модели не отменяет', async () => {
+    // эвристика снова скажет «патч» — kind перепишется, а вердикт останется
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await runDigestSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async () => ({ tldr: '', scale: 'none' as const }),
+    })
+    await db.execute('UPDATE news_poll SET next_at = 0')
+    await runNewsSlice(db, {
+      nowSec: NOW + 200_000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      fetchNews: feedOf({ 730: [post(730, '1', 'Обновление игры', PATCH)] }),
+      digestFn: okDigest,
+    })
+    expect(await getGameNews(db, 730)).toEqual([])
+  })
+
   test('на исходе бюджета пересказ не начинаем, а останавливаем фазу', async () => {
     const db = await freshDb()
     await seedPatch(db, 730, '1')
