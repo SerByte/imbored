@@ -610,7 +610,7 @@ const EN: PolicyCopy = {
       n: '06',
       title: 'How long it’s kept and how to delete it',
       answer:
-        'As long as you use the service. You can delete everything with a button in your library — instantly, or by email — within 30 days.',
+        'As long as you use the service. You can delete everything instantly with the button in your library, or by email within 30 days.',
       body: (
         <>
           <p>
@@ -633,10 +633,10 @@ const EN: PolicyCopy = {
             too.
           </p>
           <p>
-            So the service can’t be flooded with requests or brute-forced, for some actions —
-            sign-in, reading your library, picks, the game of the day, the “Browse” deck, ratings,
-            the portrait, rooms, pick links, patch summaries, error reports, data deletion — we
-            count requests from a single IP address. Such a counter stores only the address and a
+            To keep the service from being flooded with requests or brute-forced, we count requests
+            per IP address for some actions: sign-in, reading your library, picks, the game of the
+            day, the “Browse” deck, ratings, the portrait, rooms, pick links, patch summaries, error
+            reports, data deletion. Such a counter stores only the address and a
             number and is erased within two days at most. There are also personal limits — counted
             not by address but by your SteamID: picks, the game of the day, “Browse”, reading your
             library, ratings, answers to “How is it?”, pick links, votes, the deck and other party
