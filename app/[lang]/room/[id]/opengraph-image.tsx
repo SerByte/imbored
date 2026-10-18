@@ -4,9 +4,15 @@ import { ArtBackdrop, ogArt } from '@/lib/ogcard'
 import { CANVAS_WIDE } from '@/lib/ogwall'
 import { inviteCopy } from '@/lib/roominvite'
 import { loadRoomInvite, ROOM_ID_RE } from './invite'
-import { isLocale } from '@/lib/i18n'
+import { isLocale, tr } from '@/lib/i18n'
 
-export const alt = 'Приглашение в пати — imbored'
+/*
+ * Подпись картинки — одна на оба языка: alt у файловой карточки статичен, а
+ * generateImageMetadata дописал бы к адресу картинки свой хвост, и сброс
+ * кэша карточки по roomCardPath (lib/roomcard) промахивался бы. Поэтому —
+ * двумя языками сразу, а не русской на английской странице.
+ */
+export const alt = 'Приглашение в пати · Party invite — imbored'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -70,8 +76,9 @@ export default async function Image({ params }: { params: Promise<{ lang: string
   // Без потолка room-peek, в отличие от заголовка страницы, — сознательно:
   // headers() выбил бы карточку из ISR. Почему это терпимо — lib/roompeek
   const invite = ROOM_ID_RE.test(code) ? await loadRoomInvite(code) : null
-  // Те же три состояния, что у заголовка страницы: ждёт, сошлась, неизвестна
-  const { eyebrow, headline, foot } = inviteCopy(code, invite)
+  // Те же три состояния, что у заголовка страницы: ждёт, сошлась, неизвестна —
+  // на языке адреса карточки (/en/room/…/opengraph-image — по-английски)
+  const { eyebrow, headline, foot } = inviteCopy(code, invite, lang)
   // После матча билет погашен — и фоном встаёт игра, на которой сошлись; до
   // матча — игра, в которую звали, если она есть. Арт не дотянулся (чужой
   // магазин, сбой CDN) — прежний билет на тёмном
@@ -130,7 +137,7 @@ export default async function Image({ params }: { params: Promise<{ lang: string
                 color: OG_INK,
               }}
             >
-              {ROOM_ID_RE.test(code) ? code : 'ПАТИ'}
+              {ROOM_ID_RE.test(code) ? code : tr(lang, { ru: 'ПАТИ', en: 'PARTY' })}
             </div>
             {/* Отступ с запасом — см. lib/og про кириллические выносные */}
             <div style={{ display: 'flex', marginTop: 36, fontSize: 44, maxWidth: 900 }}>{headline}</div>

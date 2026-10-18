@@ -99,7 +99,8 @@ describe('повторный вход после удаления — колод
     // рендере перезапускал бы опрос
     const after = (start: string) => room.slice(room.indexOf(start) + body(room, start).length)
     expect(after('const resetDeck = useCallback(')).toMatch(/^, \[\]\)/)
-    expect(after('const refresh = useCallback(')).toMatch(/^,\s*\[roomId, resetDeck\],\s*\)/)
+    // locale — язык опроса (withLang): постоянен на странице, опрос не перезапускает
+    expect(after('const refresh = useCallback(')).toMatch(/^,\s*\[roomId, locale, resetDeck\],\s*\)/)
   })
 })
 

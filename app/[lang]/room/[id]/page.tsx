@@ -15,6 +15,7 @@ import {
 } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { GameArt } from '@/components/GameArt'
+import { useLocale } from '@/components/LocaleProvider'
 import { NeedSteam } from '@/components/NeedSteam'
 import { useShareLink } from '@/components/ShareLink'
 import { CeremonyBoundary } from '@/components/room/CeremonyBoundary'
@@ -36,8 +37,10 @@ import {
   voteMiss,
   voteSignal,
 } from '@/lib/deckvote'
+import { steamLoginFor } from '@/lib/destination'
 import type { Discount } from '@/lib/discount'
 import type { GameTrait } from '@/lib/gametraits'
+import { lp, pl, tr, withLang } from '@/lib/i18n'
 import type { Mood } from '@/lib/types'
 import {
   awaitingOthers,
@@ -53,7 +56,7 @@ import {
   waitsInBackground,
 } from '@/lib/room'
 import { plural } from '@/lib/plural'
-import { roomPresetOf } from '@/lib/presets'
+import { presetLabel, roomPresetOf } from '@/lib/presets'
 import type { InviteDoor } from '@/lib/roominvite'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
 import { HIDDEN_POLL_CAP_MS, hiddenPollDelay, nextPollStep, snapshotFate } from '@/lib/roompoll'
@@ -241,6 +244,7 @@ const serverVisible = () => true
 export default function RoomPage() {
   const params = useParams<{ id: string }>()
   const router = useLocaleRouter()
+  const locale = useLocale()
   const roomId = (params.id ?? '').toUpperCase()
 
   /**
@@ -256,14 +260,24 @@ export default function RoomPage() {
    * показывается только когда отказали ОБА пути, а не первый.
    */
   // Адрес комнаты без хвоста своей страницы: window.location.href уносил бы
-  // и чужие метки из адреса того, кто делится
+  // и чужие метки из адреса того, кто делится. Язык — того, кто зовёт: с /en
+  // друг получает /en/room/… и экран приглашения на том же языке
   const share = useShareLink(
     'room',
-    () => roomShareUrl(window.location.origin, roomId),
-    `Пати ${roomId} — imbored`,
-    'Выберем игру на вечер вместе',
+    () => roomShareUrl(window.location.origin, roomId, locale),
+    tr(locale, { ru: `Пати ${roomId} — imbored`, en: `Party ${roomId} — imbored` }),
+    tr(locale, { ru: 'Выберем игру на вечер вместе', en: "Let's pick tonight's game together" }),
   )
   const copyLink = () => void share.run()
+  /*
+   * Вход через Steam с возвратом в эту комнату — на языке страницы:
+   * steamLoginFor везёт join и lang, и Steam вернёт на /en/room/…, а не на
+   * русскую. Одна ссылка и одна подпись на три двери экрана.
+   */
+  const steamLogin = steamLoginFor(lp(locale, `/room/${roomId}`))
+  const signIn = tr(locale, { ru: 'Войти через Steam', en: 'Sign in with Steam' })
+  /** «Комната ABC123» — слово перед кодом в абзацах экранов не-участника */
+  const roomWord = tr(locale, { ru: 'Комната', en: 'Room' })
 
   const [state, setState] = useState<RoomState | null>(null)
   const [notFound, setNotFound] = useState(false)
@@ -483,7 +497,9 @@ export default function RoomPage() {
       // Номер и время — до запроса: порядок чтения на сервере, а не прихода
       const seq = ++reqSeq.current
       const askedAt = Date.now()
-      const res = await fetch(`/api/room/${roomId}`, signal ? { signal } : {})
+      // Язык — в адресе (withLang): ростер, экран приглашения и срок скидки
+      // собирает сервер на языке страницы
+      const res = await fetch(withLang(`/api/room/${roomId}`, locale), signal ? { signal } : {})
       if (res.status === 404) {
         setNotFound(true)
         return { ok: false, gone: true }
@@ -526,7 +542,7 @@ export default function RoomPage() {
       if (next.room.status === 'matched' && document.visibilityState !== 'visible') setUnseen(true)
       return { ok: true, state: next }
     },
-    [roomId, resetDeck],
+    [roomId, locale, resetDeck],
   )
 
   /**
@@ -675,7 +691,7 @@ export default function RoomPage() {
     deckInFlight.current = true
     setDeckFailed(false)
     try {
-      const res = await fetch(`/api/room/${roomId}/deck`)
+      const res = await fetch(withLang(`/api/room/${roomId}/deck`, locale))
       if (!res.ok) {
         setDeckLimited(res.status === 429)
         setDeckFailed(true)
@@ -715,7 +731,7 @@ export default function RoomPage() {
       setPulling(false)
       setDeckLoads((n) => n + 1)
     }
-  }, [roomId])
+  }, [roomId, locale])
 
   /*
    * Ключ, а не флаг «загружено».
@@ -915,14 +931,14 @@ export default function RoomPage() {
 
   const loadLikes = useCallback(async () => {
     try {
-      const res = await fetch(`/api/room/${roomId}/likes`)
+      const res = await fetch(withLang(`/api/room/${roomId}/likes`, locale))
       if (!res.ok) return
       const data = (await res.json()) as Partial<Likes>
       setLikes({ mine: data.mine ?? [], near: data.near ?? [], leader: data.leader ?? null })
     } catch {
       // Фоновая подсказка: следующий сдвиг голосов перечитает её сам
     }
-  }, [roomId])
+  }, [roomId, locale])
 
   useEffect(() => {
     if (!waiting || !visible || likesKey.current === votesKey) return
@@ -981,15 +997,18 @@ export default function RoomPage() {
    * состояние перестало быть нашим (добрали раунд — снова свайпает).
    */
   const tabTitle = state
-    ? roomTabTitle({
-        roomId,
-        status: state.room.status,
-        isMember: state.isMember,
-        awaiting,
-        sawOpen,
-        unseen,
-        matchedName: state.matchedGame?.name ?? null,
-      })
+    ? roomTabTitle(
+        {
+          roomId,
+          status: state.room.status,
+          isMember: state.isMember,
+          awaiting,
+          sawOpen,
+          unseen,
+          matchedName: state.matchedGame?.name ?? null,
+        },
+        locale,
+      )
     : null
   const titleOwn = useRef<{ original: string; ours: string } | null>(null)
 
@@ -1027,8 +1046,8 @@ export default function RoomPage() {
   useEffect(() => {
     if (!matchNews || announced.current) return
     announced.current = true
-    announceMatch({ name: matchNews, roomId, selfCaused: selfCaused.current })
-  }, [matchNews, roomId])
+    announceMatch({ name: matchNews, roomId, selfCaused: selfCaused.current }, locale)
+  }, [matchNews, roomId, locale])
 
   /*
    * Прогрев церемонии — см. докблок у MatchCeremony наверху файла. Участнику
@@ -1133,28 +1152,70 @@ export default function RoomPage() {
    * НИЧЕГО и ни строчки о причине.
    */
   function joinFailure(status: number, code: string | null): string {
-    if (status === 404) return 'Такой комнаты уже нет — попроси новую ссылку.'
+    if (status === 404)
+      return tr(locale, {
+        ru: 'Такой комнаты уже нет — попроси новую ссылку.',
+        en: 'This room is gone — ask for a new link.',
+      })
     // 409 бывает трёх видов: комната сошлась, мест нет или хост убрал — различает код
     if (code === 'full')
-      return `В пати уже ${ROOM_MAX_MEMBERS} ${plural(ROOM_MAX_MEMBERS, 'человек', 'человека', 'человек')}, больше не помещается. Собери свою.`
+      return tr(locale, {
+        ru: `В пати уже ${ROOM_MAX_MEMBERS} ${plural(ROOM_MAX_MEMBERS, 'человек', 'человека', 'человек')}, больше не помещается. Собери свою.`,
+        en: `This party already has ${ROOM_MAX_MEMBERS} people — there's no room for more. Start your own.`,
+      })
     // ROOM_KICK_SEC в lib/room: срок считается от того, как убрали, а не от нажатия
     if (code === 'kicked')
-      return 'Хост убрал тебя из этой пати. Вернуться получится через полчаса после этого — или раньше, если хост пустит обратно. А пока можно собрать свою.'
+      return tr(locale, {
+        ru: 'Хост убрал тебя из этой пати. Вернуться получится через полчаса после этого — или раньше, если хост пустит обратно. А пока можно собрать свою.',
+        en: 'The host removed you from this party. You can rejoin 30 minutes after that — or sooner if the host lets you back in. Meanwhile, you can start your own.',
+      })
     // Профиль сидит в комнате со входом через Steam, а здесь — ссылка (lib/roomseat)
     if (code === 'needsteam')
-      return 'Этот профиль уже в пати со входом через Steam. Ссылка не доказывает, что профиль твой, — войди через Steam и здесь.'
-    if (status === 409) return 'Эта пати уже договорилась об игре — попроси новую ссылку.'
-    if (status === 401) return 'Сессия истекла — подключи библиотеку заново, и вернём тебя сюда.'
-    if (status === 429) return 'Слишком много попыток подряд. Подожди немного и попробуй снова.'
-    return 'Не получилось войти. Проверь связь и попробуй ещё раз.'
+      return tr(locale, {
+        ru: 'Этот профиль уже в пати со входом через Steam. Ссылка не доказывает, что профиль твой, — войди через Steam и здесь.',
+        en: "This profile is already in the party, signed in with Steam. A link doesn't prove the profile is yours — sign in with Steam here too.",
+      })
+    if (status === 409)
+      return tr(locale, {
+        ru: 'Эта пати уже договорилась об игре — попроси новую ссылку.',
+        en: 'This party has already agreed on a game — ask for a new link.',
+      })
+    if (status === 401)
+      return tr(locale, {
+        ru: 'Сессия истекла — подключи библиотеку заново, и вернём тебя сюда.',
+        en: "Your session expired — reconnect your library and we'll bring you back here.",
+      })
+    if (status === 429) return tooOften()
+    return tr(locale, {
+      ru: 'Не получилось войти. Проверь связь и попробуй ещё раз.',
+      en: "Couldn't join. Check your connection and try again.",
+    })
+  }
+
+  /** Отказ по потолку частоты — одной строкой на вход и на демо-друга */
+  function tooOften(): string {
+    return tr(locale, {
+      ru: 'Слишком много попыток подряд. Подожди немного и попробуй снова.',
+      en: 'Too many tries in a row. Wait a bit and try again.',
+    })
   }
 
   /** Отказ выхода (self) или ✕ хоста — без имени: склонять ник из Steam нельзя */
   function leaveFailure(status: number, self: boolean): string {
-    if (status === 401) return 'Сессия истекла — обнови страницу и подключись заново.'
+    if (status === 401)
+      return tr(locale, {
+        ru: 'Сессия истекла — обнови страницу и подключись заново.',
+        en: 'Your session expired — reload the page and reconnect.',
+      })
     return self
-      ? 'Выйти не получилось — проверь связь и нажми ещё раз.'
-      : 'Убрать из пати не получилось — проверь связь и нажми ✕ ещё раз.'
+      ? tr(locale, {
+          ru: 'Выйти не получилось — проверь связь и нажми ещё раз.',
+          en: "Couldn't leave — check your connection and tap again.",
+        })
+      : tr(locale, {
+          ru: 'Убрать из пати не получилось — проверь связь и нажми ✕ ещё раз.',
+          en: "Couldn't remove them — check your connection and tap ✕ again.",
+        })
   }
 
   /** Код отказа из тела ответа; тело может быть и не JSON — тогда null */
@@ -1198,8 +1259,11 @@ export default function RoomPage() {
       if (!seed.ok) {
         setJoinError(
           seed.status === 429
-            ? 'Слишком много попыток подряд. Подожди немного и попробуй снова.'
-            : 'Не получилось завести демо-друга. Попробуй ещё раз.',
+            ? tooOften()
+            : tr(locale, {
+                ru: 'Не получилось завести демо-друга. Попробуй ещё раз.',
+                en: "Couldn't set up the demo friend. Try again.",
+              }),
         )
         return
       }
@@ -1457,7 +1521,7 @@ export default function RoomPage() {
       // и перечитываем: матч мог стать достижим прямо этим действием. Сбой
       // этого чтения — не отказ удаления: его подхватит обычный опрос
       if (memberId) {
-        setKicked({ id: memberId, name: name ?? 'участник', phase: 'shown' })
+        setKicked({ id: memberId, name: name ?? tr(locale, { ru: 'участник', en: 'Member' }), phase: 'shown' })
         // Квитанция фокуса (handOffUndo): экран, на котором нажали. state —
         // снимок того рендера, и await его не сдвигает
         if (state) undoHandoff.current = { members: state.members.length, round: state.room.deckRound }
@@ -1531,7 +1595,7 @@ export default function RoomPage() {
     // Экран — на минуту нажатия, текст — по ответу: 429 просит подождать, а
     // не нажать ещё раз (publicFailure в lib/room)
     const deck = deckKeyOf(state)
-    const missOf = (status: number): RoomMiss => ({ text: publicFailure(status), deck, wasPublic: was })
+    const missOf = (status: number): RoomMiss => ({ text: publicFailure(status, locale), deck, wasPublic: was })
     try {
       const res = await fetch(`/api/room/${roomId}/public`, {
         method: 'POST',
@@ -1556,15 +1620,18 @@ export default function RoomPage() {
   if (notFound) {
     return (
       <Notice
-        title="Такой комнаты нет"
-        body="Код с опечаткой или комната уже закрылась. Новая собирается за минуту — и ссылку на неё можно сразу кинуть своим."
+        title={tr(locale, { ru: 'Такой комнаты нет', en: "There's no such room" })}
+        body={tr(locale, {
+          ru: 'Код с опечаткой или комната уже закрылась. Новая собирается за минуту — и ссылку на неё можно сразу кинуть своим.',
+          en: 'The code has a typo, or the room has closed. A new one takes a minute — and you can send its link to your friends right away.',
+        })}
       >
         <Link href="/room/new" className="btn-ember px-6 py-3">
-          Создать свою
+          {tr(locale, { ru: 'Создать свою', en: 'Create your own' })}
         </Link>
         <Link href="/rooms" className="btn-glass">
           <Icon name="users" size={18} />
-          Подсесть к открытой пати
+          {tr(locale, { ru: 'Подсесть к открытой пати', en: 'Join an open party' })}
         </Link>
       </Notice>
     )
@@ -1582,13 +1649,17 @@ export default function RoomPage() {
     if (stale) {
       return (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
-          <p className="font-display text-display-sm">Комната не отвечает</p>
+          <p className="font-display text-display-sm">
+            {tr(locale, { ru: 'Комната не отвечает', en: "The room isn't responding" })}
+          </p>
           <p className="text-dim text-sm max-w-md leading-relaxed">
-            Сервер молчит или связь оборвалась. Пробую снова — если комната жива, она появится
-            сама.
+            {tr(locale, {
+              ru: 'Сервер молчит или связь оборвалась. Пробую снова — если комната жива, она появится сама.',
+              en: "The server is silent or the connection dropped. Trying again — if the room is alive, it'll show up on its own.",
+            })}
           </p>
           <Link href="/rooms" className="tap link-more">
-            Ко всем комнатам
+            {tr(locale, { ru: 'Ко всем комнатам', en: 'All rooms' })}
             <Icon name="arrow" size={16} />
           </Link>
         </div>
@@ -1620,7 +1691,14 @@ export default function RoomPage() {
    */
   const staleBadge = (
     <StatusLine
-      text={stale ? 'Связь потеряна — комната не обновляется. Пробую снова…' : null}
+      text={
+        stale
+          ? tr(locale, {
+              ru: 'Связь потеряна — комната не обновляется. Пробую снова…',
+              en: "Connection lost — the room isn't updating. Trying again…",
+            })
+          : null
+      }
       className="panel-lift anim-rise px-4 py-2.5 text-xs leading-relaxed text-dim"
     />
   )
@@ -1640,12 +1718,15 @@ export default function RoomPage() {
    */
   const matchStatus = (
     <StatusLine
-      text={matchLine({
-        sawOpen,
-        status: state.room.status,
-        isMember: state.isMember,
-        game: state.matchedGame,
-      })}
+      text={matchLine(
+        {
+          sawOpen,
+          status: state.room.status,
+          isMember: state.isMember,
+          game: state.matchedGame,
+        },
+        locale,
+      )}
       className="sr-only"
     />
   )
@@ -1670,14 +1751,19 @@ export default function RoomPage() {
    * ничего не раскрывает: адрес магазина API отдаёт и не участнику.
    */
   if (state.room.status === 'matched' && state.matchedGame && !state.isMember) {
-    const shop = storeLink(state.matchedGame)
+    const shop = storeLink(state.matchedGame, locale)
     return (
       <div className="relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden">
         <Ambient />
         <div className="relative max-w-md w-full panel-lift p-8 text-center flex flex-col gap-4 anim-rise">
           <h1 className="font-display text-display-sm">
-            Эта пати уже договорилась: «{state.matchedGame.name}»
+            {locale === 'en' ? (
+              `This party already agreed: “${state.matchedGame.name}”`
+            ) : (
+              <>Эта пати уже договорилась: «{state.matchedGame.name}»</>
+            )}
           </h1>
+          {/* По-английски — подпись целиком (shop.open): игру уже назвал заголовок */}
           {shop && (
             <a
               href={shop.href}
@@ -1685,7 +1771,7 @@ export default function RoomPage() {
               rel="noreferrer"
               className="tap text-sm text-dim hover:text-ink transition-colors"
             >
-              Открыть «{state.matchedGame.name}» в {shop.where}
+              {locale === 'en' ? shop.open : <>Открыть «{state.matchedGame.name}» в {shop.where}</>}
             </a>
           )}
           {/*
@@ -1700,25 +1786,30 @@ export default function RoomPage() {
           {state.needSteam ? (
             <>
               <p className="text-dim text-sm">
-                Комната <span className="font-mono text-ink">{roomId}</span>. Этот профиль в ней — со
-                входом через Steam, а ссылка не доказывает, что он твой: войди через Steam и здесь, и
-                откроется экран матча.
+                {roomWord} <span className="font-mono text-ink">{roomId}</span>
+                {tr(locale, {
+                  ru: '. Этот профиль в ней — со входом через Steam, а ссылка не доказывает, что он твой: войди через Steam и здесь, и откроется экран матча.',
+                  en: ". This profile is in it via Steam sign-in, and a link doesn't prove it's yours: sign in with Steam here too, and the match screen will open.",
+                })}
               </p>
-              <a href={`/api/auth/steam?join=${roomId}`} className="btn-ember is-block py-3">
-                Войти через Steam
+              <a href={steamLogin} className="btn-ember is-block py-3">
+                {signIn}
               </a>
             </>
           ) : (
             <>
               <p className="text-dim text-sm">
-                Комната <span className="font-mono text-ink">{roomId}</span> сошлась, и новых людей в
-                неё уже не пускают. Собери свою — или подсядь к тем, кто ещё выбирает.
+                {roomWord} <span className="font-mono text-ink">{roomId}</span>
+                {tr(locale, {
+                  ru: ' сошлась, и новых людей в неё уже не пускают. Собери свою — или подсядь к тем, кто ещё выбирает.',
+                  en: " has matched, so it's not letting new people in. Start your own — or join people who are still choosing.",
+                })}
               </p>
               <Link href="/room/new" className="btn-ember is-block py-3">
-                Создать свою комнату
+                {tr(locale, { ru: 'Создать свою комнату', en: 'Create your own room' })}
               </Link>
               <Link href="/rooms" className="tap link-more">
-                Открытые пати
+                {tr(locale, { ru: 'Открытые пати', en: 'Open parties' })}
                 <Icon name="arrow" size={16} />
               </Link>
             </>
@@ -1750,7 +1841,7 @@ export default function RoomPage() {
   const moodPreset = roomPresetOf(state.room.mood)
   const moodLine = moodPreset && (
     <p className="text-xs text-dim mt-0.5">
-      <span aria-hidden>{moodPreset.emoji}</span> {moodPreset.label}
+      <span aria-hidden>{moodPreset.emoji}</span> {presetLabel(moodPreset, locale)}
     </p>
   )
 
@@ -1769,7 +1860,10 @@ export default function RoomPage() {
       <div className="relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden">
         <Ambient />
         <div className="relative max-w-md w-full panel-lift p-8 text-center flex flex-col gap-4 anim-rise">
-          <h1 className="font-display text-display-sm">{door?.title ?? 'Тебя зовут выбрать игру на вечер'}</h1>
+          <h1 className="font-display text-display-sm">
+            {door?.title ??
+              tr(locale, { ru: 'Тебя зовут выбрать игру на вечер', en: "You're invited to pick tonight's game" })}
+          </h1>
           {moodLine}
           {/* Карта, с которой начнётся колода, — картинкой, как фон превью.
               Без арта — одна строка: заглушка с названием повторила бы его */}
@@ -1800,12 +1894,21 @@ export default function RoomPage() {
             сторож — lib/roomlikes.test.ts.
           */}
           <p className="text-dim text-sm">
-            Комната <span className="font-mono text-ink">{roomId}</span>.{' '}
+            {roomWord} <span className="font-mono text-ink">{roomId}</span>.{' '}
             {state.needSteam
-              ? 'Этот профиль уже в пати — со входом через Steam. Здесь вход по ссылке, а она не доказывает, что профиль твой: войди через Steam и здесь, и продолжишь с того же места.'
+              ? tr(locale, {
+                  ru: 'Этот профиль уже в пати — со входом через Steam. Здесь вход по ссылке, а она не доказывает, что профиль твой: войди через Steam и здесь, и продолжишь с того же места.',
+                  en: "This profile is already in the party, signed in with Steam. You came in by link, and a link doesn't prove the profile is yours: sign in with Steam here too, and you'll pick up where you left off.",
+                })
               : state.hasSession
-                ? 'Библиотека уже подключена — осталось войти и свайпать, во что не против сыграть. Совпадёте — будет матч.'
-                : 'Подключи свою библиотеку — и свайпай, во что не против сыграть. Совпадёте — будет матч.'}
+                ? tr(locale, {
+                    ru: 'Библиотека уже подключена — осталось войти и свайпать, во что не против сыграть. Совпадёте — будет матч.',
+                    en: "Your library is already connected — just join and swipe on what you'd play. When your votes line up, it's a match.",
+                  })
+                : tr(locale, {
+                    ru: 'Подключи свою библиотеку — и свайпай, во что не против сыграть. Совпадёте — будет матч.',
+                    en: "Connect your library and swipe on what you'd play. When your votes line up, it's a match.",
+                  })}
           </p>
           {/*
             aria-disabled, а не disabled, у обеих дверей: на отказе экран
@@ -1818,8 +1921,8 @@ export default function RoomPage() {
             Возврат из Steam сам посадит в комнату и поднимет членство.
           */}
           {state.needSteam ? (
-            <a href={`/api/auth/steam?join=${roomId}`} className="btn-ember is-block py-3">
-              Войти через Steam
+            <a href={steamLogin} className="btn-ember is-block py-3">
+              {signIn}
             </a>
           ) : state.hasSession ? (
             <button
@@ -1827,28 +1930,30 @@ export default function RoomPage() {
               aria-disabled={busy}
               className="btn-ember is-block py-3"
             >
-              Войти в комнату
+              {tr(locale, { ru: 'Войти в комнату', en: 'Join the room' })}
             </button>
           ) : (
             <>
               <a
-                href={`/api/auth/steam?join=${roomId}`}
+                href={steamLogin}
                 className="btn-ember is-block py-3"
               >
-                Войти через Steam
+                {signIn}
               </a>
               <Link
                 href={`/?join=${roomId}`}
                 className="btn-glass flex w-full"
               >
-                Вставить ссылку на профиль
+                {tr(locale, { ru: 'Вставить ссылку на профиль', en: 'Paste a profile link' })}
               </Link>
               <button
                 onClick={joinAsDemoFriend}
                 aria-disabled={busy}
                 className="tap text-sm text-dim hover:text-ink transition-colors"
               >
-                {busy ? 'Подключаю…' : 'Демо-друг (без Steam)'}
+                {busy
+                  ? tr(locale, { ru: 'Подключаю…', en: 'Connecting…' })
+                  : tr(locale, { ru: 'Демо-друг (без Steam)', en: 'Demo friend (no Steam)' })}
               </button>
             </>
           )}
@@ -1888,8 +1993,11 @@ export default function RoomPage() {
     <p className="relative text-xs text-faint">
       <span>
         {kickShown.phase === 'done'
-          ? `${kickShown.name} сможет войти сразу.`
-          : `Убрали из пати: ${kickShown.name}. Войти снова получится через полчаса.`}
+          ? tr(locale, { ru: `${kickShown.name} сможет войти сразу.`, en: `${kickShown.name} can join right away.` })
+          : tr(locale, {
+              ru: `Убрали из пати: ${kickShown.name}. Войти снова получится через полчаса.`,
+              en: `Removed from party: ${kickShown.name}. They can rejoin in half an hour.`,
+            })}
       </span>{' '}
       <button
         ref={undoRef}
@@ -1899,12 +2007,12 @@ export default function RoomPage() {
         className="tap tap-tight ml-1 text-ember-text hover:underline cursor-pointer aria-disabled:opacity-60 aria-disabled:no-underline"
       >
         {kickShown.phase === 'busy'
-          ? 'Пускаю…'
+          ? tr(locale, { ru: 'Пускаю…', en: 'Letting back in…' })
           : kickShown.phase === 'done'
-            ? 'Пустили обратно'
+            ? tr(locale, { ru: 'Пустили обратно', en: 'Allowed back' })
             : kickShown.phase === 'failed'
-              ? 'Не дошло — нажми ещё раз'
-              : 'Пустить обратно'}
+              ? tr(locale, { ru: 'Не дошло — нажми ещё раз', en: 'Failed — tap again' })
+              : tr(locale, { ru: 'Пустить обратно', en: 'Let back in' })}
       </button>
     </p>
   ) : null
@@ -1930,10 +2038,12 @@ export default function RoomPage() {
         <div>
           {/* Цель фокуса после входа по приглашению — joinHandoff */}
           <h1 ref={lobbyHead} tabIndex={-1} className="font-display text-display-sm">
-            Пати <span className="font-mono text-ember-text">{roomId}</span>
+            {tr(locale, { ru: 'Пати', en: 'Party' })} <span className="font-mono text-ember-text">{roomId}</span>
           </h1>
           <p className="text-xs text-dim mt-0.5">
-            {alone ? 'Матч нужен минимум вдвоём' : 'Совпадут голоса всех — будет матч'}
+            {alone
+              ? tr(locale, { ru: 'Матч нужен минимум вдвоём', en: 'A match takes at least two' })
+              : tr(locale, { ru: 'Совпадут голоса всех — будет матч', en: "When everyone's votes line up, it's a match" })}
           </p>
           {/* Настроение — той же строкой, что на экране приглашения (moodLine) */}
           {moodLine}
@@ -1983,22 +2093,30 @@ export default function RoomPage() {
             под нижнюю панель (на 19 px на 390×844, на 113 на 375×667). Высота
             карты (.room-page .deck-stack) считается от шапки в один ряд — и
             от состава над колодой в один ряд (ниже, у его разметки).
+
+            Английские подписи — из глоссария и не шире русских: «Friend link»,
+            «Invite friends», от md — «Copy friend link» и «Send link to
+            friends»; замер — в браузере на 375 и 390, как у русских.
           */}
           <button onClick={copyLink} className="btn-glass py-3 text-sm">
             {share.label(
               <>
-                <span className="md:hidden">Ссылка для друзей</span>
-                <span className="hidden md:inline">Скопировать ссылку для друзей</span>
+                <span className="md:hidden">{tr(locale, { ru: 'Ссылка для друзей', en: 'Friend link' })}</span>
+                <span className="hidden md:inline">
+                  {tr(locale, { ru: 'Скопировать ссылку для друзей', en: 'Copy friend link' })}
+                </span>
               </>,
               {
                 icon: 'link',
                 native: (
                   <>
-                    <span className="md:hidden">Позвать друзей</span>
-                    <span className="hidden md:inline">Отправить ссылку друзьям</span>
+                    <span className="md:hidden">{tr(locale, { ru: 'Позвать друзей', en: 'Invite friends' })}</span>
+                    <span className="hidden md:inline">
+                      {tr(locale, { ru: 'Отправить ссылку друзьям', en: 'Send link to friends' })}
+                    </span>
                   </>
                 ),
-                manual: 'Не вышло — продиктуй код',
+                manual: tr(locale, { ru: 'Не вышло — продиктуй код', en: "Didn't work — read out the code" }),
               },
             )}
           </button>
@@ -2030,15 +2148,18 @@ export default function RoomPage() {
                  воровали друг у друга нажатия. Это единственные два контрола,
                  которыми в пати вообще зовут людей. */
               className="btn-glass py-3 text-sm"
-              title="Открытая комната видна на доске «Пати» — к вам смогут подсесть"
+              title={tr(locale, {
+                ru: 'Открытая комната видна на доске «Пати» — к вам смогут подсесть',
+                en: 'An open room shows on the Party board — others can join you',
+              })}
             >
               <Icon name={state.room.isPublic ? 'check' : 'users'} size={16} />
               {state.room.isPublic ? (
-                'На доске'
+                tr(locale, { ru: 'На доске', en: 'On the board' })
               ) : (
                 <>
-                  <span className="md:hidden">На доску</span>
-                  <span className="hidden md:inline">Показать на доске</span>
+                  <span className="md:hidden">{tr(locale, { ru: 'На доску', en: 'Put on board' })}</span>
+                  <span className="hidden md:inline">{tr(locale, { ru: 'Показать на доске', en: 'Show on the board' })}</span>
                 </>
               )}
             </button>
@@ -2057,9 +2178,19 @@ export default function RoomPage() {
               ник — скринридеру на любой ширине.
             */
             <span className="rounded-(--radius-control) bg-ember/15 text-ember-text px-4 py-3 text-sm font-extrabold">
-              <span className="md:hidden">Ты на доске</span>
-              <span className="hidden md:inline">Ты на доске «Пати»</span>
-              <span className="sr-only"> — твой ник виден всем на странице «Пати»</span>
+              {locale === 'en' ? (
+                <>
+                  <span className="md:hidden">You&apos;re on the board</span>
+                  <span className="hidden md:inline">You&apos;re on the Party board</span>
+                  <span className="sr-only"> — everyone on the Party page can see your name</span>
+                </>
+              ) : (
+                <>
+                  <span className="md:hidden">Ты на доске</span>
+                  <span className="hidden md:inline">Ты на доске «Пати»</span>
+                  <span className="sr-only"> — твой ник виден всем на странице «Пати»</span>
+                </>
+              )}
             </span>
           ) : null}
         </div>
@@ -2073,7 +2204,7 @@ export default function RoomPage() {
         отказы рядом с собой, строке место там.
       */}
       <div role="status" className={publicDenied ? '-mt-3' : 'sr-only'}>
-        {publicDenied && <NeedSteam from={`/room/${roomId}`} why="host" />}
+        {publicDenied && <NeedSteam from={lp(locale, `/room/${roomId}`)} why="host" />}
       </div>
       {/* Отказ переключателя шапки. При AloneInvite шапка спрятана, и ту же
           строку пишет он сам, под своей плиткой, — здесь она тогда пустая */}
@@ -2103,9 +2234,9 @@ export default function RoomPage() {
                   флекс-элементами, получая gap поверх пробела: «·  0  голосов» */}
               <span>
                 {m.name}
-                {m.me ? ' (ты)' : ''} · <span className="tabular-nums">{m.votes}</span>{' '}
+                {m.me ? tr(locale, { ru: ' (ты)', en: ' (you)' }) : ''} · <span className="tabular-nums">{m.votes}</span>{' '}
                 {/* было прибито строкой: «1 голосов», «2 голосов» */}
-                {plural(m.votes, 'голос', 'голоса', 'голосов')}
+                {pl(locale, m.votes, { ru: ['голос', 'голоса', 'голосов'], en: ['vote', 'votes'] })}
               </span>
             </span>
           ))}
@@ -2125,12 +2256,17 @@ export default function RoomPage() {
       {deckFailed ? (
         <div className="panel-lift p-8 text-center flex flex-col gap-4 anim-rise">
           <p className="font-semibold">
-            {deckLimited ? 'Слишком часто' : 'Не получилось загрузить игры'}
+            {deckLimited
+              ? tr(locale, { ru: 'Слишком часто', en: 'Too many tries' })
+              : tr(locale, { ru: 'Не получилось загрузить игры', en: "Couldn't load the games" })}
           </p>
           <p className="text-dim text-sm">
             {deckLimited
-              ? 'Колоду запрашивали много раз подряд, и на это стоит потолок. Подожди минуту и попробуй снова.'
-              : 'Скорее всего, это на нашей стороне.'}
+              ? tr(locale, {
+                  ru: 'Колоду запрашивали много раз подряд, и на это стоит потолок. Подожди минуту и попробуй снова.',
+                  en: "The deck was requested too many times in a row, and there's a limit. Wait a minute and try again.",
+                })
+              : tr(locale, { ru: 'Скорее всего, это на нашей стороне.', en: "It's most likely on our end." })}
           </p>
           <button
             onClick={() => {
@@ -2141,7 +2277,7 @@ export default function RoomPage() {
             }}
             className="btn-ember px-6 py-3 self-center"
           >
-            Попробовать ещё раз
+            {tr(locale, { ru: 'Попробовать ещё раз', en: 'Try again' })}
           </button>
         </div>
       ) : cards === null ? (
@@ -2199,7 +2335,14 @@ export default function RoomPage() {
         карту — эта строка говорит, почему она вернулась.
       */}
       <StatusLine
-        text={card && voteFailed ? 'Голос не ушёл — карточка вернулась, свайпни ещё раз.' : null}
+        text={
+          card && voteFailed
+            ? tr(locale, {
+                ru: 'Голос не ушёл — карточка вернулась, свайпни ещё раз.',
+                en: "Your vote didn't go through — the card is back, swipe again.",
+              })
+            : null
+        }
         className="mt-3 text-center text-sm text-danger"
       />
     </div>

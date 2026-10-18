@@ -201,9 +201,10 @@ describe('не участник на сошедшейся комнате — г�
     const start = room.indexOf("state.room.status === 'matched' && state.matchedGame && !state.isMember")
     expect(start).toBeGreaterThan(-1)
     const screen = room.slice(start, room.indexOf('<MatchCeremony', start))
-    expect(screen).toMatch(/const shop = storeLink\(state\.matchedGame\)/)
+    expect(screen).toMatch(/const shop = storeLink\(state\.matchedGame, locale\)/)
+    // по-английски подпись целиком (shop.open), по-русски — прежняя склейка
     expect(screen).toMatch(
-      /<a\s+href=\{shop\.href\}\s+target="_blank"\s+rel="noreferrer"[^>]*>\s*Открыть «\{state\.matchedGame\.name\}» в \{shop\.where\}\s*<\/a>/,
+      /<a\s+href=\{shop\.href\}\s+target="_blank"\s+rel="noreferrer"[^>]*>\s*\{locale === 'en' \? shop\.open : <>Открыть «\{state\.matchedGame\.name\}» в \{shop\.where\}<\/>\}\s*<\/a>/,
     )
     // тихая ссылка под заголовком, а главная кнопка — по-прежнему своя комната
     const h1 = screen.indexOf('</h1>')
@@ -234,8 +235,12 @@ describe('не участник на сошедшейся комнате — г�
     const other = screen.indexOf(') : (', fork)
     expect(other).toBeGreaterThan(fork)
     const steam = screen.slice(fork, other)
-    expect(steam).toContain('href={`/api/auth/steam?join=${roomId}`}')
-    expect(steam).toMatch(/>\s*Войти через Steam\s*</)
+    // Вход — steamLoginFor на языке страницы: на /room/… это прежний
+    // /api/auth/steam?join=КОД, на /en/room/… — с lang=en
+    expect(steam).toContain('href={steamLogin}')
+    expect(steam).toMatch(/>\s*\{signIn\}\s*</)
+    expect(room).toMatch(/const steamLogin = steamLoginFor\(lp\(locale, `\/room\/\$\{roomId\}`\)\)/)
+    expect(room).toMatch(/const signIn = tr\(locale, \{ ru: 'Войти через Steam', en: 'Sign in with Steam' \}\)/)
     expect(steam).not.toMatch(/не пускают|room\/new/)
     // а «не пускают» и своя комната — чужому, в другой ветке
     expect(screen.slice(other)).toMatch(/не пускают[\s\S]*href="\/room\/new"/)
