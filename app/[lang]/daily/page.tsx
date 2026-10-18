@@ -672,11 +672,12 @@ export default function DailyPage() {
               встанут в столбик целиком, а не сломаются внутри себя.
             */}
             <div className="flex flex-wrap items-center gap-3 text-sm">
-              {/* Пилюля на 375 px — одной строкой и на английском (замер): «Game
-                  of the day · September 23» не шире русской, а строки о русском,
-                  которая делит с ней ряд, на /en нет вовсе (ruLangLine) */}
+              {/* Пилюля делит ряд на 375 px — английская не шире русской (замер
+                  на 360: «GAME OF THE DAY · OCTOBER 19» — 214 px против 167 у
+                  «ИГРА ДНЯ · 19 ОКТЯБРЯ»). Поэтому «Daily» — короткое имя раздела
+                  из глоссария, как в нижней панели; полное — во вкладке */}
               <span className="rounded-full bg-ember text-on-ember px-3 py-1 text-xs font-bold uppercase tracking-wide">
-                {tr(locale, { ru: 'Игра дня', en: 'Game of the day' })} · {dateLabel}
+                {tr(locale, { ru: 'Игра дня', en: 'Daily' })} · {dateLabel}
               </span>
               {/* Источник — фирменным зелёным, как на /play */}
               <span className={`font-extrabold text-ember-text ${hero.store ? '' : 'hidden md:inline'}`}>
