@@ -269,11 +269,18 @@ function CommonRow({ game, locale }: { game: CompatGame; locale: Locale }) {
 
 /**
  * «Нет у: …» — глоссарием «Not owned by: …». Короче русского «Нет у:» (44 px
- * на 13 px) естественной английской подписи нет, и строка шире на ~50 px.
- * Она в truncate рядом с ценой: обрезается, а не теснит цену и не вылезает
- * из карточки. Замер: на 360 px по-русски с ценой со скидкой видно и так одно
- * «Нет у…»; на 768 px «Not owned by: Sergey» теряет последние буквы имени,
- * русское — нет. Скринридер читает строку целиком.
+ * на 13 px) естественной английской подписи нет: одна приставка — ~94 px.
+ *
+ * Поэтому на /en ниже md имена стоят своей строкой над ценой, а не в одном
+ * ряду с ней. Замер на 360 px: рядом с обычной ценой («39,99 $») строке имён
+ * достаётся 93 px, и английская приставка съедала их целиком — «Not owned
+ * by…» без единого имени, когда русская «Нет у: Konst…» имя ещё показывала.
+ * Своей строкой ей достаётся вся ширина карточки (~150 px), и имя видно.
+ * С md карточка шире, и ряд прежний: на 768 px «Not owned by: Sergey»
+ * теряет разве что последние буквы. Скринридер читает строку целиком.
+ *
+ * Русская разметка не тронута: там имя в ряду видно, и страница обязана
+ * остаться прежней до байта.
  */
 function PickCard({ pick, locale }: { pick: CompatPick; locale: Locale }) {
   const missing = (
@@ -317,6 +324,12 @@ function PickCard({ pick, locale }: { pick: CompatPick; locale: Locale }) {
             <span className="inline-flex items-center gap-1.5 text-ok">
               <Icon name="check" size={14} />
               {tr(locale, { ru: 'Есть у обоих', en: 'You both own it' })}
+            </span>
+          ) : locale === 'en' ? (
+            // flex-1 — вся ширина ряда GameCardBody: колонка ниже md, ряд с md
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5 md:flex-row md:items-center md:justify-between md:gap-2">
+              {missing}
+              {price}
             </span>
           ) : (
             <>
