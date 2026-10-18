@@ -98,7 +98,9 @@ const DESTINATIONS_EN = {
     action: 'Get the link',
   },
   '/room/new': {
-    promise: "A room is built from all your libraries — connect yours and we'll create it.",
+    // «ваших» — всех в комнате, а не одного гостя: «all your libraries»
+    // читалось как несколько библиотек у него самого, и «connect yours» спорило
+    promise: "A room is built from everyone's libraries — connect yours and we'll create it.",
     action: 'Create a room',
   },
   '/whatsnew': {

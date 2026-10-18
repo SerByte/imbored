@@ -853,6 +853,8 @@ describe('тексты лендинга по-английски', () => {
     expect(EN['/play'].action).toBe('Find a game')
     expect(EN['/room/new'].action).toBe('Create a room')
     expect(EN['/compat'].action).toBe('Get the link')
+    // комната — из библиотек всех, кто в ней, а не из нескольких своих
+    expect(EN['/room/new'].promise).toBe("A room is built from everyone's libraries — connect yours and we'll create it.")
   })
 
   test('ответы квиза — над заголовком, подписями английского квиза', () => {
