@@ -676,3 +676,208 @@ describe('nextPollAt: слот суток, а не ровно +24 часа', () 
     }
   })
 })
+
+/**
+ * Английская версия: пересказ на двух языках одним вызовом и догон старых.
+ *
+ * Новый патч получает оба языка одним вызовом модели (режим 'both'). То, что
+ * пересказано до английской версии или чей английский не вышел, догоняется
+ * по телу из базы — без Steam и своей долей бюджета (lib/enbackfill).
+ */
+describe('пересказ по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  async function seedPatch(db: Db, appid: number, gid: string, name: string | null = `Game ${appid}`) {
+    if (name) await seedGame(db, appid, name, 9_000_000)
+    await enrollNewsPoll(db, [appid], 1, NOW)
+    await runNewsSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      fetchNews: feedOf({ [appid]: [post(appid, gid, 'Обновление игры', PATCH)] }),
+      digestLimit: 0,
+    })
+  }
+
+  const both = async () => ({
+    tldr: 'Починили сеть и добавили режим.',
+    tldrEn: 'Fixed the netcode and added a new mode.',
+    titleEn: 'Game update',
+    scale: 'major' as const,
+  })
+
+  /** Русские пересказы уже лежат — так выглядит база в день выкатки /en */
+  async function digestedRu(db: Db) {
+    await runDigestSlice(db, { nowSec: NOW + 4000, deadlineAt: Date.now() + ЗАПАС_MS, digestFn: okDigest })
+  }
+
+  test('один вызов пишет оба языка и английский заголовок', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    const res = await runDigestSlice(db, { nowSec: NOW + 4000, deadlineAt: Date.now() + ЗАПАС_MS, digestFn: both })
+    expect(res).toMatchObject({ digested: 1, cards: [730], stopped: 'done' })
+    expect(res).not.toHaveProperty('english')
+    const [item] = await getGameNews(db, 730)
+    expect(item).toMatchObject({
+      tldr: 'Починили сеть и добавили режим.',
+      tldrEn: 'Fixed the netcode and added a new mode.',
+      titleEn: 'Game update',
+    })
+    expect(CYRILLIC.test(item!.tldrEn!)).toBe(false)
+  })
+
+  test('английский не вышел — русский записан, английский ждёт догона', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await runDigestSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async () => ({ tldr: 'Починили сеть.', tldrEn: null, titleEn: null, scale: 'major' as const }),
+    })
+    const r = await db.execute('SELECT tldr, tldr_en, tldr_en_tries FROM news_items WHERE appid = 730')
+    expect(r.rows[0]).toMatchObject({ tldr: 'Починили сеть.', tldr_en: null, tldr_en_tries: 1 })
+  })
+
+  test('догон — когда русская очередь пуста: по телу из базы и в режиме en', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await digestedRu(db)
+
+    const calls: Array<{ mode?: string; body: string; gameName: string }> = []
+    const res = await runDigestSlice(db, {
+      nowSec: NOW + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async (a) => {
+        calls.push({ mode: a.mode, body: a.body, gameName: a.gameName })
+        return { tldrEn: 'Fixed the netcode and added a new mode.', titleEn: 'Game update', scale: 'hotfix' as const }
+      },
+    })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ mode: 'en', gameName: 'Game 730' })
+    // тело — сохранённое в базе, а не новый поход в Steam
+    expect(calls[0]!.body).toContain('Исправлен вылет')
+    expect(res).toMatchObject({ digested: 1, english: 1, cards: [730], hasMore: false, stopped: 'done' })
+    const [item] = await getGameNews(db, 730)
+    // русский пересказ и масштаб — от основного пересказа: догон их не трогает
+    expect(item).toMatchObject({
+      tldr: 'Починили сеть и добавили режим.',
+      scale: 'major',
+      tldrEn: 'Fixed the netcode and added a new mode.',
+      titleEn: 'Game update',
+    })
+  })
+
+  test('новый патч не ждёт за догоном: пока русская очередь не пуста, догона нет', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await digestedRu(db)
+    await seedPatch(db, 570, '2')
+    const modes: Array<string | undefined> = []
+    await runDigestSlice(db, {
+      nowSec: NOW + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async (a) => {
+        modes.push(a.mode)
+        return both()
+      },
+    })
+    expect(modes).toEqual([undefined])
+  })
+
+  test('опрос с пересказом догоном не занимается — у него своя доля и свой крон', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await digestedRu(db)
+    let calls = 0
+    await runNewsSlice(db, {
+      nowSec: NOW + 200_000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      fetchNews: feedOf({}),
+      digestFn: async () => {
+        calls++
+        return both()
+      },
+    })
+    expect(calls).toBe(0)
+  })
+
+  test('доля догона выбрана — стоп без засчитанных попыток и без тревоги health', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await seedPatch(db, 570, '2')
+    await digestedRu(db)
+    vi.stubEnv('LLM_EN_BACKFILL_DAILY', '1')
+    try {
+      const res = await runDigestSlice(db, {
+        nowSec: NOW + 5000,
+        deadlineAt: Date.now() + ЗАПАС_MS,
+        digestFn: async () => ({ tldrEn: 'Fixed it.', titleEn: null, scale: 'major' as const }),
+      })
+      expect(res).toMatchObject({ digested: 1, english: 1, enCapped: true, hasMore: false, stopped: 'done' })
+      const tries = await db.execute('SELECT SUM(tldr_en_tries) AS n FROM news_items')
+      expect(Number(tries.rows[0]!.n)).toBe(1)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  test('модель без английского (прежний договор) — догон встаёт, ничего не записав', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await digestedRu(db)
+    const res = await runDigestSlice(db, { nowSec: NOW + 5000, deadlineAt: Date.now() + ЗАПАС_MS, digestFn: okDigest })
+    expect(res).toMatchObject({ digested: 0, hasMore: false, stopped: 'done' })
+    const r = await db.execute('SELECT tldr_en, tldr_en_tries FROM news_items WHERE appid = 730')
+    expect(r.rows[0]).toMatchObject({ tldr_en: null, tldr_en_tries: 0 })
+  })
+
+  test('отказ сервиса в догоне — как у русской фазы: стоп, попытки не засчитаны', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await digestedRu(db)
+    const res = await runDigestSlice(db, {
+      nowSec: NOW + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async () => {
+        throw new LlmUnavailableError(401, 'ключ отозван')
+      },
+    })
+    expect(res).toMatchObject({ stopped: 'unavailable', llm: 'down', llmStatus: 401 })
+    const r = await db.execute('SELECT tldr_en_tries FROM news_items WHERE appid = 730')
+    expect(Number(r.rows[0]!.tldr_en_tries)).toBe(0)
+  })
+
+  test('englishOnly — только догон, русская очередь стоит', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await digestedRu(db)
+    await seedPatch(db, 570, '2')
+    const modes: Array<string | undefined> = []
+    await runDigestSlice(db, {
+      nowSec: NOW + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      englishOnly: true,
+      digestFn: async (a) => {
+        modes.push(a.mode)
+        return { tldrEn: 'Fixed it.', titleEn: null, scale: 'major' as const }
+      },
+    })
+    expect(modes).toEqual(['en'])
+    expect((await getUnsummarized(db)).map((n) => n.appid)).toEqual([570])
+  })
+
+  test('игры нет в базе — имя нейтральное, а не русская заглушка', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 999, '1', null)
+    const names: string[] = []
+    await runDigestSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async (a) => {
+        names.push(a.gameName)
+        return both()
+      },
+    })
+    expect(names).toEqual(['App 999'])
+    expect(CYRILLIC.test(names[0]!)).toBe(false)
+  })
+})
