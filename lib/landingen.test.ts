@@ -97,10 +97,26 @@ describe('дверь без скрипта и подсказки поля на /
 
   test('«Where’s that?» и шаги — пунктами английского клиента Steam', () => {
     const toggle = en(createElement(LinkHelpToggle, { open: false, onToggle: () => {} }))
-    expect(toggle).toContain('aria-label="Where do I find my link?"')
+    expect(toggle).toContain('aria-label="Where’s that link?"')
     expect(toggle).toMatch(/<span class="join-help-word">Where’s that<\/span>\?<\/button>$/)
     const panel = en(createElement(LinkHelp, { open: true }))
     expect(panel).not.toMatch(CYR)
     for (const label of ['“Profile”', '“Copy Page URL”', '“Add a Friend”', '/id/']) expect(panel).toContain(label)
+  })
+
+  /*
+   * Имя кнопки начинается словами, которые видно глазом (WCAG 2.5.3): голосовой
+   * ввод ищет её по подписи, и «click Where’s that» должно находить кнопку.
+   * Русская ветка — та же проверка, что в lib/linkhelp.test.ts, здесь — рядом,
+   * чтобы оба языка держали одно правило.
+   */
+  test('имя «Where’s that?» начинается видимой подписью — на обоих языках', () => {
+    const ru = renderToStaticMarkup(createElement(LinkHelpToggle, { open: false, onToggle: () => {} }))
+    for (const html of [ru, en(createElement(LinkHelpToggle, { open: false, onToggle: () => {} }))]) {
+      const name = html.match(/aria-label="([^"]+)"/)?.[1]
+      const visible = html.match(/<span class="join-help-word">([^<]+)<\/span>/)?.[1]
+      expect(visible, html).toBeDefined()
+      expect(name?.startsWith(visible!), `${name} / ${visible}`).toBe(true)
+    }
   })
 })

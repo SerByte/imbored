@@ -127,7 +127,12 @@ const ERROR_TEXT_EN: Record<ErrorCode, string> = {
     'We need a profile link, the custom URL from its end, or a friend code. Steam doesn’t search by display name.',
   nosession: 'Your session expired — connect your library again and we’ll take you back to the party.',
   ratelimited: 'Too many tries in a row. Wait a bit and try again.',
-  private: 'Steam is hiding your library. One setting changes that — see how below.',
+  /*
+    Не «Steam is hiding your library»: так по-английски названа панель
+    PrivacyHelp прямо под строкой, и одна фраза читалась бы дважды подряд.
+    Как и в русском, здесь — что случилось с играми, в панели — что делать.
+  */
+  private: 'Your game list is hidden on Steam. One setting changes that — see how below.',
 }
 
 /** Строка отказа на языке страницы; чужой код — общее «что-то пошло не так» */

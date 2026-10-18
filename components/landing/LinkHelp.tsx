@@ -41,6 +41,11 @@ export const LINK_HELP_ID = 'profile-link-help'
  * .join-help-word прячется, и от кнопки виден один «?». Имя от этого не
  * меняется, и «Где взять» в нём остаётся для голосового ввода.
  *
+ * По-английски имя по той же причине начинается словами с кнопки: «Where’s
+ * that link?», а не «Where do I find my link?». Голосовой ввод ищет кнопку по
+ * тому, что видно глазом (WCAG 2.5.3), и на «click Where’s that» второе имя
+ * не находилось.
+ *
  * min-w-10 — чтобы одинокий «?» оставался целью для пальца, а не полоской в
  * семь пикселей; на тач-экране .tap добирает зону до 44 — но только наружу, к
  * краю пилюли (.tap-flush-start): слева вплотную поле, и штатные 6 px зоны
@@ -52,7 +57,7 @@ export function LinkHelpToggle({ open, onToggle }: { open: boolean; onToggle: ()
   return (
     <button
       type="button"
-      aria-label={en ? 'Where do I find my link?' : 'Где взять ссылку?'}
+      aria-label={en ? 'Where’s that link?' : 'Где взять ссылку?'}
       aria-expanded={open}
       aria-controls={LINK_HELP_ID}
       onClick={onToggle}
