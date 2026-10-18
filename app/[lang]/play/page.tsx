@@ -2983,11 +2983,13 @@ function Player({ say }: { say: (line: string) => void }) {
                       </>
                     ),
                   })}
+                  {/* «past 2 weeks» — слова самого Steam, и строка на 360 px не
+                      шире русской: «in the last two weeks» переносило её */}
                   {cont.recentHours > 0 && (
                     <span className="tabular-nums text-faint">
                       {tr(locale, {
                         ru: ` · ${cont.recentHours} ч за две недели`,
-                        en: ` · ${fmtNumber(locale, cont.recentHours)} h in the last two weeks`,
+                        en: ` · ${fmtNumber(locale, cont.recentHours)} h past 2 weeks`,
                       })}
                     </span>
                   )}

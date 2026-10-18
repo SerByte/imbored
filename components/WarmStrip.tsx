@@ -79,11 +79,11 @@ export function WarmStrip({
                   />
                 </span>
                 {/* Плашка стоит над нижней панелью и на 360 px обязана влезть в
-                    строку, как русская: английская подпись — не шире её
-                    (docs/i18n.md, «Голос»), поэтому короче глоссарной «Still
-                    reading your library» */}
+                    строку, как русская: английская подпись не шире её
+                    (docs/i18n.md, «Голос»). Замерено на 360 px: «Still reading
+                    your library · 1,204» — 165 px против 169 у русской */}
                 <span className="text-dim">
-                  {tr(locale, { ru: 'Дочитываю библиотеку', en: 'Reading your library' })}
+                  {tr(locale, { ru: 'Дочитываю библиотеку', en: 'Still reading your library' })}
                   {remaining > 0 && (
                     <>
                       {' · '}
