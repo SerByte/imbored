@@ -41,6 +41,7 @@ import {
   countLiked,
   getNewsPage,
   getUnsummarized,
+  getUnsummarizedEn,
   listExplore,
   listPublicRooms,
   migrateDb,
@@ -265,6 +266,44 @@ const CASES: Case[] = [
     run: (db) => getUnsummarized(db),
     indexes: ['idx_news_tldr_v2'],
     sortFree: true,
+  },
+  // Английский догон: патчи с русским пересказом без английского — свой
+  // частичный индекс, свежие первыми, LIMIT обрывает чтение
+  {
+    name: 'очередь английского пересказа',
+    run: (db) => getUnsummarizedEn(db),
+    indexes: ['idx_news_en_digest'],
+    sortFree: true,
+  },
+  // Факт о патче на /en: тот же скалярный подзапрос на пару, но по
+  // английскому двойнику — в нём только патчи с английским пересказом
+  {
+    name: 'свежий крупный патч после последнего запуска, по-английски',
+    run: async (db) =>
+      latestMajorPatchSince(
+        await withPatches(db),
+        [
+          [730, NOW - 86_400],
+          [570, NOW - 86_400],
+        ],
+        'en',
+      ),
+    indexes: ['idx_news_en_major'],
+    sortFree: true,
+  },
+  // Карта сайта и IndexNow на /en: тот же idx_news_feed, английский пересказ
+  // и его отметка — остаточным фильтром по окну
+  {
+    name: 'патчи для карты сайта /en',
+    run: (db) => sitemapNews(db, NOW - 90 * 86_400, 5000, 'en'),
+    indexes: ['idx_news_feed'],
+    sortFree: true,
+  },
+  {
+    name: 'свежепересказанные по-английски патчи',
+    run: (db) => freshlyDigestedPatches(db, NOW - 90 * 86_400, NOW - 3600, 100, 'en'),
+    indexes: ['idx_news_feed'],
+    sortFree: false,
   },
   {
     name: 'пачка опроса новостей',

@@ -4,6 +4,7 @@ import type { GameArtUrls } from './art'
 import { CYRILLIC_GLOB } from './cyrillic'
 import { PRICE_TRUST_SEC } from './discount'
 import type { FeedbackCtx } from './feedbackctx'
+import type { Locale } from './i18n'
 import {
   FEEDBACK_COLUMNS,
   feedbackCheckStale,
@@ -626,6 +627,24 @@ CREATE INDEX IF NOT EXISTS idx_feedback_ctx ON feedback (created_at)
 -- холодного старта — та же причина, что у idx_feedback_ctx.
 CREATE INDEX IF NOT EXISTS idx_feedback_banned ON feedback (steamid, appid, created_at DESC)
   WHERE action = 'banned';
+
+-- Очередь английского пересказа (getUnsummarizedEn): патчи, у которых русский
+-- пересказ уже есть, а английского нет. Догоняется из сохранённого тела, без
+-- похода в Steam, и только когда русская очередь пуста (runDigestSlice).
+-- Здесь, а не в SCHEMA_NEWS рядом с idx_news_tldr_v2: tldr_en и tldr_en_tries
+-- у старых баз приезжают ALTER-циклом, а SCHEMA_NEWS идёт до него. Имя — не
+-- idx_news_tldr_…: сторож в lib/queryplan.test.ts ищет дрейф очереди русского
+-- пересказа по этому префиксу. Предикат повторяет запрос дословно.
+CREATE INDEX IF NOT EXISTS idx_news_en_digest ON news_items (published_at DESC)
+  WHERE kind = 'patch' AND tldr <> '' AND tldr_en IS NULL AND tldr_en_tries < 3;
+
+-- Английский двойник idx_news_app_major: подтверждённый крупный патч после
+-- последнего запуска (latestMajorPatchSince на /en). Своим индексом, а не
+-- лишним условием поверх русского: в нём не больше одной строки на пару, а
+-- русский дочитывал бы все пересказанные, ещё не переведённые патчи игры.
+-- Здесь по той же причине, что и очередь выше: tldr_en — колонка ALTER-цикла.
+CREATE INDEX IF NOT EXISTS idx_news_en_major ON news_items (appid, published_at DESC)
+  WHERE kind = 'patch' AND scale = 'major' AND tldr_en <> '';
 `
 
 /**
@@ -792,7 +811,7 @@ const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
  * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
  * выполняются на каждом старте, по одному обращению на блок.
  */
-export const CURRENT_SCHEMA_V = 9
+export const CURRENT_SCHEMA_V = 10
 
 /**
  * Колонки, добавленные после первых версий схемы.
@@ -886,6 +905,38 @@ export const ADDED_COLUMNS = [
   // промоут и доливка медиа, прогрев его не просит (lib/catalog). Пустое не
   // затирает известное — COALESCE в апсерте и в setGamesMedia
   ['games', 'ru_lang INTEGER'],
+  /*
+   * Английская версия сайта (docs/i18n.md) — v10. Всё, что хранится по
+   * языку, получает английский слот рядом с русским, а не вместо него:
+   * русские колонки и их правила остаются как были.
+   */
+  // Описание игры по-английски. Отдельной колонкой, а не поверх
+  // short_description: там правило «русское не заменяется нерусским»
+  // (keepRussianSql), и английский текст прогрева ему как раз чужой. Пишут
+  // прогрев и крон карточек (GetItems по-английски, lib/catalog), промоут и
+  // catalog:descriptions --lang=en. Поле обогащения: пустое не затирает
+  // привезённое (keepFilledSql). NULL — английского не знаем
+  ['games', 'short_description_en TEXT'],
+  // Пересказ патча по-английски (lib/newsjob): тем же вызовом модели, что
+  // русский, или догоном из сохранённого тела. Сбрасывается вместе с
+  // русским, когда меняется тело (upsertNewsItems); tldr_en_tries — свой
+  // счётчик попыток, как tldr_tries у русского
+  ['news_items', 'tldr_en TEXT'],
+  ['news_items', 'tldr_en_at INTEGER'],
+  ['news_items', 'tldr_en_tries INTEGER NOT NULL DEFAULT 0'],
+  // Английский заголовок — только у поста, чей заголовок не английский
+  // (договор claudeNewsDigest: titleEn). NULL — заголовок и так английский
+  // или перевода нет, и /en строит свой («{Игра} update»)
+  ['news_items', 'title_en TEXT'],
+  // Зарезервировано под тело поста по-английски (?l=english у издателей с
+  // русским оригиналом). Пока не пишется никем, кроме сброса в
+  // upsertNewsItems, — колонка заведена сейчас, чтобы второй этап обошёлся
+  // без новой версии схемы
+  ['news_items', 'blocks_en_json TEXT'],
+  // Язык выбора, которым поделились (/pick/<id>): текст причины подписан на
+  // своём языке, и страница выбора его называет. 'ru' у строк старше колонки
+  // — так и было: до английской версии делились только по-русски
+  ['shared_picks', "lang TEXT NOT NULL DEFAULT 'ru'"],
 ] as const
 
 /**
@@ -1643,7 +1694,26 @@ export async function markActiveDay(
 }
 
 /** v — версия промпта, которым написан текст (PORTRAIT_TEXT_V в lib/portraitvoice) */
-export type PortraitCache = { takenAt: number; text: string; v?: number }
+export type PortraitText = { takenAt: number; text: string; v?: number }
+
+/**
+ * Текст портрета в users.portrait_json. Русский слот — верхний уровень, как
+ * было до английской версии, английский — en рядом с ним: у каждого свой
+ * takenAt и своя версия промпта, и свежесть каждого portraitTextFresh
+ * сверяет отдельно. Один JSON, а не вторая колонка: слоты пишутся порознь
+ * (страница на своём языке зовёт модель только за своим текстом), и запись
+ * одного не имеет права стереть другой — это держит json_set в
+ * setUserPortrait.
+ */
+export type PortraitCache = PortraitText & { en?: PortraitText }
+
+/** Слот портрета, если он целый: битый или чужой формы — как его нет */
+function portraitSlot(raw: unknown): PortraitText | null {
+  if (!raw || typeof raw !== 'object') return null
+  const { takenAt, text, v } = raw as Record<string, unknown>
+  if (typeof takenAt !== 'number' || typeof text !== 'string') return null
+  return typeof v === 'number' ? { takenAt, text, v } : { takenAt, text }
+}
 
 /**
  * Записать текст портрета — пока жив снимок, из которого он собран.
@@ -1664,29 +1734,68 @@ export type PortraitCache = { takenAt: number; text: string; v?: number }
  *
  * WHERE у SELECT нужен и ради разбора: без него ON CONFLICT после SELECT
  * SQLite читает как ON у соединения.
+ *
+ * locale — какой слот пишется (PortraitCache). Русский — верхний уровень
+ * целиком, как раньше, но английский слот рядом переживает запись; английский
+ * ложится в en через json_set и не трогает русского. Проверки формы в SQL —
+ * вложенным CASE: json_type на битой строке бросает, а ветки CASE, в отличие
+ * от AND, вычисляются только выбранные.
  */
 export async function setUserPortrait(
   db: Db,
   steamid: string,
-  value: PortraitCache,
+  value: PortraitText,
+  locale: Locale = 'ru',
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000)
+  const slot = JSON.stringify(value)
+  const merge =
+    locale === 'en'
+      ? `json_set(CASE WHEN json_valid(users.portrait_json) THEN
+                    CASE WHEN json_type(users.portrait_json) = 'object' THEN users.portrait_json ELSE '{}' END
+                  ELSE '{}' END,
+                  '$.en', json(json_extract(excluded.portrait_json, '$.en')))`
+      : `CASE WHEN json_valid(users.portrait_json) THEN
+           CASE WHEN json_type(users.portrait_json, '$.en') = 'object'
+             THEN json_set(excluded.portrait_json, '$.en', json(json_extract(users.portrait_json, '$.en')))
+             ELSE excluded.portrait_json END
+         ELSE excluded.portrait_json END`
   await db.execute({
     sql: `INSERT INTO users (steamid, portrait_json, created_at, last_seen_at)
-          SELECT ?, ?, ?, ?
+          SELECT ?, ${locale === 'en' ? "json_object('en', json(?))" : '?'}, ?, ?
           WHERE EXISTS (SELECT 1 FROM library_snapshots WHERE steamid = ? AND taken_at = ?)
-          ON CONFLICT(steamid) DO UPDATE SET portrait_json = excluded.portrait_json`,
-    args: [steamid, JSON.stringify(value), now, now, steamid, value.takenAt],
+          ON CONFLICT(steamid) DO UPDATE SET portrait_json = ${merge}`,
+    args: [steamid, slot, now, now, steamid, value.takenAt],
   })
 }
 
-export async function getUserPortrait(db: Db, steamid: string): Promise<PortraitCache | null> {
+/**
+ * Текст портрета на языке locale. Русский — запись целиком, как раньше (с
+ * английским слотом в en, если он есть); английский — сам слот en. null —
+ * текста на этом языке нет: строки нет, слот битый или записан только другой
+ * язык (первый заход на портрет был с /en).
+ */
+export async function getUserPortrait(
+  db: Db,
+  steamid: string,
+  locale: Locale = 'ru',
+): Promise<PortraitCache | null> {
   const res = await db.execute({
     sql: 'SELECT portrait_json AS v FROM users WHERE steamid = ?',
     args: [steamid],
   })
   const v = res.rows[0]?.v as string | null | undefined
-  return v ? (JSON.parse(v) as PortraitCache) : null
+  if (!v) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(v)
+  } catch {
+    return null
+  }
+  if (locale === 'en') return portraitSlot((parsed as { en?: unknown } | null)?.en)
+  // Русский — верхний уровень как есть, только если он сам целый: строка, в
+  // которую писали лишь английский, русского текста не несёт
+  return portraitSlot(parsed) ? (parsed as PortraitCache) : null
 }
 
 /* ---------- комнаты (групповой режим) ---------- */
@@ -2510,8 +2619,20 @@ export async function sweepDailyPicks(db: Db, keepFromDay: string): Promise<void
   await db.execute({ sql: 'DELETE FROM daily_picks WHERE day < ?', args: [keepFromDay] })
 }
 
-/** Доска «ищут игроков»: открытые публичные комнаты за последние сутки (один запрос) */
-export async function listPublicRooms(db: Db, nowSec: number): Promise<PublicRoomListing[]> {
+/**
+ * Доска «ищут игроков»: открытые публичные комнаты за последние сутки (один запрос).
+ *
+ * locale — язык подписей участников без ника («Игрок 1a2b» / «Player 1a2b»):
+ * их строит memberLabel из lib/room, и язык уйдёт туда, как только у неё
+ * появится свой параметр. До тех пор подпись русская на обоих языках, а
+ * сигнатура доски уже та, по которой её зовёт /en.
+ */
+export async function listPublicRooms(
+  db: Db,
+  nowSec: number,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- уйдёт в memberLabel, см. докблок
+  locale: Locale = 'ru',
+): Promise<PublicRoomListing[]> {
   const res = await db.execute({
     sql: `SELECT r.id AS id, r.created_at AS created_at, r.mood_json AS mood_json,
                  m.steamid AS steamid, m.persona_name AS persona_name
@@ -2958,8 +3079,8 @@ const GAME_INSERT = `INSERT INTO games (appid, name, tags_json, genres_json, cat
             release_year, developer, publisher, reviews_total, reviews_percent, reviews_30d,
             ccu, ccu_at, tag_count, is_multiplayer,
             price_initial, discount_percent, discount_ends_at, price_at, trailer_json, updated_at,
-            price_cc, store_hidden, ru_lang)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            price_cc, store_hidden, ru_lang, short_description_en)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 /**
  * Что делать с уже лежащей строкой: 'update' — переписать (обычный апсерт),
@@ -3102,6 +3223,9 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
             -- Язык просят не все: прогрев без него, appdetails знает только
             -- озвучку и «нет». Без ответа — прежний, ноль — тоже ответ
             ru_lang = ${keepKnownSql('ru_lang')},
+            -- Английское описание — поле обогащения своей колонки: его
+            -- привозят не все писатели, и пустое не стирает привезённого
+            short_description_en = ${keepFilledSql('short_description_en')},
             updated_at = excluded.updated_at`,
     args: [
       meta.appid,
@@ -3143,6 +3267,7 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
       meta.priceCc ?? null,
       meta.storeHidden ? 1 : 0,
       meta.ruLang ?? null,
+      meta.shortDescriptionEn ?? null,
     ],
   }
 }
@@ -3444,6 +3569,8 @@ export type GameRow = {
   dead_reason?: string | null
   /** Колонка из ALTER-цикла, как price_cc: у строки старше неё поля нет */
   ru_lang?: number | null
+  /** Английское описание — колонка из ALTER-цикла v10, как ru_lang */
+  short_description_en?: string | null
   /**
    * game_semantics.json через SEMANTICS_JOIN. Есть только у выборок пачкой;
    * одиночные чтения (getGameMeta, страница игры) таблицу не джойнят.
@@ -3473,6 +3600,9 @@ export function rowToMeta(row: GameRow, cc: string = priceRegion()): GameMeta {
     categories: parseIdList(row.categories_json),
   }
   if (row.short_description !== null) meta.shortDescription = row.short_description
+  // Пустое — как нет: английский слот читает descriptionFor (lib/gamedesc), и
+  // пустая строка там значила бы «описание есть»
+  if (row.short_description_en) meta.shortDescriptionEn = row.short_description_en
   if (row.header_image !== null) meta.headerImage = row.header_image
   // Узкая выборка (getGamesMetaLite) колонку не читает вовсе — отсюда undefined
   if (row.screenshots_json) meta.screenshots = parseStrList(row.screenshots_json)
@@ -3909,6 +4039,9 @@ const GAME_LITE_COLS = [
   // ru_lang — одно число, а нужен он именно здесь: полка покупок и герой /play
   // читают мету этой выборкой (подбор, пул открытий)
   'ru_lang',
+  // «О чём игра» у новой для человека игры на /en (aboutLine в lib/cards) —
+  // та же выборка, что и русское описание рядом
+  'short_description_en',
 ] as const
 
 /**
@@ -3982,6 +4115,9 @@ export async function getHeroMedia(db: Db, appids: number[]): Promise<Map<number
  * что лежит в объекте у вызывающего. Правило пустоты то же, что у апсерта
  * (keepFilledSql, COALESCE у языка): нет кадров, трейлера или языка в ответе —
  * прежние остаются. Ноль языка — не пустота: «русского нет» тоже пишется.
+ * Английское описание едет тем же ответом (GetItems ходит по-английски) и
+ * пишется так же: нет его — прежнее остаётся. Русского short_description
+ * запись не касается вовсе.
  *
  * updated_at не трогаем по той же причине, что setGameDescriptions: это
  * lastmod карты сайта, а доливка медиа по всему каталогу — не повод сказать
@@ -3991,21 +4127,32 @@ export async function getHeroMedia(db: Db, appids: number[]): Promise<Map<number
  */
 export async function setGamesMedia(
   db: Db,
-  rows: ReadonlyArray<{ appid: number; screenshots?: string[]; trailer?: Trailer; ruLang?: RuLang }>,
+  rows: ReadonlyArray<{
+    appid: number
+    screenshots?: string[]
+    trailer?: Trailer
+    ruLang?: RuLang
+    /** Описание из того же GetItems по-английски (StoreMedia в lib/catalog) */
+    shortDescriptionEn?: string
+  }>,
 ): Promise<number> {
-  const writes = rows.filter((r) => r.screenshots?.length || r.trailer || r.ruLang !== undefined)
+  const writes = rows.filter(
+    (r) => r.screenshots?.length || r.trailer || r.ruLang !== undefined || r.shortDescriptionEn,
+  )
   if (!writes.length) return 0
   const res = await db.batch(
     writes.map((r) => ({
       sql: `UPDATE games SET
               screenshots_json = COALESCE(?, screenshots_json),
               trailer_json = COALESCE(?, trailer_json),
-              ru_lang = COALESCE(?, ru_lang)
+              ru_lang = COALESCE(?, ru_lang),
+              short_description_en = COALESCE(?, short_description_en)
             WHERE appid = ?`,
       args: [
         r.screenshots?.length ? JSON.stringify(r.screenshots) : null,
         r.trailer ? JSON.stringify(r.trailer) : null,
         r.ruLang ?? null,
+        r.shortDescriptionEn || null,
         r.appid,
       ],
     })),
@@ -4208,6 +4355,13 @@ export type PageQueueOpts = {
    * — у всех; зачем срок, см. pageDueSql.
    */
   redoBefore?: number
+  /**
+   * Возвращать в очередь pros/cons модели без английского слота ('claude' без
+   * $.en): их пересобирает тот же вызов, что пишет оба языка (lib/pagejob).
+   * Срок тот же — redoBefore: карточка, у которой английский раз за разом не
+   * выходит, иначе стояла бы в голове очереди каждое звено.
+   */
+  redoEnglish?: boolean
 }
 
 /**
@@ -4245,6 +4399,12 @@ export type PageQueueOpts = {
  * возвращалась бы каждое звено — а с общей сортировкой по отзывам она ещё и
  * стоит в голове очереди. Срок закрывает её при любом счётчике: пересобрать
  * такую карточку пробуют не чаще раза за срок.
+ *
+ * Пятая ветка — английский слот (redoEnglish). Пересказ модели, собранный
+ * до английской версии, несёт только русский, а /en показывает «За что
+ * любят» лишь по-английски и без слота молчит. Пересобрать его — тот же один
+ * вызов, что пишет оба языка; русский при этом обновляется заодно. Срок —
+ * тот же redoBefore, и по тому же доводу, что у эвристики.
  */
 function pageDueSql(
   staleBefore: number,
@@ -4258,12 +4418,16 @@ function pageDueSql(
               OR page_at < ?
               OR (page_tries > 0 AND page_tries < ?)
               OR (? = 1 AND page_at < ? AND json_extract(pros_cons_json, '$.source') = 'reviews')
+              OR (? = 1 AND page_at < ? AND json_extract(pros_cons_json, '$.source') = 'claude'
+                  AND json_extract(pros_cons_json, '$.en') IS NULL)
             )`,
     args: [
       staleBefore,
       maxTries,
       opts.redoHeuristic ? 1 : 0,
       // без срока — любая отметка раньше конца времён
+      opts.redoBefore ?? Number.MAX_SAFE_INTEGER,
+      opts.redoEnglish ? 1 : 0,
       opts.redoBefore ?? Number.MAX_SAFE_INTEGER,
     ],
   }
@@ -4521,10 +4685,17 @@ export async function topGamesByTags(
  * бранью из отзывов, и страница игры её не показывает никогда (lib/gamepage).
  * Новому потребителю обойти это правило нечем — строк с ней он не получит.
  */
-export async function getLovedFor(db: Db, appids: number[]): Promise<Map<number, string[]>> {
+export async function getLovedFor(
+  db: Db,
+  appids: number[],
+  locale: Locale = 'ru',
+): Promise<Map<number, string[]>> {
   if (!appids.length) return new Map()
+  // Английский — слот en того же пересказа (lib/pagejob): нет слота — нет и
+  // строки, русский на /en не подставляется (docs/i18n.md, тексты модели)
+  const path = locale === 'en' ? '$.en.pros' : '$.pros'
   const res = await db.execute({
-    sql: `SELECT appid, json_extract(pros_cons_json, '$.pros') AS pros FROM games
+    sql: `SELECT appid, json_extract(pros_cons_json, '${path}') AS pros FROM games
           WHERE ${APPIDS_IN} AND json_extract(pros_cons_json, '$.source') = 'claude'`,
     args: [JSON.stringify(appids)],
   })
@@ -4557,16 +4728,19 @@ export async function getLovedFor(db: Db, appids: number[]): Promise<Map<number,
 export async function gameDescriptions(
   db: Db,
   limit: number,
+  locale: Locale = 'ru',
 ): Promise<Array<{ appid: number; description: string | null }>> {
+  // Колонка — по языку доливки: английская живёт отдельно (ADDED_COLUMNS v10)
+  const col = locale === 'en' ? 'short_description_en' : 'short_description'
   const res = await db.execute({
-    sql: `SELECT appid, short_description FROM games
+    sql: `SELECT appid, ${col} AS description FROM games
           WHERE ${ALIVE_POOL} AND appid > 0
           ORDER BY reviews_total DESC
           LIMIT ?`,
     args: [limit],
   })
-  return (res.rows as unknown as Array<{ appid: number; short_description: string | null }>).map(
-    (r) => ({ appid: r.appid, description: r.short_description }),
+  return (res.rows as unknown as Array<{ appid: number; description: string | null }>).map(
+    (r) => ({ appid: r.appid, description: r.description }),
   )
 }
 
@@ -4588,13 +4762,15 @@ export async function gameDescriptions(
 export async function setGameDescriptions(
   db: Db,
   rows: ReadonlyArray<{ appid: number; description: string }>,
+  locale: Locale = 'ru',
 ): Promise<number> {
   if (!rows.length) return 0
+  const sql =
+    locale === 'en'
+      ? 'UPDATE games SET short_description_en = ? WHERE appid = ?'
+      : 'UPDATE games SET short_description = ? WHERE appid = ?'
   const res = await db.batch(
-    rows.map((r) => ({
-      sql: 'UPDATE games SET short_description = ? WHERE appid = ?',
-      args: [r.description, r.appid],
-    })),
+    rows.map((r) => ({ sql, args: [r.description, r.appid] })),
     'write',
   )
   return res.reduce((sum, r) => sum + Number(r.rowsAffected ?? 0), 0)
@@ -6289,17 +6465,34 @@ export type SharedPick = {
   kind: PickKind
   reason: string
   createdAt: number
+  /**
+   * Язык текста причины: на нём сервер его подписал (lib/pickshare) и на нём
+   * страница выбора его покажет. 'ru' у строк до английской версии.
+   */
+  lang: Locale
 }
 
+/**
+ * lang необязателен ради прежних вызывающих: без него — 'ru', как и у строк
+ * старше колонки.
+ */
 export async function createSharedPick(
   db: Db,
-  row: { id: string; createdBy: string; appid: number; source: CandidateSource; kind: PickKind; reason: string },
+  row: {
+    id: string
+    createdBy: string
+    appid: number
+    source: CandidateSource
+    kind: PickKind
+    reason: string
+    lang?: Locale
+  },
   nowSec: number,
 ): Promise<void> {
   await db.execute({
-    sql: `INSERT INTO shared_picks (id, created_by, appid, source, kind, reason, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    args: [row.id, row.createdBy, row.appid, row.source, row.kind, row.reason, nowSec],
+    sql: `INSERT INTO shared_picks (id, created_by, appid, source, kind, reason, created_at, lang)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [row.id, row.createdBy, row.appid, row.source, row.kind, row.reason, nowSec, row.lang ?? 'ru'],
   })
 }
 
@@ -6311,7 +6504,9 @@ export async function createSharedPick(
  * жизни: причины из шаблона повторяются дословно, и отправленная через
  * месяц ссылка иначе оказалась бы вчерашней строкой, которая истечёт завтра.
  * kind — в условии: тот же текст бывает и игрой дня, и выбором на вечер, а
- * подписи у страниц разные.
+ * подписи у страниц разные. lang — по той же причине: страница выбора
+ * говорит на языке ссылки, и русская строка с совпавшим текстом (имя игры,
+ * пустая причина) не годится в ответ на английскую отправку.
  */
 export async function findSharedPick(
   db: Db,
@@ -6320,12 +6515,14 @@ export async function findSharedPick(
   kind: PickKind,
   reason: string,
   sinceSec: number,
+  lang: Locale = 'ru',
 ): Promise<string | null> {
   const res = await db.execute({
     sql: `SELECT id FROM shared_picks
            WHERE created_by = ? AND created_at >= ? AND appid = ? AND kind = ? AND reason = ?
+             AND lang = ?
            LIMIT 1`,
-    args: [createdBy, sinceSec, appid, kind, reason],
+    args: [createdBy, sinceSec, appid, kind, reason, lang],
   })
   const row = res.rows[0] as unknown as { id: string } | undefined
   return row ? String(row.id) : null
@@ -6338,12 +6535,20 @@ export async function findSharedPick(
  */
 export async function getSharedPick(db: Db, id: string, sinceSec: number): Promise<SharedPick | null> {
   const res = await db.execute({
-    sql: `SELECT id, appid, source, kind, reason, created_at FROM shared_picks
+    sql: `SELECT id, appid, source, kind, reason, created_at, lang FROM shared_picks
            WHERE id = ? AND created_at >= ?`,
     args: [id, sinceSec],
   })
   const row = res.rows[0] as unknown as
-    | { id: string; appid: number; source: string; kind: string; reason: string; created_at: number }
+    | {
+        id: string
+        appid: number
+        source: string
+        kind: string
+        reason: string
+        created_at: number
+        lang: string | null
+      }
     | undefined
   if (!row) return null
   return {
@@ -6353,6 +6558,8 @@ export async function getSharedPick(db: Db, id: string, sinceSec: number): Promi
     kind: String(row.kind) === 'daily' ? 'daily' : 'play',
     reason: String(row.reason),
     createdAt: Number(row.created_at),
+    // Неизвестное — русский: им и были все строки до колонки
+    lang: row.lang === 'en' ? 'en' : 'ru',
   }
 }
 
@@ -6849,6 +7056,17 @@ export type StoredNews = {
   imageUrl?: string
   rank: number
   tldr?: string
+  /**
+   * Пересказ по-английски (lib/newsjob). Нет поля — английского пересказа
+   * нет, и /en блок не показывает, а не подставляет русский (docs/i18n.md).
+   */
+  tldrEn?: string
+  /**
+   * Английский заголовок поста, чей оригинал не английский (договор
+   * claudeNewsDigest: titleEn). Нет поля — заголовок и так английский или
+   * перевода нет: /en берёт title как есть или строит свой.
+   */
+  titleEn?: string
 }
 
 /**
@@ -6894,6 +7112,9 @@ type NewsRow = {
   image_url: string | null
   rank: number
   tldr: string | null
+  /** Колонки ALTER-цикла v10: у строки, прочитанной до него, их нет вовсе */
+  tldr_en?: string | null
+  title_en?: string | null
 }
 
 function rowToNews(r: NewsRow): StoredNews {
@@ -6917,11 +7138,21 @@ function rowToNews(r: NewsRow): StoredNews {
     ...(r.image_url ? { imageUrl: r.image_url } : {}),
     rank: r.rank,
     ...(r.tldr ? { tldr: r.tldr } : {}),
+    ...(r.tldr_en ? { tldrEn: r.tldr_en } : {}),
+    ...(r.title_en ? { titleEn: r.title_en } : {}),
   }
 }
 
-const NEWS_COLS =
+/**
+ * Колонки, которые пишет опрос (upsertNewsItems): строка поста и русский
+ * пересказ. Английские слоты в INSERT не входят — их пишет только пересказ,
+ * а сбрасывает CASE по телу в том же апсерте.
+ */
+const NEWS_BASE_COLS =
   'appid, gid, title, url, published_at, kind, scale, blocks_json, body_hash, image_url, rank, tldr'
+
+/** Всё, что читают лента, карточка и страница патча: строка поста и оба языка пересказа */
+const NEWS_COLS = `${NEWS_BASE_COLS}, tldr_en, title_en`
 
 /**
  * Во сколько раз перебираем строк, чтобы после схлопывания по играм осталось
@@ -6972,7 +7203,7 @@ export async function upsertNewsItems(
 ): Promise<number> {
   if (!items.length) return 0
   const stmts = items.map((n) => ({
-    sql: `INSERT INTO news_items (${NEWS_COLS}, tldr_at, tldr_tries, created_at, updated_at)
+    sql: `INSERT INTO news_items (${NEWS_BASE_COLS}, tldr_at, tldr_tries, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, ?, ?)
           ON CONFLICT(appid, gid) DO UPDATE SET
             title = excluded.title,
@@ -6999,7 +7230,23 @@ export async function upsertNewsItems(
             tldr_at = CASE WHEN news_items.body_hash IS excluded.body_hash
                            THEN news_items.tldr_at ELSE NULL END,
             tldr_tries = CASE WHEN news_items.body_hash IS excluded.body_hash
-                              THEN news_items.tldr_tries ELSE 0 END
+                              THEN news_items.tldr_tries ELSE 0 END,
+            -- Английские слоты — тем же правилом: пересказ другого тела
+            -- неправда на любом языке. Заголовок по-английски — перевод
+            -- заголовка, поэтому он уходит ещё и вместе со сменой самого
+            -- заголовка: устаревший перевод на /en хуже запасного
+            -- «{Игра} update»
+            tldr_en = CASE WHEN news_items.body_hash IS excluded.body_hash
+                           THEN news_items.tldr_en ELSE NULL END,
+            tldr_en_at = CASE WHEN news_items.body_hash IS excluded.body_hash
+                              THEN news_items.tldr_en_at ELSE NULL END,
+            tldr_en_tries = CASE WHEN news_items.body_hash IS excluded.body_hash
+                                 THEN news_items.tldr_en_tries ELSE 0 END,
+            title_en = CASE WHEN news_items.body_hash IS excluded.body_hash
+                             AND news_items.title IS excluded.title
+                            THEN news_items.title_en ELSE NULL END,
+            blocks_en_json = CASE WHEN news_items.body_hash IS excluded.body_hash
+                                  THEN news_items.blocks_en_json ELSE NULL END
           WHERE news_items.body_hash IS NOT excluded.body_hash
              OR news_items.title IS NOT excluded.title
              OR news_items.kind IS NOT excluded.kind
@@ -7130,6 +7377,8 @@ export type NewsHead = {
   title: string
   publishedAt: number
   scale: NewsScale | null
+  /** Английский заголовок не английского поста — как StoredNews.titleEn */
+  titleEn?: string
 }
 
 /**
@@ -7142,7 +7391,7 @@ export type NewsHead = {
 export async function getGamePatchHeads(db: Db, appid: number, limit = 8): Promise<NewsHead[]> {
   if (appid <= 0) return []
   const res = await db.execute({
-    sql: `SELECT gid, title, published_at, scale FROM news_items
+    sql: `SELECT gid, title, published_at, scale, title_en FROM news_items
           WHERE appid = ? AND kind = 'patch'
           ORDER BY published_at DESC LIMIT ?`,
     args: [appid, limit],
@@ -7153,12 +7402,14 @@ export async function getGamePatchHeads(db: Db, appid: number, limit = 8): Promi
       title: string
       published_at: number
       scale: string | null
+      title_en: string | null
     }>
   ).map((r) => ({
     gid: r.gid,
     title: r.title,
     publishedAt: Number(r.published_at),
     scale: r.scale === 'major' || r.scale === 'hotfix' ? r.scale : null,
+    ...(r.title_en ? { titleEn: r.title_en } : {}),
   }))
 }
 
@@ -7181,12 +7432,16 @@ export async function sitemapNews(
   db: Db,
   sinceSec: number,
   limit: number,
+  locale: Locale = 'ru',
 ): Promise<Array<{ appid: number; gid: string; changedAt: number }>> {
+  // /en-двойник страницы своё имеет только с английским пересказом: без него
+  // он не индексируется (docs/i18n.md), и в карте сайта ему не место
+  const [tldr, at] = locale === 'en' ? ['tldr_en', 'tldr_en_at'] : ['tldr', 'tldr_at']
   const res = await db.execute({
-    sql: `SELECT appid, gid, MAX(updated_at, COALESCE(tldr_at, 0)) AS changed_at
+    sql: `SELECT appid, gid, MAX(updated_at, COALESCE(${at}, 0)) AS changed_at
           FROM news_items
           WHERE kind = 'patch' AND scale = 'major' AND rank > 0
-            AND published_at >= ? AND tldr IS NOT NULL
+            AND published_at >= ? AND ${tldr} IS NOT NULL
           ORDER BY published_at DESC LIMIT ?`,
     args: [sinceSec, limit],
   })
@@ -7214,18 +7469,22 @@ export async function freshlyDigestedPatches(
   publishedSince: number,
   digestedAfter: number,
   limit: number,
+  locale: Locale = 'ru',
 ): Promise<Array<{ appid: number; gid: string; digestedAt: number }>> {
+  // /en-страница патча становится индексируемой с английским пересказом —
+  // и отметка у неё своя: tldr_en_at, а не время русского
+  const [tldr, at] = locale === 'en' ? ['tldr_en', 'tldr_en_at'] : ['tldr', 'tldr_at']
   const res = await db.execute({
-    sql: `SELECT appid, gid, tldr_at FROM news_items
+    sql: `SELECT appid, gid, ${at} AS digested_at FROM news_items
           WHERE kind = 'patch' AND scale = 'major' AND rank > 0
-            AND published_at >= ? AND tldr IS NOT NULL AND tldr_at > ?
-          ORDER BY tldr_at, appid, gid LIMIT ?`,
+            AND published_at >= ? AND ${tldr} IS NOT NULL AND ${at} > ?
+          ORDER BY ${at}, appid, gid LIMIT ?`,
     args: [publishedSince, digestedAfter, limit],
   })
-  return (res.rows as unknown as Array<{ appid: number; gid: string; tldr_at: number }>).map((r) => ({
+  return (res.rows as unknown as Array<{ appid: number; gid: string; digested_at: number }>).map((r) => ({
     appid: Number(r.appid),
     gid: String(r.gid),
-    digestedAt: Number(r.tldr_at),
+    digestedAt: Number(r.digested_at),
   }))
 }
 
@@ -7268,7 +7527,12 @@ export const PATCH_SINCE_MAX = 60
 export async function latestMajorPatchSince(
   db: Db,
   pairs: ReadonlyArray<readonly [appid: number, since: number]>,
+  locale: Locale = 'ru',
 ): Promise<Map<number, string>> {
+  // На /en факт — английский пересказ, и индекс у него свой (idx_news_en_major):
+  // предикат подзапроса повторяет его так же дословно, как русский — свой.
+  // Нет английского — нет и факта: причина говорит по-старому, а не по-русски
+  const tldrCol = locale === 'en' ? 'tldr_en' : 'tldr'
   const out = new Map<number, string>()
   // Отрицательные appid — игры чужих магазинов, новостей Steam у них нет.
   // Повтор игры — одна пара: ответ всё равно один на appid
@@ -7283,9 +7547,9 @@ export async function latestMajorPatchSince(
   for (let i = 0; i < args.length; i += PATCH_SINCE_MAX) {
     stmts.push({
       sql: `SELECT k.appid AS appid,
-                   (SELECT n.tldr FROM news_items AS n
+                   (SELECT n.${tldrCol} FROM news_items AS n
                      WHERE n.appid = k.appid AND n.published_at > k.since
-                       AND n.kind = 'patch' AND n.scale = 'major' AND n.tldr <> ''
+                       AND n.kind = 'patch' AND n.scale = 'major' AND n.${tldrCol} <> ''
                      ORDER BY n.published_at DESC LIMIT 1) AS tldr
             FROM (SELECT json_extract(value, '$[0]') AS appid,
                          json_extract(value, '$[1]') AS since
@@ -7408,10 +7672,15 @@ export async function getFeedHeadForApps(
  * getRssFeedForApps). Меняется лишь список столбцов: соединение и поиск по
  * ключу те же, и сторож плана у обоих режимов один.
  */
-async function withBodies(db: Db, head: FeedHeadItem[], bodies: 'all' | 'untold' = 'all'): Promise<StoredNews[]> {
+async function withBodies(
+  db: Db,
+  head: FeedHeadItem[],
+  bodies: 'all' | 'untold' | 'untold-en' = 'all',
+): Promise<StoredNews[]> {
   if (!head.length) return []
+  const cols = bodies === 'all' ? NEWS_COLS : bodies === 'untold' ? NEWS_COLS_UNTOLD : NEWS_COLS_UNTOLD_EN
   const res = await db.execute({
-    sql: `SELECT ${bodies === 'all' ? NEWS_COLS : NEWS_COLS_UNTOLD} FROM json_each(?) AS k
+    sql: `SELECT ${cols} FROM json_each(?) AS k
           CROSS JOIN news_items AS n
             ON n.appid = json_extract(k.value, '$[0]') AND n.gid = json_extract(k.value, '$[1]')`,
     args: [JSON.stringify(head.map((h) => [h.appid, h.gid]))],
@@ -7475,6 +7744,16 @@ const NEWS_COLS_UNTOLD = NEWS_COLS.replace(
 )
 
 /**
+ * То же для английской ленты: описание записи там — английский пересказ, и
+ * тело нужно патчу без него, даже если русский пересказ есть. Английский
+ * оригинал (у патчноутов почти всегда так) ридер покажет как есть.
+ */
+const NEWS_COLS_UNTOLD_EN = NEWS_COLS.replace(
+  'blocks_json',
+  "CASE WHEN COALESCE(tldr_en, '') = '' THEN blocks_json ELSE '[]' END AS blocks_json",
+)
+
+/**
  * Личная лента для ридера (app/whatsnew/feed/[token]): те же ключи в том же
  * порядке, что у getFeedForApps, но тело патча — только когда пересказа нет.
  *
@@ -7494,8 +7773,10 @@ export async function getRssFeedForApps(
   limit = 30,
   before?: number,
   since?: number,
+  locale: Locale = 'ru',
 ): Promise<StoredNews[]> {
-  return withBodies(db, await getFeedHeadForApps(db, appids, limit, before, since), 'untold')
+  const head = await getFeedHeadForApps(db, appids, limit, before, since)
+  return withBodies(db, head, locale === 'en' ? 'untold-en' : 'untold')
 }
 
 /**
@@ -7518,26 +7799,96 @@ export async function getUnsummarized(db: Db, limit = 12): Promise<StoredNews[]>
 }
 
 /**
+ * Очередь английского пересказа. Предикат дословно повторяет idx_news_en_digest.
+ *
+ * Только патчи с русским пересказом: тот уже решил масштаб и отсеял спам, а
+ * английский догон пересказывает то же тело, сохранённое в blocks_json, — без
+ * похода в Steam. Пересказы обоих языков одним вызовом пишет обычная очередь
+ * (getUnsummarized); сюда попадает то, что пересказано до английской версии
+ * или чей английский не вышел (tldr_en_tries — свой счётчик, три попытки).
+ */
+export async function getUnsummarizedEn(db: Db, limit = 12): Promise<StoredNews[]> {
+  const res = await db.execute({
+    sql: `SELECT ${NEWS_COLS} FROM news_items
+          WHERE kind = 'patch' AND tldr <> '' AND tldr_en IS NULL AND tldr_en_tries < 3
+          ORDER BY published_at DESC LIMIT ?`,
+    args: [limit],
+  })
+  return (res.rows as unknown as NewsRow[]).map(rowToNews)
+}
+
+/**
+ * Что пересказ пишет в строку поста. tldrEn — английский слот того же
+ * вызова: строка — записать (с titleEn, если он есть), null — модель
+ * ответила, а английский не вышел: попытка засчитывается в tldr_en_tries,
+ * и запись дождётся догона. undefined — английского не просили вовсе
+ * (прежний договор модели): его колонки не трогаются.
+ */
+export type NewsDigestWrite = {
+  tldr: string
+  scale: NewsScale
+  tldrEn?: string | null
+  titleEn?: string | null
+}
+
+/**
  * tldr = null засчитывает попытку, но не выжигает запись: три неудачи подряд
  * (нет ключа, отказ модели, битый JSON) — и запись выпадает из очереди.
+ * Английский слот — см. NewsDigestWrite; одним UPDATE с русским.
  */
 export async function setNewsDigest(
   db: Db,
   appid: number,
   gid: string,
-  digest: { tldr: string; scale: NewsScale } | null,
+  digest: NewsDigestWrite | null,
   nowSec: number,
 ): Promise<void> {
   if (digest) {
+    const en = digest.tldrEn === undefined ? null : digest.tldrEn?.trim() || ''
+    const enSet =
+      en === null
+        ? ''
+        : en
+          ? ', tldr_en = ?, tldr_en_at = ?, title_en = ?, tldr_en_tries = tldr_en_tries + 1'
+          : ', tldr_en_tries = tldr_en_tries + 1'
+    const enArgs = en ? [en, nowSec, digest.titleEn?.trim() || null] : []
     await db.execute({
-      sql: `UPDATE news_items SET tldr = ?, scale = ?, tldr_at = ?, tldr_tries = tldr_tries + 1
+      sql: `UPDATE news_items SET tldr = ?, scale = ?, tldr_at = ?, tldr_tries = tldr_tries + 1${enSet}
             WHERE appid = ? AND gid = ?`,
-      args: [digest.tldr, digest.scale, nowSec, appid, gid],
+      args: [digest.tldr, digest.scale, nowSec, ...enArgs, appid, gid],
     })
     return
   }
   await db.execute({
     sql: 'UPDATE news_items SET tldr_tries = tldr_tries + 1 WHERE appid = ? AND gid = ?',
+    args: [appid, gid],
+  })
+}
+
+/**
+ * Английский догон (getUnsummarizedEn): только английские колонки, русский
+ * пересказ и масштаб не трогаются — их решил основной пересказ. null —
+ * попытка засчитана, как и у русского: три неудачи, и запись выпадает из
+ * очереди догона.
+ */
+export async function setNewsDigestEn(
+  db: Db,
+  appid: number,
+  gid: string,
+  digest: { tldrEn: string; titleEn?: string | null } | null,
+  nowSec: number,
+): Promise<void> {
+  const tldrEn = digest?.tldrEn.trim()
+  if (tldrEn) {
+    await db.execute({
+      sql: `UPDATE news_items SET tldr_en = ?, tldr_en_at = ?, title_en = ?, tldr_en_tries = tldr_en_tries + 1
+            WHERE appid = ? AND gid = ?`,
+      args: [tldrEn, nowSec, digest?.titleEn?.trim() || null, appid, gid],
+    })
+    return
+  }
+  await db.execute({
+    sql: 'UPDATE news_items SET tldr_en_tries = tldr_en_tries + 1 WHERE appid = ? AND gid = ?',
     args: [appid, gid],
   })
 }

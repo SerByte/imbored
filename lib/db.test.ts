@@ -4669,8 +4669,8 @@ describe('версия схемы', () => {
     // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
     // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
     expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
-      version: 9,
-      columns: 40,
+      version: 10,
+      columns: 47,
     })
   })
 })
@@ -5993,6 +5993,8 @@ describe('выбор, которым поделились (/pick/<id>)', () => {
       kind: 'play',
       reason: 'Вечер на головоломки.',
       createdAt: NOW,
+      // язык ссылки — поле SharedPick с v10; без него при записи — русский
+      lang: 'ru',
     })
     expect(await getSharedPick(db, 'abcdefghjkmn', NOW + 1)).toBeNull()
     expect(await getSharedPick(db, 'nosuchpick23', 0)).toBeNull()
