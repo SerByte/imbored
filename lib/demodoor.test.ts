@@ -102,6 +102,23 @@ describe('полоса', () => {
   test('в потоке — только сама строка, без слоя', () => {
     expect(html({ from: '/library', className: 'mb-6' })).toMatch(/^<p class="[^"]*\bmb-6\b/)
   })
+
+  /*
+   * Страницы зовут полосу русским путём (from="/daily"), и на /en двери
+   * обязаны вести обратно на английскую: те же адреса, что у demoDoors от
+   * '/en/daily', — и ни слова по-русски.
+   */
+  test('на английском — по-английски, и обе двери ведут на /en', async () => {
+    const { LocaleProvider } = await import('@/components/LocaleProvider')
+    const out = renderToStaticMarkup(
+      createElement(LocaleProvider, { locale: 'en', children: createElement(DemoBar, { from: '/daily' }) }),
+    )
+    const { steam, link } = demoDoors('/en/daily')
+    expect(out).toContain(`href="${steam.replace(/&/g, '&amp;')}"`)
+    expect(out).toContain(`href="${link.replace(/&/g, '&amp;')}"`)
+    expect(out).toMatch(/>Sign in with Steam<\/a>/)
+    expect(out).not.toMatch(/[А-Яа-яЁё]/)
+  })
 })
 
 describe('полоса стоит там, где демо в момент ценности', () => {

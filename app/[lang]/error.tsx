@@ -2,8 +2,10 @@
 
 import Link from '@/components/Link'
 import { useEffect } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { LogoMark } from '@/components/Logo'
 import { clientErrorCode, isChunkLoadError, reportClientError } from '@/lib/clienterr'
+import { tr } from '@/lib/i18n'
 
 /**
  * Граница ошибок приложения. До этого любое исключение в серверном компоненте
@@ -31,6 +33,10 @@ import { clientErrorCode, isChunkLoadError, reportClientError } from '@/lib/clie
  * же экране. Перезагрузка тянет свежий HTML со ссылками на куски текущей
  * сборки (lib/clienterr, isChunkLoadError). Только по нажатию — зациклиться
  * ей не на чем.
+ *
+ * Язык — из контекста (useLocale): граница стоит под корневым layout, и его
+ * провайдер у неё есть, в отличие от app/global-error.tsx, которому язык
+ * приходится читать из адреса.
  */
 export default function Error({
   error,
@@ -39,6 +45,7 @@ export default function Error({
   error: Error & { digest?: string }
   retry: () => void
 }) {
+  const locale = useLocale()
   const code = error.digest ?? clientErrorCode(error)
   const stale = isChunkLoadError(error)
 
@@ -53,20 +60,27 @@ export default function Error({
     <div className="flex-1 flex items-center justify-center px-5 py-24">
       <div className="max-w-md w-full panel-lift p-8 text-center flex flex-col items-center gap-5 anim-reveal">
         <LogoMark size={48} />
-        <h1 className="font-display text-display-sm">Что-то сломалось</h1>
+        <h1 className="font-display text-display-sm">{tr(locale, { ru: 'Что-то сломалось', en: 'Something broke' })}</h1>
         <p className="text-dim text-sm leading-relaxed">
-          Скорее всего, это на нашей стороне. Можно попробовать ещё раз — обычно помогает.
+          {tr(locale, {
+            ru: 'Скорее всего, это на нашей стороне. Можно попробовать ещё раз — обычно помогает.',
+            en: "It's most likely on our end. Try again — that usually helps.",
+          })}
         </p>
         <button
           onClick={() => (stale ? window.location.reload() : retry())}
           className="btn-ember is-block py-3"
         >
-          {stale ? 'Обновить страницу' : 'Попробовать снова'}
+          {stale
+            ? tr(locale, { ru: 'Обновить страницу', en: 'Reload page' })
+            : tr(locale, { ru: 'Попробовать снова', en: 'Try again' })}
         </button>
         <Link href="/" className="tap text-sm text-dim hover:text-ink transition-colors">
-          На главную
+          {tr(locale, { ru: 'На главную', en: 'Back to home' })}
         </Link>
-        <span className="text-[11px] tabular-nums text-faint">код: {code}</span>
+        <span className="text-[11px] tabular-nums text-faint">
+          {tr(locale, { ru: 'код', en: 'code' })}: {code}
+        </span>
       </div>
     </div>
   )

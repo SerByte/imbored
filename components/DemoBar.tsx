@@ -2,7 +2,9 @@
 
 import Link from '@/components/Link'
 import { useEffect, useSyncExternalStore } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { demoDoors, noteDemoDoorShown } from '@/lib/demodoor'
+import { lp, tr } from '@/lib/i18n'
 import { getServerSessionHint, getSessionHint, subscribeSessionHint } from '@/lib/sessionhint'
 import { track } from '@/lib/track'
 
@@ -39,7 +41,14 @@ export function DemoBar({
   overlay?: boolean
   className?: string
 }) {
-  const doors = demoDoors(from)
+  const locale = useLocale()
+  /*
+   * Двери — от адреса страницы на её языке: страницы зовут полосу русским
+   * путём (from="/daily"), а на /en обе двери обязаны вернуть на английскую —
+   * вход через Steam с lang=en, ссылка через /en (lib/demodoor). Счёт показов
+   * — по тому же пути без языка: одна страница — один счётчик.
+   */
+  const doors = demoDoors(lp(locale, from))
 
   useEffect(() => {
     noteDemoDoorShown(from)
@@ -49,15 +58,17 @@ export function DemoBar({
     <p
       className={`pointer-events-auto max-w-xl rounded-(--radius-card) border border-edge bg-bg/70 px-4 py-2 text-xs leading-relaxed text-ink backdrop-blur sm:py-2.5 sm:text-sm ${className}`}
     >
-      <span className="font-semibold">Это чужая демо-библиотека.</span>{' '}
-      <span className="text-dim">Подбор по твоей —</span>{' '}
+      <span className="font-semibold">
+        {tr(locale, { ru: 'Это чужая демо-библиотека.', en: 'This is a demo library, not yours.' })}
+      </span>{' '}
+      <span className="text-dim">{tr(locale, { ru: 'Подбор по твоей —', en: 'For picks from yours —' })}</span>{' '}
       {/* Обычная ссылка: вход через Steam — переход на чужой сайт через наш роут */}
       <a
         href={doors.steam}
         onClick={() => track('demo_door_steam')}
         className="tap tap-tight font-semibold text-ember-text hover:underline"
       >
-        Войти через Steam
+        {tr(locale, { ru: 'Войти через Steam', en: 'Sign in with Steam' })}
       </a>
       <span aria-hidden className="text-faint">
         {' · '}
@@ -67,7 +78,7 @@ export function DemoBar({
         onClick={() => track('demo_door_link')}
         className="tap tap-tight font-semibold text-ember-text hover:underline"
       >
-        вставить ссылку
+        {tr(locale, { ru: 'вставить ссылку', en: 'paste a link' })}
       </Link>
     </p>
   )

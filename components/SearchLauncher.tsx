@@ -2,7 +2,9 @@
 
 import { useRef, useState } from 'react'
 import { Icon } from '@/components/Icon'
+import { useLocale } from '@/components/LocaleProvider'
 import { clientErrorCode, reportClientError } from '@/lib/clienterr'
+import type { Locale } from '@/lib/i18n'
 
 /**
  * Кнопка «Найти игру» — лёгкий вход в поиск по каталогу.
@@ -105,11 +107,23 @@ function loadDialog(): Promise<Dialog> {
 /**
  * Имя значка и подставки. Константой, а не двумя литералами: каждая копия
  * кириллицы — ~20 байт в первой загрузке каждой страницы.
+ *
+ * По-английски — «Search games», а не «Find a game»: ту фразу глоссарий
+ * (docs/i18n.md) отдаёт подбору, и два одинаковых имени в одной шапке звали
+ * бы в разные места. Строки обоих языков — объектом по языку, без tr():
+ * кнопка стоит в первой загрузке каждой страницы и везёт только то, что ей
+ * нужно (lib/searchlazy.test.ts).
  */
-const NAME = 'Найти игру'
+const NAME = { ru: 'Найти игру', en: 'Search games' } satisfies Record<Locale, string>
 
 /** Чанк окна не пришёл на нажатие. Одной константой — по той же причине, что NAME */
-const MISSED = 'Поиск не загрузился — обнови страницу'
+const MISSED = {
+  ru: 'Поиск не загрузился — обнови страницу',
+  en: "Search didn't load — reload the page",
+} satisfies Record<Locale, string>
+
+/** Подпись строки-поля на /games и 404 */
+const FIELD = { ru: 'Найти игру по названию', en: 'Search games by title' } satisfies Record<Locale, string>
 
 /**
  * Подставка для клавиатуры, пока чанк окна в пути (докблок выше): невидимое
@@ -137,11 +151,12 @@ const MISSED = 'Поиск не загрузился — обнови стран
  * без чего не работает: автодополнение и регистр клавиатуры поправит поле
  * окна, когда фокус перейдёт в него.
  */
-export function holdKeyboard(): HTMLInputElement {
+export function holdKeyboard(locale: Locale = 'ru'): HTMLInputElement {
   const proxy = document.createElement('input')
   proxy.setAttribute('role', 'combobox')
   proxy.setAttribute('aria-expanded', 'false')
-  proxy.setAttribute('aria-label', NAME)
+  // Подставку создаёт не React, а обработчик нажатия: язык ей передаёт кнопка
+  proxy.setAttribute('aria-label', NAME[locale])
   proxy.style.cssText = 'position:fixed;top:0;opacity:0;font-size:16px'
   proxy.addEventListener('blur', () => proxy.remove())
   document.body.append(proxy)
@@ -150,6 +165,7 @@ export function holdKeyboard(): HTMLInputElement {
 }
 
 export function SearchLauncher({ variant = 'icon' }: { variant?: 'icon' | 'field' }) {
+  const locale = useLocale()
   const opener = useRef<HTMLButtonElement>(null)
   // Компонент окна в состоянии: есть — окно открыто (см. докблок выше).
   // seed — набранное в подставку, пока чанк ехал (holdKeyboard)
@@ -168,8 +184,8 @@ export function SearchLauncher({ variant = 'icon' }: { variant?: 'icon' | 'field
         type="button"
         aria-haspopup="dialog"
         // У строки имя — её подпись; у значка подписи нет
-        aria-label={field ? undefined : NAME}
-        title={field ? undefined : missed ? MISSED : NAME}
+        aria-label={field ? undefined : NAME[locale]}
+        title={field ? undefined : missed ? MISSED[locale] : NAME[locale]}
         className={
           field
             ? 'search-field'
@@ -188,7 +204,7 @@ export function SearchLauncher({ variant = 'icon' }: { variant?: 'icon' | 'field
             return
           }
           // Синхронно, до первого await: после него жест уже кончился
-          const proxy = holdKeyboard()
+          const proxy = holdKeyboard(locale)
           loadDialog().then(
             (Dialog) => setOpen({ Dialog, seed: proxy.value }),
             // Чанк не доехал — окна нет, кнопка на месте. Моргнула связь —
@@ -212,7 +228,7 @@ export function SearchLauncher({ variant = 'icon' }: { variant?: 'icon' | 'field
         }}
       >
         <Icon name="search" size={field ? 18 : 17} />
-        {field && (missed ? MISSED : 'Найти игру по названию')}
+        {field && (missed ? MISSED[locale] : FIELD[locale])}
       </button>
       {/* Стоит всегда, текст приходит с отказом: область, вставленная
           вместе с текстом, звучит не везде (components/StatusLine). Не
@@ -221,7 +237,7 @@ export function SearchLauncher({ variant = 'icon' }: { variant?: 'icon' | 'field
           globals.css: классом, а не утилитами, — по той же причине, что
           .search-field); у строки-поля отказ и так написан на ней самой */}
       <span role="status" className={missed && !field ? 'search-miss' : 'sr-only'}>
-        {missed ? MISSED : ''}
+        {missed ? MISSED[locale] : ''}
       </span>
       {open && <open.Dialog opener={opener} seed={open.seed} onClose={() => setOpen(null)} />}
     </>
