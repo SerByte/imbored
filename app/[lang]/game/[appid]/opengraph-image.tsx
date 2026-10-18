@@ -4,11 +4,19 @@ import { reviewFacts, type GamePageData } from '@/lib/gamepage'
 import { ogFonts, ogGlow, ogNum, ogScrim, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { ogArt } from '@/lib/ogcard'
 import { getDb } from '@/lib/server'
-import { plural } from '@/lib/plural'
-import { tagRu } from '@/lib/tagsru'
-import { isLocale } from '@/lib/i18n'
+import { tagLabel } from '@/lib/tagsru'
+import { isLocale, pl, tr } from '@/lib/i18n'
 
-export const alt = 'Стоит ли играть — imbored'
+/**
+ * Подпись картинки — без языка, одна на обе версии. Next читает alt
+ * константой модуля, а не на запрос: «Стоит ли играть — imbored» стояло бы
+ * og:image:alt и у английской карточки. Перевести её можно только через
+ * generateImageMetadata, а он переносит картинку на адрес
+ * …/opengraph-image/<id>: у русской страницы сменился бы сам og:image, а он
+ * обязан остаться прежним. Имя продукта верно на любом языке, а всё, что
+ * карточка говорит словами, — на ней самой, на языке страницы.
+ */
+export const alt = 'imbored'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -93,6 +101,8 @@ export default async function Image({ params }: { params: Promise<{ lang: string
   const { lang, appid: raw } = await params
   // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
   if (!isLocale(lang)) return new Response('Not found', { status: 404 })
+  // Дальше lang — язык страницы, чью карточку рисуем: подписи и числа на нём
+  const locale = lang
   const appid = Number(raw)
   const row = Number.isInteger(appid) && appid !== 0 ? await getGamePageRow(await getDb(), appid) : null
 
@@ -129,17 +139,24 @@ export default async function Image({ params }: { params: Promise<{ lang: string
   // Тот же запасной источник, что и на самой странице: без него карточка 278
   // игр из тысячи уезжала в чат вообще без оценки.
   const facts = reviewFacts(meta, reviewsSummary)
-  // Подписи тегов по-русски — те же, что чипсами на самой странице
+  // Подписи тегов на языке страницы — те же, что чипсами на самой странице
   const tags = Object.entries(meta.tags)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
-    .map(([t]) => tagRu(t))
+    .map(([t]) => tagLabel(t, locale))
 
+  const reviews = facts
+    ? pl(locale, facts.total, { ru: ['отзыва', 'отзывов', 'отзывов'], en: ['review', 'reviews'] })
+    : ''
   const lines = [
     // «— за» в хвосте читалось как обрубленная фраза — та же правка, что на
-    // самой странице игры
+    // самой странице игры. По-английски — фраза глоссария целиком («92% of
+    // 48,213 reviews are positive»): она не длиннее русской на той же ширине
     facts
-      ? `${facts.percent}% положительных из ${ogNum(facts.total)} ${plural(facts.total, 'отзыва', 'отзывов', 'отзывов')}`
+      ? tr(locale, {
+          ru: `${facts.percent}% положительных из ${ogNum(facts.total, locale)} ${reviews}`,
+          en: `${facts.percent}% of ${ogNum(facts.total, locale)} ${reviews} ${facts.total === 1 ? 'is' : 'are'} positive`,
+        })
       : null,
     tags.length ? tags.join(' · ') : null,
   ].filter(Boolean) as string[]
@@ -201,7 +218,7 @@ export default async function Image({ params }: { params: Promise<{ lang: string
               marginBottom: 16,
             }}
           >
-            СТОИТ ЛИ ИГРАТЬ
+            {tr(locale, { ru: 'СТОИТ ЛИ ИГРАТЬ', en: 'WORTH PLAYING?' })}
           </div>
 
           {/* Отступ снизу большой намеренно — см. lib/og про кириллические выносные */}

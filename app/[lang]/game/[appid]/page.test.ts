@@ -17,6 +17,7 @@ import {
   replaceGameTags,
   setGameJson,
   setNewsDigest,
+  setNewsDigestEn,
   upsertGameMeta,
   upsertNewsItems,
   type Db,
@@ -117,8 +118,11 @@ function patch(gid: string, publishedAt: number, rank: number): StoredNews {
  * Карточка со всем, что в ней бывает зависящего от часов: скидка со сроком
  * (подпись), онлайн с отметкой замера, дата выхода (возврат), патчи с весом
  * игры, полка «Похожие» с артом.
+ *
+ * over — поля самой карточки поверх этих (английский слот описания у тестов
+ * английской версии).
  */
-async function seed(): Promise<void> {
+async function seed(over: Partial<GameMeta> = {}): Promise<void> {
   await upsertGameMeta(
     db,
     game(APPID, {
@@ -137,6 +141,7 @@ async function seed(): Promise<void> {
       publisher: 'Valve',
       ccu: 850_123,
       ccuAt: T0 - 3600,
+      ...over,
     }),
     T0,
   )
@@ -483,5 +488,117 @@ describe('«Позвать в эту игру»', () => {
     await upsertGameMeta(db, game(22, { categories: [2, 1, 9], ccu: 100 }), T0)
     expect(await partyLinks(21)).toEqual([])
     expect(await partyLinks(22)).toEqual([roomSeedHref(22)])
+  })
+})
+
+/**
+ * Английская карточка: /en/game/730 — та же страница на языке params.
+ *
+ * Русский вывод без языка прежний (тесты выше), а здесь — что на /en не
+ * остаётся русского: ни в тексте, ни в метаданных, ни в разметке, ни в
+ * пропсах островков. Блоки из текстов модели без английского слота
+ * (плюсы/минусы) не показываются вовсе, а не показываются по-русски.
+ */
+describe('английская карточка', () => {
+  const CYR = /[А-Яа-яЁё]/
+  const en = (appid = APPID) => ({ params: Promise.resolve({ appid: String(appid), lang: 'en' }) })
+
+  /** Карточка seed() с английскими слотами: описание, плюсы/минусы, пересказ патча */
+  async function seedEn(): Promise<void> {
+    await seed({ shortDescriptionEn: 'The shooter millions play.' })
+    // Соседи по-английски: кириллица на /en — только в чужих данных, а здесь их нет
+    await db.execute({ sql: "UPDATE games SET name = 'Game ' || appid WHERE appid BETWEEN 10 AND 17", args: [] })
+    await setGameJson(db, APPID, 'pros_cons_json', {
+      pros: ['стрельба'],
+      cons: ['читеры'],
+      source: 'claude',
+      en: { pros: ['gunplay'], cons: ['cheaters'] },
+    })
+    await setNewsDigestEn(db, APPID, '1', { tldrEn: 'Fixed the netcode.' }, T0)
+  }
+
+  test('заголовок — вопросом своего языка, и описание без кириллицы', async () => {
+    await seedEn()
+    const meta = await generateMetadata(en())
+    expect(meta.title).toBe('Is Counter-Strike 2 worth playing?')
+    expect(meta.openGraph?.title).toBe('Is Counter-Strike 2 worth playing?')
+    expect(meta.twitter?.title).toBe('Is Counter-Strike 2 worth playing?')
+    expect(meta.description).toMatch(/Loved for: gunplay\./)
+    expect(JSON.stringify(meta)).not.toMatch(CYR)
+  })
+
+  test('на странице, в разметке и в пропсах островков — ни буквы по-русски', async () => {
+    await seedEn()
+    lang.locale = 'en'
+    const page = await GamePage(en())
+    const text = textOf(visible(page))
+    expect(text.match(new RegExp(`.{0,30}${CYR.source}.{0,30}`, 'g'))).toBeNull()
+    // всё, что уходит в RSC-часть: пропсы островков (новости, кольцо, ценник)
+    expect(JSON.stringify(flight(page))).not.toMatch(CYR)
+    expect(JSON.stringify(jsonLdOf(flight(page)))).not.toMatch(CYR)
+  })
+
+  test('то, что видно: оценка, цена, онлайн, кнопки и подписи', async () => {
+    await seedEn()
+    lang.locale = 'en'
+    const page = visible(await GamePage(en()))
+    const text = textOf(page)
+    for (const s of [
+      'Very Positive',
+      'of 1,000 reviews',
+      '850,123',
+      'were playing',
+      'until Oct 14',
+      'Steam page',
+      'YouTube reviews',
+      'Invite to this game',
+      'Loved for',
+      'Criticized for',
+      'Summarized by AI from the most helpful Steam reviews',
+      'The shooter millions play.',
+      'More from Valve: Portal · Portal 2',
+      'Similar games',
+      'Find a game for your mood',
+      'Similar to “Counter-Strike 2”, for your mood',
+    ]) {
+      expect(text, s).toContain(s)
+    }
+    const [ring] = islandsOf(page, 'ProgressRing')
+    expect(ring.ariaLabel).toBe('90% of 1,000 reviews are positive')
+    const youtube = JSON.stringify(page).match(/youtube\.com\/results\?search_query=([^"]+)/)?.[1]
+    expect(decodeURIComponent(youtube ?? '')).toBe('Counter-Strike 2 review')
+  })
+
+  test('без английского слота плюсов и минусов — блока нет вовсе, и подписи ИИ тоже', async () => {
+    // seed() кладёт только русские плюсы и минусы
+    await seed({ shortDescriptionEn: 'The shooter millions play.' })
+    lang.locale = 'en'
+    const text = textOf(visible(await GamePage(en())))
+    expect(text).not.toContain('Loved for')
+    expect(text).not.toContain('Summarized by AI')
+    expect(text).not.toMatch(/стрельба|читеры/)
+  })
+
+  test('без английского описания абзаца нет, а не русский абзац', async () => {
+    await seed()
+    lang.locale = 'en'
+    const text = textOf(visible(await GamePage(en())))
+    expect(text).not.toContain('Шутер, в который играют миллионы.')
+  })
+
+  test('без сводки Steam подпись кольца — фразой глоссария целиком', async () => {
+    await upsertGameMeta(db, game(APPID, { name: 'Ori', reviewsPercent: 80, reviewsTotal: 1 }), T0)
+    lang.locale = 'en'
+    expect(textOf(visible(await GamePage(en())))).toContain('of 1 review is positive')
+  })
+
+  test('новости патчей — с английским заголовком и пересказом только при tldr_en', async () => {
+    await seedEn()
+    lang.locale = 'en'
+    const [news] = islandsOf(flight(await GamePage(en())), 'GameNews')
+    const items = news.items as Array<{ gid: string; title: string; tldr?: string }>
+    expect(items.find((i) => i.gid === '1')?.tldr).toBe('Fixed the netcode.')
+    expect(items.find((i) => i.gid === '2')).not.toHaveProperty('tldr')
+    for (const i of items) expect(i.title).not.toMatch(CYR)
   })
 })
