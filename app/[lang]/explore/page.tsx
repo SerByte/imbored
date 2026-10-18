@@ -1,6 +1,7 @@
 'use client'
 
 import Link from '@/components/Link'
+import { useLocale } from '@/components/LocaleProvider'
 import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { GameCardBody } from '@/components/GameCard'
@@ -23,6 +24,7 @@ import {
   putBack,
 } from '@/lib/explore'
 import { focusAdrift } from '@/lib/focushandoff'
+import { lp, tr, withLang, type Locale } from '@/lib/i18n'
 import { inTurn } from '@/lib/unlike'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { isNeedSteam, writerStore } from '@/lib/writer'
@@ -33,25 +35,49 @@ import { isNeedSteam, writerStore } from '@/lib/writer'
  * Тот же разбор, что у /play и /daily (сторож lib/failscreens.test.ts): под
  * 409 живут «нет снимка библиотеки» и «листать нечего», и советы у них
  * противоположные. Код читается из тела ответа.
+ *
+ * Тексты — на каждом языке свой разбор тех же кодов (FAILS[locale]).
  */
-const FAIL: Record<string, { title: string; text: string }> = {
-  nolibrary: {
-    title: 'Библиотека не доехала',
-    text: 'Steam не отдал список игр. Чаще всего его прячут настройки профиля — и это чинится за минуту.',
+type FailCopy = { title: string; text: string }
+
+const FAILS: Record<Locale, Record<string, FailCopy>> = {
+  ru: {
+    nolibrary: {
+      title: 'Библиотека не доехала',
+      text: 'Steam не отдал список игр. Чаще всего его прячут настройки профиля — и это чинится за минуту.',
+    },
+    nocandidates: {
+      title: 'Листать пока нечего',
+      text: 'Всё, что подошло бы, ты уже пролистал или убрал в бан. Пролистанное вернётся через неделю — а пока можно подобрать игру под настроение.',
+    },
+    ratelimited: {
+      title: 'Слишком часто',
+      text: 'Колода собирается из всей библиотеки, и на это стоит потолок. Вернись через несколько минут.',
+    },
+    // Листать было бы что, но всё — под «Не предлагать» (lib/mutetags.ts).
+    // Фильтр живёт на квизе, куда ведёт «Подобрать под настроение» под текстом
+    muted: {
+      title: 'Всё под «Не предлагать»',
+      text: 'Всё, что легло бы в колоду, попало под «Не предлагать». Фильтр меняется на экране настроения.',
+    },
   },
-  nocandidates: {
-    title: 'Листать пока нечего',
-    text: 'Всё, что подошло бы, ты уже пролистал или убрал в бан. Пролистанное вернётся через неделю — а пока можно подобрать игру под настроение.',
-  },
-  ratelimited: {
-    title: 'Слишком часто',
-    text: 'Колода собирается из всей библиотеки, и на это стоит потолок. Вернись через несколько минут.',
-  },
-  // Листать было бы что, но всё — под «Не предлагать» (lib/mutetags.ts).
-  // Фильтр живёт на квизе, куда ведёт «Подобрать под настроение» под текстом
-  muted: {
-    title: 'Всё под «Не предлагать»',
-    text: 'Всё, что легло бы в колоду, попало под «Не предлагать». Фильтр меняется на экране настроения.',
+  en: {
+    nolibrary: {
+      title: "Your library didn't come through",
+      text: "Steam didn't send your game list. Usually your profile's privacy settings hide it — a one-minute fix.",
+    },
+    nocandidates: {
+      title: 'Nothing to browse yet',
+      text: "You've already swiped or hidden everything that would fit. Skipped games come back in a week — for now, you can pick a game by mood.",
+    },
+    ratelimited: {
+      title: 'Too many tries',
+      text: "The deck is built from your whole library, and there's a limit on that. Come back in a few minutes.",
+    },
+    muted: {
+      title: "Everything is under “Don't suggest”",
+      text: "Everything that would go in the deck is under “Don't suggest”. You can change the filter on the mood screen.",
+    },
   },
 }
 
@@ -59,17 +85,32 @@ const FAIL: Record<string, { title: string; text: string }> = {
  * Сеть, пятисотка, оборванный ответ, потолок ожидания (EXPLORE_WAIT_MS).
  * Единственный отказ, у которого есть «Попробовать снова»: у остальных
  * повтор вернёт тот же 409 или 429 (lib/failscreens.test.ts).
+ *
+ * По объекту на язык, и каждый — один на всю жизнь модуля: кнопку повтора
+ * решает сравнение fail === FAIL_UNKNOWN, а не текст.
  */
-const FAIL_UNKNOWN = {
-  title: 'Не получилось собрать колоду',
-  text: 'Похоже, что-то сломалось по дороге — попробуй ещё раз.',
+const FAILS_UNKNOWN: Record<Locale, FailCopy> = {
+  ru: {
+    title: 'Не получилось собрать колоду',
+    text: 'Похоже, что-то сломалось по дороге — попробуй ещё раз.',
+  },
+  en: {
+    title: "Couldn't build the deck",
+    text: 'Something seems to have broken along the way — try again.',
+  },
 }
 
 /**
  * «Интересно» и «Мимо», а не «Играем!» и «Не хочу»: в колоде исследователя
  * никто ничего не обещает — это и есть «без обязательств».
+ *
+ * По-английски — Into it / Skip (глоссарий): кнопки голоса замерены, и
+ * английская подпись не длиннее русской.
  */
-const LABELS: DeckLabels = { yes: 'Интересно', no: 'Мимо' }
+const LABELS: Record<Locale, DeckLabels> = {
+  ru: { yes: 'Интересно', no: 'Мимо' },
+  en: { yes: 'Into it', no: 'Skip' },
+}
 
 /**
  * Плитка полки из карты колоды — приглянувшееся только что, ещё до сервера.
@@ -94,7 +135,13 @@ function shelfOf(card: DeckCard): ShelfCard {
 }
 
 export default function ExplorePage() {
+  const locale = useLocale()
   const router = useLocaleRouter()
+  /** Разбор отказов на языке страницы — те же объекты на каждый рендер (см. FAILS_UNKNOWN) */
+  const FAIL = FAILS[locale]
+  const FAIL_UNKNOWN = FAILS_UNKNOWN[locale]
+  /** Адрес колоды с языком (withLang): причины и подписи карт — на языке страницы, ключ кэша — адрес */
+  const deckUrl = withLang('/api/explore', locale)
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
   /**
    * Код отказа из тела ответа: nolibrary, nocandidates, muted (всё под «Не
@@ -102,7 +149,9 @@ export default function ExplorePage() {
    */
   const [reason, setReason] = useState<string | null>(null)
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
-  const [message, setMessage] = useState('Изучаю твою библиотеку…')
+  const [message, setMessage] = useState(() =>
+    tr(locale, { ru: 'Изучаю твою библиотеку…', en: 'Looking through your library…' }),
+  )
   const [cards, setCards] = useState<ExploreCard[]>([])
   const [deckTotal, setDeckTotal] = useState(0)
   const [voted, setVoted] = useState(0)
@@ -200,7 +249,8 @@ export default function ExplorePage() {
           .catch(() => null)
         // replace, а не push: запись /explore без сессии мертва, и «Назад» с
         // лендинга снова открывал её — 401 — и снова уводил на лендинг. Дальше
-        // /explore назад было не уйти, к квизу или чужому пику тоже
+        // /explore назад было не уйти, к квизу или чужому пику тоже. Лендинг —
+        // на языке страницы: префикс к '/?next=…' ставит useLocaleRouter
         if (res.status === 401) {
           if (!signal.aborted) router.replace(bounceTo('/explore'))
           return 'gone'
@@ -241,9 +291,9 @@ export default function ExplorePage() {
     const ac = new AbortController()
     const { signal } = ac
     const deal = async () => {
-      setMessage('Собираю колоду…')
+      setMessage(tr(locale, { ru: 'Собираю колоду…', en: 'Dealing your deck…' }))
       try {
-        await show(await fetch('/api/explore', { signal: exploreSignal(signal) }), signal)
+        await show(await fetch(deckUrl, { signal: exploreSignal(signal) }), signal)
       } catch {
         // Потолок обрывает запрос, но не страницу: signal цел, и это отказ
         if (!signal.aborted) setPhase('error')
@@ -255,7 +305,7 @@ export default function ExplorePage() {
         signal,
         onProgress: (p) => {
           setPrep(p)
-          if (p.remaining > 0) setMessage(remainingLine(p.remaining))
+          if (p.remaining > 0) setMessage(remainingLine(p.remaining, locale))
         },
         onYield: () => {
           first = deal()
@@ -293,7 +343,7 @@ export default function ExplorePage() {
     setDealing(true)
     const miss = (code: string | null) => setRedealMiss((FAIL[code ?? ''] ?? FAIL_UNKNOWN).text)
     try {
-      const res = await fetch('/api/explore', { signal: exploreSignal(ac.signal) })
+      const res = await fetch(deckUrl, { signal: exploreSignal(ac.signal) })
       setDealFocus(keyboard && focusAdrift(document, deckEnd.current))
       await show(res, ac.signal, miss)
     } catch {
@@ -333,7 +383,7 @@ export default function ExplorePage() {
     setRetrying(true)
     let gone = false
     try {
-      const res = await fetch('/api/explore', { signal: exploreSignal(ac.signal) })
+      const res = await fetch(deckUrl, { signal: exploreSignal(ac.signal) })
       setDealFocus(keyboard && focusAdrift(document, failBox.current))
       gone = (await show(res, ac.signal)) === 'gone'
     } catch {
@@ -445,7 +495,7 @@ export default function ExplorePage() {
     setUndone((n) => n + 1)
     // Колода встаёт заново, но это не «новая колода»: фокус ей отдаёт undo, а не redeal
     setDealFocus(false)
-    setSaid(`«${card.name}» снова в колоде`)
+    setSaid(tr(locale, { ru: `«${card.name}» снова в колоде`, en: `“${card.name}” is back in the deck` }))
     if (keyboard) pendingFocus.current = 'deck'
   }
 
@@ -548,7 +598,9 @@ export default function ExplorePage() {
           {/* Проверка — входом через Steam, как на /play: снимок пишет вход. */}
           {reason === 'nolibrary' && (
             <div className="max-w-md text-left">
-              <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor('/explore')} />
+              {/* Вход — с языком страницы: lp даёт /en/explore, и steamLoginFor
+                  везёт lang=en через Steam и обратно */}
+              <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor(lp(locale, '/explore'))} />
             </div>
           )}
           {/* aria-disabled, а не disabled: неудача повтора оставляет экран как
@@ -560,16 +612,16 @@ export default function ExplorePage() {
               aria-disabled={retrying}
               className="tap cursor-pointer text-sm text-ember-text hover:underline aria-disabled:opacity-50"
             >
-              {retrying ? 'Пробую…' : 'Попробовать снова'}
+              {retrying ? tr(locale, { ru: 'Пробую…', en: 'Trying…' }) : tr(locale, { ru: 'Попробовать снова', en: 'Try again' })}
             </button>
           )}
           {reason === 'nolibrary' ? (
             <Link href={reconnectHref()} className="btn-ember px-6 py-3">
-              Подключить заново
+              {tr(locale, { ru: 'Подключить заново', en: 'Reconnect' })}
             </Link>
           ) : (
             <Link href="/quiz" className="tap link-more">
-              Подобрать под настроение
+              {tr(locale, { ru: 'Подобрать под настроение', en: 'Pick by mood' })}
               <Icon name="arrow" size={16} />
             </Link>
           )}
@@ -589,7 +641,10 @@ export default function ExplorePage() {
   const undoButton = lastSkip && (
     <button type="button" onClick={(e) => undo(e.detail === 0)} className="tap link-more max-w-full">
       <Icon name="back" size={14} />
-      <span className="min-w-0 truncate">Вернуть «{lastSkip.name}»</span>
+      {/* Один ряд с многоточием и на английском: длинное имя обрезается, а не переносится */}
+      <span className="min-w-0 truncate">
+        {tr(locale, { ru: `Вернуть «${lastSkip.name}»`, en: `Bring back “${lastSkip.name}”` })}
+      </span>
     </button>
   )
 
@@ -613,17 +668,24 @@ export default function ExplorePage() {
     */}
     <div className="flex-1 mx-auto w-full max-w-6xl px-safe pt-28 pb-16 grid max-md:content-start gap-8 md:grid-cols-[minmax(0,440px)_minmax(0,1fr)] md:grid-rows-[auto_1fr] md:gap-x-14">
       <div className="flex flex-col gap-2 md:col-start-2 md:row-start-1 md:pt-4">
-        <h1 className="font-display text-display-sm">Полистать без обязательств</h1>
+        <h1 className="font-display text-display-sm">
+          {tr(locale, { ru: 'Полистать без обязательств', en: 'Browse, no strings attached' })}
+        </h1>
         <p className="text-sm text-dim leading-relaxed">
-          Своё и из магазина вперемешку, без вопросов о настроении. «Мимо» ничего не
-          прячет и не портит подбор — а «Интересно» кладёт игру на полку ниже.
+          {tr(locale, {
+            ru: 'Своё и из магазина вперемешку, без вопросов о настроении. «Мимо» ничего не прячет и не портит подбор — а «Интересно» кладёт игру на полку ниже.',
+            en: "Your games and store finds, mixed, with no mood questions. “Skip” hides nothing and doesn't affect your picks — “Into it” puts the game on the shelf below.",
+          })}
         </p>
         {readOnly && (
           <p className="text-sm text-dim">
-            Листать можно и так, но полка запомнится только до закрытия вкладки.
+            {tr(locale, {
+              ru: 'Листать можно и так, но полка запомнится только до закрытия вкладки.',
+              en: 'You can browse anyway, but the shelf only lasts until you close this tab.',
+            })}
           </p>
         )}
-        {readOnly && <NeedSteam from="/explore" />}
+        {readOnly && <NeedSteam from={lp(locale, '/explore')} />}
       </div>
 
       {/*
@@ -662,7 +724,7 @@ export default function ExplorePage() {
           votedCount={voted}
           deckTotal={deckTotal}
           alone
-          labels={LABELS}
+          labels={LABELS[locale]}
           nowSec={nowSec}
           initialFocus={dealFocus ? 'yes' : null}
         />
@@ -672,7 +734,7 @@ export default function ExplorePage() {
               голоса (pendingFocus 'end') и объявляет, что колода кончилась.
               Кольцо не снимается — фокус сюда приходит с клавиатуры */}
           <h2 ref={deckEndHead} tabIndex={-1} className="text-lg">
-            Колода кончилась
+            {tr(locale, { ru: 'Колода кончилась', en: "That's the whole deck" })}
           </h2>
           {/* «На полке», а не «ниже»: с md полка стоит колонкой справа, и под
               панелью пусто — направление верно только на телефоне. «Всё, что
@@ -681,8 +743,14 @@ export default function ExplorePage() {
               без существительного «любую» не с чем согласовать */}
           <p className="text-sm text-dim max-w-md leading-relaxed">
             {liked.length
-              ? 'Всё, что зацепило, — на полке «Приглянулось»: открой любую игру — там и трейлер, и кадры, и цена.'
-              : 'Ничего не зацепило — это тоже ответ. Можно взять ещё колоду или подобрать под настроение.'}
+              ? tr(locale, {
+                  ru: 'Всё, что зацепило, — на полке «Приглянулось»: открой любую игру — там и трейлер, и кадры, и цена.',
+                  en: 'Everything that hooked you is on the “Caught your eye” shelf: open any game for its trailer, screenshots and price.',
+                })
+              : tr(locale, {
+                  ru: 'Ничего не зацепило — это тоже ответ. Можно взять ещё колоду или подобрать под настроение.',
+                  en: "Nothing hooked you — that's an answer too. Take another deck or pick by mood.",
+                })}
           </p>
           <div className="flex flex-wrap justify-center items-center gap-4">
             {/* aria-disabled, а не disabled: на отказе панель остаётся, и
@@ -694,10 +762,10 @@ export default function ExplorePage() {
               aria-disabled={dealing}
               className="btn-ember px-6 py-3 aria-disabled:opacity-50"
             >
-              {dealing ? 'Собираю…' : 'Ещё колоду'}
+              {dealing ? tr(locale, { ru: 'Собираю…', en: 'Dealing…' }) : tr(locale, { ru: 'Ещё колоду', en: 'Another deck' })}
             </button>
             <Link href="/quiz" className="tap link-more">
-              Подобрать под настроение <Icon name="arrow" size={14} />
+              {tr(locale, { ru: 'Подобрать под настроение', en: 'Pick by mood' })} <Icon name="arrow" size={14} />
             </Link>
           </div>
           <p role="status" className="text-sm text-danger max-w-md">
@@ -719,7 +787,7 @@ export default function ExplorePage() {
       {(liked.length > 0 || shelfTouched) && (
         <section aria-labelledby="explore-shelf" className="flex flex-col gap-4 md:col-start-2 md:row-start-2">
           <SectionLabel>
-            <span id="explore-shelf">Приглянулось</span>
+            <span id="explore-shelf">{tr(locale, { ru: 'Приглянулось', en: 'Caught your eye' })}</span>
           </SectionLabel>
           {/*
             Отказ «Убрать» скринридеру говорит строка полки, а не плитки:
@@ -730,7 +798,12 @@ export default function ExplorePage() {
           */}
           <StatusLine
             text={
-              unlikeMissName ? `Не вышло — «${unlikeMissName}» осталась на полке. Попробуй ещё раз.` : null
+              unlikeMissName
+                ? tr(locale, {
+                    ru: `Не вышло — «${unlikeMissName}» осталась на полке. Попробуй ещё раз.`,
+                    en: `Didn't work — “${unlikeMissName}” is still on the shelf. Try again.`,
+                  })
+                : null
             }
             className="sr-only"
           />
@@ -739,7 +812,10 @@ export default function ExplorePage() {
               переезжает, а область, родившаяся вместе с текстом, звучит не везде */}
           {liked.length === 0 && (
             <p ref={shelfEmpty} tabIndex={-1} className="text-sm text-dim">
-              С полки всё убрано. «Интересно» в колоде положит сюда новое.
+              {tr(locale, {
+                ru: 'С полки всё убрано. «Интересно» в колоде положит сюда новое.',
+                en: 'The shelf is empty. “Into it” in the deck will put new games here.',
+              })}
             </p>
           )}
           <div className="grid grid-cols-2 gap-x-4 gap-y-6">
@@ -761,7 +837,7 @@ export default function ExplorePage() {
                     corner={<DiscountCorner discount={c.discount} />}
                     meta={
                       c.owned ? (
-                        <span className="truncate">в библиотеке</span>
+                        <span className="truncate">{tr(locale, { ru: 'в библиотеке', en: 'in your library' })}</span>
                       ) : (
                         <PriceTag
                           priceFinal={c.priceFinal}
@@ -787,15 +863,18 @@ export default function ExplorePage() {
                     else unlikeButtons.current.delete(c.appid)
                   }}
                   onClick={() => void unlike(c)}
-                  aria-label={`Убрать «${c.name}» с полки`}
+                  aria-label={tr(locale, {
+                    ru: `Убрать «${c.name}» с полки`,
+                    en: `Remove “${c.name}” from the shelf`,
+                  })}
                   className="pill mt-3 self-start"
                 >
-                  Убрать
+                  {tr(locale, { ru: 'Убрать', en: 'Remove' })}
                 </button>
                 {/* Для глаза: скринридеру отказ уже сказала строка полки */}
                 {unlikeMiss === c.appid && (
                   <p aria-hidden className="pt-2 text-[11px] text-danger">
-                    Не вышло — попробуй ещё раз
+                    {tr(locale, { ru: 'Не вышло — попробуй ещё раз', en: "Didn't work — try again" })}
                   </p>
                 )}
               </div>
@@ -813,7 +892,7 @@ export default function ExplorePage() {
               }}
               className="tap link-more self-start"
             >
-              Показать все · <span className="tabular-nums">{liked.length}</span>
+              {tr(locale, { ru: 'Показать все', en: 'Show all' })} · <span className="tabular-nums">{liked.length}</span>
               <Icon name="down" size={14} />
             </button>
           )}
