@@ -12,9 +12,9 @@ import { isMultiplayerMeta } from '@/lib/recommend'
 import { quizHref, roomSeedHref } from '@/lib/presets'
 import { seedable } from '@/lib/roomseed'
 import { pickCopy, quoted } from '@/lib/sharedpick'
-import { lp, toLocale } from '@/lib/i18n'
+import { lp, toLocale, tr, type Locale } from '@/lib/i18n'
 import { localeAlternates, ogSite } from '@/lib/site'
-import { loadSharedPick, pickHasNear } from './load'
+import { loadSharedPick, pickHasNear, reasonOn } from './load'
 
 /*
  * Одна точечная выборка по ключу и строка игры. Динамическая, а не ISR:
@@ -29,8 +29,13 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const { id, lang } = await params
   const locale = toLocale(lang)
   const got = await loadOnce(id)
-  const { title, description } = pickCopy(
-    got ? { name: got.meta.name, reason: got.pick.reason, kind: got.pick.kind } : null,
+  // Причина — только на языке страницы (reasonOn): на чужом заголовок
+  // называет игру, а описание — общее обещание сайта, без чужой фразы
+  const reason = got ? reasonOn(got.pick, locale) : null
+  const { title } = pickCopy(got ? { name: got.meta.name, reason: reason ?? '', kind: got.pick.kind } : null, locale)
+  const { description } = pickCopy(
+    got && reason !== null ? { name: got.meta.name, reason, kind: got.pick.kind } : null,
+    locale,
   )
   const url = `/pick/${id.toLowerCase()}`
   return {
@@ -53,10 +58,16 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   }
 }
 
-/** Откуда игра — без местоимений: род того, кто выбирал, неизвестен */
-function sourceLine(source: string, appid: number): string {
-  if (appid < 0) return 'Из библиотеки — игра другого магазина'
-  return source === 'new' ? 'Из магазина Steam — ещё не куплена' : 'Из своей библиотеки Steam'
+/**
+ * Откуда игра — без местоимений: род того, кто выбирал, неизвестен. По-английски
+ * род не нужен — «their» про того, кто прислал ссылку.
+ */
+function sourceLine(source: string, appid: number, locale: Locale): string {
+  if (appid < 0)
+    return tr(locale, { ru: 'Из библиотеки — игра другого магазина', en: 'From their library — a game from another store' })
+  return source === 'new'
+    ? tr(locale, { ru: 'Из магазина Steam — ещё не куплена', en: 'From the Steam store — not bought yet' })
+    : tr(locale, { ru: 'Из своей библиотеки Steam', en: 'From their own Steam library' })
 }
 
 /**
@@ -67,12 +78,20 @@ function sourceLine(source: string, appid: number): string {
  * ценового хвоста (lib/sharedpick shareText). Имени того, кто выбирал, и
  * steamid здесь нет — только непрозрачный id в адресе.
  */
-export default async function PickPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params
+export default async function PickPage({ params }: { params: Promise<{ id: string; lang?: string }> }) {
+  // Язык — из params: у страницы есть тесты, а next/root-params в vitest
+  // бросает при импорте. Без lang (тест, вызов вне маршрута) — русский
+  const { id, lang } = await params
+  const locale = toLocale(lang)
   const got = await loadOnce(id)
   if (!got) notFound()
   const { pick, meta } = got
-  const eyebrow = pick.kind === 'daily' ? 'Моя игра дня' : 'imbored выбрал мне на вечер'
+  const eyebrow =
+    pick.kind === 'daily'
+      ? tr(locale, { ru: 'Моя игра дня', en: 'My game of the day' })
+      : tr(locale, { ru: 'imbored выбрал мне на вечер', en: 'imbored picked my game for tonight' })
+  // Цитата — только на языке страницы (reasonOn): на чужом — игра, откуда она и приглашение
+  const reason = reasonOn(pick, locale)
   const near = await pickHasNear(meta)
 
   return (
@@ -103,19 +122,24 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
         <div className="relative mx-auto w-full max-w-6xl px-safe pb-14 pt-40">
           <div className="flex max-w-xl flex-col">
             <Eyebrow className="mb-3">
-              {eyebrow} · {dayLabel(dayKey(pick.createdAt))}
+              {eyebrow} · {dayLabel(dayKey(pick.createdAt), locale)}
             </Eyebrow>
             {/* Кегль героя игры, как на /play и /daily: крупнее одно длинное
                 слово названия на телефоне не помещается */}
             <h1 className="font-display text-display-lg [overflow-wrap:anywhere]">{meta.name}</h1>
-            <blockquote className="mt-5 text-lg leading-relaxed text-ink">{quoted(pick.reason)}</blockquote>
-            <p className="mt-3 text-sm text-dim">{sourceLine(pick.source, meta.appid)}</p>
+            {reason !== null && (
+              <blockquote className="mt-5 text-lg leading-relaxed text-ink">{quoted(reason, locale)}</blockquote>
+            )}
+            {/* Без цитаты строка о том, откуда игра, встаёт под названием на место отступа цитаты */}
+            <p className={reason !== null ? 'mt-3 text-sm text-dim' : 'mt-5 text-sm text-dim'}>
+              {sourceLine(pick.source, meta.appid, locale)}
+            </p>
           </div>
         </div>
       </section>
 
       <section className="mx-auto flex w-full max-w-6xl flex-col items-start gap-5 px-safe py-14">
-        <h2 className="font-display text-display-sm">А тебе?</h2>
+        <h2 className="font-display text-display-sm">{tr(locale, { ru: 'А тебе?', en: 'Your turn?' })}</h2>
         {/*
           Сначала — чей это выбор. Адресат видел героя на весь экран и мог
           прочесть его как совет себе, а игру выбирали по чужой библиотеке и
@@ -125,14 +149,16 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
           ещё нет (sourceLine выше).
         */}
         <p className="max-w-md text-sm leading-relaxed text-dim">
-          Этот выбор — по библиотеке того, кто прислал ссылку. Тебе imbored выберет по твоей — одну
-          игру на вечер, с объяснением, почему она. Без Steam — есть демо, это минута.
+          {tr(locale, {
+            ru: 'Этот выбор — по библиотеке того, кто прислал ссылку. Тебе imbored выберет по твоей — одну игру на вечер, с объяснением, почему она. Без Steam — есть демо, это минута.',
+            en: "This pick is based on the library of whoever sent the link. imbored will pick from yours — one game for tonight, with why it's the one. No Steam? There's a demo; it takes a minute.",
+          })}
         </p>
         <div className="flex flex-wrap items-center gap-4">
           {/* Квиз открыт любому: гостя он сам доведёт до входа или демо,
               а /quiz не пункт назначения, и bounceTo свёл бы его к главной */}
           <Link href="/quiz" className="btn-ember px-6 py-3">
-            Выбери мне игру
+            {tr(locale, { ru: 'Выбери мне игру', en: 'Pick a game for me' })}
           </Link>
           {/*
             Мост от чужой игры к своей библиотеке. Голый /quiz выше начинает с
@@ -146,13 +172,17 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
           */}
           {near && (
             <Link href={quizHref(null, meta.appid)} className="tap link-more">
-              Похожее на «{meta.name}» — по моей библиотеке
+              {locale === 'en' ? (
+                <>Similar to “{meta.name}” — from my library</>
+              ) : (
+                <>Похожее на «{meta.name}» — по моей библиотеке</>
+              )}
               <Icon name="arrow" size={16} />
             </Link>
           )}
           {meta.appid > 0 && (
             <Link href={`/game/${meta.appid}`} className="tap link-more">
-              Об игре
+              {tr(locale, { ru: 'Об игре', en: 'About the game' })}
               <Icon name="arrow" size={16} />
             </Link>
           )}
@@ -172,7 +202,9 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
               prefetch={false}
               className="tap link-more"
             >
-              {seedable(meta) ? 'Позвать в эту игру' : 'Позвать в пати'}
+              {seedable(meta)
+                ? tr(locale, { ru: 'Позвать в эту игру', en: 'Invite to this game' })
+                : tr(locale, { ru: 'Позвать в пати', en: 'Invite friends' })}
               <Icon name="arrow" size={16} />
             </Link>
           )}

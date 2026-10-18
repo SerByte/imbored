@@ -4,10 +4,16 @@ import { ogFonts, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { ArtBackdrop, ogArt } from '@/lib/ogcard'
 import { CANVAS_WIDE } from '@/lib/ogwall'
 import { pickCopy, quoted } from '@/lib/sharedpick'
-import { loadSharedPick } from './load'
-import { isLocale } from '@/lib/i18n'
+import { loadSharedPick, reasonOn } from './load'
+import { isLocale, tr } from '@/lib/i18n'
 
-export const alt = 'Выбор на вечер — imbored'
+/*
+ * Подпись картинки — без языка: alt — статический экспорт, один на обе версии
+ * страницы, а generateImageMetadata сменил бы адрес карточки (…/opengraph-image/<id>)
+ * у уже разосланных ссылок. Имя бренда читается одинаково на обоих языках;
+ * что на картинке, говорят og:title и og:description страницы.
+ */
+export const alt = 'imbored'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -26,13 +32,18 @@ export async function generateStaticParams(): Promise<Array<Record<string, strin
  * Карточка выбора в чате: арт игры во весь холст, над ним — «imbored выбрал
  * мне на вечер», название и начало объяснения. Цены нет — ссылка живёт
  * месяц. Выбора нет (истёк, удалён) — приглашение без игры.
+ *
+ * Слова — на языке карточки (/en/pick/<id>/opengraph-image — английская), а
+ * объяснение — только если оно на том же языке (reasonOn): чужая фраза в
+ * превью читалась бы так же сбоем, как на самой странице.
  */
 export default async function Image({ params }: { params: Promise<{ lang: string; id: string }> }) {
   const { lang, id } = await params
   // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
   if (!isLocale(lang)) return new Response('Not found', { status: 404 })
   const got = await loadSharedPick(id)
-  const copy = pickCopy(got ? { name: got.meta.name, reason: got.pick.reason, kind: got.pick.kind } : null)
+  const reason = got ? reasonOn(got.pick, lang) : null
+  const copy = pickCopy(got ? { name: got.meta.name, reason: reason ?? '', kind: got.pick.kind } : null, lang)
   const art = got ? await ogArt(got.meta) : null
 
   return new ImageResponse(
@@ -63,11 +74,11 @@ export default async function Image({ params }: { params: Promise<{ lang: string
           <div style={{ fontSize: 20, letterSpacing: 6, color: OG_EMBER, marginBottom: 18 }}>{copy.eyebrow}</div>
           {/* Запас снизу — под хвосты кириллицы (см. карточку портрета) */}
           <div style={{ fontSize: 72, lineHeight: 1.12, marginBottom: 22 }}>
-            {got ? got.meta.name.slice(0, 40) : 'Одна игра на вечер'}
+            {got ? got.meta.name.slice(0, 40) : tr(lang, { ru: 'Одна игра на вечер', en: 'One game for tonight' })}
           </div>
-          {got && (
+          {reason !== null && (
             <div style={{ fontSize: 26, lineHeight: 1.35, color: OG_INK, marginBottom: 22, maxWidth: 1000 }}>
-              {quoted(clip(got.pick.reason, 140) ?? got.pick.reason.slice(0, 140))}
+              {quoted(clip(reason, 140) ?? reason.slice(0, 140), lang)}
             </div>
           )}
           <div style={{ fontSize: 20, color: OG_DIM }}>{copy.foot}</div>
