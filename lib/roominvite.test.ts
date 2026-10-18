@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { ROOM_PRESETS } from './presets'
+import { memberLabel } from './room'
 import { DOOR_NAMES, inviteCopy, inviteDoor, NEW_ROOM_HINT, newRoomHint, type RoomInvite } from './roominvite'
 
 const open: RoomInvite = {
@@ -426,6 +427,55 @@ describe('превью приглашения по-английски', () => {
       expect(t).not.toMatch(/party ABC234/)
     }
   })
+
+  /*
+   * Демо-личность пишется в базу русской подписью («Демо-игрок»), а хост
+   * демо-пати — обычное дело: экран входа предлагает «Демо-друга». Превью
+   * называет его по-английски тем же словом, что ростер (memberLabel), — по
+   * признаку hostDemo, без steamid.
+   */
+  test('демо-хост в английском превью — «Demo player», без кириллицы', () => {
+    const demo: RoomInvite = { ...openEn, host: 'Демо-игрок', hostDemo: true }
+    const c = inviteCopy('ABC234', demo, 'en')
+    expect(c.title).toBe('Demo player invites you to Party ABC234')
+    expect(c.headline).toBe("Demo player wants to pick tonight's game")
+    expect(everything(c)).not.toMatch(CYRILLIC)
+
+    const friend = inviteCopy(
+      'ABC234',
+      { ...demo, host: 'Демо-друг', seedName: 'Valheim', preset: 'Уютно и надолго' },
+      'en',
+    )
+    expect(friend.title).toBe('Demo friend invites you to “Valheim” · Party ABC234')
+    expect(friend.headline).toBe('Demo friend invites you to “Valheim”')
+    expect(everything(friend)).not.toMatch(CYRILLIC)
+
+    const quick = inviteCopy('ABC234', { ...demo, preset: 'Пара быстрых каток' }, 'en')
+    expect(quick.headline).toBe('Demo player: a few quick rounds')
+    expect(everything(quick)).not.toMatch(CYRILLIC)
+  })
+
+  test('без признака демо ник — как записан: живой «Демо-игрок» остаётся собой', () => {
+    const live = inviteCopy('ABC234', { ...openEn, host: 'Демо-игрок' }, 'en')
+    expect(live.title).toBe('Демо-игрок invites you to Party ABC234')
+    expect(inviteCopy('ABC234', { ...openEn, host: 'Демо-игрок', hostDemo: false }, 'en')).toEqual(live)
+  })
+
+  test('по-русски признак демо ничего не меняет — до буквы', () => {
+    const base: RoomInvite = { ...open, host: 'Демо-игрок' }
+    for (const extra of [{}, { seedName: 'Valheim' }, { preset: 'Пара быстрых каток' }]) {
+      const inv = { ...base, ...extra }
+      expect(inviteCopy('ABC234', { ...inv, hostDemo: true })).toEqual(inviteCopy('ABC234', inv))
+      expect(inviteCopy('ABC234', { ...inv, hostDemo: true }, 'ru')).toEqual(inviteCopy('ABC234', inv))
+    }
+    expect(inviteCopy('ABC234', { ...base, hostDemo: true }).headline).toBe('Демо-игрок зовёт выбрать игру на вечер')
+  })
+
+  test('пустой ник хоста у демо — безлично, как у любого', () => {
+    const c = inviteCopy('ABC234', { ...openEn, host: '', hostDemo: true }, 'en')
+    expect(c).toEqual(inviteCopy('ABC234', { ...openEn, host: '' }, 'en'))
+    expect(c.headline).toBe("You're invited to pick tonight's game")
+  })
 })
 
 describe('экран приглашения по-английски', () => {
@@ -460,6 +510,25 @@ describe('экран приглашения по-английски', () => {
     const d = inviteDoor({ host, names: [host, 'Anna'], seed: null }, 'en')
     expect(d.title).toBe("xXx_DarkLordOfTheNi… wants to pick tonight's game")
     expect(d.here).toBe('Already here: xXx_DarkLordOfTheNi… and Anna')
+  })
+
+  test('демо-хост — по-английски и в заголовке, и в «Already here», как в ростере', () => {
+    const DEMO = '00012345678901234'
+    const FRIEND = '00012345678901235'
+    const names = [memberLabel('ABC234', DEMO, 'Демо-игрок', 'en'), memberLabel('ABC234', FRIEND, 'Демо-друг', 'en')]
+    const d = inviteDoor({ host: 'Демо-игрок', hostDemo: true, names, seed: null }, 'en')
+    expect(d).toEqual({
+      title: "Demo player wants to pick tonight's game",
+      here: 'Already here: Demo player and Demo friend',
+      seed: null,
+    })
+    for (const s of [d.title, d.here]) expect(s).not.toMatch(CYRILLIC)
+    // заголовок экрана — та же фраза, что крупная строка карточки
+    expect(d.title).toBe(inviteCopy('ABC234', { ...open, host: 'Демо-игрок', hostDemo: true }, 'en').headline)
+    // по-русски — как записано, до буквы
+    expect(inviteDoor({ host: 'Демо-игрок', hostDemo: true, names: ['Демо-игрок', 'Аня'], seed: null })).toEqual(
+      inviteDoor({ host: 'Демо-игрок', names: ['Демо-игрок', 'Аня'], seed: null }),
+    )
   })
 
   test('игра, в которую звали, — той же фразой, что в описании превью', () => {

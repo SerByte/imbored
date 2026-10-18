@@ -1,6 +1,7 @@
 import type { GameArtUrls } from './art'
 import { lp, pl, tr, type Locale } from './i18n'
 import { ROOM_PRESETS } from './presets'
+import { demoPersonaName } from './room'
 
 /**
  * Что известно о комнате тому, кто ещё в неё не вошёл, — и что из этого
@@ -19,6 +20,15 @@ export type RoomInvite = {
   members: number
   /** ник создателя, если Steam его отдал */
   host: string | null
+  /**
+   * Хост — демо-личность (isDemoId его steamid). Её ник — не из Steam, а
+   * наша подпись, записанная русской («Демо-игрок»), и английское превью
+   * называет её по-английски (demoPersonaName в lib/room) — тем же словом,
+   * что ростер. Признаком, а не steamid: превью steamid хоста не нужен.
+   * Необязательное поле: без него ник — как записан, и русское превью от
+   * него не зависит вовсе.
+   */
+  hostDemo?: boolean
   /** матч уже случился — приглашать больше некуда */
   matched: boolean
   /** на чём сошлись; null — матча нет или игры нет в каталоге */
@@ -222,8 +232,8 @@ export function inviteCopy(code: string, invite: RoomInvite | null, locale: Loca
   // «Серёга зовёт» / «Тебя зовут» — в заголовке ник целиком (ширину держит
   // браузер), в карточке — восемнадцать знаков: строка стоит кеглем 44.
   // Знаков, а не единиц UTF-16 (head): срез посреди эмодзи давал на
-  // карточке пустой квадрат
-  const host = invite.host
+  // карточке пустой квадрат. Демо-хост — на языке превью (hostName)
+  const host = hostName(invite.host, invite.hostDemo, locale)
   const hostCard = host === null ? null : head(host, 18)
   const calls = callsOf(host)
   const callsCard = callsOf(hostCard)
@@ -260,6 +270,18 @@ export function inviteCopy(code: string, invite: RoomInvite | null, locale: Loca
         : pickTonight(hostCard, locale),
     foot: `${members} ${inRoomShort} · ${tr(locale, { ru: 'подключи библиотеку и свайпай', en: 'connect your library and swipe' })}`,
   }
+}
+
+/**
+ * Ник хоста на языке страницы — одно правило на превью и на экран
+ * приглашения, и то же, что у ростера (demoPersonaName): друг читает
+ * «Demo player wants to…» над «Already here: Demo player and…», а не
+ * «Демо-игрок» над английским ростером. Пустой ник — как был, безличным
+ * «Тебя зовут»: демо-подписью пустая строка не бывает, и «Demo player» на
+ * её месте назвал бы того, кого никто не называл.
+ */
+function hostName(host: string | null, demo: boolean | undefined, locale: Locale): string | null {
+  return host ? demoPersonaName(host, demo === true, locale) : host
 }
 
 /** «Серёга зовёт» или безличное «Тебя зовут» — одно на превью и на экран приглашения */
@@ -382,19 +404,27 @@ export type InviteDoor = {
  * Английский — те же правила и те же фразы, что у превью (pickTonight,
  * seedOffer): «Already here: A, B and 2 more». Заголовок с ником не шире
  * русского (замер — у pickTonight), и в 286 px он переносится на то же число
- * строк: ширину держит ник, а не фраза.
+ * строк: ширину держит ник, а не фраза. Демо-хост — по-английски, как в
+ * превью и в ростере (hostDemo).
  */
 export function inviteDoor(
   args: {
     /** ник хоста — personaName, как у превью; null — хост ушёл или Steam ника не отдал */
     host: string | null
+    /**
+     * Хост — демо-личность (isDemoId его steamid), как RoomInvite.hostDemo:
+     * его русская подпись встаёт в английский заголовок по-английски.
+     * Необязательное: без него ник — как записан
+     */
+    hostDemo?: boolean
     /** метки всех, кто в комнате, хост первым */
     names: readonly string[]
     seed: DoorSeed | null
   },
   locale: Locale = 'ru',
 ): InviteDoor {
-  const { host, names, seed } = args
+  const { names, seed } = args
+  const host = hostName(args.host, args.hostDemo, locale)
   const shown = names.slice(0, DOOR_NAMES).map((n) => clip(n, DOOR_NAME_MAX))
   const rest = names.length - shown.length
   const and = tr(locale, { ru: 'и', en: 'and' })

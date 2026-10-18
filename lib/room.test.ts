@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   awaitingOthers,
   deckBehind,
+  demoPersonaName,
   kickHandoffDue,
   matchByLeader,
   matchLine,
@@ -557,9 +558,44 @@ describe('memberLabel по-английски', () => {
     expect(memberLabel('ABC123', DEMO, 'Демо-друг', 'en')).toBe('Demo friend')
     // ник, который человек выбрал в Steam сам, — не наша подпись
     expect(memberLabel('ABC123', SID, 'Демо-игрок', 'en')).toBe('Демо-игрок')
-    // у демо со своим именем переводить нечего
-    expect(memberLabel('ABC123', DEMO, 'Sergey', 'en')).toBe('Sergey')
+    // ник демо-личности пишем только мы: незнакомая запись — тоже «Demo
+    // player», как у personaLabel в lib/playername, а не чужая кириллица
+    expect(memberLabel('ABC123', DEMO, 'Sergey', 'en')).toBe('Demo player')
+    expect(memberLabel('ABC123', DEMO, 'Что-то', 'en')).toBe('Demo player')
     // по-русски — как хранится
     expect(memberLabel('ABC123', DEMO, 'Демо-игрок')).toBe('Демо-игрок')
+    expect(memberLabel('ABC123', DEMO, 'Sergey')).toBe('Sergey')
+  })
+})
+
+/**
+ * Правило имени демо-личности — одно на ростер и на экран приглашения, и то
+ * же, что у personaLabel (lib/playername): иначе замена одной на другую молча
+ * поменяла бы вывод, а хост в приглашении и в ростере звался бы по-разному.
+ */
+describe('demoPersonaName', () => {
+  test('по-английски демо-личность — «Demo friend» или «Demo player», что бы ни было записано', () => {
+    expect(demoPersonaName('Демо-друг', true, 'en')).toBe('Demo friend')
+    expect(demoPersonaName('Демо-игрок', true, 'en')).toBe('Demo player')
+    expect(demoPersonaName('Что-то', true, 'en')).toBe('Demo player')
+    for (const s of ['Демо-друг', 'Демо-игрок', 'Что-то']) {
+      expect(demoPersonaName(s, true, 'en')).not.toMatch(CYRILLIC)
+    }
+  })
+
+  test('живой человек и русская страница — ник как записан', () => {
+    expect(demoPersonaName('Демо-игрок', false, 'en')).toBe('Демо-игрок')
+    expect(demoPersonaName('Sergey', false, 'en')).toBe('Sergey')
+    expect(demoPersonaName('Демо-друг', true, 'ru')).toBe('Демо-друг')
+    expect(demoPersonaName('Демо-игрок', true)).toBe('Демо-игрок')
+  })
+
+  test('memberLabel зовёт то же правило', () => {
+    const DEMO = '00012345678901234'
+    for (const name of ['Демо-друг', 'Демо-игрок', 'Что-то']) {
+      for (const locale of ['ru', 'en'] as const) {
+        expect(memberLabel('ABC123', DEMO, name, locale)).toBe(demoPersonaName(name, true, locale))
+      }
+    }
   })
 })

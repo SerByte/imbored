@@ -131,7 +131,7 @@ export function waitingMode(args: {
  *
  * locale — язык того, кому отдаётся ростер: метка — интерфейс, а не ник.
  * Запасное имя — «Player ab12» с тем же хешем, и демо-личности тоже
- * называются на языке страницы (demoPersona): их имя хранится русским.
+ * называются на языке страницы (demoPersonaName): их имя хранится русским.
  */
 export function memberLabel(
   roomId: string,
@@ -139,28 +139,40 @@ export function memberLabel(
   personaName: string | null | undefined,
   locale: Locale = 'ru',
 ): string {
-  if (personaName) return demoPersona(steamid, personaName, locale)
+  if (personaName) return demoPersonaName(personaName, isDemoId(steamid), locale)
   const tail = hashString(roomId + steamid).toString(36).slice(0, 4)
   return tr(locale, { ru: `Игрок ${tail}`, en: `Player ${tail}` })
 }
 
 /**
- * Имя демо-личности на языке страницы; любое другое имя — как есть.
+ * Ник на языке страницы: у демо-личности — по-английски, у живого человека —
+ * как записан.
  *
  * «Демо-игрок» — не ник из Steam, а подпись, которую поставили мы (seedDemo
  * в lib/demo, /api/connect пишут её в users русской), и на английской
- * странице она была бы единственным русским словом в ростере. Переводится
- * только у демо-steamid (isDemoId): живой человек, назвавшийся в Steam
- * «Демо-игрок», остаётся собой. Своя пара здесь — пока у сайта нет общего
- * переводчика имён демо; появится — memberLabel зовёт его.
+ * странице она была бы единственным русским словом в ростере и в
+ * приглашении. Переводится только у демо-личности (demo — isDemoId её
+ * steamid): живой человек, назвавшийся в Steam «Демо-игрок», остаётся собой.
+ *
+ * Правило — то же, что у personaLabel в lib/playername: у демо-личности
+ * английская подпись — «Demo friend» для «Демо-друга» и «Demo player» для
+ * любого другого записанного ника. Ник демо-личности пишем только мы, и
+ * подпись обязана сказать то же, что русская на соседней вкладке, — а не
+ * пропустить кириллицу, если вход в демо когда-нибудь запишет третий.
+ * Различались бы правила — ростер и экран приглашения назвали бы одного
+ * хоста по-разному, а замена этой функции на personaLabel молча поменяла бы
+ * вывод.
+ *
+ * Признаком, а не steamid: экран приглашения и превью steamid хоста не
+ * знают и не должны (RoomInvite.hostDemo) — им хватает «это демо».
  *
  * Сравнением, а не таблицей на уровне модуля: lib/room едет в первую
- * загрузку комнаты, а memberLabel там не зовут — так бандлеру нечего
- * оставлять ради него.
+ * загрузку комнаты, а эту функцию там не зовут — так бандлеру нечего
+ * оставлять ради неё.
  */
-function demoPersona(steamid: string, name: string, locale: Locale): string {
-  if (locale !== 'en' || !isDemoId(steamid)) return name
-  return name === 'Демо-игрок' ? 'Demo player' : name === 'Демо-друг' ? 'Demo friend' : name
+export function demoPersonaName(name: string, demo: boolean, locale: Locale = 'ru'): string {
+  if (locale !== 'en' || !demo) return name
+  return name === 'Демо-друг' ? 'Demo friend' : 'Demo player'
 }
 
 const ROOM_CODE_RE = /^[A-Z0-9]{6}$/
