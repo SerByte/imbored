@@ -13,6 +13,7 @@ import { PlayersNow } from '@/components/PlayersNow'
 import { ProgressRing } from '@/components/ProgressRing'
 import { RefundNote } from '@/components/RefundNote'
 import { OwnedLaunch } from '@/components/OwnedLaunch'
+import { OwnedNear } from '@/components/OwnedNear'
 import { sitemapGames } from '@/lib/db'
 import { discountTrustedUntil, discountView, lapsedRegularPrice, trustedPrice } from '@/lib/discount'
 import { trimArt } from '@/lib/art'
@@ -302,6 +303,13 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   // кнопкой запуска значит спорить с собственным вердиктом. Часы — ради
   // пульса: свежий месяц похвал снимает «большинство отзывов отрицательные»
   const verdict = deadVerdict(meta, now)
+  /*
+   * «Похожее уже есть у тебя» (lib/ownednear) — у игры Steam, где стоит
+   * OwnedLaunch (он и спрашивает), и только при готовых соседях: полка по
+   * тегу (similarTag) значит, что таблицы соседей у игры нет, и роут
+   * искать своих будет не в чем — спрашивать незачем.
+   */
+  const nearAsk = !meta.storeUrl && !verdict && data.similar.length > 0 && !data.similarTag
   // При равных весах — по имени: тот же порядок, что у жанров в разметке
   // (gameJsonLd), иначе видимое и размеченное расходились бы на ничьих
   const topTags = Object.entries(meta.tags)
@@ -693,6 +701,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                       name={meta.name}
                       finishable={!isReplayable(meta)}
                       follow={data.similar.length > 0}
+                      near={nearAsk}
                       className="btn-glass"
                     />
                   )}
@@ -912,6 +921,10 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             GameLink без префетча: шесть холодных рендеров с записью ISR на
             каждый просмотр карточки, до которой доскроллили, — не цена за
             шесть ссылок, по которым уйдут в лучшем случае по одной. */}
+        {/* Свои из этих же соседей — над ними: до покупки сначала то, что
+            уже лежит на полке. Разметка ISR пуста, строку дорисовывает
+            островок по ответу владения (lib/ownednear) */}
+        {nearAsk && <OwnedNear appid={appid} />}
         {data.similar.length > 0 && (
           <section>
             <SectionLabel className="mb-4">

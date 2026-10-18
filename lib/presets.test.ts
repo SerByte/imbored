@@ -1,6 +1,10 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { LEANS, NEUTRAL_MOOD, parseLean, parseMood } from './mood'
+import { HUB_GENRES, hubTagOf } from './gamehub'
 import {
+  parseGenreParam,
   parseSeedParam,
   playHref,
   presetHref,
@@ -94,6 +98,30 @@ describe('playHref', () => {
   })
 })
 
+describe('parseGenreParam', () => {
+  // Форма, а не словарь (почему — в докблоке): каждый адрес страницы жанра
+  // проходит, и сервер узнаёт его обратно тем же hubTagOf
+  test('адрес любой страницы жанра проходит и узнаётся обратно', () => {
+    for (const [tag, { slug }] of Object.entries(HUB_GENRES)) {
+      expect(parseGenreParam(slug), slug).toBe(slug)
+      expect(hubTagOf(slug), slug).toBe(tag)
+    }
+  })
+
+  test('не адрес — не жанр', () => {
+    for (const raw of [null, undefined, '', 'Roguelike', 'point & click', '-x', 'x-', 'a--b', 'рогалик', 'x'.repeat(41)]) {
+      expect(parseGenreParam(raw), JSON.stringify(raw)).toBeNull()
+    }
+  })
+
+  test('жанр — в самый хвост адреса выдачи, после затравки', () => {
+    expect(playHref(NEUTRAL_MOOD, { lean: 'fresh', genre: 'roguelike' })).toBe(
+      '/play?time=medium&vibe=chill&social=solo&lean=fresh&genre=roguelike',
+    )
+    expect(playHref(NEUTRAL_MOOD, { genre: null })).toBe('/play?time=medium&vibe=chill&social=solo')
+  })
+})
+
 describe('parseSeedParam', () => {
   test('ненулевое целое — затравка, отрицательное тоже', () => {
     expect(parseSeedParam('620')).toBe(620)
@@ -133,6 +161,39 @@ describe('quizHref', () => {
     expect(parseSeedParam(new URL(quizHref(null, -7), 'https://imbored.cc').searchParams.get('seed'))).toBe(-7)
     expect(quizHref(null, null)).toBe('/quiz')
     expect(quizHref('untouched', 620)).toBe('/quiz?from=untouched')
+  })
+
+  // «Подобрать рогалики из своей библиотеки» со страницы жанра. С затравкой
+  // жанр не едет: «как Hades» уже сказало, из чего выбирать
+  test('жанр едет в квиз; при фокусе и затравке — нет', () => {
+    expect(quizHref(null, null, 'roguelike')).toBe('/quiz?genre=roguelike')
+    expect(quizHref(null, 620, 'roguelike')).toBe('/quiz?seed=620')
+    expect(quizHref('untouched', null, 'roguelike')).toBe('/quiz?from=untouched')
+  })
+
+  /*
+   * Сторож дороги жанра: страница жанра → квиз → выдача. Голый /quiz на
+   * странице жанра терял жанр ровно на входе в продукт, а квиз, забывший
+   * genre в playHref, потерял бы его на шаг позже — и ни один тест поведения
+   * этого не заметил бы: выдача ведь приходит.
+   */
+  test('страница жанра зовёт квиз с жанром, квиз несёт его в выдачу', () => {
+    const root = path.join(__dirname, '..')
+    const read = (...p: string[]) => fs.readFileSync(path.join(root, ...p), 'utf8')
+    expect(read('app', 'games', '[tag]', 'page.tsx')).toContain('href={quizHref(null, null, slug)}')
+    const quiz = read('app', 'quiz', 'page.tsx')
+    expect(quiz).toMatch(/playHref\(mood, \{[^}]*genre: genre\?\.slug,/)
+    // рулетка и «нераспакованное» жанра не несут — при жанре их кнопок нет
+    expect(quiz).toContain('{!seed && !genre && (')
+    expect(quiz).toContain('{!focus && !seed && !genre && (')
+  })
+
+  // Подпись ряда квиза не обещает «из твоей библиотеки»: магазинные в
+  // пятёрке бывают и при своих, а следующий экран честно скажет, откуда они
+  test('квиз с жанром обещает «сначала свои», а не «из твоей библиотеки»', () => {
+    const quiz = fs.readFileSync(path.join(__dirname, '..', 'app', 'quiz', 'page.tsx'), 'utf8')
+    expect(quiz).toContain('`${genre.title} — сначала свои, одним тапом:`')
+    expect(quiz).not.toMatch(/\$\{genre\.title\}[^`]*из твоей библиотеки/)
   })
 })
 

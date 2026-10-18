@@ -245,16 +245,27 @@ export function roomSeedHref(appid: number): string {
  *
  * seed — «Как «X», но…» с адреса: соседи игры X под это настроение (см.
  * parseSeedParam). Ноль и null в адрес не попадают — это «без затравки».
+ *
+ * genre — жанр со страницы /games/<slug> (см. parseGenreParam): выдача из
+ * игр этого жанра, сначала своих. Последним — за seed, по тому же правилу,
+ * что lean: прежние адреса не меняются.
  */
 export function playHref(
   mood: Mood,
-  opts: { lean?: Lean | null; focus?: Focus | null; roulette?: boolean; seed?: number | null } = {},
+  opts: {
+    lean?: Lean | null
+    focus?: Focus | null
+    roulette?: boolean
+    seed?: number | null
+    genre?: string | null
+  } = {},
 ): string {
   const q = new URLSearchParams({ time: mood.time, vibe: mood.vibe, social: mood.social })
   if (opts.roulette) q.set('roulette', '1')
   if (opts.focus) q.set('from', opts.focus)
   if (opts.lean) q.set('lean', opts.lean)
   if (opts.seed) q.set('seed', String(opts.seed))
+  if (opts.genre) q.set('genre', opts.genre)
   return `/play?${q.toString()}`
 }
 
@@ -280,6 +291,22 @@ export function parseSeedParam(raw: string | null | undefined): number | null {
 }
 
 /**
+ * Жанр из адреса — адрес страницы жанра (HUB_GENRES в lib/gamehub: «roguelike»,
+ * «point-and-click»), а не ключ тега Steam: адреса страниц не меняются
+ * никогда, и с ними в адресе нет ни пробелов, ни амперсанда «Point & Click».
+ *
+ * Здесь — только форма: латиница, цифры и дефисы, не длиннее сорока. Есть
+ * ли такая страница, решают те, кому нужен сам жанр, — сервер подбора и
+ * квиз (hubTagOf в lib/gamehub). Модуль без зависимостей не тянет ради
+ * проверки словарь тридцати жанров в лендинг, proxy.ts и /play — последний
+ * стоит у потолка бюджета первой загрузки. Незнакомый адрес доедет до
+ * сервера и будет там молча «без жанра», как опечатка в lean.
+ */
+export function parseGenreParam(raw: string | null | undefined): string | null {
+  return raw && raw.length <= 40 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(raw) ? raw : null
+}
+
+/**
  * Адрес квиза — «Изменить настроение» с выдачи и вход в «Как «X», но…» извне.
  *
  * Фокус «нераспакованное» живёт только в адресе, и голый /quiz снимал его
@@ -293,10 +320,17 @@ export function parseSeedParam(raw: string | null | undefined): number | null {
  * а гость пройдёт через него и вход как обычно. Вместе с фокусом затравка не
  * едет: «нераспакованное» уже задало вопрос, и соседи X его бы не услышали
  * (та же развилка, что у кнопки «Как «X», но…» на /play).
+ *
+ * genre — вход со страницы жанра («Подобрать рогалики из своей библиотеки»):
+ * квиз спросит настроение и понесёт жанр в playHref. С затравкой вместе не
+ * едет: «как Hades» уже сказало, из чего выбирать, и сервер всё равно взял
+ * бы затравку (см. buildCandidates). «Изменить настроение» с выдачи жанр не
+ * несёт намеренно — как шапка не несёт фокус: это выход из узкого вопроса.
  */
-export function quizHref(focus: Focus | null, seed?: number | null): string {
+export function quizHref(focus: Focus | null, seed?: number | null, genre?: string | null): string {
   if (focus) return `/quiz?from=${focus}`
-  return seed ? `/quiz?seed=${seed}` : '/quiz'
+  if (seed) return `/quiz?seed=${seed}`
+  return genre ? `/quiz?genre=${genre}` : '/quiz'
 }
 
 /** Пресет — это обычный адрес выдачи, ровно тот же, что строит /quiz. */

@@ -17,7 +17,7 @@ import { genreBreadcrumbLd, genreItemListLd, ldScript } from '@/lib/jsonld'
 import { pointsLine } from '@/lib/modeltext'
 import { navPrefetch } from '@/lib/nav'
 import { plural } from '@/lib/plural'
-import { presetHref, roomSeedHref, VIBE_PRESETS } from '@/lib/presets'
+import { presetHref, quizHref, roomSeedHref, VIBE_PRESETS } from '@/lib/presets'
 import { appBaseUrl } from '@/lib/server'
 import { OG_SITE } from '@/lib/site'
 import { tagRu } from '@/lib/tagsru'
@@ -262,6 +262,27 @@ function Onward({ genre }: { genre: Genre }) {
       <div>
         <Link href={presetHref(SLEEP)} className="btn-ember px-6 py-3">
           {SLEEP.label} — из своей библиотеки {arrow}
+        </Link>
+      </div>
+    )
+  }
+  /*
+   * Квиз, а не /play: страница статическая и про сессию не знает, а квиз
+   * открыт любому — гостя он сам доведёт до входа или демо.
+   *
+   * У жанра — с жанром (quizHref → /quiz?genre=<slug>): человек пришёл из
+   * поиска «лучшие рогалики», и голый квиз терял жанр ровно на входе в
+   * продукт — кнопка обещала «из своей библиотеки», а выдача была обо всём
+   * подряд. Теперь квиз спросит настроение и подберёт рогалики, сначала свои;
+   * своих нет — магазинные того же жанра, и выдача скажет об этом (genreLine
+   * в lib/playflow). У подборки (facet) жанра нет — квиз голый. Адрес один на
+   * всех — разметка ISR от смотрящего не зависит.
+   */
+  if (genre.kind === 'genre') {
+    return (
+      <div>
+        <Link href={quizHref(null, null, genre.slug)} className="btn-ember px-6 py-3">
+          Подобрать {genre.title.charAt(0).toLowerCase() + genre.title.slice(1)} из своей библиотеки {arrow}
         </Link>
       </div>
     )

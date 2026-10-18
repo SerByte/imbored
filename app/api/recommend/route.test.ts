@@ -3,6 +3,7 @@ import { PATCH_SINCE_LEAD } from '@/lib/comeback'
 import { resetSwallowed } from '@/lib/errlog'
 import {
   logFeedback,
+  replaceGameTags,
   saveLibrarySnapshot,
   setNewsDigest,
   upsertGamesMeta,
@@ -520,6 +521,126 @@ describe('/api/recommend: затравка seed', () => {
     const res = await POST(post('/api/recommend', { mood: MOOD, seed: 30 }))
     expect(res.status).toBe(409)
     expect(await res.json()).toEqual({ error: 'nocandidates', seed: { appid: 30, name: 'Одинокая' } })
+  })
+})
+
+/**
+ * Жанр со страницы /games/<slug>: «Подобрать рогалики из своей библиотеки».
+ * Адресом страницы (genre: 'roguelike'), эхо — название для подписи и есть
+ * ли свои. Модель не зовётся, как у затравки: это новый повод её звать.
+ */
+describe('/api/recommend: жанр genre', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  /** Своё: пазл 10 (якорь) и рогалики 11, 12; каталог: рогалик 20 и пазл 21 */
+  async function genreLibrary(own: number[] = [10, 11, 12]): Promise<string[]> {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key')
+    const calls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        calls.push(input instanceof Request ? input.url : String(input))
+        return new Response('', { status: 404 })
+      }),
+    )
+    await signIn(db, STEAMID, { verified: true })
+    const now = nowSec()
+    const metas: Array<{ appid: number; tags: Record<string, number> }> = [
+      { appid: 10, tags: { Puzzle: 1000, Casual: 600 } },
+      { appid: 11, tags: { Roguelike: 1000, Indie: 400 } },
+      { appid: 12, tags: { Action: 1000, Roguelike: 800 } },
+      { appid: 20, tags: { Roguelike: 1000, Action: 300 } },
+      { appid: 21, tags: { Puzzle: 1000, Casual: 600 } },
+    ]
+    await upsertGamesMeta(
+      db,
+      metas.map((m) => ({ ...m, name: `Игра ${m.appid}`, genres: [], categories: [2] })),
+      now,
+    )
+    for (const m of metas) {
+      await replaceGameTags(db, m.appid, Object.entries(m.tags).map(([tag, weight]) => ({ tag, weight })))
+    }
+    await saveLibrarySnapshot(
+      db,
+      STEAMID,
+      own.map((appid) => ({ appid, name: `Игра ${appid}`, playtimeForever: appid === 10 ? 3000 : 0, playtime2Weeks: 0 })),
+      now,
+    )
+    return calls
+  }
+
+  type Body = { picks: Array<{ appid: number; source: string }>; discoveries: Array<{ appid: number }>; engine: string; genre: unknown }
+
+  test('только жанр, эхо с названием и своими, модель не зовётся', async () => {
+    const calls = await genreLibrary()
+    const res = await POST(post('/api/recommend', { mood: MOOD, genre: 'roguelike' }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body
+    const shown = [...body.picks, ...body.discoveries].map((p) => p.appid)
+    expect(shown.length).toBeGreaterThan(0)
+    for (const appid of shown) expect([11, 12, 20], `${appid} не рогалик`).toContain(appid)
+    expect(body.genre).toEqual({ title: 'Рогалики', own: true })
+    expect(body.engine).toBe('heuristic')
+    expect(calls.filter((u) => u.includes('anthropic'))).toEqual([])
+  })
+
+  // Своих рогаликов нет — выдача из магазинных, и эхо говорит об этом: подпись
+  // «из твоей библиотеки» без единой своей была бы неправдой
+  test('своих этого жанра нет — магазинные того же жанра, own: false', async () => {
+    await genreLibrary([10])
+    const res = await POST(post('/api/recommend', { mood: MOOD, genre: 'roguelike' }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body
+    expect(body.picks.map((p) => p.appid).sort()).toEqual([11, 12, 20])
+    expect(body.picks.every((p) => p.source === 'new')).toBe(true)
+    expect(body.genre).toEqual({ title: 'Рогалики', own: false })
+  })
+
+  test('не адрес страницы жанра — обычная выдача без эха, как опечатка в lean', async () => {
+    await genreLibrary()
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    for (const genre of ['Roguelike', 'no-such-genre', 42, null]) {
+      const res = await POST(post('/api/recommend', { mood: MOOD, genre }))
+      expect(res.status, JSON.stringify(genre)).toBe(200)
+      expect(((await res.json()) as Body).genre, JSON.stringify(genre)).toBeNull()
+    }
+  })
+
+  /*
+   * «С друзьями» жанр пустеет чаще всего: свои — только сетевые (fitsSocial),
+   * пул магазина — только мультиплеер (requireMultiplayer). Отказ называет
+   * жанр, как называет затравку: иначе /play показал бы общее «верни
+   * что-нибудь из бана», а пусто — от жанра.
+   */
+  test('жанр «с друзьями» без сетевых — 409 nocandidates с названием жанра', async () => {
+    await genreLibrary()
+    const friends = { ...MOOD, social: 'friends' }
+    const res = await POST(post('/api/recommend', { mood: friends, genre: 'roguelike' }))
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'nocandidates', genre: { title: 'Рогалики' } })
+  })
+
+  // Жанр, который не применился, не называется: при затравке пусто от неё
+  test('с затравкой отказ — про затравку, без жанра', async () => {
+    await genreLibrary()
+    // без тегов соседей нет ни готовых, ни по полке тега
+    await upsertGamesMeta(db, [{ appid: 30, name: 'Одинокая', tags: {}, genres: [], categories: [2] }], nowSec())
+    const res = await POST(post('/api/recommend', { mood: MOOD, seed: 30, genre: 'roguelike' }))
+    expect(res.status).toBe(409)
+    expect(await res.json()).toEqual({ error: 'nocandidates', seed: { appid: 30, name: 'Одинокая' } })
+  })
+
+  test('с затравкой жанр не применяется: эхо — затравки', async () => {
+    await genreLibrary()
+    await upsertNeighbors(db, new Map([[10, [21].map((neighbor) => ({ neighbor, score: 0.9, shared: ['Puzzle'] }))]]))
+    const res = await POST(post('/api/recommend', { mood: MOOD, seed: 10, genre: 'roguelike' }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body & { seed: unknown }
+    expect(body.genre).toBeNull()
+    expect(body.seed).toEqual({ appid: 10, name: 'Игра 10' })
   })
 })
 

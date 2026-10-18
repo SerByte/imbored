@@ -16,7 +16,7 @@ import { modelTextFlaw } from './modeltext'
 import { parseMood } from './mood'
 import { NEIGHBORS_K, type Neighbor } from './neighbors'
 import { OTHER_STORE_GAMES } from './otherstores'
-import { minutesHidden, playtimeHidden } from './playtime'
+import { HIDDEN_PLAYTIME_MIN_GAMES, minutesHidden, playtimeHidden } from './playtime'
 import { PLAN_INTENTS_SQL, PLAN_TTL_SEC, type EveningPlan, type PlanIntent } from './eveningplan'
 import {
   OUTCOME_LATE_ASK_SEC,
@@ -2910,6 +2910,50 @@ export async function snapshotOwns(db: Db, steamid: string, appid: number): Prom
   })
   const row = res.rows[0] as unknown as { owned: number } | undefined
   return row ? Number(row.owned) === 1 : null
+}
+
+/**
+ * Какие из этих игр есть в последнем снапшоте — и сколько в каждой наиграно.
+ *
+ * Для «Похожее уже есть у тебя» на странице игры (/api/session/owns, near):
+ * дюжина соседей против библиотеки за один заход. Как и у snapshotOwns,
+ * отвечает база, а не JS: блоб библиотеки на сотни килобайт в функцию не
+ * едет, обратно — строки одних совпавших игр.
+ *
+ * Значение — минуты по снимку; null — время скрыто настройками Steam
+ * (playtimeHidden в lib/playtime: от HIDDEN_PLAYTIME_MIN_GAMES игр и ни
+ * одной минуты). Признак — по всей библиотеке, а не по совпавшим, поэтому
+ * счёт игр и максимум минут идут оконными функциями того же прохода по
+ * json_each: второй разбор блоба ради одного бита стоил бы столько же,
+ * сколько первый. Без этого «не запускал» стояло бы у игры, где у человека
+ * пятьсот часов, — та же неправда, от которой lib/playtime и заведён.
+ *
+ * Снапшота нет — пустая карта: «есть ли похожая» тогда просто не о чем
+ * сказать, как и у snapshotOwns с его null.
+ */
+export async function snapshotOwnsMany(
+  db: Db,
+  steamid: string,
+  appids: readonly number[],
+): Promise<Map<number, number | null>> {
+  if (!appids.length) return new Map()
+  const res = await db.execute({
+    sql: `SELECT appid, minutes, total, top FROM (
+            SELECT json_extract(j.value, '$.appid') AS appid,
+                   COALESCE(json_extract(j.value, '$.playtimeForever'), 0) AS minutes,
+                   COUNT(*) OVER () AS total,
+                   MAX(COALESCE(json_extract(j.value, '$.playtimeForever'), 0)) OVER () AS top
+            FROM (SELECT games_json FROM library_snapshots WHERE steamid = ?
+                  ORDER BY taken_at DESC, id DESC LIMIT 1) s,
+                 json_each(s.games_json) j
+          ) WHERE appid IN (SELECT value FROM json_each(?))`,
+    args: [steamid, JSON.stringify(appids)],
+  })
+  const rows = res.rows as unknown as Array<{ appid: number; minutes: number; total: number; top: number }>
+  // Все строки несут одни и те же total и top — признак берётся с первой
+  const hidden =
+    rows.length > 0 && Number(rows[0].total) >= HIDDEN_PLAYTIME_MIN_GAMES && !Number(rows[0].top)
+  return new Map(rows.map((r) => [Number(r.appid), hidden ? null : Math.max(0, Number(r.minutes) || 0)]))
 }
 
 /**
