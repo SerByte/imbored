@@ -3,6 +3,7 @@ import { buildCandidates } from '@/lib/candidates'
 import { buildPickContext, exploreCardView, shelfCardView } from '@/lib/cards'
 import { getGamesMetaLite, listExplore, listExploreLiked } from '@/lib/db'
 import { EXPLORE_SHELF_MAX, exploreDeck, exploredAppids } from '@/lib/explore'
+import { localeFromRequest } from '@/lib/i18n'
 import { heuristicPicks } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
 import { checkRatesInOrder, clientIp, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
@@ -33,6 +34,12 @@ const EXPLORE_WINDOW_SEC = 600
 const EXPLORE_IP_LIMIT = 60
 
 export async function GET(req: Request) {
+  /*
+   * Язык карт — из адреса (?lang=en, withLang на странице): причины, длина
+   * сессии и срок скидки уезжают клиенту готовыми строками, и решает их язык
+   * тот, кто их пишет. В адресе, а не в куке: ключом кэша обязан быть адрес.
+   */
+  const locale = localeFromRequest(req)
   const session = await currentSession()
   if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
   const { steamid } = session
@@ -111,7 +118,7 @@ export async function GET(req: Request) {
   // Цены — до причин: шаблон называет скидку, а карта — ценник (buildPickContext).
   // Полка — тем же запросом в магазин: у неё тоже ценник, и GetItems берёт
   // до двухсот игр разом
-  const ctx = await buildPickContext(db, set, [...deck.map((c) => c.appid), ...likedIds])
+  const ctx = await buildPickContext(db, set, [...deck.map((c) => c.appid), ...likedIds], { locale })
   const owned = new Set(set.games.map((g) => g.appid))
   const reasons = new Map(
     heuristicPicks(deck, ctx.metaNow, deck.length, now, set.profile, {
@@ -120,6 +127,7 @@ export async function GET(req: Request) {
       hoursOf: ctx.hoursOf,
       hideUrgency: ctx.hideUrgency,
       playtimeHidden: set.playtimeHidden,
+      locale,
     }).map((p) => [p.appid, p]),
   )
 
@@ -136,7 +144,7 @@ export async function GET(req: Request) {
       // Свежая цена, если её только что обновили; иначе — из прочитанного
       const meta = ctx.metaNow(id) ?? likedMetas.get(id)
       return meta
-        ? [shelfCardView(meta, { now, owned: owned.has(id), hideUrgency: ctx.hideUrgency })]
+        ? [shelfCardView(meta, { now, owned: owned.has(id), hideUrgency: ctx.hideUrgency, locale })]
         : []
     }),
   })

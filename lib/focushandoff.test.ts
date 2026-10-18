@@ -119,7 +119,8 @@ describe('/explore: колода уходит — фокус остаётся н
   const deck = read('components/SwipeDeck.tsx')
 
   test('конец колоды — заголовок, который принимает фокус', () => {
-    expect(page).toMatch(/<h2 ref=\{deckEndHead\} tabIndex=\{-1\}[^>]*>\s*Колода кончилась/)
+    // Заголовок — на языке страницы (tr): русская ветка та же
+    expect(page).toMatch(/<h2 ref=\{deckEndHead\} tabIndex=\{-1\}[^>]*>\s*\{tr\(locale, \{ ru: 'Колода кончилась'/)
   })
 
   test('голос с клавиатуры по последней карте отдаёт фокус этому заголовку', () => {
@@ -141,7 +142,7 @@ describe('/explore: колода уходит — фокус остаётся н
     const redeal = page.slice(page.indexOf('const redeal = async (keyboard: boolean)'))
     const decide = redeal.indexOf('setDealFocus(keyboard && focusAdrift(document, deckEnd.current))')
     expect(decide, 'решение о фокусе новой колоды пропало').toBeGreaterThan(-1)
-    expect(redeal.indexOf("await fetch('/api/explore'")).toBeLessThan(decide)
+    expect(redeal.indexOf('await fetch(deckUrl')).toBeLessThan(decide)
     expect(redeal.indexOf('await show(res')).toBeGreaterThan(decide)
     expect(page).toMatch(/<div ref=\{deckEnd\} className="panel-lift/)
   })
@@ -162,7 +163,7 @@ describe('/explore: колода уходит — фокус остаётся н
     const retry = page.slice(page.indexOf('const retry = async (keyboard: boolean)'))
     const decide = retry.indexOf('setDealFocus(keyboard && focusAdrift(document, failBox.current))')
     expect(decide, 'решение о фокусе после повтора пропало').toBeGreaterThan(-1)
-    expect(retry.indexOf("await fetch('/api/explore'")).toBeLessThan(decide)
+    expect(retry.indexOf('await fetch(deckUrl')).toBeLessThan(decide)
     expect(retry.indexOf('await show(res')).toBeGreaterThan(decide)
   })
 })

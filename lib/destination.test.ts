@@ -474,7 +474,10 @@ describe('квиз гостя: сразу на лендинг, и лендинг
     // после гидратации (снимок сервера — «не гость»), внизу первого шага
     expect(quiz).toMatch(/const guest = useSyncExternalStore\(subscribeSessionHint, knownGuest, notGuest\)/)
     expect(quiz).toMatch(/const notGuest = \(\) => false/)
-    expect(quiz).toMatch(/\{stepIndex === 0 && guest && \(\s*<p[^>]*>\s*Потом останется подключить библиотеку/)
+    // Строка — на языке страницы (tr), русская ветка — те же слова
+    expect(quiz).toMatch(
+      /\{stepIndex === 0 && guest && \(\s*<p[^>]*>\s*\{tr\(locale, \{\s*ru: 'Потом останется подключить библиотеку/,
+    )
     // вне потока: строка, пришедшая с ответом touch, не двигает вопрос и плитки
     const note = quiz.slice(quiz.indexOf('{stepIndex === 0 && guest && ('), quiz.indexOf('Потом останется'))
     expect(note).toMatch(/className="absolute [^"]*\btop-full\b/)

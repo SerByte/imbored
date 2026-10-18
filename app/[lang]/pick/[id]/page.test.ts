@@ -6,7 +6,7 @@ import { quizHref, roomSeedHref } from '@/lib/presets'
 import { nowSec } from '@/lib/server'
 import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
-import type { PickKind } from '@/lib/sharedpick'
+import { pickCopy, quoted, type PickKind } from '@/lib/sharedpick'
 import type { GameMeta } from '@/lib/types'
 import PickPage, { generateMetadata } from './page'
 
@@ -183,5 +183,90 @@ describe('«Похожее на «X» — по моей библиотеке»',
   test('без тегов — соседей не ищем, ссылки нет', async () => {
     const params = await share('ghjkmnpqrstu', game(23, {}))
     expect(await seedLinks(params, 23)).toHaveLength(0)
+  })
+})
+
+/**
+ * Язык ссылки и язык страницы.
+ *
+ * Причину писал сервер на языке того, кто делился (shared_picks.lang), и
+ * перевести её нечем. На своём языке страница цитирует её, как прежде; на
+ * чужом — игра, откуда она и приглашение, без цитаты, а описание в чате —
+ * общее обещание сайта: русская фраза посреди /en/pick читалась бы сбоем.
+ */
+describe('/en/pick: причина — только на своём языке', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+  const en = (id: string) => ({ params: Promise.resolve({ id, lang: 'en' }) })
+
+  async function shareIn(id: string, meta: GameMeta, lang: 'ru' | 'en', reason: string, kind: PickKind = 'play') {
+    const now = nowSec()
+    await upsertGameMeta(db, meta, now)
+    await createSharedPick(
+      db,
+      { id, createdBy: '76561198000000001', appid: meta.appid, source: 'owned', kind, reason, lang },
+      now,
+    )
+  }
+
+  test('русский выбор на /en — игра и двери по-английски, без русской цитаты', async () => {
+    await shareIn('hjkmnpqrstuv', game(30, { name: 'Hades', categories: [2, 9] }), 'ru', 'Потому что')
+    const tree = flightOf(await PickPage(en('hjkmnpqrstuv')), ISLANDS)
+    const text = textOf(tree)
+    expect(text).toContain('imbored picked my game for tonight')
+    expect(text).toContain('Hades')
+    expect(text).toContain('From their own Steam library')
+    expect(text).toContain('Your turn?')
+    expect(text).not.toContain('Потому что')
+    expect(text).not.toMatch(CYRILLIC)
+    const links = islandsOf(tree, 'Link')
+    expect(links.map((l) => textOf(l.children))).toEqual(
+      expect.arrayContaining(['Pick a game for me', 'About the game', 'Invite to this game']),
+    )
+
+    const meta = await generateMetadata(en('hjkmnpqrstuv'))
+    expect(meta.title).toEqual({ absolute: '“Hades” — imbored picked my game for tonight' })
+    // Описание — не из чужой причины, а обещание сайта на языке страницы
+    expect(meta.description).toBe(pickCopy(null, 'en').description)
+    expect(String(meta.description)).not.toMatch(CYRILLIC)
+    expect(meta.openGraph).toMatchObject({ locale: 'en_US', url: '/en/pick/hjkmnpqrstuv' })
+    expect(meta.alternates?.canonical).toBe('/en/pick/hjkmnpqrstuv')
+  })
+
+  test('английский выбор на /en — цитата в “…”, описание из неё', async () => {
+    const reason = '“Hades” fits a short evening: one run takes about 30 minutes.'
+    await shareIn('jkmnpqrstuvw', game(31, { name: 'Hades' }), 'en', reason, 'daily')
+    const text = textOf(flightOf(await PickPage(en('jkmnpqrstuvw')), ISLANDS))
+    expect(text).toContain('My game of the day')
+    expect(text).toContain(quoted(reason, 'en'))
+    const meta = await generateMetadata(en('jkmnpqrstuvw'))
+    expect(meta.title).toBe('“Hades” — my game of the day')
+    expect(meta.description).toBe(reason)
+  })
+
+  /*
+   * «По твоей», а не «из твоей» — и по-английски: выдача по ссылке берёт и
+   * игры магазина (соседи затравки, newPool в lib/candidates), так что
+   * «from yours» / «from my library» обещали бы то, чего не будет.
+   */
+  test('/en: приглашение и мост к своей библиотеке — based on, а не from', async () => {
+    await shareIn('mnpqrstuvwxy', game(33, { name: 'Hades', tags: { Roguelike: 900 } }), 'ru', 'Потому что')
+    await upsertGameMeta(db, game(34, { tags: { Roguelike: 800 } }), nowSec())
+    await replaceGameTags(db, 34, [{ tag: 'Roguelike', weight: 800 }])
+    const tree = flightOf(await PickPage(en('mnpqrstuvwxy')), ISLANDS)
+    const text = textOf(tree)
+    expect(text).toContain('imbored will pick one for you based on yours')
+    expect(text).not.toMatch(/from yours|from my library/)
+    const seed = islandsOf(tree, 'Link').filter((l) => l.href === quizHref(null, 33))
+    expect(seed.map((l) => textOf(l.children))).toEqual(['Similar to “Hades” — based on my library'])
+  })
+
+  test('английский выбор на русской странице — без английской цитаты, русская страница прежняя', async () => {
+    await shareIn('kmnpqrstuvwx', game(32, { name: 'Hades' }), 'en', 'Because it fits tonight.')
+    const params = { params: Promise.resolve({ id: 'kmnpqrstuvwx' }) }
+    const text = textOf(flightOf(await PickPage(params), ISLANDS))
+    expect(text).toContain('imbored выбрал мне на вечер')
+    expect(text).not.toContain('Because it fits tonight')
+    const meta = await generateMetadata(params)
+    expect(meta.description).toBe(pickCopy(null).description)
   })
 })

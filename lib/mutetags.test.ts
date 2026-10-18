@@ -1,4 +1,4 @@
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import { MuteTags } from '../components/MuteTags'
@@ -150,5 +150,21 @@ describe('MuteTags', () => {
     expect(out).toContain(`<div id="${controls}" hidden=""`)
     // чипсы — внутри неё, а не где-то рядом
     expect(out.slice(out.indexOf(`id="${controls}"`))).toContain('aria-pressed="false"')
+  })
+})
+
+/*
+ * /en/quiz: та же панель словами глоссария — «Don't suggest». Язык — из
+ * контекста страницы (LocaleProvider), пропса нет; чипсы подписывает
+ * muteLabel, MUTES даёт только ключи.
+ */
+describe('MuteTags по-английски', () => {
+  test('свёрнутая строка, имя группы и чипсы — без кириллицы', async () => {
+    const { LocaleProvider } = await import('../components/LocaleProvider')
+    const out = renderToStaticMarkup(createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, createElement(MuteTags)))
+    expect(out).toContain('What not to suggest')
+    expect(out).toContain('aria-label="Don&#x27;t suggest"')
+    for (const p of MUTES) expect(out).toContain(`>${muteLabel(p.key, 'en')}</button>`)
+    expect(out).not.toMatch(/[А-Яа-яЁё]/)
   })
 })

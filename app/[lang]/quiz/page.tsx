@@ -7,6 +7,7 @@ import { Ambient } from '@/components/Ambient'
 import { ClickSpark } from '@/components/ClickSpark'
 import { Icon, type IconName } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'
+import { useLocale } from '@/components/LocaleProvider'
 import { MuteTags } from '@/components/MuteTags'
 import { PosterFan, type FanGame } from '@/components/PosterFan'
 import { SoundToggle } from '@/components/SoundToggle'
@@ -14,12 +15,13 @@ import { SpotlightCard } from '@/components/SpotlightCard'
 import { useSearch } from '@/components/useSearch'
 import { freshLastMood, lastMoodStore } from '@/lib/lastmood'
 import { bounceTo } from '@/lib/destination'
+import { tr } from '@/lib/i18n'
 import { CONFIRM_MS, DUR, EASE, EASE_IN, OUTRO } from '@/lib/motion'
 import { NEUTRAL_MOOD, type Lean } from '@/lib/mood'
 import { hasFreshWarm, warmMarkStore } from '@/lib/warmmark'
 import { timeHiddenStore } from '@/lib/playtime'
-import { parseSeedParam, playHref, VIBE_PRESETS } from '@/lib/presets'
-import { STEPS } from '@/lib/quiz'
+import { parseSeedParam, playHref, presetLabel, VIBE_PRESETS } from '@/lib/presets'
+import { stepsFor } from '@/lib/quiz'
 import { isSoundOn } from '@/lib/quizsound'
 import type { Focus } from '@/lib/recommend'
 import { getSessionHint, knownGuest, subscribeSessionHint } from '@/lib/sessionhint'
@@ -141,6 +143,7 @@ function prefersReducedMotion(): boolean {
 }
 
 function Quiz() {
+  const locale = useLocale()
   const router = useLocaleRouter()
   const search = useSearch()
   const [stepIndex, setStepIndex] = useState(0)
@@ -171,8 +174,10 @@ function Quiz() {
   }, [])
   const [outro, setOutro] = useState(false)
 
-  const step = STEPS[stepIndex]
-  const last = stepIndex === STEPS.length - 1
+  // Шаги на языке страницы: оси, ключи и порядок общие (lib/quiz), разные только слова
+  const steps = stepsFor(locale)
+  const step = steps[stepIndex]
+  const last = stepIndex === steps.length - 1
   // Приходит с /library («Выбрать одну →») и живёт до самого /play. Не настроение,
   // а отдельная ось — как roulette у «Мне повезёт».
   //
@@ -408,11 +413,13 @@ function Quiz() {
         {stepIndex === 0 && (
           <div className="w-full flex flex-col items-center gap-3 anim-rise">
             <span className="text-xs text-faint">
+              {/* «Similar to», а не «Like»: в начале строки like читается
+                  глаголом, как сердце «Liked it»; глоссарий — Similar to “X” */}
               {focus
-                ? 'Только нераспакованное — одним тапом:'
+                ? tr(locale, { ru: 'Только нераспакованное — одним тапом:', en: 'Unopened only, in one tap:' })
                 : seed
-                  ? 'Похожее на выбранную игру — одним тапом:'
-                  : 'Одним тапом:'}
+                  ? tr(locale, { ru: 'Похожее на выбранную игру — одним тапом:', en: 'Similar to the game you picked, in one tap:' })
+                  : tr(locale, { ru: 'Одним тапом:', en: 'In one tap:' })}
             </span>
             {/*
               На телефоне пилюли едут одной лентой, а не переносятся.
@@ -454,7 +461,7 @@ function Quiz() {
                   className="pill shrink-0 py-3"
                 >
                   {PRESET_ICON[p.key] ? <Icon name={PRESET_ICON[p.key]} size={16} /> : <span aria-hidden>{p.emoji}</span>}
-                  {p.label}
+                  {presetLabel(p, locale)}
                 </button>
               ))}
               {/*
@@ -484,7 +491,7 @@ function Quiz() {
                   className="pill shrink-0 py-3 text-ember-text"
                 >
                   <Icon name="dice" size={16} />
-                  Мне повезёт
+                  {tr(locale, { ru: 'Мне повезёт', en: 'Surprise me' })}
                 </button>
               )}
               {/*
@@ -503,7 +510,10 @@ function Quiz() {
                   className="pill shrink-0 py-3 text-ember-text"
                 >
                   <Icon name="box" size={16} />
-                  {timeHidden ? 'Из своей библиотеки' : 'Ни разу не запускал'}
+                  {tr(locale, {
+                    ru: timeHidden ? 'Из своей библиотеки' : 'Ни разу не запускал',
+                    en: timeHidden ? 'From your library' : 'Never launched',
+                  })}
                 </button>
               )}
             </div>
@@ -527,17 +537,23 @@ function Quiz() {
         */}
         <div className="flex flex-col items-center gap-3">
           {stepIndex === 0 && (
-            <span className="text-xs text-faint anim-rise">Или ответь на три вопроса:</span>
+            <span className="text-xs text-faint anim-rise">
+              {tr(locale, { ru: 'Или ответь на три вопроса:', en: 'Or answer three questions:' })}
+            </span>
           )}
           {/* «Шаг 2 из 3 · Вайб» и три полосы, как у сериала «серия 2 из 3».
               Для глаза: скринридер слышит «Вопрос N из 3» в имени заголовка
               шага ниже, и вторая такая же подпись была бы дублем. */}
           <div aria-hidden className="flex flex-col items-center gap-2.5">
             <Eyebrow as="span" tone="dim">
-              Шаг {stepIndex + 1} из {STEPS.length} · {step.axis}
+              {tr(locale, {
+                ru: `Шаг ${stepIndex + 1} из ${steps.length}`,
+                en: `Step ${stepIndex + 1} of ${steps.length}`,
+              })}{' '}
+              · {step.axis}
             </Eyebrow>
             <div className="flex gap-1.5">
-              {STEPS.map((s, i) => (
+              {steps.map((s, i) => (
                 <span key={s.key} className="relative h-1 w-12 overflow-hidden rounded-full bg-track">
                   {/* Заливка едет масштабом от левого края: пройденный шаг
                       дотягивается до конца, будущий стоит пустым */}
@@ -596,7 +612,12 @@ function Quiz() {
               variants={ITEM_VARIANTS}
               className="font-display text-display-md text-center outline-none"
             >
-              <span className="sr-only">Вопрос {stepIndex + 1} из {STEPS.length}. </span>
+              <span className="sr-only">
+                {tr(locale, {
+                  ru: `Вопрос ${stepIndex + 1} из ${steps.length}. `,
+                  en: `Question ${stepIndex + 1} of ${steps.length}. `,
+                })}
+              </span>
               {step.question}
             </m.h1>
 
@@ -626,7 +647,10 @@ function Quiz() {
         */}
         {stepIndex === 0 && guest && (
           <p className="absolute inset-x-0 top-full mx-auto mt-10 max-w-sm text-center text-xs text-dim anim-rise">
-            Потом останется подключить библиотеку — ссылкой на профиль, через Steam или демо: игру выбираем из неё.
+            {tr(locale, {
+              ru: 'Потом останется подключить библиотеку — ссылкой на профиль, через Steam или демо: игру выбираем из неё.',
+              en: 'Then just connect your library — with a profile link, Steam or the demo: we pick the game from it.',
+            })}
           </p>
         )}
 
@@ -640,7 +664,7 @@ function Quiz() {
             className="tap link-more cursor-pointer"
           >
             <Icon name="back" size={16} />
-            Назад
+            {tr(locale, { ru: 'Назад', en: 'Back' })}
           </button>
         )}
 

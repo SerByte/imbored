@@ -68,7 +68,8 @@ describe('«Зашло» у героя снимается тем же нажат
   })
 
   test('/daily: нажатое сердце снимает «Зашло», отказ — строкой под кнопками героя', () => {
-    expect(daily).toContain(flat("liked.has(hero.appid) ? void undoLike('daily', hero, setLiked, setRerollMiss) : like()"))
+    // Язык страницы — в отказ: иначе строка «Не вышло снять…» на /en по-русски
+    expect(daily).toContain(flat("liked.has(hero.appid) ? void undoLike('daily', hero, setLiked, setRerollMiss, locale) : like()"))
     // «Зацепило» при горящем сердце его не снимает: like() молчит на повтор,
     // его зовёт и ответ на вопрос после запуска
     expect(daily).toMatch(/constlike=\(intent\?:CtxIntent\)=>\{forgetLaunch\(hero\.appid\)if\(liked\.has\(hero\.appid\)\)return/)
@@ -86,11 +87,12 @@ describe('«Зашло» у героя снимается тем же нажат
       ),
     )
     expect(play).toContain(flat(`<span className="sr-only">{tr(locale, { ru: 'Зашло', en: 'Liked it' })}</span>`))
-    for (const [file, code, on] of [['app/[lang]/daily/page.tsx', daily, 'liked.has(hero.appid)']] as const) {
-      expect(code, file).toContain(flat('aria-pressed={' + on + '}'))
-      expect(code, file).toContain(flat('title={' + on + " ? '" + PRESSED_TITLE + "' : 'Зашло'}"))
-      expect(code, file).toContain(flat('<span className="sr-only">Зашло</span>'))
-    }
+    // /daily говорит на языке страницы (tr): русская ветка — те же слова
+    const on = 'liked.has(hero.appid)'
+    expect(daily).toContain(flat('aria-pressed={' + on + '}'))
+    expect(daily).toContain(flat('ru: ' + on + " ? '" + PRESSED_TITLE + "' : 'Зашло',"))
+    expect(daily).toContain(flat('en: ' + on + " ? 'Liked it — tap to undo' : 'Liked it',"))
+    expect(daily).toContain(flat(`<span className="sr-only">{tr(locale, { ru: 'Зашло', en: 'Liked it' })}</span>`))
   })
 
   /*
@@ -231,7 +233,10 @@ describe('«Мимо» в колоде /explore возвращается', () =>
     const btn = code.slice(code.indexOf('constundoButton=lastSkip&&('), code.indexOf('</button>)', code.indexOf('constundoButton=')))
     expect(btn).toContain(flat(`onClick={(e) => undo(e.detail === 0)}`))
     expect(btn).toContain('max-w-full')
-    expect(btn).toContain(flat('<span className="min-w-0 truncate">Вернуть «{lastSkip.name}»</span>'))
+    // Подпись — на языке страницы (tr), одним шаблоном на язык
+    expect(btn).toContain(
+      flat('<span className="min-w-0 truncate">{tr(locale, { ru: `Вернуть «${lastSkip.name}»`, en: `Bring back “${lastSkip.name}”` })}</span>'),
+    )
   })
 
   /*

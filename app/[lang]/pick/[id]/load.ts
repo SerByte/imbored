@@ -1,5 +1,6 @@
 import { getGamesMetaLite, getSharedPick, type SharedPick } from '@/lib/db'
 import { nearGames } from '@/lib/gamepage'
+import type { Locale } from '@/lib/i18n'
 import { getDb, nowSec } from '@/lib/server'
 import { SHARED_PICK_ID_RE, SHARED_PICK_TTL_SEC } from '@/lib/sharedpick'
 import type { GameMeta } from '@/lib/types'
@@ -24,6 +25,19 @@ export async function loadSharedPick(raw: string): Promise<{ pick: SharedPick; m
   } catch {
     return null
   }
+}
+
+/**
+ * Причина выбора — только на языке страницы, иначе null.
+ *
+ * Причину писал сервер на языке того, кто делился (shared_picks.lang), и
+ * перевести её нечем: это текст модели или шаблона под чужую библиотеку.
+ * Русская фраза посреди /en/pick (и наоборот) читалась бы сбоем, поэтому
+ * на чужом языке страница, заголовок и карточка в чате показывают игру,
+ * откуда она и приглашение, — без цитаты и без описания из неё.
+ */
+export function reasonOn(pick: Pick<SharedPick, 'reason' | 'lang'>, locale: Locale): string | null {
+  return pick.lang === locale ? pick.reason : null
 }
 
 /**

@@ -1,6 +1,7 @@
 'use client'
 
 import Link from '@/components/Link'
+import { useLocale } from '@/components/LocaleProvider'
 import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { BlurBand } from '@/components/BlurBand'
@@ -31,6 +32,7 @@ import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import { closesPlan } from '@/lib/eveningplan'
 import type { CtxIntent, CtxSlot, FeedbackCtx } from '@/lib/feedbackctx'
 import type { FeedbackAction, SkipReason } from '@/lib/feedbackkinds'
+import { fmtNumber, lp, tr, withLang, type Locale } from '@/lib/i18n'
 import {
   dueLaunchFor,
   dueLaunchNow,
@@ -40,7 +42,7 @@ import {
   subscribeDueLaunch,
 } from '@/lib/launchmemo'
 import { forgetPlanned } from '@/lib/planforget'
-import { SOURCE_BADGE, suggestsInstall } from '@/lib/sources'
+import { sourceBadge, suggestsInstall } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import type { CandidateSource } from '@/lib/types'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
@@ -64,40 +66,70 @@ import { TagChips } from '@/components/TagChips'
  * Тот же разбор сделан для /play проходом раньше; здесь он повторён по
  * коду, но не по тексту: у страниц разные действия, и предлагать им одно и то
  * же значило бы вернуться к одной строке на все случаи, только длиннее.
+ *
+ * Тексты — на каждом языке свой разбор тех же кодов (FAILS[locale]).
  */
-const FAIL: Record<string, { title: string; text: string }> = {
-  nolibrary: {
-    title: 'Библиотека не доехала',
-    text: 'Steam не отдал список игр. Чаще всего его прячут настройки профиля — и это чинится за минуту.',
+type FailCopy = { title: string; text: string }
+
+const FAILS: Record<Locale, Record<string, FailCopy>> = {
+  ru: {
+    nolibrary: {
+      title: 'Библиотека не доехала',
+      text: 'Steam не отдал список игр. Чаще всего его прячут настройки профиля — и это чинится за минуту.',
+    },
+    nocandidates: {
+      title: 'Выбирать не из чего',
+      text: 'В библиотеке не осталось игр, из которых можно собрать игру дня: возможно, всё подходящее уехало в бан.',
+    },
+    /*
+     * Потолки частоты /api/daily: десять запросов в час на человека и тридцать
+     * отборов в час на адрес — заход в уже выбранную игру дня адрес не тратит
+     * (DAILY_IP_LIMIT в app/api/daily/route.ts). Без этой строки 429 уходил в
+     * FAIL_UNKNOWN и страница говорила «что-то сломалось по дороге» — неправда:
+     * не сломалось ничего, и через несколько минут всё заработает. /play и
+     * /explore этот случай уже различали, здесь его просто не было.
+     */
+    ratelimited: {
+      title: 'Слишком часто',
+      text: 'Игру дня запрашивали много раз подряд, и на это стоит потолок. Загляни через несколько минут — а пока можно подобрать игру под настроение.',
+    },
+    // Выбрать было бы из чего, но всё — под «Не предлагать» (lib/mutetags.ts).
+    // Фильтр живёт на квизе, куда ведёт «Обычный подбор» под текстом
+    muted: {
+      title: 'Всё под «Не предлагать»',
+      text: 'Игра дня выбирается из того, что осталось после «Не предлагать», — а не осталось ничего. Фильтр меняется на экране настроения.',
+    },
   },
-  nocandidates: {
-    title: 'Выбирать не из чего',
-    text: 'В библиотеке не осталось игр, из которых можно собрать игру дня: возможно, всё подходящее уехало в бан.',
-  },
-  /*
-   * Потолки частоты /api/daily: десять запросов в час на человека и тридцать
-   * отборов в час на адрес — заход в уже выбранную игру дня адрес не тратит
-   * (DAILY_IP_LIMIT в app/api/daily/route.ts). Без этой строки 429 уходил в
-   * FAIL_UNKNOWN и страница говорила «что-то сломалось по дороге» — неправда:
-   * не сломалось ничего, и через несколько минут всё заработает. /play и
-   * /explore этот случай уже различали, здесь его просто не было.
-   */
-  ratelimited: {
-    title: 'Слишком часто',
-    text: 'Игру дня запрашивали много раз подряд, и на это стоит потолок. Загляни через несколько минут — а пока можно подобрать игру под настроение.',
-  },
-  // Выбрать было бы из чего, но всё — под «Не предлагать» (lib/mutetags.ts).
-  // Фильтр живёт на квизе, куда ведёт «Обычный подбор» под текстом
-  muted: {
-    title: 'Всё под «Не предлагать»',
-    text: 'Игра дня выбирается из того, что осталось после «Не предлагать», — а не осталось ничего. Фильтр меняется на экране настроения.',
+  en: {
+    nolibrary: {
+      title: "Your library didn't come through",
+      text: "Steam didn't send your game list. Usually your profile's privacy settings hide it — a one-minute fix.",
+    },
+    nocandidates: {
+      title: 'Nothing to pick from',
+      text: "There's nothing left in your library to pick a game of the day from: maybe everything that fits is under Hidden.",
+    },
+    ratelimited: {
+      title: 'Too many tries',
+      text: "The game of the day was requested many times in a row, and there's a limit. Check back in a few minutes — or pick a game by mood for now.",
+    },
+    muted: {
+      title: "Everything is under “Don't suggest”",
+      text: "The game of the day comes from what's left after “Don't suggest” — and nothing is. You can change the filter on the mood screen.",
+    },
   },
 }
 
 /** Сеть, пятисотка, оборванный ответ. */
-const FAIL_UNKNOWN = {
-  title: 'Не получилось выбрать игру дня',
-  text: 'Похоже, что-то сломалось по дороге. Попробуй зайти чуть позже.',
+const FAILS_UNKNOWN: Record<Locale, FailCopy> = {
+  ru: {
+    title: 'Не получилось выбрать игру дня',
+    text: 'Похоже, что-то сломалось по дороге. Попробуй зайти чуть позже.',
+  },
+  en: {
+    title: "Couldn't pick the game of the day",
+    text: 'Something seems to have broken along the way. Try again a bit later.',
+  },
 }
 
 /*
@@ -118,9 +150,17 @@ const storeHref = (c: Pick<StoreCard, 'appid' | 'storeUrl'>) =>
  * /api/daily, forgetDailyPick в /api/feedback). После «не тот жанр» запись дня
  * осталась бы на месте, и обещанная «другая» оказалась бы той же игрой.
  */
-const STOP_REASONS: ReadonlyArray<{ key: SkipReason; label: string }> = [
-  { key: 'notnow', label: 'Дай другую' },
-]
+const STOP_REASONS: Record<Locale, ReadonlyArray<{ key: SkipReason; label: string }>> = {
+  ru: [{ key: 'notnow', label: 'Дай другую' }],
+  en: [{ key: 'notnow', label: 'Give me another' }],
+}
+
+/** «Не сегодня» ушло, а другую не подобрали — одна строка на отказ ответа и обрыв сети */
+const rerollFailed = (locale: Locale) =>
+  tr(locale, {
+    ru: 'Отложили, но другую подобрать не вышло — обнови страницу чуть позже.',
+    en: "Set aside, but we couldn't find another — refresh the page in a bit.",
+  })
 
 /** Игра дня и подпись для «Отправить другу» (lib/pickshare) — её кладёт роут, не dailyCardView */
 type DailyHero = DailyPickCard & Partial<ShareView>
@@ -169,6 +209,7 @@ async function sendFeedback(
 }
 
 export default function DailyPage() {
+  const locale = useLocale()
   const router = useLocaleRouter()
   const [pick, setPick] = useState<DailyHero | null>(null)
   const [discoveries, setDiscoveries] = useState<StoreCard[]>([])
@@ -182,7 +223,9 @@ export default function DailyPage() {
    */
   const [reason, setReason] = useState<string | null>(null)
   const [prep, setPrep] = useState<WarmupProgress | null>(null)
-  const [message, setMessage] = useState('Изучаю твою библиотеку…')
+  const [message, setMessage] = useState(() =>
+    tr(locale, { ru: 'Изучаю твою библиотеку…', en: 'Looking through your library…' }),
+  )
   /** Своя на магазинный день и показана ли она вместо магазинной */
   const [alternate, setAlternate] = useState<DailyHero | null>(null)
   const [ownDay, setOwnDay] = useState(false)
@@ -278,7 +321,8 @@ export default function DailyPage() {
         // replace, а не push: запись /daily без сессии мертва, и «Назад» с
         // лендинга открывал её снова — 401 — и снова уводил на лендинг. Гость,
         // зашедший сюда из сцены «Игра дня» или навигации, не мог уйти
-        // «Назад» дальше /daily (так же было у /play и /explore)
+        // «Назад» дальше /daily (так же было у /play и /explore). Лендинг — на
+        // языке страницы: префикс к '/?next=…' ставит useLocaleRouter
         if (res.status === 401) {
           if (!signal.aborted) router.replace(bounceTo('/daily'))
           return
@@ -300,8 +344,9 @@ export default function DailyPage() {
        * обычный запрос, как раньше. Сеть моргнула на этом шаге — тоже идём
        * обычной дорогой: прогрев сам скажет, если сети нет совсем.
        */
+      // Язык — в адресе (withLang): ответ свой на язык, и ключ кэша — адрес
       try {
-        const res = await fetch('/api/daily?cached=1', { signal })
+        const res = await fetch(withLang('/api/daily?cached=1', locale), { signal })
         if (res.status !== 204) {
           await show(res)
           return
@@ -328,7 +373,7 @@ export default function DailyPage() {
         signal,
         onProgress: (p) => {
           setPrep(p)
-          if (p.remaining > 0) setMessage(remainingLine(p.remaining))
+          if (p.remaining > 0) setMessage(remainingLine(p.remaining, locale))
         },
       })
       if (warm === 'aborted') return
@@ -342,9 +387,9 @@ export default function DailyPage() {
         return
       }
 
-      setMessage('Выбираю твою игру дня…')
+      setMessage(tr(locale, { ru: 'Выбираю твою игру дня…', en: 'Picking your game of the day…' }))
       try {
-        await show(await fetch('/api/daily', { signal }))
+        await show(await fetch(withLang('/api/daily', locale), { signal }))
       } catch {
         if (!signal.aborted) setPhase('error')
       }
@@ -357,7 +402,7 @@ export default function DailyPage() {
   const sharePick = useSharePick(ownDay && alternate ? alternate : pick, 'daily')
 
   const failed = phase === 'error' || (phase === 'ok' && !pick)
-  const fail = FAIL[reason ?? ''] ?? FAIL_UNKNOWN
+  const fail = FAILS[locale][reason ?? ''] ?? FAILS_UNKNOWN[locale]
   /*
    * Одна живая строка на всю страницу.
    *
@@ -403,14 +448,16 @@ export default function DailyPage() {
           {/* Проверка — входом через Steam, как на /play: снимок пишет вход. */}
           {reason === 'nolibrary' && (
             <div className="max-w-md text-left">
-              <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor('/daily')} />
+              {/* Вход — с языком страницы: lp даёт /en/daily, и steamLoginFor
+                  везёт lang=en через Steam и обратно */}
+              <PrivacyHelp retryHref={readOnly ? undefined : steamLoginFor(lp(locale, '/daily'))} />
             </div>
           )}
 
           {/* Кандидатов нет — вернуть игры из бана можно только в библиотеке. */}
           {reason === 'nocandidates' && (
             <Link href="/library" className="tap link-more">
-              Посмотреть библиотеку
+              {tr(locale, { ru: 'Посмотреть библиотеку', en: 'See your library' })}
               <Icon name="arrow" size={16} />
             </Link>
           )}
@@ -419,14 +466,14 @@ export default function DailyPage() {
               он упрётся ровно в ту же причину, и совет был бы тупиком. */}
           {reason !== 'nolibrary' && (
             <Link href="/quiz" className="tap link-more">
-              Обычный подбор
+              {tr(locale, { ru: 'Обычный подбор', en: 'Pick by mood' })}
               <Icon name="arrow" size={16} />
             </Link>
           )}
 
           {reason === 'nolibrary' && (
             <Link href={reconnectHref()} className="btn-ember px-6 py-3">
-              Подключить заново
+              {tr(locale, { ru: 'Подключить заново', en: 'Reconnect' })}
             </Link>
           )}
         </div>
@@ -468,10 +515,11 @@ export default function DailyPage() {
       const ok = await sendFeedback(hero.appid, 'skipped', 'notnow', ctxOf(hero, intent))
       // Отказ по правам — кнопки уже спрятались, и строка о входе на месте
       if (!ok) {
-        if (writerStore.get() !== false) setRerollMiss('Не получилось отложить — попробуй ещё раз.')
+        if (writerStore.get() !== false)
+          setRerollMiss(tr(locale, { ru: 'Не получилось отложить — попробуй ещё раз.', en: "Couldn't set it aside — try again." }))
         return
       }
-      const res = await fetch('/api/daily')
+      const res = await fetch(withLang('/api/daily', locale))
       if (!res.ok) {
         const code = await res
           .json()
@@ -481,10 +529,16 @@ export default function DailyPage() {
         // (lib/mutetags.ts): «обнови позже» тут не поможет, поможет фильтр
         setRerollMiss(
           code === 'nocandidates'
-            ? 'Отложили. Другой игры на сегодня не нашлось — загляни завтра.'
+            ? tr(locale, {
+                ru: 'Отложили. Другой игры на сегодня не нашлось — загляни завтра.',
+                en: "Set aside. There's no other game for today — come back tomorrow.",
+              })
             : code === 'muted'
-              ? 'Отложили. Остальное на сегодня — под «Не предлагать»: фильтр меняется на экране настроения.'
-              : 'Отложили, но другую подобрать не вышло — обнови страницу чуть позже.',
+              ? tr(locale, {
+                  ru: 'Отложили. Остальное на сегодня — под «Не предлагать»: фильтр меняется на экране настроения.',
+                  en: "Set aside. Everything else today is under “Don't suggest” — change the filter on the mood screen.",
+                })
+              : rerollFailed(locale),
         )
         return
       }
@@ -493,9 +547,10 @@ export default function DailyPage() {
       applyDaily(data)
       const own = wasOwn && data.ownAlternate
       if (own) setOwnDay(true)
-      setSaid(`Другая игра на сегодня: ${(own ? data.ownAlternate! : data.pick).name}`)
+      const name = (own ? data.ownAlternate! : data.pick).name
+      setSaid(tr(locale, { ru: `Другая игра на сегодня: ${name}`, en: `Another game for today: ${name}` }))
     } catch {
-      setRerollMiss('Отложили, но другую подобрать не вышло — обнови страницу чуть позже.')
+      setRerollMiss(rerollFailed(locale))
     } finally {
       setRerolling(false)
     }
@@ -527,8 +582,11 @@ export default function DailyPage() {
           что у «Не сегодня»: откладывает героя и подбирает другого */}
       <StopAsk
         game={stopDue}
-        reasons={STOP_REASONS}
-        hint="Так бывает. Отложим её и подберём другую на сегодня."
+        reasons={STOP_REASONS[locale]}
+        hint={tr(locale, {
+          ru: 'Так бывает. Отложим её и подберём другую на сегодня.',
+          en: "It happens. We'll set it aside and find another one for today.",
+        })}
         // Плашка исчезает вместе с нажатой кнопкой, и фокус без присмотра
         // упал бы в body — отдаём его герою, как после любого ответа
         onReason={() => {
@@ -584,7 +642,7 @@ export default function DailyPage() {
         <div aria-hidden className="grain" />
         {/* Демо называет себя и даёт дверь к своей библиотеке — вне потока,
             как на /play (см. DemoBar) */}
-        {demo && <DemoBar from="/daily" overlay />}
+        {demo && <DemoBar from={lp(locale, '/daily')} overlay />}
 
         <div className="relative mx-auto w-full max-w-6xl px-safe pb-16 pt-40">
           <HeroPoster appid={hero.appid} name={hero.name} className="absolute bottom-16 right-5" />
@@ -614,16 +672,23 @@ export default function DailyPage() {
               встанут в столбик целиком, а не сломаются внутри себя.
             */}
             <div className="flex flex-wrap items-center gap-3 text-sm">
+              {/* Пилюля делит ряд на 375 px — английская не шире русской (замер
+                  на 360: «GAME OF THE DAY · OCTOBER 19» — 214 px против 167 у
+                  «ИГРА ДНЯ · 19 ОКТЯБРЯ»). Поэтому «Daily» — короткое имя раздела
+                  из глоссария, как в нижней панели; полное — во вкладке */}
               <span className="rounded-full bg-ember text-on-ember px-3 py-1 text-xs font-bold uppercase tracking-wide">
-                Игра дня · {dateLabel}
+                {tr(locale, { ru: 'Игра дня', en: 'Daily' })} · {dateLabel}
               </span>
               {/* Источник — фирменным зелёным, как на /play */}
               <span className={`font-extrabold text-ember-text ${hero.store ? '' : 'hidden md:inline'}`}>
-                {hero.store ? STORE_LABEL[hero.store] ?? hero.store : SOURCE_BADGE[hero.source]}
+                {hero.store ? STORE_LABEL[hero.store] ?? hero.store : sourceBadge(hero.source, locale)}
               </span>
               {hero.hoursPlayed !== null && hero.hoursPlayed > 0 && (
                 <span className="hidden tabular-nums text-dim md:inline">
-                  {hero.hoursPlayed} ч наиграно
+                  {tr(locale, {
+                    ru: `${hero.hoursPlayed} ч наиграно`,
+                    en: `${fmtNumber(locale, hero.hoursPlayed)} h played`,
+                  })}
                 </span>
               )}
               {hero.russian && <span className="whitespace-nowrap text-dim">{hero.russian}</span>}
@@ -648,11 +713,16 @@ export default function DailyPage() {
               logoClassName="h-[clamp(96px,14vw,184px)]"
               delay={0.2}
             />
-            <p className="text-base md:text-lg text-ink/90 leading-relaxed">{hero.reason}</p>
+            {/* Пустая причина — только на /en у записи дня до английской
+                версии (/api/daily): абзац тогда не рисуется. Русская причина
+                пустой не бывает, и её абзац — как был */}
+            {(hero.reason || locale === 'ru') && (
+              <p className="text-base md:text-lg text-ink/90 leading-relaxed">{hero.reason}</p>
+            )}
             {/* «О чём игра» — у игры дня из магазина (lib/cards aboutLine) */}
             {hero.about && (
               <p className="-mt-2 line-clamp-3 text-sm text-dim">
-                <span className="font-bold text-ink">О чём: </span>
+                <span className="font-bold text-ink">{tr(locale, { ru: 'О чём: ', en: 'About: ' })}</span>
                 {hero.about}
               </p>
             )}
@@ -680,8 +750,11 @@ export default function DailyPage() {
                   className="btn-ember px-6 py-3"
                 >
                   {hero.store
-                    ? `Открыть в ${STORE_LABEL[hero.store] ?? 'магазине'}`
-                    : 'Смотреть в Steam'}
+                    ? tr(locale, {
+                        ru: `Открыть в ${STORE_LABEL[hero.store] ?? 'магазине'}`,
+                        en: STORE_LABEL[hero.store] ? `Open in ${STORE_LABEL[hero.store]}` : 'Open store page',
+                      })
+                    : tr(locale, { ru: 'Смотреть в Steam', en: 'View on Steam' })}
                 </a>
               ) : (
                 <SteamLaunch
@@ -714,7 +787,9 @@ export default function DailyPage() {
                   className="btn-glass aria-disabled:opacity-60"
                 >
                   <Icon name="next" size={18} />
-                  {rerolling ? 'Подбираю другую…' : 'Не сегодня'}
+                  {rerolling
+                    ? tr(locale, { ru: 'Подбираю другую…', en: 'Finding another…' })
+                    : tr(locale, { ru: 'Не сегодня', en: 'Not today' })}
                 </button>
               )}
               <Link
@@ -722,11 +797,11 @@ export default function DailyPage() {
                 onClick={() =>
                   void sendFeedback(hero.appid, 'opened', undefined, ctxOf(hero, 'details'))
                 }
-                title="Подробнее об игре"
+                title={tr(locale, { ru: 'Подробнее об игре', en: 'Game details' })}
                 className="btn-circle"
               >
                 <Icon name="info" size={20} />
-                <span className="sr-only">Подробнее</span>
+                <span className="sr-only">{tr(locale, { ru: 'Подробнее', en: 'Details' })}</span>
               </Link>
               {/* Отзыв об игре дня: «Зашло» учит вкус, «Не сегодня» откладывает
                   и тут же предлагает другую. У сессии только для чтения их нет
@@ -738,20 +813,24 @@ export default function DailyPage() {
                   // полка /library (lib/unlike). Отказ — строкой под кнопками,
                   // той же, что у «Не сегодня», и сердце горит снова. Имя
                   // кнопки не меняется — тумблер называет aria-pressed, а
-                  // обратимость видна в подсказке
-                  onClick={() => (liked.has(hero.appid) ? void undoLike('daily', hero, setLiked, setRerollMiss) : like())}
+                  // обратимость видна в подсказке. Язык — в отказ: без него
+                  // строка под кнопками на /en вышла бы русской (unlikeMiss)
+                  onClick={() => (liked.has(hero.appid) ? void undoLike('daily', hero, setLiked, setRerollMiss, locale) : like())}
                   aria-pressed={liked.has(hero.appid)}
-                  title={liked.has(hero.appid) ? 'Зашло — нажми, чтобы снять' : 'Зашло'}
+                  title={tr(locale, {
+                    ru: liked.has(hero.appid) ? 'Зашло — нажми, чтобы снять' : 'Зашло',
+                    en: liked.has(hero.appid) ? 'Liked it — tap to undo' : 'Liked it',
+                  })}
                   className="btn-circle"
                 >
                   <Icon name={liked.has(hero.appid) ? 'check' : 'heart'} size={20} />
-                  <span className="sr-only">Зашло</span>
+                  <span className="sr-only">{tr(locale, { ru: 'Зашло', en: 'Liked it' })}</span>
                 </button>
               )}
               {/* Отправить игру дня другу — /pick/<id>; пишет строку, поэтому не читателю */}
               {!readOnly && sharePick.button}
             </div>
-            {readOnly && <NeedSteam from="/daily" why="launch" className="-mt-1" />}
+            {readOnly && <NeedSteam from={lp(locale, '/daily')} why="launch" className="-mt-1" />}
             {!readOnly && sharePick.panel}
             {/* Отказ «Не сегодня» и снятия «Зашло» — в строке, которая стоит
                 всегда: notToday и undoLike сбрасывают прежний, и новый
@@ -767,7 +846,10 @@ export default function DailyPage() {
                 <SteamLaunch
                   appid={hero.appid}
                   mode="install"
-                  label="Ещё не установлена? Поставь на загрузку заранее"
+                  label={tr(locale, {
+                    ru: 'Ещё не установлена? Поставь на загрузку заранее',
+                    en: 'Not installed yet? Start the download now',
+                  })}
                   onClick={() =>
                     void sendFeedback(hero.appid, 'opened', undefined, ctxOf(hero, 'install'))
                   }
@@ -786,7 +868,7 @@ export default function DailyPage() {
             )}
             <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
               <Link href="/quiz" className="tap link-more">
-                Хочу выбрать сам
+                {tr(locale, { ru: 'Хочу выбрать сам', en: "I'd rather choose" })}
                 <Icon name="arrow" size={16} />
               </Link>
               {/* Магазинный день — раз в три: кто сегодня покупать не собирался,
@@ -799,11 +881,13 @@ export default function DailyPage() {
                     wantHeroFocus.current = true
                     setOwnDay(!ownDay)
                     setRerollMiss(null)
-                    setSaid(`Игра дня: ${next.name}`)
+                    setSaid(tr(locale, { ru: `Игра дня: ${next.name}`, en: `Game of the day: ${next.name}` }))
                   }}
                   className="tap link-more cursor-pointer"
                 >
-                  {ownDay ? 'Вернуть игру дня из магазина' : 'Сегодня хочу из своего'}
+                  {ownDay
+                    ? tr(locale, { ru: 'Вернуть игру дня из магазина', en: "Back to today's store pick" })
+                    : tr(locale, { ru: 'Сегодня хочу из своего', en: "Today I'd rather play my own" })}
                   {!ownDay && <Icon name="arrow" size={16} />}
                 </button>
               )}
@@ -835,8 +919,11 @@ export default function DailyPage() {
               </span>
               <span>
                 {hero.source === 'new'
-                  ? 'Одна игра на день. Покупать ничего не нужно.'
-                  : 'Одна игра на день.'}
+                  ? tr(locale, {
+                      ru: 'Одна игра на день. Покупать ничего не нужно.',
+                      en: 'One game a day. No need to buy anything.',
+                    })
+                  : tr(locale, { ru: 'Одна игра на день.', en: 'One game a day.' })}
               </span>
             </p>
             {/*
@@ -854,7 +941,7 @@ export default function DailyPage() {
                 {/* Ссылка строчная, не inline-flex: длинное название
                     переносится внутри строки, а &nbsp; держат его начало при
                     «Вчера была:» и стрелку при последнем слове */}
-                Вчера была:&nbsp;<Link
+                {tr(locale, { ru: 'Вчера была:', en: "Yesterday's:" })}&nbsp;<Link
                   href={`/game/${yesterday.appid}`}
                   prefetch={false}
                   className="tap font-semibold text-dim transition-colors hover:text-ink"
@@ -873,19 +960,21 @@ export default function DailyPage() {
       {discoveries.length > 0 && (
         <section className="mx-auto w-full max-w-6xl px-safe py-16">
           <div className="flex items-baseline justify-between gap-3 mb-1">
-            <SectionLabel>Нет в твоей библиотеке</SectionLabel>
+            <SectionLabel>{tr(locale, { ru: 'Нет в твоей библиотеке', en: 'Not in your library' })}</SectionLabel>
             <a
               href="https://steamdb.info/sales/"
               target="_blank"
               rel="noreferrer"
               className="tap link-more shrink-0"
             >
-              Все скидки Steam <Icon name="arrow" size={14} />
+              {tr(locale, { ru: 'Все скидки Steam', en: 'All Steam sales' })} <Icon name="arrow" size={14} />
             </a>
           </div>
           <p className="text-xs text-faint mb-4 max-w-md">
-            Подобрано по твоему вкусу среди актуального. Ничего покупать не нужно — это просто на
-            будущее.
+            {tr(locale, {
+              ru: 'Подобрано по твоему вкусу среди актуального. Ничего покупать не нужно — это просто на будущее.',
+              en: "Picked for your taste from what's out now. No need to buy anything — it's just for later.",
+            })}
           </p>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-6">
             {discoveries.map((c) => (

@@ -1,4 +1,4 @@
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { isSoundOn, setSoundOn, soundOffSnapshot, subscribeSound } from './quizsound'
@@ -223,5 +223,21 @@ describe('SoundToggle', () => {
     const html = renderToStaticMarkup(createElement(SoundToggle))
     const label = html.slice(html.indexOf('</svg>') + '</svg>'.length, html.lastIndexOf('</button>'))
     expect(label).toMatch(/^<span>Звук<span aria-hidden="true"> выкл\.<\/span><\/span>$/)
+  })
+})
+
+/*
+ * /en/quiz: тумблер говорит «Sound on / off» (глоссарий) той же формой — имя
+ * «Sound», состояние в aria-pressed, «on/off» для глаза.
+ */
+describe('SoundToggle по-английски', () => {
+  test('имя «Sound», подпись «Sound off», одним флекс-элементом', async () => {
+    vi.resetModules()
+    const { SoundToggle } = await import('../components/SoundToggle')
+    const { LocaleProvider } = await import('../components/LocaleProvider')
+    const html = renderToStaticMarkup(createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, createElement(SoundToggle)))
+    const label = html.slice(html.indexOf('</svg>') + '</svg>'.length, html.lastIndexOf('</button>'))
+    expect(label).toBe('<span>Sound<span aria-hidden="true"> off</span></span>')
+    expect(html).not.toMatch(/[А-Яа-яЁё]/)
   })
 })

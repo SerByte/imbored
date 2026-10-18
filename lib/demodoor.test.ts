@@ -121,7 +121,7 @@ describe('полоса стоит там, где демо в момент цен
     const src = code(read('app/[lang]/daily/page.tsx'))
     expect(src).toContain('const demo = useDemoSession()')
     const hero = src.indexOf('media-dark relative flex-1 min-h-[92vh]')
-    const bar = src.indexOf('{demo && <DemoBar from="/daily" overlay />}')
+    const bar = src.indexOf("{demo && <DemoBar from={lp(locale, '/daily')} overlay />}")
     const text = src.indexOf('pb-16 pt-40', hero)
     expect(hero).toBeGreaterThan(-1)
     expect(bar, 'полоса ушла из героя игры дня').toBeGreaterThan(hero)

@@ -107,8 +107,12 @@ describe('превью в мессенджерах', () => {
       // /quiz?from=untouched и прочие хвосты (lib/robots)
       'app/[lang]/quiz/layout.tsx': '/quiz',
     }
+    // Тексты на языке страницы — generateMetadata, который отдаёт ownAddress
+    // со своими title и description (app/[lang]/daily/layout.tsx)
     for (const [file, url] of Object.entries(own)) {
-      expect(read(file), file).toMatch(new RegExp(`export const generateMetadata = ownAddress\\('${url}'`))
+      expect(read(file), file).toMatch(
+        new RegExp(`(?:export const generateMetadata = |export async function generateMetadata\\b[^]*?return )ownAddress\\('${url}'`),
+      )
     }
   })
 
