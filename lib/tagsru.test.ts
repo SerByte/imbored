@@ -20,6 +20,17 @@ describe('tagLabel', () => {
       expect(tagLabel(tag, 'ru'), tag).toBe(tagRu(tag))
     }
   })
+
+  test('без языка — русский: вызывающий, который язык не прокидывает, получает tagRu', () => {
+    for (const tag of ['Roguelike', 'Dystopian ', 'Character Action Game']) {
+      expect(tagLabel(tag), tag).toBe(tagRu(tag))
+    }
+  })
+
+  test('на английском — без кириллицы для любого тега словаря', () => {
+    const keys = [...Object.keys(TAGS_RU_STEAM), ...Object.keys(TAGS_RU_OVERRIDES)]
+    expect(keys.filter((t) => /[А-Яа-яЁё]/.test(tagLabel(t, 'en')))).toEqual([])
+  })
 })
 
 describe('tagRu', () => {
@@ -76,6 +87,10 @@ describe('tagRu', () => {
  * Перевод держится на том, что его зовут на месте вывода, — и новый экран,
  * нарисовавший meta.tags как есть, вернул бы английские теги, не сломав ни
  * одного теста поведения. Поэтому здесь не поведение, а текст.
+ *
+ * Подпись — tagRu или tagLabel (та же tagRu на русском и сам тег на
+ * английском): файл, переведённый на язык страницы, зовёт tagLabel, и
+ * сторожу всё равно, какой из двух, — лишь бы не голый ключ.
  */
 describe('теги выводятся по-русски', () => {
   const ROOT = path.join(__dirname, '..')
@@ -95,7 +110,7 @@ describe('теги выводятся по-русски', () => {
   for (const file of WHERE) {
     test(file, () => {
       const src = fs.readFileSync(path.join(ROOT, file), 'utf8')
-      expect(src, `${file}: тег без tagRu вернулся бы английским`).toMatch(/\btagRu\b/)
+      expect(src, `${file}: тег без tagRu или tagLabel вернулся бы ключом`).toMatch(/\b(tagRu|tagLabel)\b/)
     })
   }
 })

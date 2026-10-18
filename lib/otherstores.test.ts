@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { OTHER_STORE_GAMES } from './otherstores'
-import { OTHER_STORE_GENRE, OTHER_STORE_OF } from './storecover'
+import { OTHER_STORE_GENRE, OTHER_STORE_OF, otherStoreGenre } from './storecover'
 
 /**
  * Жанр типографской обложки — готовой строкой (см. OTHER_STORE_GENRE).
@@ -19,6 +19,31 @@ describe('жанр игр не из Steam', () => {
       // MOBA и MMORPG так и пишут по-русски — латиница допустима только целиком заглавная
       expect(/[а-яё]/i.test(genre) || /^[A-Z]+$/.test(genre), `${g.name}: ${genre}`).toBe(true)
     }
+  })
+
+  /*
+   * Английская таблица — без правила «кириллица или ВСЕ ЗАГЛАВНЫЕ»: она
+   * латиницей целиком. Сторож обратный — ни одной русской буквы, иначе на
+   * /en обложка заговорила бы по-русски.
+   */
+  test('у каждой игры пула есть английская подпись, и она без кириллицы', () => {
+    for (const g of OTHER_STORE_GAMES) {
+      const genre = otherStoreGenre(g.appid, 'en')
+      expect(genre, g.name).toBeTruthy()
+      expect(genre, `${g.name}: ${genre}`).not.toMatch(/[А-Яа-яЁё]/)
+      expect(genre, `${g.name}: ${genre}`).toMatch(/^[A-Z]/)
+    }
+    expect(otherStoreGenre(-101, 'en')).toBe('Battle royale')
+    expect(otherStoreGenre(-106, 'en')).toBe('MOBA')
+  })
+
+  test('по умолчанию и на ru — ровно OTHER_STORE_GENRE; чужой appid — undefined', () => {
+    for (const g of OTHER_STORE_GAMES) {
+      expect(otherStoreGenre(g.appid), g.name).toBe(OTHER_STORE_GENRE[g.appid])
+      expect(otherStoreGenre(g.appid, 'ru'), g.name).toBe(OTHER_STORE_GENRE[g.appid])
+    }
+    expect(otherStoreGenre(730, 'en')).toBeUndefined()
+    expect(otherStoreGenre(730)).toBeUndefined()
   })
 
   test('TypeCover не импортирует словарь тегов', () => {
