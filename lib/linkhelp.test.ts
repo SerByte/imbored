@@ -211,9 +211,10 @@ describe('счёт раскрытий', () => {
    * нет, был бы тем самым «считаем больше, чем сказали».
    */
   test('раскрытие названо в /privacy среди считаемых шагов', () => {
-    expect(read('app/[lang]/privacy/page.tsx').replace(/\s+/g, ' ')).toMatch(
-      /Ещё мы считаем несколько шагов:[^.]*раскрытие подсказки «Где взять\?» у поля ссылки/,
-    )
+    // текст политики — в page.copy.tsx, на обоих языках
+    const policy = read('app/[lang]/privacy/page.copy.tsx').replace(/\s+/g, ' ')
+    expect(policy).toMatch(/Ещё мы считаем несколько шагов:[^.]*раскрытие подсказки «Где взять\?» у поля ссылки/)
+    expect(policy).toMatch(/We also count a few steps:[^.]*opening the “Where’s that\?” hint by the profile link field/)
   })
 })
 
