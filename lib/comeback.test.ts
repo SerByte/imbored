@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'vitest'
-import { comebackPatchPairs, comebackSince, patchHasDeadline, wallPatchPairs } from './comeback'
+import {
+  comebackPatchPairs,
+  comebackSince,
+  PATCH_SINCE_LEAD,
+  PATCH_SINCE_LEADS,
+  patchHasDeadline,
+  patchSinceLead,
+  wallPatchPairs,
+} from './comeback'
 import { wallState } from './forgotten'
 import { playtimeHidden } from './playtime'
 import { hiddenLibrary } from './testing/hiddenlibrary'
@@ -122,5 +130,61 @@ describe('patchHasDeadline', () => {
     ]) {
       expect(patchHasDeadline(t), t).toBe(false)
     }
+  })
+})
+
+/*
+ * Английский пересказ (tldr_en) уходит в причину на /en тем же patchSentence,
+ * и срок в нём давит так же. Правила обоих языков работают разом.
+ */
+describe('patchHasDeadline: английский пересказ', () => {
+  test('месяц, «until», «ends», «last chance», «hurry», «days left» — срок', () => {
+    for (const t of [
+      'The Halloween season with a new map runs until November 5',
+      'Event ends Nov 5',
+      'Available through May 3',
+      'Rewards until the 3rd of May',
+      'New mode available only until 11/05',
+      'Limited-time event with rewards',
+      'A time-limited mode is back',
+      'Last chance to earn the skin',
+      'Hurry: the event is almost over',
+      'Two weeks left in the season',
+      'A temporary Halloween mode',
+    ]) {
+      expect(patchHasDeadline(t), t).toBe(true)
+    }
+  })
+
+  test('версии, «may», «ending», «endless» и обычный пересказ — не срок', () => {
+    for (const t of [
+      'Update 1.5 adds a new biome',
+      'Version 1.10.2: new mode',
+      'You may now trade items with friends',
+      'Added a new ending and two bosses',
+      'Endless mode is here',
+      'Reworked combat, co-op is in',
+      'Space Age is out',
+      'Balance is now 50/50 between factions',
+    ]) {
+      expect(patchHasDeadline(t), t).toBe(false)
+    }
+  })
+})
+
+/*
+ * Вводная факта — и текст, и метка: shareText вырезает предложение, которое
+ * ей начинается. Английская — неизменный префикс глоссария.
+ */
+describe('patchSinceLead', () => {
+  test('русская по умолчанию — та же строка, что PATCH_SINCE_LEAD', () => {
+    expect(patchSinceLead()).toBe(PATCH_SINCE_LEAD)
+    expect(patchSinceLead('ru')).toBe(PATCH_SINCE_LEAD)
+  })
+
+  test('английская — по глоссарию, без кириллицы', () => {
+    expect(patchSinceLead('en')).toBe('Since you last played, a major update came out')
+    expect(patchSinceLead('en')).not.toMatch(/[А-Яа-яЁё]/)
+    expect(Object.values(PATCH_SINCE_LEADS).sort()).toEqual([PATCH_SINCE_LEAD, patchSinceLead('en')].sort())
   })
 })

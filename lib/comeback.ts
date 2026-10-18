@@ -1,3 +1,4 @@
+import type { Locale } from './i18n'
 import type { LibraryTileState } from './recommend'
 import type { CandidateSource, LibraryGame } from './types'
 
@@ -46,6 +47,25 @@ import type { CandidateSource, LibraryGame } from './types'
  */
 export const PATCH_SINCE_LEAD = 'С твоего последнего захода вышло крупное обновление'
 
+/**
+ * Та же вводная на обоих языках (глоссарий docs/i18n.md).
+ *
+ * Это не только текст, но и метка: shareText (lib/sharedpick.ts) узнаёт по
+ * началу предложения факт о патче и вырезает его из публичной ссылки. Поэтому
+ * английская вводная — неизменный префикс: имя апдейта и пересказ
+ * patchSentence ставит только ПОСЛЕ неё, и startsWith узнаёт её всегда.
+ * Проверке нужны обе сразу — причина в ссылке бывает на любом языке.
+ */
+export const PATCH_SINCE_LEADS = {
+  ru: PATCH_SINCE_LEAD,
+  en: 'Since you last played, a major update came out',
+} as const satisfies Record<Locale, string>
+
+/** Вводная факта на языке страницы: причина на /play и подсказка метки «обновлялась» на /library */
+export function patchSinceLead(locale: Locale = 'ru'): string {
+  return PATCH_SINCE_LEADS[locale]
+}
+
 /*
  * Срок в пересказе. Схема дайджеста зовёт крупным и сезон, и ивент с новым
  * контентом, а промпт дайджеста сроков не запрещает: «Хэллоуинский сезон с
@@ -61,9 +81,44 @@ const DAY_MONTH = /(?<![\d.])\d{1,2}\.(?:0[1-9]|1[0-2])(?![\d.])/
 const DEADLINE_WORDS =
   /(?<![а-яё])(?:до\s+\d|только\s+до|до\s+конца|успе[йвт]|осталось|остаётся|заканчива|законч|ограниченн|временн|последн(?:ий|ие|яя)\s+(?:шанс|дн))/i
 
-/** Несёт ли пересказ патча срок — тогда он не повод, а «успей» */
+/*
+ * Тот же срок в английском пересказе (tldr_en): на /en он уходит в причину
+ * тем же patchSentence, и «until November 5» давит там так же, как «до 5
+ * ноября». Логика та же — грубо и с запасом, — но у английского свои ловушки.
+ *
+ * Месяцы — с заглавной и без /i: «march» и «may» в английском — обычные
+ * слова («you may now trade»). May и сокращения считаются сроком только
+ * рядом с числом дня: «May 3», «3rd of May», «Nov 5». Числовая дата — по
+ * американскому порядку «11/05», с месяцем 1–12 первым: так «50/50» и «24/7»
+ * датой не становятся.
+ *
+ * Слова — только те, что говорят о конце: «ends», а не «end» и не «ending»
+ * («a new ending» — сюжетный патч, а не срок), «until», «last chance»,
+ * «hurry», «limited-time», «N days left». «temporary» ловит и «temporary fix»
+ * — как русское «временн» ловит «временный фикс»: лишний отказ дешевле.
+ */
+const MONTH_EN =
+  /\b(?:January|February|March|April|June|July|August|September|October|November|December)\b|\bMay\s+\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?May\b|\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\.?\s+\d{1,2}\b/
+const DATE_EN = /(?<![\d./])(?:0?[1-9]|1[0-2])\/(?:0?[1-9]|[12]\d|3[01])(?![\d/])/
+const DEADLINE_WORDS_EN =
+  /\b(?:until|till|ends|expires?|limited[-\s]time|time[-\s]limited|for\s+a\s+limited|last\s+chance|hurry|don'?t\s+miss|while\s+it\s+lasts|(?:days?|weeks?|hours?)\s+left|temporary)\b/i
+
+/**
+ * Несёт ли пересказ патча срок — тогда он не повод, а «успей».
+ *
+ * Русские и английские правила — разом, на любом тексте: пересказ приезжает
+ * на языке страницы, а латиница в русском и кириллица в английском правил
+ * друг друга не задевают.
+ */
 export function patchHasDeadline(tldr: string): boolean {
-  return MONTH_GEN.test(tldr) || DAY_MONTH.test(tldr) || DEADLINE_WORDS.test(tldr)
+  return (
+    MONTH_GEN.test(tldr) ||
+    DAY_MONTH.test(tldr) ||
+    DEADLINE_WORDS.test(tldr) ||
+    MONTH_EN.test(tldr) ||
+    DATE_EN.test(tldr) ||
+    DEADLINE_WORDS_EN.test(tldr)
+  )
 }
 
 /** С какого момента искать обновление у своей игры; null — сравнивать не с чем */
