@@ -1,11 +1,11 @@
 import { feedLinkOwner, getGamesMetaLite, getLatestSnapshotMinutes, getRssFeedForApps } from '@/lib/db'
 import { FEED_POLL_LIMIT, FEED_POLL_WINDOW_SEC, feedTokenHash, isFeedToken } from '@/lib/feedlink'
-import { newsDescription, newsPageTitle, newsPath } from '@/lib/newspage'
+import { newsDescription, newsPageTitle, newsPath, newsTitleOn } from '@/lib/newspage'
 import { checkRate, rateLimitedResponse } from '@/lib/ratelimit'
 import { rssFeed } from '@/lib/rss'
 import { appBaseUrl, getDb, isDemoId, nowSec } from '@/lib/server'
 import { resolveWhatsNew } from '@/lib/whatsnewfeed'
-import { isLocale } from '@/lib/i18n'
+import { htmlLang, isLocale, lp, tr } from '@/lib/i18n'
 
 /**
  * Личная RSS-лента по секретной ссылке: крупные патчи игр из твоей
@@ -57,6 +57,15 @@ import { isLocale } from '@/lib/i18n'
  * секретной ссылки. Ключ даёт только чтение этой ленты и гасится
  * перевыпуском; поэтому мы его и не прячем от журнала, а делаем дешёвым
  * для отзыва.
+ *
+ * ЯЗЫК — из адреса: ключ один, а лент две, /whatsnew/feed/<ключ> и
+ * /en/whatsnew/feed/<ключ> (строка FeedLink ставит язык своей страницы).
+ * Английская — вкладка «In your games» английской версии: те же записи,
+ * заголовок — newsTitleOn, описание — английский пересказ, а без него
+ * начало поста, только если оно английское (ридер getRssFeedForApps с 'en'
+ * русское тело не отдаёт вовсе), иначе заголовок. Запись без пересказа здесь
+ * остаётся, в отличие от общей ленты: это патч твоей игры, и знать о нём
+ * важнее, чем читать его пересказ.
  */
 export const dynamic = 'force-dynamic'
 
@@ -77,6 +86,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ lang: string; 
   const { lang, token } = await ctx.params
   // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
   if (!isLocale(lang)) return miss()
+  const locale = lang
   if (!isFeedToken(token)) return miss()
 
   const db = await getDb()
@@ -102,7 +112,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ lang: string; 
     wantsPopular: false,
     nowSec: now,
     snapshot: (id) => getLatestSnapshotMinutes(db, id),
-    forApps: (appids, limit, since) => getRssFeedForApps(db, appids, limit, undefined, since),
+    forApps: (appids, limit, since) => getRssFeedForApps(db, appids, limit, undefined, since, locale),
     // Добивки нет: в ридер идёт только личный блок — см. докблок
     major: async () => [],
   })
@@ -114,20 +124,34 @@ export async function GET(_req: Request, ctx: { params: Promise<{ lang: string; 
   const base = appBaseUrl()
   const demo = isDemoId(steamid)
   const xml = rssFeed({
-    title: demo ? 'Что нового в играх демо-библиотеки — imbored' : 'Что нового в твоих играх — imbored',
-    link: `${base}/whatsnew`,
+    title: demo
+      ? tr(locale, {
+          ru: 'Что нового в играх демо-библиотеки — imbored',
+          en: "What's new in the demo library's games — imbored",
+        })
+      : tr(locale, { ru: 'Что нового в твоих играх — imbored', en: "What's new in your games — imbored" }),
+    link: `${base}${lp(locale, '/whatsnew')}`,
     description: demo
-      ? 'Крупные патчи игр демо-библиотеки — коротко и по-русски.'
-      : 'Крупные патчи игр из твоей библиотеки — коротко и по-русски.',
+      ? tr(locale, {
+          ru: 'Крупные патчи игр демо-библиотеки — коротко и по-русски.',
+          en: "Major patches for the demo library's games, in short.",
+        })
+      : tr(locale, {
+          ru: 'Крупные патчи игр из твоей библиотеки — коротко и по-русски.',
+          en: 'Major patches for games in your library, in short.',
+        }),
+    language: htmlLang(locale),
     builtAt: now,
     items: items.map((item) => {
       const game = metas.get(item.appid)?.name
+      // Пересказ — на языке ленты: на /en русского нет (docs/i18n.md, п. 8)
+      const shown = locale === 'en' ? { ...item, tldr: item.tldrEn } : item
       return {
         // Те же заголовок и описание, что у общей ленты и страницы патча
-        title: newsPageTitle(item.title, game, item.publishedAt),
-        link: `${base}${newsPath(item.appid, item.gid)}`,
+        title: newsPageTitle(newsTitleOn(item, game, locale), game, item.publishedAt, locale),
+        link: `${base}${lp(locale, newsPath(item.appid, item.gid))}`,
         publishedAt: item.publishedAt,
-        description: newsDescription(item, game),
+        description: newsDescription(shown, game, locale),
       }
     }),
   })
