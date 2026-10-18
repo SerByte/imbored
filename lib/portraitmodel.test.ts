@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest'
+import { archetypeLabel } from './portrait'
 import { buildPortraitModel, buildYearModel, portraitTag, PURGATORY_MAX } from './portraitmodel'
 import type { GameMeta, LibraryGame } from './types'
 
@@ -206,4 +207,20 @@ describe('итоги года в модели', () => {
     const ids = (xs: number[]) => [...new Set(xs)].sort((a, b) => a - b)
     expect(ids(Object.keys(model?.covers ?? {}).map(Number))).toEqual(ids(shown.map((g) => g.appid)))
   })
+})
+
+/*
+ * Модель кэшируется строкой (unstable_cache на странице) и живёт до смены
+ * снапшота — у обоих языков одна. Поэтому в ней ключ архетипа, а не только
+ * русская подпись: /en/portrait подписывает те же архетипы по ключу
+ * (archetypeLabel), из той же записи кэша.
+ */
+test('модель несёт ключи архетипов и переживает JSON вместе с ними', () => {
+  const { games, metas } = collector()
+  const model = buildPortraitModel(games, (id) => metas.get(id), NOW, PLAN)
+  const cached = JSON.parse(JSON.stringify(model)) as typeof model
+  expect(cached.headline?.key).toBe('Automation')
+  expect(archetypeLabel(cached.headline!.key, 'en')).toBe('factory builder')
+  expect(cached.portrait.archetypes.map((a) => a.key)).toEqual(model.portrait.archetypes.map((a) => a.key))
+  for (const a of cached.portrait.archetypes) expect(a.label).toBe(archetypeLabel(a.key, 'ru'))
 })

@@ -1,7 +1,7 @@
 import { createClient } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
-import { loadCompat, loadCompatInvite, loadInviteHead } from './compatpage'
-import { migrateDb, saveLibrarySnapshot, updateGamePrices, upsertGamesMeta, type Db } from './db'
+import { loadCompat, loadCompatInvite, loadInviteHead, nameOf } from './compatpage'
+import { migrateDb, saveLibrarySnapshot, updateGamePrices, upsertGamesMeta, upsertUser, type Db } from './db'
 import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 import { roundsOf } from './testing/rounds'
 import type { LibraryGame } from './types'
@@ -146,5 +146,101 @@ describe('совместимость: круги к базе', () => {
     expect(guest).toEqual({ kind: 'noauth', invite: await loadCompatInvite(db, OPEN) })
     expect(noLibrary).toEqual({ kind: 'nolibrary', invite: await loadCompatInvite(db, OPEN) })
     expect(await loadCompat(db, { other: LATE, me: OPEN, now: NOW })).toEqual({ kind: 'noprofile', otherName: null })
+  })
+})
+
+/**
+ * Имена на странице сравнения — на её языке. Ник настоящего человека не
+ * переводится; переводятся запасное имя («Игрок 1234» → «Player 1234») и
+ * демо-ник, который в базе записан по-русски (lib/playername).
+ */
+describe('совместимость по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+  const DEMO_FRIEND = '00012345678901232'
+  /** Латинская библиотека: в английском ответе не должно остаться кириллицы */
+  const LATIN: LibraryGame[] = ['Alpha', 'Bravo', 'Charlie', 'Delta'].map((name, i) => ({
+    appid: 2000 + i,
+    name,
+    playtimeForever: (i + 1) * 300,
+    playtime2Weeks: 0,
+  }))
+
+  async function seedLatin(db: Db): Promise<void> {
+    await upsertGamesMeta(
+      db,
+      LATIN.map((g) => ({ appid: g.appid, name: g.name, tags: { 'Co-op': 100 }, genres: [], categories: [1, 9, 38] })),
+      NOW,
+    )
+    await saveLibrarySnapshot(db, OPEN, LATIN, NOW)
+    await saveLibrarySnapshot(db, DEMO_FRIEND, LATIN.slice(0, 3), NOW)
+    await upsertUser(db, { steamid: DEMO_FRIEND, personaName: 'Демо-друг' }, NOW)
+  }
+
+  test('nameOf: запасное имя и демо-ник — по-английски, настоящий ник — как есть', () => {
+    expect(nameOf(OPEN, null, 'en')).toBe('Player 0032')
+    expect(nameOf(DEMO_FRIEND, 'Демо-друг', 'en')).toBe('Demo friend')
+    expect(nameOf(OPEN, 'Аня', 'en')).toBe('Аня')
+    // по-русски — как было
+    expect(nameOf(OPEN, null)).toBe('Игрок 0032')
+    expect(nameOf(DEMO_FRIEND, 'Демо-друг', 'ru')).toBe('Демо-друг')
+  })
+
+  test('приглашение и его голова называют владельца по-английски', async () => {
+    const db = await freshDb()
+    await seedLatin(db)
+    const invite = await loadCompatInvite(db, OPEN, { locale: 'en' })
+    expect(invite?.name).toBe('Player 0032')
+    expect(JSON.stringify(invite)).not.toMatch(CYRILLIC)
+    expect((await loadInviteHead(db, DEMO_FRIEND, 'en'))?.name).toBe('Demo friend')
+    // без языка — русский, как было
+    expect((await loadCompatInvite(db, OPEN))?.name).toBe('Игрок 0032')
+    expect((await loadInviteHead(db, DEMO_FRIEND))?.name).toBe('Демо-друг')
+  })
+
+  /*
+   * Гость видит приглашение, которое loadCompat собирает сам, через
+   * loadCompatInvite. Язык обязан доехать и туда: иначе на /en шапка
+   * страницы сказала бы «Player 0032», а приглашение под ней — «Игрок 0032».
+   */
+  test('loadCompat отдаёт приглашению тот же язык', async () => {
+    const db = await freshDb()
+    await seedLatin(db)
+    const LATE = '76561198000000034'
+    const guest = await loadCompat(db, { other: OPEN, me: null, now: NOW, locale: 'en' })
+    const noLibrary = await loadCompat(db, { other: OPEN, me: LATE, now: NOW, locale: 'en' })
+    const invite = await loadCompatInvite(db, OPEN, { locale: 'en' })
+    expect(guest).toEqual({ kind: 'noauth', invite })
+    expect(noLibrary).toEqual({ kind: 'nolibrary', invite })
+    expect(JSON.stringify(guest)).not.toMatch(CYRILLIC)
+  })
+
+  test('посчитанная пара: имена обоих — по-английски, без кириллицы во всём ответе', async () => {
+    const db = await freshDb()
+    await seedLatin(db)
+    const state = await loadCompat(db, { other: DEMO_FRIEND, me: OPEN, now: NOW, locale: 'en' })
+    if (state.kind !== 'ok') throw new Error(state.kind)
+    expect(state.data).toMatchObject({ myName: 'Player 0032', otherName: 'Demo friend', commonTotal: 3 })
+    expect(JSON.stringify(state)).not.toMatch(CYRILLIC)
+    // «Нет у: …» собрано из тех же имён
+    for (const p of [...state.data.playNow, ...state.data.playLater]) {
+      for (const n of p.missingFor) expect(['Player 0032', 'Demo friend']).toContain(n)
+    }
+  })
+
+  test('без профиля: демо-ник на языке страницы, пустой — null', async () => {
+    const db = await freshDb()
+    await upsertUser(db, { steamid: DEMO_FRIEND, personaName: 'Демо-друг' }, NOW)
+    expect(await loadCompat(db, { other: DEMO_FRIEND, me: null, now: NOW, locale: 'en' })).toEqual({
+      kind: 'noprofile',
+      otherName: 'Demo friend',
+    })
+    expect(await loadCompat(db, { other: DEMO_FRIEND, me: null, now: NOW })).toEqual({
+      kind: 'noprofile',
+      otherName: 'Демо-друг',
+    })
+    expect(await loadCompat(db, { other: OPEN, me: null, now: NOW, locale: 'en' })).toEqual({
+      kind: 'noprofile',
+      otherName: null,
+    })
   })
 })

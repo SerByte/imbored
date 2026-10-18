@@ -216,6 +216,12 @@ export function renewToken(sid: string, steamid: string, secret: string, nowSec:
 /**
  * Подпись устройства для списка входов. Не для безопасности — только чтобы
  * человек узнал свой телефон среди строк, поэтому грубого разбора достаточно.
+ *
+ * Языка у неё нет намеренно: подпись пишется в sessions.device в минуту
+ * входа и нигде на сайте пока не выводится, а язык страницы при входе не
+ * решает, на каком языке её прочтут потом. Появится вывод — переводить там
+ * («Яндекс» → «Yandex»), как ники демо-личностей (lib/playername), а не
+ * при записи.
  */
 export function deviceLabel(userAgent: string | null | undefined): string | null {
   if (!userAgent) return null

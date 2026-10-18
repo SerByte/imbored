@@ -3,7 +3,9 @@ import {
   buildLibraryView,
   dayKey,
   forgottenCandidates,
+  LIBRARY_FILTERS,
   LIBRARY_PAGE_SIZE,
+  libraryFilterLabel,
   libraryHref,
   libraryPage,
   parseLibraryQuery,
@@ -11,6 +13,8 @@ import {
   parseLibraryFilter,
   parseLibraryPage,
   pickForgotten,
+  SHELF_EMPTY,
+  shelfEmpty,
   wallState,
 } from './forgotten'
 import { tagWeightFrom } from './tagweight'
@@ -497,5 +501,42 @@ describe('поиск по стене /library', () => {
     expect(found.filter).toBe('all')
     expect(found.games.map((g) => g.appid)).toEqual([1001])
     expect(found.counts).toEqual({ all: 1, untouched: 0, unplayed: 0, comeback: 0, active: 0 })
+  })
+})
+
+/**
+ * Чипсы и пустые полки /en/library — слова глоссария, и ни одной полки без
+ * подписи: порядок задаёт русский LIBRARY_FILTERS, подпись — язык страницы.
+ */
+describe('полки /library по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('подписи чипсов — из глоссария, по-русски — как в LIBRARY_FILTERS', () => {
+    expect(LIBRARY_FILTERS.map((f) => libraryFilterLabel(f.id, 'en'))).toEqual([
+      'All',
+      'Unopened',
+      'Bounced off',
+      'Abandoned',
+      'Playing now',
+    ])
+    for (const f of LIBRARY_FILTERS) {
+      expect(libraryFilterLabel(f.id)).toBe(f.label)
+      expect(libraryFilterLabel(f.id, 'ru')).toBe(f.label)
+      // чипс не шире русского: строка чипсов переносится на телефоне
+      expect(libraryFilterLabel(f.id, 'en').length, f.id).toBeLessThanOrEqual(f.label.length)
+    }
+  })
+
+  test('пустые полки — свои слова у каждой, «Играю сейчас» не поздравляет', () => {
+    expect(shelfEmpty('untouched', 'en')).toBe("Nothing sealed: you've at least opened everything you bought.")
+    expect(shelfEmpty('unplayed', 'en')).toBe("Opening a game and dropping it in the first hour just isn't you.")
+    expect(shelfEmpty('comeback', 'en')).toBe('Nothing abandoned: you keep coming back to your games.')
+    expect(shelfEmpty('active', 'en')).toBe("You haven't launched anything in the last two weeks.")
+    const ids = ['untouched', 'unplayed', 'comeback', 'active'] as const
+    expect(new Set(ids.map((id) => shelfEmpty(id, 'en'))).size).toBe(ids.length)
+    for (const id of ids) {
+      expect(shelfEmpty(id, 'en')).not.toMatch(CYRILLIC)
+      expect(shelfEmpty(id)).toBe(SHELF_EMPTY[id])
+    }
   })
 })
