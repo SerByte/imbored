@@ -7,6 +7,7 @@ import {
   TRIVIA_COUNT,
   type TriviaCatalogGame,
   type TriviaParty,
+  type TriviaQuestion,
 } from './trivia'
 import { tagRu } from './tagsru'
 import { hiddenLibrary } from './testing/hiddenlibrary'
@@ -308,5 +309,111 @@ describe('loadTriviaCatalog', () => {
     })
     const [dota] = await loadTriviaCatalog(db, 'seed')
     expect(dota.tags).toEqual(tags)
+  })
+})
+
+/** Кириллица в строке — на английской странице это непереведённый кусок */
+const CYRILLIC = /[А-Яа-яЁё]/
+
+/**
+ * Викторина по-английски. Каталог и пати — латиницей, как придут на /en
+ * (имена — метки ростера, их переводит memberLabel у вызывающего): тогда во
+ * всём, что увидит человек, не должно остаться ни одной русской буквы.
+ */
+describe('buildTrivia по-английски', () => {
+  // Два набора тегов через одну игру: иначе «какого тега нет» не из чего собрать
+  const CATALOG_EN: TriviaCatalogGame[] = Array.from({ length: 24 }, (_, i) =>
+    game(100 + i, `Game ${i}`, {
+      ccu: (i + 1) * 5000,
+      tags: i % 2 ? { Action: 90, 'Co-op': 70, RPG: 50 } : { Strategy: 90, Indie: 70, Puzzle: 50 },
+    }),
+  )
+  const PARTY_EN: TriviaParty[] = [
+    { steamid: 'a', name: 'Anna', library: lib([1, 'Dota 2', 300], [2, 'Portal 2', 10], [3, 'Factorio', 90]) },
+    { steamid: 'b', name: 'Boris', library: lib([1, 'Dota 2', 20], [4, 'Terraria', 200], [5, 'Valheim', 50]) },
+  ]
+  const shown = (q: TriviaQuestion) => [q.prompt, q.reveal ?? '', ...q.options.map((o) => o.label)]
+
+  test('без языка — русский до буквы', () => {
+    const args = { seed: 'r:1:0', catalog: CATALOG, party: PARTY }
+    expect(buildTrivia(args)).toEqual(buildTrivia({ ...args, locale: 'ru' }))
+  })
+
+  test('сид от языка не зависит: те же вопросы, другие слова', () => {
+    const ru = buildTrivia({ seed: 'r:1:0', catalog: CATALOG_EN, party: PARTY_EN })
+    const en = buildTrivia({ seed: 'r:1:0', catalog: CATALOG_EN, party: PARTY_EN, locale: 'en' })
+    expect(en.map((q) => q.id)).toEqual(ru.map((q) => q.id))
+    expect(en.map((q) => q.answer)).toEqual(ru.map((q) => q.answer))
+  })
+
+  test('вопросы каждого вида — английскими фразами', () => {
+    const kinds = new Set<string>()
+    for (let round = 0; round < 10; round++) {
+      for (const q of buildTrivia({ seed: `r:en:${round}`, catalog: CATALOG_EN, party: PARTY_EN, locale: 'en' })) {
+        kinds.add(q.kind)
+        for (const s of shown(q)) expect(s, `${q.kind}: ${s}`).not.toMatch(CYRILLIC)
+        if (q.kind === 'cover') expect(q.prompt).toBe('Which game is this?')
+        if (q.kind === 'ccu') {
+          expect(q.prompt).toBe("Where's the bigger crowd right now?")
+          // онлайн — с английскими разрядами: «Game 3 — 20,000»
+          expect(q.reveal).toMatch(/^Game \d+ — \d{1,3}(,\d{3})*, Game \d+ — \d{1,3}(,\d{3})*$/)
+        }
+        if (q.kind === 'nottag') expect(q.prompt).toMatch(/^Which tag doesn't “Game \d+” have\?$/)
+        if (q.kind === 'hours') expect(q.prompt).toBe('Who has more hours in “Dota 2”?')
+        if (q.kind === 'toptrio') expect(q.prompt).toMatch(/^Whose top 3 is this: [^,]+, [^,]+, [^,]+\?$/)
+      }
+    }
+    expect([...kinds].sort()).toEqual(['ccu', 'cover', 'hours', 'nottag', 'toptrio'])
+  })
+
+  /** Пати на двоих с одной общей игрой — латиницей */
+  function duoEn(a: number, b: number): TriviaParty[] {
+    const one = (min: number): LibraryGame[] => [{ appid: 570, name: 'Dota 2', playtimeForever: min, playtime2Weeks: 0 }]
+    return [
+      { steamid: 'd', name: 'Dima', library: one(a) },
+      { steamid: 's', name: 'Sasha', library: one(b) },
+    ]
+  }
+  const hoursEn = (party: TriviaParty[]) =>
+    Array.from({ length: 20 }, (_, round) =>
+      buildTrivia({ seed: `r:h:${round}`, catalog: CATALOG_EN, party, locale: 'en' }).filter((q) => q.kind === 'hours'),
+    ).flat()
+
+  test('hours: разгадка — минутами до десяти часов, дальше — целыми часами с разрядами', () => {
+    const minutes = hoursEn(duoEn(60, 89))
+    expect(minutes.length).toBeGreaterThan(0)
+    for (const q of minutes) expect(q.reveal).toBe('Sasha — 1 h 29 min, Dima — 1 h')
+
+    const ten = hoursEn(duoEn(90, 615))
+    expect(ten.length).toBeGreaterThan(0)
+    for (const q of ten) expect(q.reveal).toBe('Sasha — 10 h, Dima — 1 h 30 min')
+
+    const many = hoursEn(duoEn(40, 2434 * 60))
+    expect(many.length).toBeGreaterThan(0)
+    for (const q of many) expect(q.reveal).toBe('Sasha — 2,434 h, Dima — 40 min')
+  })
+
+  test('nottag: варианты — сами теги Steam, и два ключа с одной подписью — один вариант', () => {
+    const twin: TriviaCatalogGame[] = CATALOG_EN.map((g, i) => ({
+      ...g,
+      tags: (i % 2
+        ? { 'Dystopian ': 90, Action: 70, RPG: 50 }
+        : { Dystopian: 90, Strategy: 70, Indie: 50 }) as Record<string, number>,
+    }))
+    let seen = 0
+    for (let round = 0; round < 20; round++) {
+      for (const q of buildTrivia({ seed: `r:twin:${round}`, catalog: twin, party: [], locale: 'en' })) {
+        if (q.kind !== 'nottag') continue
+        seen++
+        const labels = q.options.map((o) => o.label)
+        expect(new Set(labels).size, labels.join(', ')).toBe(labels.length)
+        // подпись без пробела по краям, как её покажет человек
+        expect(labels.every((l) => l === l.trim()), labels.join('|')).toBe(true)
+        const target = twin.find((g) => q.prompt.includes(`“${g.name}”`))!
+        const own = new Set(Object.keys(target.tags).map((t) => t.trim()))
+        q.options.forEach((o, i) => expect(own.has(o.label), `${q.prompt}: ${o.label}`).toBe(i !== q.answer))
+      }
+    }
+    expect(seen).toBeGreaterThan(0)
   })
 })
