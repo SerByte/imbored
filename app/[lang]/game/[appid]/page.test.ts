@@ -527,6 +527,38 @@ describe('английская карточка', () => {
     expect(JSON.stringify(meta)).not.toMatch(CYR)
   })
 
+  /*
+   * alt файловой карточки один на все языки, поэтому /en ставит свой images —
+   * ту же карточку с английской подписью, а русская своего images не задаёт и
+   * получает файловую до байта (enCard в page.tsx). Размеры и тип в page.tsx —
+   * копия: если карточка сменит формат, тест это поймает.
+   */
+  test('превью на /en — та же карточка маршрута, но с английским alt', async () => {
+    await seedEn()
+    const { size, contentType } = await import('./opengraph-image')
+    const meta = await generateMetadata(en())
+    expect(meta.openGraph?.images).toEqual([
+      {
+        url: `/en/game/${APPID}/opengraph-image`,
+        width: size.width,
+        height: size.height,
+        type: contentType,
+        alt: 'Is it worth playing? — imbored',
+      },
+    ])
+    // twitter:image Next дозаполняет из openGraph сам — своего тут не нужно
+    expect(meta.twitter).not.toHaveProperty('images')
+  })
+
+  test('русская страница своего images не задаёт — карточку и её alt ставит файл', async () => {
+    await seedEn()
+    const { alt } = await import('./opengraph-image')
+    expect(alt).toBe('Стоит ли играть — imbored')
+    const meta = await generateMetadata({ params: Promise.resolve({ appid: String(APPID) }) })
+    expect(meta.openGraph).not.toHaveProperty('images')
+    expect(meta.twitter).not.toHaveProperty('images')
+  })
+
   test('на странице, в разметке и в пропсах островков — ни буквы по-русски', async () => {
     await seedEn()
     lang.locale = 'en'

@@ -165,4 +165,26 @@ describe('английские хаб и страница жанра', () => {
     expect(text).not.toMatch(CYR)
     expect(JSON.stringify(page)).not.toMatch(CYR)
   })
+
+  /*
+   * Как у карточки игры: alt файловой карточки один на все языки, и /en
+   * ставит свой images — ту же карточку маршрута с английским alt. Русская
+   * страница images не задаёт: карточка, адрес с хешем и alt — от файла.
+   */
+  test('жанр: превью на /en — та же карточка с английским alt, русская — от файла', async () => {
+    const { size, contentType, alt } = await import('./[tag]/opengraph-image')
+    const enMeta = await generateGenreMetadata(en({ tag: 'open-world' }))
+    expect(enMeta.openGraph?.images).toEqual([
+      {
+        url: '/en/games/open-world/opengraph-image',
+        width: size.width,
+        height: size.height,
+        type: contentType,
+        alt: 'Genre — imbored',
+      },
+    ])
+    expect(alt).toBe('Жанр — imbored')
+    const ruMeta = await generateGenreMetadata({ params: Promise.resolve({ tag: 'open-world' }) })
+    expect(ruMeta.openGraph).not.toHaveProperty('images')
+  })
 })

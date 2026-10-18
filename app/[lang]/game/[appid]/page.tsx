@@ -121,6 +121,27 @@ export async function generateStaticParams({
 /** generateMetadata и сам компонент рендерят один запрос — читаем базу однажды. */
 const loadOnce = cache(loadGamePage)
 
+/**
+ * Карточка превью на /en — та же opengraph-image.tsx рядом, но с английской
+ * подписью. alt файловой карточки — константа модуля, одна на все языки, и
+ * на /en og:image:alt был бы русским. Свой images этого уровня Next ставит
+ * вместо файла, а twitter:image дозаполняет из openGraph сам. Русская
+ * страница images не объявляет и получает файловую карточку как была: адрес
+ * с хешем, размеры и alt — оттуда. Хеша у английского адреса нет — его
+ * ставит только файловая метадата; карточку и так перерисовывает revalidate.
+ *
+ * Размеры и тип — копия size и contentType карточки, а не импорт: модуль
+ * карточки тянет next/og и шрифты в рендер страницы. Что они совпадают —
+ * сторож в page.test.ts. Не «мёртвый images» из lib/social.test.ts: тот —
+ * images, которые перекрыл бы файл, а здесь images перекрывают файл.
+ */
+const EN_CARD = { width: 1200, height: 630, type: 'image/png', alt: 'Is it worth playing? — imbored' }
+
+function enCard(locale: Locale, canonical: string) {
+  if (locale !== 'en') return {}
+  return { images: [{ url: lp(locale, `${canonical}/opengraph-image`), ...EN_CARD }] }
+}
+
 export async function generateMetadata({
   params,
 }: {
@@ -152,15 +173,17 @@ export async function generateMetadata({
   const canonical = `/game/${appid}`
 
   /*
-   * Картинки здесь больше нет, и это не потеря, а переезд. Раньше в openGraph
-   * подставлялся сырой header-файл из Steam 920×430: чужая пропорция, которую
-   * мессенджеры режут по краям, без названия поверх и без единого следа
-   * imbored. Теперь карточку рисует opengraph-image.tsx рядом — арт во всю
-   * карточку, скрим и текст, как на самой странице.
+   * Картинки у русской страницы здесь нет, и это не потеря, а переезд. Раньше
+   * в openGraph подставлялся сырой header-файл из Steam 920×430: чужая
+   * пропорция, которую мессенджеры режут по краям, без названия поверх и без
+   * единого следа imbored. Теперь карточку рисует opengraph-image.tsx рядом —
+   * арт во всю карточку, скрим и текст, как на самой странице.
    *
-   * Оставлять здесь images было нельзя даже «на всякий случай»: файловая
-   * метадата приоритетнее объекта metadata, так что эти строки всё равно
-   * никогда бы не применились — они бы только врали читающему код.
+   * Файл Next подставляет сам, но только пока у openGraph этого уровня нет
+   * своего ключа images (resolve-metadata, mergeStaticMetadata): свой images
+   * встаёт ВМЕСТО файла. Поэтому чужой картинки здесь быть не должно, а на
+   * /en images есть — но это та же карточка, только с английским alt
+   * (enCard ниже).
    */
   /*
    * Записи, которые каталог сам считает мёртвыми, не идут в индекс.
@@ -214,6 +237,7 @@ export async function generateMetadata({
       description,
       url: lp(locale, canonical),
       type: 'article',
+      ...enCard(locale, canonical),
     },
     twitter: {
       card: 'summary_large_image',

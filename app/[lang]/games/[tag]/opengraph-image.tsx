@@ -6,14 +6,14 @@ import { loadGenre } from './load'
 import { isLocale, pl, tr } from '@/lib/i18n'
 
 /**
- * Подпись картинки — без языка, одна на обе версии: Next читает alt
- * константой модуля, а не на запрос, и «Жанр — imbored» стояло бы
- * og:image:alt и у английской карточки. generateImageMetadata перенёс бы
- * картинку на адрес …/opengraph-image/<id>, и у русской страницы сменился
- * бы сам og:image (тот же довод — у карточки игры, app/[lang]/game/[appid]).
- * Жанр словами — на самой карточке, на языке страницы.
+ * Подпись картинки — русская, как была: Next читает alt константой модуля, а
+ * не на запрос. generateImageMetadata перенёс бы картинку на адрес
+ * …/opengraph-image/<id>, и у русской страницы сменился бы сам og:image.
+ * Английскую подпись на /en ставит страница своим openGraph.images с этой же
+ * карточкой (EN_CARD в page.tsx; почему так можно — у карточки игры,
+ * app/[lang]/game/[appid]).
  */
-export const alt = 'imbored'
+export const alt = 'Жанр — imbored'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 

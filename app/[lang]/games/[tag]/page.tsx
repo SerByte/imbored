@@ -51,6 +51,20 @@ const thin = (games: readonly GenreGame[]) => games.length < HUB_MIN_SHELF
 /** «40 игр» / «40 games» — счёт игр жанра в описании и на странице */
 const gamesWord = (locale: Locale, n: number) => pl(locale, n, { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] })
 
+/**
+ * Карточка превью на /en — та же opengraph-image.tsx рядом, с английским alt.
+ * Русская страница своего images не объявляет и получает файловую карточку
+ * до байта. Почему так можно и почему размеры — копия, а не импорт, — у
+ * карточки игры (enCard в app/[lang]/game/[appid]/page.tsx); сторож — в
+ * app/[lang]/games/page.test.ts.
+ */
+const EN_CARD = { width: 1200, height: 630, type: 'image/png', alt: 'Genre — imbored' }
+
+function enCard(locale: Locale, canonical: string) {
+  if (locale !== 'en') return {}
+  return { images: [{ url: lp(locale, `${canonical}/opengraph-image`), ...EN_CARD }] }
+}
+
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { tag: slug, lang } = await params
   const locale = toLocale(lang)
@@ -74,7 +88,14 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
     description,
     alternates: localeAlternates(locale, canonical),
     ...(thin(games) ? { robots: { index: false, follow: true } } : {}),
-    openGraph: { ...ogSite(locale), type: 'website', url: lp(locale, canonical), title: heading, description },
+    openGraph: {
+      ...ogSite(locale),
+      type: 'website',
+      url: lp(locale, canonical),
+      title: heading,
+      description,
+      ...enCard(locale, canonical),
+    },
   }
 }
 
