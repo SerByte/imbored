@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   awaitingOthers,
   deckBehind,
+  demoPersonaName,
   kickHandoffDue,
   matchByLeader,
   matchLine,
@@ -462,5 +463,139 @@ describe('kickHandoffDue: фокус на «Пустить обратно» — 
   test('квитанции нет или строки нет — фокус не трогаем', () => {
     expect(kickHandoffDue(null, { members: 2, round: 0, phase: 'shown' })).toBe(false)
     expect(kickHandoffDue(ticket, { members: 2, round: 0, phase: null })).toBe(false)
+  })
+})
+
+/** Кириллица в строке — на английской странице это непереведённый кусок */
+const CYRILLIC = /[А-Яа-яЁё]/
+
+/**
+ * Строки комнаты по-английски. Русский — по умолчанию и прежний: всё выше
+ * зовёт функции без языка.
+ */
+describe('строки комнаты по-английски', () => {
+  const tab = {
+    roomId: 'ABC123',
+    status: 'open' as const,
+    isMember: true,
+    awaiting: false,
+    sawOpen: true,
+    unseen: false,
+    matchedName: null,
+  }
+  const matchedTab = { ...tab, status: 'matched' as const, matchedName: 'Hades' }
+
+  test('заголовок вкладки: «ждём остальных» и «сошлись» — теми же двумя состояниями', () => {
+    // код — через неразрывный пробел, как по-русски
+    expect(roomTabTitle({ ...tab, awaiting: true }, 'en')).toBe('Waiting for others · Party ABC123')
+    expect(roomTabTitle({ ...matchedTab, unseen: true }, 'en')).toBe('● Matched: Hades')
+    expect(roomTabTitle(matchedTab, 'en')).toBe('Matched: Hades')
+    expect(roomTabTitle(tab, 'en')).toBeNull()
+    expect(roomTabTitle({ ...matchedTab, sawOpen: false }, 'en')).toBeNull()
+    expect(roomTabTitle({ ...tab, isMember: false, awaiting: true }, 'en')).toBeNull()
+    expect(roomTabTitle({ ...tab, awaiting: true })).toBe(roomTabTitle({ ...tab, awaiting: true }, 'ru'))
+  })
+
+  test('строка под ростером', () => {
+    expect(rosterHint({ swiping: 1, hasMore: true }, 'en')).toBe('The match will show up on its own — no need to refresh.')
+    expect(rosterHint({ swiping: 0, hasMore: true }, 'en')).toBe('No match — grab more games with the button below.')
+    expect(rosterHint({ swiping: 0, hasMore: false }, 'en')).toBeNull()
+  })
+
+  test('матч для скринридера', () => {
+    const args = { sawOpen: true, status: 'matched' as const, isMember: true, game: { name: 'Hades' } }
+    expect(matchLine(args, 'en')).toBe('Match: “Hades”')
+    expect(matchLine({ ...args, sawOpen: false }, 'en')).toBeNull()
+  })
+
+  test('отказ переключателя доски: 429 просит подождать, остальное — проверить связь', () => {
+    const limited = publicFailure(429, 'en')
+    expect(limited).toBe("You've switched the board too often — wait a few minutes, then try again.")
+    expect(limited).not.toMatch(/check your connection|tap it again/)
+    for (const status of [0, 400, 500]) {
+      expect(publicFailure(status, 'en'), String(status)).toBe(
+        "The board didn't switch — check your connection and tap it again.",
+      )
+    }
+  })
+
+  test('ни одной русской буквы в английских строках', () => {
+    const all = [
+      roomTabTitle({ ...tab, awaiting: true }, 'en'),
+      roomTabTitle({ ...matchedTab, unseen: true }, 'en'),
+      rosterHint({ swiping: 1, hasMore: false }, 'en'),
+      rosterHint({ swiping: 0, hasMore: true }, 'en'),
+      matchLine({ sawOpen: true, status: 'matched', isMember: true, game: { name: 'Hades' } }, 'en'),
+      publicFailure(429, 'en'),
+      publicFailure(500, 'en'),
+    ]
+    for (const s of all) expect(s).not.toMatch(CYRILLIC)
+  })
+})
+
+describe('memberLabel по-английски', () => {
+  const SID = '76561198012345678'
+  const DEMO = '00012345678901234'
+
+  test('настоящее имя — как есть, запасное — «Player» с тем же хешем', () => {
+    expect(memberLabel('ABC123', SID, 'Dima', 'en')).toBe('Dima')
+    const en = memberLabel('ABC123', SID, null, 'en')
+    expect(en).toMatch(/^Player [0-9a-z]{4}$/)
+    // та же метка, что у русского «Игрок …»: один человек — один хвост
+    expect(en.slice('Player '.length)).toBe(memberLabel('ABC123', SID, null).slice('Игрок '.length))
+    expect(en).not.toMatch(CYRILLIC)
+  })
+
+  test('steamid наружу не уходит и в английской метке', () => {
+    const label = memberLabel('ABC123', SID, undefined, 'en')
+    for (let n = 3; n <= SID.length; n++) {
+      for (let i = 0; i + n <= SID.length; i++) expect(label).not.toContain(SID.slice(i, i + n))
+    }
+  })
+
+  test('демо-личности называются по-английски, а живой ник «Демо-игрок» остаётся собой', () => {
+    expect(memberLabel('ABC123', DEMO, 'Демо-игрок', 'en')).toBe('Demo player')
+    expect(memberLabel('ABC123', DEMO, 'Демо-друг', 'en')).toBe('Demo friend')
+    // ник, который человек выбрал в Steam сам, — не наша подпись
+    expect(memberLabel('ABC123', SID, 'Демо-игрок', 'en')).toBe('Демо-игрок')
+    // ник демо-личности пишем только мы: незнакомая запись — тоже «Demo
+    // player», как у personaLabel в lib/playername, а не чужая кириллица
+    expect(memberLabel('ABC123', DEMO, 'Sergey', 'en')).toBe('Demo player')
+    expect(memberLabel('ABC123', DEMO, 'Что-то', 'en')).toBe('Demo player')
+    // по-русски — как хранится
+    expect(memberLabel('ABC123', DEMO, 'Демо-игрок')).toBe('Демо-игрок')
+    expect(memberLabel('ABC123', DEMO, 'Sergey')).toBe('Sergey')
+  })
+})
+
+/**
+ * Правило имени демо-личности — одно на ростер и на экран приглашения, и то
+ * же, что у personaLabel (lib/playername): иначе замена одной на другую молча
+ * поменяла бы вывод, а хост в приглашении и в ростере звался бы по-разному.
+ */
+describe('demoPersonaName', () => {
+  test('по-английски демо-личность — «Demo friend» или «Demo player», что бы ни было записано', () => {
+    expect(demoPersonaName('Демо-друг', true, 'en')).toBe('Demo friend')
+    expect(demoPersonaName('Демо-игрок', true, 'en')).toBe('Demo player')
+    expect(demoPersonaName('Что-то', true, 'en')).toBe('Demo player')
+    for (const s of ['Демо-друг', 'Демо-игрок', 'Что-то']) {
+      expect(demoPersonaName(s, true, 'en')).not.toMatch(CYRILLIC)
+    }
+  })
+
+  test('живой человек и русская страница — ник как записан', () => {
+    expect(demoPersonaName('Демо-игрок', false, 'en')).toBe('Демо-игрок')
+    expect(demoPersonaName('Sergey', false, 'en')).toBe('Sergey')
+    expect(demoPersonaName('Демо-друг', true, 'ru')).toBe('Демо-друг')
+    expect(demoPersonaName('Демо-игрок', true)).toBe('Демо-игрок')
+  })
+
+  test('memberLabel зовёт то же правило', () => {
+    const DEMO = '00012345678901234'
+    for (const name of ['Демо-друг', 'Демо-игрок', 'Что-то']) {
+      for (const locale of ['ru', 'en'] as const) {
+        expect(memberLabel('ABC123', DEMO, name, locale)).toBe(demoPersonaName(name, true, locale))
+      }
+    }
   })
 })

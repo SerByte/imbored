@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest'
-import { DOOR_NAMES, inviteCopy, inviteDoor, NEW_ROOM_HINT, type RoomInvite } from './roominvite'
+import { ROOM_PRESETS } from './presets'
+import { memberLabel } from './room'
+import { DOOR_NAMES, inviteCopy, inviteDoor, NEW_ROOM_HINT, newRoomHint, type RoomInvite } from './roominvite'
 
 const open: RoomInvite = {
   id: 'ABC234',
@@ -248,5 +250,296 @@ describe('экран приглашения', () => {
     expect(d.seed).toEqual({ ...valheim, line: 'Первой картой — «Valheim»; не зайдёт — дальше колода из ваших библиотек.' })
     expect(inviteCopy('ABC234', { ...open, seedName: 'Valheim' }).description.startsWith(d.seed!.line)).toBe(true)
     expect(inviteDoor({ host: 'Серёга', names: ['Серёга'], seed: null }).seed).toBeNull()
+  })
+})
+
+/** Кириллица в строке — на английской странице это непереведённый кусок */
+const CYRILLIC = /[А-Яа-яЁё]/
+
+/**
+ * Английское превью: целые фразы на каждое состояние, а не перевод русских
+ * кусков. Ник и игры латиницей — тогда во всём, что прочтут в чате, не
+ * должно остаться ни одной русской буквы.
+ */
+describe('превью приглашения по-английски', () => {
+  const openEn: RoomInvite = { ...open, host: 'Sergey' }
+  const matchedEn: RoomInvite = { ...openEn, matched: true, matchedName: 'Hades' }
+
+  test('русский — по умолчанию и до буквы прежний', () => {
+    expect(inviteCopy('ABC234', open)).toEqual(inviteCopy('ABC234', open, 'ru'))
+    expect(newRoomHint()).toBe(NEW_ROOM_HINT)
+    expect(NEW_ROOM_HINT).toBe('Собери свою комнату — imbored.cc/room/new')
+  })
+
+  test('комната ждёт — кто зовёт и сколько уже внутри', () => {
+    const c = inviteCopy('ABC234', openEn, 'en')
+    expect(c.title).toBe('Sergey invites you to Party ABC234')
+    expect(c.description).toBe(
+      "3 people are already in the room. Connect your Steam library and swipe on what you'd play. When everyone's votes line up, it's a match.",
+    )
+    expect(c.eyebrow).toBe('PARTY · INVITE')
+    expect(c.headline).toBe("Sergey wants to pick tonight's game")
+    expect(c.foot).toBe('3 people in the room · connect your library and swipe')
+    expect(everything(c)).not.toMatch(CYRILLIC)
+  })
+
+  test('без ника хоста — безлично, и один человек — в единственном числе', () => {
+    const c = inviteCopy('ABC234', { ...openEn, host: null, members: 1 }, 'en')
+    expect(c.title).toBe("You're invited to Party ABC234")
+    expect(c.headline).toBe("You're invited to pick tonight's game")
+    expect(c.description).toMatch(/^1 person is already in the room\. Connect/)
+    expect(c.foot).toBe('1 person in the room · connect your library and swipe')
+  })
+
+  test('после матча — игра и своя комната по английскому адресу, без точки после него', () => {
+    const c = inviteCopy('ABC234', matchedEn, 'en')
+    expect(c.title).toBe('Party ABC234 matched on “Hades”')
+    expect(c.headline).toBe('Matched on “Hades”')
+    expect(c.eyebrow).toBe('PARTY · MATCH')
+    expect(c.foot).toBe('Start your own room — imbored.cc/en/room/new')
+    expect(c.description).toBe(
+      'The votes landed on “Hades” — this room already has its game. Start your own room — imbored.cc/en/room/new',
+    )
+    expect(c.description.endsWith(newRoomHint('en'))).toBe(true)
+    expect(everything(c)).not.toMatch(/swipe|connect/i)
+    expect(everything(c)).not.toMatch(CYRILLIC)
+  })
+
+  test('матч без названия — «already picked», без пустых кавычек', () => {
+    const c = inviteCopy('ABC234', { ...matchedEn, matchedName: null }, 'en')
+    expect(c.title).toBe('Party ABC234 already picked a game')
+    expect(c.headline).toBe('Game already picked')
+    expect(c.description).toBe(
+      'The votes are in — this room already has its game. Start your own room — imbored.cc/en/room/new',
+    )
+    expect(everything(c)).not.toContain('“”')
+  })
+
+  test('о комнате ничего не известно — нейтрально, без призыва', () => {
+    const c = inviteCopy('ZZZZZZ', null, 'en')
+    expect(c).toEqual({
+      title: 'Party ZZZZZZ',
+      description:
+        'Party on imbored: your group picks one game for tonight from your Steam libraries — by vote, no arguing in chat.',
+      eyebrow: 'PARTY',
+      headline: 'Friends pick a game for tonight',
+      foot: 'One game for all — from your Steam libraries',
+    })
+    expect(everything(c)).not.toMatch(/swipe|connect|invite/i)
+  })
+
+  test('настроение приходит русским названием и встаёт английским', () => {
+    const c = inviteCopy('ABC234', { ...openEn, preset: 'Пара быстрых каток' }, 'en')
+    expect(c.title).toBe('Sergey invites you to Party ABC234 · A few quick rounds')
+    expect(c.headline).toBe('Sergey: a few quick rounds')
+    expect(c.eyebrow).toBe('PARTY · INVITE')
+    expect(c.foot).toBe(inviteCopy('ABC234', openEn, 'en').foot)
+
+    const nobody = inviteCopy('ABC234', { ...openEn, host: null, preset: 'Уютно и надолго' }, 'en')
+    expect(nobody.title).toBe("You're invited to Party ABC234 · Cozy and long")
+    expect(nobody.headline).toBe("You're invited: cozy and long")
+  })
+
+  test('у каждого пресета комнаты есть английское название', () => {
+    // Новый пресет без пары молча выпал бы из английского превью
+    for (const p of ROOM_PRESETS) {
+      const c = inviteCopy('ABC234', { ...openEn, preset: p.label }, 'en')
+      expect(c.title, p.key).not.toBe(inviteCopy('ABC234', openEn, 'en').title)
+      expect(everything(c), p.key).not.toMatch(CYRILLIC)
+    }
+  })
+
+  test('незнакомое название настроения — как комната без него, а не русское слово в английской фразе', () => {
+    expect(inviteCopy('ABC234', { ...openEn, preset: 'Своё настроение' }, 'en')).toEqual(
+      inviteCopy('ABC234', openEn, 'en'),
+    )
+  })
+
+  test('длинный ник режется в карточке и рядом с настроением, в заголовке — целиком', () => {
+    const host = 'Very-very long player nickname'
+    const c = inviteCopy('ABC234', { ...openEn, host, preset: 'Спокойно, под разговор' }, 'en')
+    expect(c.headline).toBe('Very-very long pla: chill, while we talk')
+    expect(c.title).toBe(`${host} invites you to Party ABC234 · Chill, while we talk`)
+  })
+
+  test('предложенная игра — зовут в неё, и честно сказано, что это предложение', () => {
+    const c = inviteCopy('ABC234', { ...openEn, seedName: 'Deep Rock Galactic' }, 'en')
+    expect(c.title).toBe('Sergey invites you to “Deep Rock Galactic” · Party ABC234')
+    expect(c.headline).toBe('Sergey invites you to “Deep Rock Galactic”')
+    expect(c.description).toBe(
+      'First card: “Deep Rock Galactic”. Not into it? Next up is a deck from your libraries. ' +
+        "3 people are already in the room. Connect your Steam library and swipe on what you'd play. When everyone's votes line up, it's a match.",
+    )
+    expect(c.eyebrow).toBe('PARTY · INVITE')
+    expect(everything(c)).not.toMatch(CYRILLIC)
+
+    const nobody = inviteCopy('ABC234', { ...openEn, host: null, seedName: 'Valheim' }, 'en')
+    expect(nobody.title).toBe("You're invited to “Valheim” · Party ABC234")
+    expect(nobody.headline).toBe("You're invited to “Valheim”")
+  })
+
+  test('игра и настроение вместе: игра — крупно, настроение — в надзаголовке', () => {
+    const c = inviteCopy('ABC234', { ...openEn, seedName: 'Deep Rock Galactic', preset: 'Весь вечер вместе' }, 'en')
+    expect(c.headline).toBe('Sergey invites you to “Deep Rock Galactic”')
+    expect(c.eyebrow).toBe('PARTY · ALL EVENING TOGETHER')
+  })
+
+  /*
+   * «invites you to “”» шире «зовёт в «»» на 123 px кеглем 44, и название
+   * игры в английской карточке короче на пять знаков: самая длинная строка
+   * не длиннее русской. В заголовке вкладки — целиком.
+   */
+  test('длинное название предложенной игры в английской карточке режется раньше русской', () => {
+    const name = 'Warhammer 40,000: Dawn of War – Definitive Edition Remastered'
+    const c = inviteCopy('ABC234', { ...openEn, seedName: name }, 'en')
+    expect(c.headline).toBe('Sergey invites you to “Warhammer 40,000: Dawn of War –…”')
+    expect(c.title).toContain(name)
+    expect(c.description).toContain(name)
+    // после матча фраза уже русской — потолок общий
+    expect(inviteCopy('ABC234', { ...matchedEn, matchedName: name }, 'en').headline).toBe(
+      'Matched on “Warhammer 40,000: Dawn of War – Defin…”',
+    )
+  })
+
+  test('после матча предложенная игра молчит и по-английски', () => {
+    const c = inviteCopy('ABC234', { ...matchedEn, seedName: 'Valheim', preset: 'Весь вечер вместе' }, 'en')
+    expect(c).toEqual(inviteCopy('ABC234', matchedEn, 'en'))
+  })
+
+  /*
+   * «invites you to party ABC234» читается как «зовёт тусить», а код
+   * повисает отдельно. Пати с кодом — имя, как в глоссарии («Party
+   * ABC123»): с большой буквы во всех состояниях.
+   */
+  test('«Party ABC234» — с большой буквы во всех состояниях', () => {
+    const titles = [
+      inviteCopy('ABC234', null, 'en').title,
+      inviteCopy('ABC234', openEn, 'en').title,
+      inviteCopy('ABC234', { ...openEn, host: null }, 'en').title,
+      inviteCopy('ABC234', { ...openEn, preset: 'Уютно и надолго' }, 'en').title,
+      inviteCopy('ABC234', { ...openEn, seedName: 'Valheim' }, 'en').title,
+      inviteCopy('ABC234', { ...openEn, host: null, seedName: 'Valheim' }, 'en').title,
+      inviteCopy('ABC234', matchedEn, 'en').title,
+      inviteCopy('ABC234', { ...matchedEn, matchedName: null }, 'en').title,
+    ]
+    for (const t of titles) {
+      expect(t).toContain('Party ABC234')
+      expect(t).not.toMatch(/party ABC234/)
+    }
+  })
+
+  /*
+   * Демо-личность пишется в базу русской подписью («Демо-игрок»), а хост
+   * демо-пати — обычное дело: экран входа предлагает «Демо-друга». Превью
+   * называет его по-английски тем же словом, что ростер (memberLabel), — по
+   * признаку hostDemo, без steamid.
+   */
+  test('демо-хост в английском превью — «Demo player», без кириллицы', () => {
+    const demo: RoomInvite = { ...openEn, host: 'Демо-игрок', hostDemo: true }
+    const c = inviteCopy('ABC234', demo, 'en')
+    expect(c.title).toBe('Demo player invites you to Party ABC234')
+    expect(c.headline).toBe("Demo player wants to pick tonight's game")
+    expect(everything(c)).not.toMatch(CYRILLIC)
+
+    const friend = inviteCopy(
+      'ABC234',
+      { ...demo, host: 'Демо-друг', seedName: 'Valheim', preset: 'Уютно и надолго' },
+      'en',
+    )
+    expect(friend.title).toBe('Demo friend invites you to “Valheim” · Party ABC234')
+    expect(friend.headline).toBe('Demo friend invites you to “Valheim”')
+    expect(everything(friend)).not.toMatch(CYRILLIC)
+
+    const quick = inviteCopy('ABC234', { ...demo, preset: 'Пара быстрых каток' }, 'en')
+    expect(quick.headline).toBe('Demo player: a few quick rounds')
+    expect(everything(quick)).not.toMatch(CYRILLIC)
+  })
+
+  test('без признака демо ник — как записан: живой «Демо-игрок» остаётся собой', () => {
+    const live = inviteCopy('ABC234', { ...openEn, host: 'Демо-игрок' }, 'en')
+    expect(live.title).toBe('Демо-игрок invites you to Party ABC234')
+    expect(inviteCopy('ABC234', { ...openEn, host: 'Демо-игрок', hostDemo: false }, 'en')).toEqual(live)
+  })
+
+  test('по-русски признак демо ничего не меняет — до буквы', () => {
+    const base: RoomInvite = { ...open, host: 'Демо-игрок' }
+    for (const extra of [{}, { seedName: 'Valheim' }, { preset: 'Пара быстрых каток' }]) {
+      const inv = { ...base, ...extra }
+      expect(inviteCopy('ABC234', { ...inv, hostDemo: true })).toEqual(inviteCopy('ABC234', inv))
+      expect(inviteCopy('ABC234', { ...inv, hostDemo: true }, 'ru')).toEqual(inviteCopy('ABC234', inv))
+    }
+    expect(inviteCopy('ABC234', { ...base, hostDemo: true }).headline).toBe('Демо-игрок зовёт выбрать игру на вечер')
+  })
+
+  test('пустой ник хоста у демо — безлично, как у любого', () => {
+    const c = inviteCopy('ABC234', { ...openEn, host: '', hostDemo: true }, 'en')
+    expect(c).toEqual(inviteCopy('ABC234', { ...openEn, host: '' }, 'en'))
+    expect(c.headline).toBe("You're invited to pick tonight's game")
+  })
+})
+
+describe('экран приглашения по-английски', () => {
+  const valheim = { appid: 892970, name: 'Valheim', headerImage: null, art: null }
+
+  test('кто зовёт — той же фразой, что крупная строка карточки', () => {
+    expect(inviteDoor({ host: 'Sergey', names: ['Sergey'], seed: null }, 'en')).toEqual({
+      title: "Sergey wants to pick tonight's game",
+      here: null,
+      seed: null,
+    })
+    expect(inviteDoor({ host: null, names: ['Player 3f9a'], seed: null }, 'en').title).toBe(
+      "You're invited to pick tonight's game",
+    )
+    expect(inviteDoor({ host: 'Sergey', names: ['Sergey', 'Anna'], seed: null }, 'en').title).toBe(
+      inviteCopy('ABC234', { ...open, host: 'Sergey' }, 'en').headline,
+    )
+  })
+
+  test('кто уже здесь — через запятую и «and», остальные числом', () => {
+    const here = (names: string[]) => inviteDoor({ host: 'Sergey', names, seed: null }, 'en').here
+    expect(here(['Sergey', 'Anna'])).toBe('Already here: Sergey and Anna')
+    expect(here(['Sergey', 'Anna', 'Dima'])).toBe('Already here: Sergey, Anna and Dima')
+    expect(here(['Sergey', 'Anna', 'Dima', 'Sasha', 'Player 3f9a'])).toBe(
+      'Already here: Sergey, Anna, Dima and 2 more',
+    )
+    expect(inviteDoor({ host: null, names: ['Anna'], seed: null }, 'en').here).toBe('Already here: Anna')
+  })
+
+  test('длинный ник хоста режется тем же потолком, что по-русски', () => {
+    const host = 'xXx_DarkLordOfTheNight_2009_xXx!'
+    const d = inviteDoor({ host, names: [host, 'Anna'], seed: null }, 'en')
+    expect(d.title).toBe("xXx_DarkLordOfTheNi… wants to pick tonight's game")
+    expect(d.here).toBe('Already here: xXx_DarkLordOfTheNi… and Anna')
+  })
+
+  test('демо-хост — по-английски и в заголовке, и в «Already here», как в ростере', () => {
+    const DEMO = '00012345678901234'
+    const FRIEND = '00012345678901235'
+    const names = [memberLabel('ABC234', DEMO, 'Демо-игрок', 'en'), memberLabel('ABC234', FRIEND, 'Демо-друг', 'en')]
+    const d = inviteDoor({ host: 'Демо-игрок', hostDemo: true, names, seed: null }, 'en')
+    expect(d).toEqual({
+      title: "Demo player wants to pick tonight's game",
+      here: 'Already here: Demo player and Demo friend',
+      seed: null,
+    })
+    for (const s of [d.title, d.here]) expect(s).not.toMatch(CYRILLIC)
+    // заголовок экрана — та же фраза, что крупная строка карточки
+    expect(d.title).toBe(inviteCopy('ABC234', { ...open, host: 'Демо-игрок', hostDemo: true }, 'en').headline)
+    // по-русски — как записано, до буквы
+    expect(inviteDoor({ host: 'Демо-игрок', hostDemo: true, names: ['Демо-игрок', 'Аня'], seed: null })).toEqual(
+      inviteDoor({ host: 'Демо-игрок', names: ['Демо-игрок', 'Аня'], seed: null }),
+    )
+  })
+
+  test('игра, в которую звали, — той же фразой, что в описании превью', () => {
+    const d = inviteDoor({ host: 'Sergey', names: ['Sergey'], seed: valheim }, 'en')
+    expect(d.seed).toEqual({
+      ...valheim,
+      line: 'First card: “Valheim”. Not into it? Next up is a deck from your libraries.',
+    })
+    expect(
+      inviteCopy('ABC234', { ...open, host: 'Sergey', seedName: 'Valheim' }, 'en').description.startsWith(d.seed!.line),
+    ).toBe(true)
+    for (const s of [d.title, d.seed!.line]) expect(s).not.toMatch(CYRILLIC)
   })
 })
