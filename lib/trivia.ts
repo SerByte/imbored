@@ -134,23 +134,6 @@ function pick<T>(arr: T[], rnd: () => number): T | undefined {
 }
 
 /**
- * Сыгранное в разгадке «у кого больше часов» — на языке вопроса. Русское —
- * playedLine (lib/outcome) как есть; английское — те же правила с
- * сокращениями глоссария: «40 min», «1 h 29 min», от десяти часов — целыми
- * часами с разрядами, «2,434 h». Своя ветка здесь — пока у playedLine нет
- * языка; появится — зовётся он.
- */
-function played(minutes: number, locale: Locale): string {
-  if (locale !== 'en') return playedLine(minutes)
-  const m = Math.max(0, Math.round(minutes))
-  const h = Math.floor(m / 60)
-  const rest = m % 60
-  if (!h) return `${rest} min`
-  if (h >= 10) return `${fmtNumber(locale, Math.round(m / 60))} h`
-  return rest ? `${h} h ${rest} min` : `${h} h`
-}
-
-/**
  * Набор вопросов комнаты.
  *
  * locale — язык текста вопросов и подписей тегов. Сид от языка не зависит,
@@ -216,8 +199,9 @@ export function buildTrivia(args: {
       answer: s.answer,
       // playedLine, а не часы: до десяти часов он точен до минуты («1 ч 29 мин»
       // против «1 ч»), и округлённая разгадка не показывает ничью там, где
-      // её нет. Выше десяти часов порог 1.3 сам разводит подписи
-      reveal: sorted.map((x) => `${x.name} — ${played(x.min, locale)}`).join(', '),
+      // её нет. Выше десяти часов порог 1.3 сам разводит подписи. На языке
+      // вопроса: «1 h 29 min», «2,434 h» — сокращения глоссария
+      reveal: sorted.map((x) => `${x.name} — ${playedLine(x.min, locale)}`).join(', '),
     }
   }
 

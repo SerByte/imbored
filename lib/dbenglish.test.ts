@@ -3,6 +3,7 @@ import {
   claimPageEnrichBatch,
   countPageEnrichDue,
   createDb,
+  createRoom,
   createSharedPick,
   findSharedPick,
   freshlyDigestedPatches,
@@ -19,6 +20,7 @@ import {
   getUnsummarized,
   getUnsummarizedEn,
   getUserPortrait,
+  joinRoom,
   latestMajorPatchSince,
   listPublicRooms,
   markPageEnriched,
@@ -29,6 +31,7 @@ import {
   setGamesMedia,
   setNewsDigest,
   setNewsDigestEn,
+  setRoomPublic,
   setUserPortrait,
   sitemapNews,
   upsertGameMeta,
@@ -406,6 +409,28 @@ describe('доска пати: язык подписи', () => {
   test('сигнатура с языком не меняет русского ответа', async () => {
     const db = await freshDb()
     expect(await listPublicRooms(db, NOW, 'en')).toEqual(await listPublicRooms(db, NOW))
+  })
+
+  /*
+   * Подписи участников строит memberLabel (lib/room) — та же, что у ростера
+   * самой комнаты: без ника — запасное имя с хешем, у демо-личности — её
+   * подпись на языке доски, ник живого человека — как записан.
+   */
+  test('подписи участников на /en — английские, русская доска — прежняя', async () => {
+    const db = await freshDb()
+    await createRoom(db, { id: 'PUBEN1', steamid: '76561198000000001' }, NOW)
+    await joinRoom(db, 'PUBEN1', '76561198000000001', undefined, NOW)
+    await joinRoom(db, 'PUBEN1', '00076561198000002', 'Демо-игрок', NOW + 1)
+    await joinRoom(db, 'PUBEN1', '76561198000000003', 'Anya', NOW + 2)
+    await setRoomPublic(db, 'PUBEN1', true)
+
+    const [ru] = await listPublicRooms(db, NOW + 10)
+    const [en] = await listPublicRooms(db, NOW + 10, 'en')
+    expect(ru.memberNames[0]).toMatch(/^Игрок [0-9a-z]{1,4}$/)
+    expect(ru.memberNames.slice(1)).toEqual(['Демо-игрок', 'Anya'])
+    // тот же хеш — один и тот же человек, просто подписан на языке доски
+    expect(en.memberNames).toEqual([`Player ${ru.memberNames[0].slice('Игрок '.length)}`, 'Demo player', 'Anya'])
+    expect(en.memberNames.join(' ')).not.toMatch(/[А-Яа-яЁё]/)
   })
 })
 

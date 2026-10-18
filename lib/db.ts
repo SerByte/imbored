@@ -2649,15 +2649,13 @@ export async function sweepDailyPicks(db: Db, keepFromDay: string): Promise<void
 /**
  * Доска «ищут игроков»: открытые публичные комнаты за последние сутки (один запрос).
  *
- * locale — язык подписей участников без ника («Игрок 1a2b» / «Player 1a2b»):
- * их строит memberLabel из lib/room, и язык уйдёт туда, как только у неё
- * появится свой параметр. До тех пор подпись русская на обоих языках, а
- * сигнатура доски уже та, по которой её зовёт /en.
+ * locale — язык подписей участников: запасное имя без ника («Игрок 1a2b» /
+ * «Player 1a2b») и ник демо-личности («Демо-игрок» / «Demo player»). Их
+ * строит memberLabel из lib/room — та же метка, что в ростере самой комнаты.
  */
 export async function listPublicRooms(
   db: Db,
   nowSec: number,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- уйдёт в memberLabel, см. докблок
   locale: Locale = 'ru',
 ): Promise<PublicRoomListing[]> {
   const res = await db.execute({
@@ -2695,7 +2693,7 @@ export async function listPublicRooms(
     }
     if (raw.steamid) {
       // steamid наружу не уходит вовсе — см. memberLabel в lib/room
-      room.memberNames.push(memberLabel(room.id, raw.steamid, raw.persona_name))
+      room.memberNames.push(memberLabel(room.id, raw.steamid, raw.persona_name, locale))
     }
   }
   return [...byRoom.values()]

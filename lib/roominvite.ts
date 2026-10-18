@@ -1,7 +1,7 @@
 import type { GameArtUrls } from './art'
 import { lp, pl, tr, type Locale } from './i18n'
-import { ROOM_PRESETS } from './presets'
-import { demoPersonaName } from './room'
+import { demoPersonaName } from './playername'
+import { presetLabel, roomPresetByLabel } from './presets'
 
 /**
  * Что известно о комнате тому, кто ещё в неё не вошёл, — и что из этого
@@ -23,7 +23,7 @@ export type RoomInvite = {
   /**
    * Хост — демо-личность (isDemoId его steamid). Её ник — не из Steam, а
    * наша подпись, записанная русской («Демо-игрок»), и английское превью
-   * называет её по-английски (demoPersonaName в lib/room) — тем же словом,
+   * называет её по-английски (demoPersonaName в lib/playername) — тем же словом,
    * что ростер. Признаком, а не steamid: превью steamid хоста не нужен.
    * Необязательное поле: без него ник — как записан, и русское превью от
    * него не зависит вовсе.
@@ -99,26 +99,19 @@ const CARD_NAME_MAX = 38
 const CARD_SEED_MAX_EN = CARD_NAME_MAX - 5
 
 /**
- * Английские названия настроений комнаты — по ключу пресета.
+ * Название настроения на языке превью; для ru — как пришло, до буквы.
  *
- * invite.preset — РУССКОЕ название (loadRoomInvite кладёт label пресета), а
- * его английская пара живёт здесь, пока у lib/presets нет своей подписи по
- * языку; появится — названия берутся оттуда, а таблица уходит. Неизвестное
- * название (пресет добавили, а пару забыли) на английском — как комната без
- * настроения: прежний текст, а не русское слово посреди английской фразы.
+ * invite.preset — РУССКОЕ название (loadRoomInvite кладёт label пресета), и
+ * английское находится по нему же: пресет по русскому названию
+ * (roomPresetByLabel), подпись — его английская пара (presetLabel), та же,
+ * что на экране выбора настроения. Неизвестное название (пресет переименовали,
+ * а комната старая) на английском — как комната без настроения: прежний
+ * текст, а не русское слово посреди английской фразы.
  */
-const PRESET_EN = new Map<string, string>([
-  ['evening', 'All evening together'],
-  ['quick', 'A few quick rounds'],
-  ['cozy', 'Cozy and long'],
-  ['talk', 'Chill, while we talk'],
-])
-
-/** Название настроения на языке превью; для ru — как пришло, до буквы */
 function presetName(label: string | null, locale: Locale): string | null {
   if (label === null || locale !== 'en') return label
-  const key = ROOM_PRESETS.find((p) => p.label === label)?.key
-  return (key !== undefined && PRESET_EN.get(key)) || null
+  const preset = roomPresetByLabel(label)
+  return preset ? presetLabel(preset, locale) : null
 }
 
 /**
@@ -274,7 +267,8 @@ export function inviteCopy(code: string, invite: RoomInvite | null, locale: Loca
 
 /**
  * Ник хоста на языке страницы — одно правило на превью и на экран
- * приглашения, и то же, что у ростера (demoPersonaName): друг читает
+ * приглашения, и то же, что у ростера (demoPersonaName — то же правило, что
+ * у personaLabel в memberLabel): друг читает
  * «Demo player wants to…» над «Already here: Demo player and…», а не
  * «Демо-игрок» над английским ростером. Пустой ник — как был, безличным
  * «Тебя зовут»: демо-подписью пустая строка не бывает, и «Demo player» на

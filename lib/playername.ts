@@ -31,6 +31,27 @@ export function playerFallback(tail: string, locale: Locale = 'ru'): string {
 const DEMO_FRIEND_RU = 'Демо-друг'
 
 /**
+ * Ник на языке страницы по признаку «это демо», а не по steamid: у демо-
+ * личности — по-английски, у живого человека — как записан.
+ *
+ * Нужна тем, кто steamid не знает и знать не должен: превью и экран
+ * приглашения в комнату (RoomInvite.hostDemo в lib/roominvite) получают
+ * только «хост — демо». Ростер и всё, у кого steamid есть, зовут personaLabel
+ * — она проверяет демо сама и сводится к этой же функции, так что правило
+ * одно, и хост в приглашении назван тем же словом, что в ростере.
+ *
+ * Сверка по записанному нику, а не по последней цифре steamid: подпись
+ * обязана сказать то же, что русская на соседней вкладке, а русская
+ * показывает именно записанное. «Demo player» — для любого другого
+ * записанного ника демо-личности: пишем его только мы, и кириллица не
+ * проскочит, даже если вход в демо когда-нибудь запишет третий.
+ */
+export function demoPersonaName(name: string, demo: boolean, locale: Locale = 'ru'): string {
+  if (locale !== 'en' || !demo) return name
+  return name === DEMO_FRIEND_RU ? 'Demo friend' : 'Demo player'
+}
+
+/**
  * Ник для вывода: у настоящего игрока — как записан, у демо-личности — на
  * языке страницы.
  *
@@ -54,9 +75,5 @@ export function personaLabel(
   locale: Locale = 'ru',
 ): string | null {
   if (stored == null) return null
-  if (locale !== 'en' || !isDemoId(steamid)) return stored
-  // Сверка по записанному нику, а не по последней цифре steamid: подпись
-  // обязана сказать то же, что русская на соседней вкладке, а русская
-  // показывает именно записанное
-  return stored === DEMO_FRIEND_RU ? 'Demo friend' : 'Demo player'
+  return demoPersonaName(stored, isDemoId(steamid), locale)
 }
