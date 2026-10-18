@@ -73,15 +73,17 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { title, games } = genre
   const n = games.length
   const canonical = `/games/${slug}`
-  // Заголовок жанра — как есть, с заглавной: hubTitle уже в нужном регистре,
-  // и по-английски он встаёт внутрь фразы («The best Roguelikes on Steam…»)
+  // Заголовок жанра — первым и как есть: hubTitle уже с заглавной, и
+  // по-английски его не опустить в середину фразы («The best Roguelikes…»
+  // читается опечаткой), а строчной его делать нельзя — JRPGs, CRPGs.
+  // Хвост — фраза глоссария, тем же порядком, что по-русски.
   const heading = tr(locale, {
     ru: `${title} — лучшие в Steam по отзывам`,
-    en: `The best ${title} on Steam, by reviews`,
+    en: `${title} — the best on Steam, by reviews`,
   })
   const description = tr(locale, {
     ru: `${title}: ${n} ${gamesWord(locale, n)}, для которых жанр главный, — с долей положительных отзывов, длиной захода и тем, за что их любят.`,
-    en: `${title}: ${n} ${gamesWord(locale, n)} where it's the main genre, with the share of positive reviews, session length and what players love about them.`,
+    en: `${title}: ${n} ${gamesWord(locale, n)} where this genre is one of the main tags, with the share of positive reviews, session length and what players love about each.`,
   })
   return {
     title: heading,

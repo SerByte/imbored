@@ -90,7 +90,7 @@ export default async function GamesHubPage({ params }: Partial<PageProps<'/[lang
           <p className="leading-relaxed text-dim">
             {tr(locale, {
               ru: 'По двенадцать игр на жанр — из тех, для кого он главный, а не метка в хвосте списка тегов. Порядок — по числу отзывов в Steam, и каждая игра стоит только на одной полке: под каждым жанром свои находки, а не одни и те же хиты.',
-              en: "Twelve games per genre, picked from those where it's the main genre, not a tag buried at the end of the list. Sorted by number of Steam reviews, and each game sits on one shelf only: every genre gets its own finds, not the same hits over and over.",
+              en: 'Twelve games per genre, picked from games where that genre is one of the main tags, not one buried at the end of the list. Sorted by number of Steam reviews, and each game sits on one shelf only: every genre gets its own finds, not the same hits over and over.',
             })}
           </p>
           {/* Полки показывают по двенадцать игр на жанр, а в каталоге их

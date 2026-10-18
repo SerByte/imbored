@@ -87,15 +87,19 @@ export default async function Image({ params }: { params: Promise<{ lang: string
           <div style={{ fontSize: 76, lineHeight: 1.12, marginBottom: 22 }}>
             {genre ? genre.title : tr(locale, { ru: 'Игры по жанрам', en: 'Games by genre' })}
           </div>
+          {/* Порядок — по числу отзывов, как на странице, а не по их доле:
+              «ranked by reviews» читалось бы рейтингом. «this» — жанр из
+              заголовка над строкой. Не шире русской (замер Manrope 800,
+              26 px: 693 против 751 px у «40 игр…»), в строку на 1072 px */}
           <div style={{ fontSize: 26, color: OG_DIM }}>
             {n > 0
               ? tr(locale, {
                   ru: `${n} ${gamesWord}, для которых жанр главный, — по отзывам игроков`,
-                  en: `${n} ${gamesWord} where it's the main genre, ranked by player reviews`,
+                  en: `${n} ${gamesWord} where this is a main tag, most-reviewed first`,
                 })
               : tr(locale, {
                   ru: 'Тридцать жанров — по отзывам игроков Steam',
-                  en: 'Thirty genres, ranked by Steam player reviews',
+                  en: 'Thirty genres, most-reviewed games first',
                 })}
           </div>
         </div>

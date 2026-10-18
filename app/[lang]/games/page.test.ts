@@ -150,11 +150,14 @@ describe('английские хаб и страница жанра', () => {
     })
   })
 
-  test('жанр: заголовок с заглавной внутри фразы, строки карточек и описание без кириллицы', async () => {
+  test('жанр: заголовок жанра первым, строки карточек и описание без кириллицы', async () => {
     await latin()
     const meta = await generateGenreMetadata(en({ tag: 'open-world' }))
-    expect(meta.title).toBe('The best Open-world games on Steam, by reviews')
-    expect(meta.description).toMatch(/^Open-world games: 8 games where it's the main genre/)
+    // Жанр — первым и с заглавной, как по-русски: внутри фразы
+    // («The best Open-world games…») заглавная читалась бы опечаткой
+    expect(meta.title).toBe('Open-world games — the best on Steam, by reviews')
+    expect(meta.openGraph?.title).toBe('Open-world games — the best on Steam, by reviews')
+    expect(meta.description).toMatch(/^Open-world games: 8 games where this genre is one of the main tags, /)
     expect(JSON.stringify(meta)).not.toMatch(CYR)
 
     const page = flight(await GenrePage(en({ tag: 'open-world' })))
