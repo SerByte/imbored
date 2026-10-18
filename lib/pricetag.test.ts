@@ -175,7 +175,8 @@ describe('«не продаётся» не гасится бесплатност
   test('строка колоды спрашивает «нет в регионе» раньше «бесплатно»', () => {
     const src = fs.readFileSync(path.join(ROOT, 'components', 'SwipeDeck.tsx'), 'utf8')
     const unsold = src.indexOf('card.unsold && card.priceCc')
-    const free = src.indexOf("? ' · бесплатно'")
+    // русская подпись — в паре tr() с английской (на /en — ' · free')
+    const free = src.indexOf("ru: ' · бесплатно'")
     expect(unsold).toBeGreaterThan(-1)
     expect(free).toBeGreaterThan(unsold)
   })

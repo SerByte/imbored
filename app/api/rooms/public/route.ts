@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { listPublicRooms } from '@/lib/db'
-import { roomPresetOf } from '@/lib/presets'
+import { localeFromRequest } from '@/lib/i18n'
+import { presetLabel, roomPresetOf } from '@/lib/presets'
 import { getDb, nowSec } from '@/lib/server'
 
 /**
@@ -18,16 +19,22 @@ import { getDb, nowSec } from '@/lib/server'
  * быстрых каток» отвечает незнакомцу на «подсесть ли мне сюда» до того, как
  * он вошёл. Внутри комнаты это и так видит каждый (шапка комнаты). Своё
  * сочетание осей без пресета — null: называть его чужим именем нельзя.
+ *
+ * Язык — в адресе (?lang=en, withLang у /rooms), и только там: ответ общий
+ * на край, и ключ кэша — сам адрес. Английская доска — английские метки
+ * участников («Demo friend», «Player ab12») и название пресета; русская —
+ * прежняя до байта.
  */
-export async function GET() {
+export async function GET(req: Request) {
   const now = nowSec()
-  const rooms = (await listPublicRooms(await getDb(), now)).map((r) => {
+  const locale = localeFromRequest(req)
+  const rooms = (await listPublicRooms(await getDb(), now, locale)).map((r) => {
     const preset = roomPresetOf(r.mood)
     return {
       id: r.id,
       memberNames: r.memberNames,
       minutesAgo: Math.max(0, Math.round((now - r.createdAt) / 60)),
-      preset: preset ? { label: preset.label, emoji: preset.emoji } : null,
+      preset: preset ? { label: presetLabel(preset, locale), emoji: preset.emoji } : null,
     }
   })
   return NextResponse.json(

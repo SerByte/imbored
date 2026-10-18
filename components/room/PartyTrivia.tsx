@@ -4,8 +4,10 @@ import { Icon } from '@/components/Icon'
 import { AnimatePresence, m } from 'framer-motion'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
+import { useLocale } from '@/components/LocaleProvider'
 import { StatusLine } from '@/components/StatusLine'
 import { focusAdrift } from '@/lib/focushandoff'
+import { tr, withLang } from '@/lib/i18n'
 import type { TriviaQuestion } from '@/lib/trivia'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -38,6 +40,7 @@ export function PartyTrivia({
   interruptKey: string
   interruptNote: string
 }) {
+  const locale = useLocale()
   const [open, setOpen] = useState(false)
   const [round, setRound] = useState(0)
   const [questions, setQuestions] = useState<TriviaQuestion[] | null>(null)
@@ -107,12 +110,15 @@ export function PartyTrivia({
   /*
    * try, а не голый await: обрыв сети отклонял промис в пустоту, и панель
    * навсегда оставалась на «Придумываю вопросы…».
+   *
+   * Язык — в адресе (withLang): вопросы и разгадки собирает сервер, и
+   * английской странице он отдаёт их по-английски. Сид от языка не зависит.
    */
   const load = useCallback(
     async (r: number) => {
       setFailed(false)
       try {
-        const res = await fetch(`/api/room/${roomId}/trivia?round=${r}`)
+        const res = await fetch(withLang(`/api/room/${roomId}/trivia?round=${r}`, locale))
         if (!res.ok) throw new Error(`trivia: HTTP ${res.status}`)
         const data = (await res.json()) as { round: number; questions: TriviaQuestion[] }
         setQuestions(data.questions)
@@ -124,7 +130,7 @@ export function PartyTrivia({
         setQuestions([])
       }
     },
-    [roomId],
+    [roomId, locale],
   )
 
   // Нечего показать — блока нет вовсе. Пустая викторина хуже её отсутствия.
@@ -136,7 +142,14 @@ export function PartyTrivia({
   /** Разбор ответа на текущий вопрос; null — ещё не ответили */
   const verdict =
     q && chosen !== null
-      ? `${chosen === q.answer ? 'Ага.' : `Не-а — ${q.options[q.answer].label}.`}${q.reveal ? ` ${q.reveal}` : ''}`
+      ? `${
+          chosen === q.answer
+            ? tr(locale, { ru: 'Ага.', en: 'Yep.' })
+            : tr(locale, {
+                ru: `Не-а — ${q.options[q.answer].label}.`,
+                en: `Nope — ${q.options[q.answer].label}.`,
+              })
+        }${q.reveal ? ` ${q.reveal}` : ''}`
       : null
 
   return (
@@ -158,13 +171,20 @@ export function PartyTrivia({
         className="w-full panel-lift glass-hover px-5 py-4 flex items-center justify-between gap-3 text-left cursor-pointer"
       >
         <span className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium">Пока ждём — маленькая викторина</span>
+          <span className="text-sm font-medium">
+            {tr(locale, { ru: 'Пока ждём — маленькая викторина', en: 'Quick trivia while we wait' })}
+          </span>
           <span className="text-xs text-faint">
-            {interrupted ? interruptNote : 'Про ваши библиотеки. На матч не влияет.'}
+            {interrupted
+              ? interruptNote
+              : tr(locale, {
+                  ru: 'Про ваши библиотеки. На матч не влияет.',
+                  en: "About your libraries. Doesn't affect the match.",
+                })}
           </span>
         </span>
         <span className="link-more shrink-0">
-          {open ? 'Свернуть' : 'Играть'}
+          {open ? tr(locale, { ru: 'Свернуть', en: 'Hide' }) : tr(locale, { ru: 'Играть', en: 'Play' })}
           <Icon name="down" size={16} className={open ? 'rotate-180' : ''} />
         </span>
       </button>
@@ -183,7 +203,7 @@ export function PartyTrivia({
             <div className="panel-lift mt-3 p-5 flex flex-col gap-4">
               {questions === null && (
                 <p ref={headRef} tabIndex={-1} className="text-sm text-faint">
-                  Придумываю вопросы…
+                  {tr(locale, { ru: 'Придумываю вопросы…', en: 'Coming up with questions…' })}
                 </p>
               )}
 
@@ -196,10 +216,19 @@ export function PartyTrivia({
               {questions !== null && questions.length === 0 && (
                 <p ref={headRef} tabIndex={-1} className="text-sm text-faint">
                   {failed
-                    ? 'Вопросы не загрузились — попробуй чуть позже.'
+                    ? tr(locale, {
+                        ru: 'Вопросы не загрузились — попробуй чуть позже.',
+                        en: "The questions didn't load — try again a bit later.",
+                      })
                     : round > 0
-                      ? 'Вопросы кончились — все раунды сыграны, а повторяться мы не станем.'
-                      : 'Вопросов не набралось — каталог у нас пока небогатый.'}
+                      ? tr(locale, {
+                          ru: 'Вопросы кончились — все раунды сыграны, а повторяться мы не станем.',
+                          en: "That's all the questions — every round is played, and we won't repeat ourselves.",
+                        })
+                      : tr(locale, {
+                          ru: 'Вопросов не набралось — каталог у нас пока небогатый.',
+                          en: "Not enough questions — our catalog is still pretty small.",
+                        })}
                 </p>
               )}
 
@@ -287,7 +316,7 @@ export function PartyTrivia({
                         }}
                         className="btn-glass shrink-0 py-2.5 text-sm"
                       >
-                        Дальше <Icon name="arrow" size={14} />
+                        {tr(locale, { ru: 'Дальше', en: 'Next' })} <Icon name="arrow" size={14} />
                       </button>
                     </div>
                   )}
@@ -297,9 +326,9 @@ export function PartyTrivia({
               {done && (
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p ref={headRef} tabIndex={-1} className="text-sm text-faint">
-                    <span className="tabular-nums">{score}</span> из{' '}
-                    <span className="tabular-nums">{questions.length}</span>. Ну, время
-                    прошло.
+                    <span className="tabular-nums">{score}</span> {tr(locale, { ru: 'из', en: 'of' })}{' '}
+                    <span className="tabular-nums">{questions.length}</span>
+                    {tr(locale, { ru: '. Ну, время прошло.', en: '. Well, it passed the time.' })}
                   </p>
                   <button
                     onClick={() => {
@@ -311,7 +340,7 @@ export function PartyTrivia({
                     }}
                     className="btn-glass py-2.5 text-sm"
                   >
-                    Ещё раунд
+                    {tr(locale, { ru: 'Ещё раунд', en: 'Another round' })}
                   </button>
                 </div>
               )}

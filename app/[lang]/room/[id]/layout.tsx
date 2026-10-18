@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import { headers } from 'next/headers'
 import { inviteCopy } from '@/lib/roominvite'
-import { lp, toLocale } from '@/lib/i18n'
+import { lp, toLocale, tr } from '@/lib/i18n'
 import { localeAlternates, ogSite } from '@/lib/site'
 import { loadRoomInviteForPage, ROOM_ID_RE } from './invite'
 import { MotionLazy } from '@/components/motion/MotionLazy'
@@ -33,7 +33,7 @@ export async function generateMetadata({
   const robots = { index: false, follow: false } as const
 
   if (!ROOM_ID_RE.test(code)) {
-    return { title: 'Пати', robots }
+    return { title: tr(locale, { ru: 'Пати', en: 'Party' }), robots }
   }
 
   // После матча — какая игра и куда идти дальше, без комнаты — нейтрально:
@@ -41,7 +41,10 @@ export async function generateMetadata({
   // заголовок — та же проверка существования кода, что и API комнаты
   // (lib/roompeek). headers() режим рендера не меняет: страница и так
   // собирается на каждый запрос — generateStaticParams у неё нет
-  const { title, description } = inviteCopy(code, await loadRoomInviteForPage(code, await headers()))
+  // Приглашение читается без языка, а слова собирает inviteCopy на языке
+  // страницы: превью и заголовок одной комнаты на /room и /en/room — одни
+  // факты разными словами
+  const { title, description } = inviteCopy(code, await loadRoomInviteForPage(code, await headers()), locale)
 
   // Код — в верхнем регистре: /room/abc234 и /room/ABC234 — одна комната
   const url = `/room/${code}`

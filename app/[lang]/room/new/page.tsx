@@ -1,11 +1,13 @@
 'use client'
 
 import Link from '@/components/Link'
+import { useLocale } from '@/components/LocaleProvider'
 import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { bounceTo, steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
-import { ROOM_PRESETS, roomArrival, roomSeedOf, type RoomPreset } from '@/lib/presets'
+import { lp, tr } from '@/lib/i18n'
+import { presetHint, presetLabel, ROOM_PRESETS, roomArrival, roomSeedOf, type RoomPreset } from '@/lib/presets'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { Icon } from '@/components/Icon'
 import { eyebrow } from '@/components/Labels'
@@ -104,6 +106,7 @@ function arrivalQuery(preset: string | null, hint: string | null, game: number |
 
 export default function NewRoomPage() {
   const router = useLocaleRouter()
+  const locale = useLocale()
   const [phase, setPhase] = useState<Phase>('choosing')
   /** что выбрано тапом; до тапа — то, с чем вернулись со входа */
   const [picked, setPicked] = useState<RoomPreset | null>(null)
@@ -145,7 +148,9 @@ export default function NewRoomPage() {
           body: JSON.stringify({ mood: p.mood, game: g ?? undefined }),
         })
         if (res.status === 401) {
-          router.push(bounceTo('/room/new', arrivalQuery(p.key, null, g)))
+          // На языке страницы: bounceTo читает язык из пути и ведёт на лендинг
+          // того же языка, а вход вернёт на /en/room/new
+          router.push(bounceTo(lp(locale, '/room/new'), arrivalQuery(p.key, null, g)))
           return
         }
         // Своя ветка у 429: «попробуй ещё раз» — вредный совет, когда упёрся в
@@ -174,7 +179,7 @@ export default function NewRoomPage() {
         setPhase('failed')
       }
     },
-    [router],
+    [router, locale],
   )
 
   const create = (p: RoomPreset) => {
@@ -235,9 +240,9 @@ export default function NewRoomPage() {
     },
     [picked],
   )
-  const status = (
-    <StatusLine text={view === 'creating' ? 'Создаю комнату для пати…' : null} className="sr-only" />
-  )
+  const creatingLine = tr(locale, { ru: 'Создаю комнату для пати…', en: 'Creating your party room…' })
+  const status = <StatusLine text={view === 'creating' ? creatingLine : null} className="sr-only" />
+  const joinOpen = tr(locale, { ru: 'Подсесть к открытой пати', en: 'Join an open party' })
 
   if (view === 'choosing') {
     return (
@@ -246,11 +251,19 @@ export default function NewRoomPage() {
       <div className="flex-1 flex items-center justify-center px-5 py-24">
         <div className="max-w-3xl w-full flex flex-col gap-8 anim-reveal">
           <div className="text-center flex flex-col items-center gap-2">
-            <h1 className="font-display text-display-md">Какой будет вечер?</h1>
+            <h1 className="font-display text-display-md">
+              {tr(locale, { ru: 'Какой будет вечер?', en: 'What kind of evening?' })}
+            </h1>
             <p className="max-w-md text-dim text-sm leading-relaxed">
-              Колода соберётся из ваших библиотек под это настроение — его увидят все, кто
-              зайдёт в комнату.
-              {hint && ` Ровно такого вечера, как в подборе, здесь нет — похожий, «${hint.label}», отмечен ниже, но выбирать тебе.`}
+              {tr(locale, {
+                ru: 'Колода соберётся из ваших библиотек под это настроение — его увидят все, кто зайдёт в комнату.',
+                en: 'The deck is built from your libraries to fit this mood — everyone who joins the room will see it.',
+              })}
+              {hint &&
+                tr(locale, {
+                  ru: ` Ровно такого вечера, как в подборе, здесь нет — похожий, «${hint.label}», отмечен ниже, но выбирать тебе.`,
+                  en: ` There's no evening exactly like the one in Pick — the closest, “${presetLabel(hint, locale)}”, is marked below, but it's your call.`,
+                })}
             </p>
             {/*
               Место под строку — с кадра, где игра известна, а не с ответа
@@ -270,8 +283,12 @@ export default function NewRoomPage() {
               <p className="max-w-md min-h-[3.25em] text-sm leading-relaxed">
                 {seedName && (
                   <>
-                    <span className="block">Первой картой — «{seedName}».</span>
-                    <span className="block">Не зайдёт — дальше обычная колода.</span>
+                    <span className="block">
+                      {locale === 'en' ? `First card: “${seedName}”.` : <>Первой картой — «{seedName}».</>}
+                    </span>
+                    <span className="block">
+                      {tr(locale, { ru: 'Не зайдёт — дальше обычная колода.', en: 'Not into it? The usual deck is next.' })}
+                    </span>
                   </>
                 )}
               </p>
@@ -292,19 +309,21 @@ export default function NewRoomPage() {
                   {/* Отметка — текстом внутри кнопки, а не только рамкой: её
                       слышит скринридер и видит тот, кто не различает цвет */}
                   {hint?.key === p.key && (
-                    <span className={`relative block mb-1.5 ${eyebrow('ember')}`}>похоже на твоё</span>
+                    <span className={`relative block mb-1.5 ${eyebrow('ember')}`}>
+                      {tr(locale, { ru: 'похоже на твоё', en: 'close to yours' })}
+                    </span>
                   )}
                   <span className="relative block text-[1.375rem] leading-tight font-extrabold tracking-[-0.025em]">
-                    {p.label}
+                    {presetLabel(p, locale)}
                   </span>
-                  <span className="relative block text-sm text-dim mt-1.5">{p.hint}</span>
+                  <span className="relative block text-sm text-dim mt-1.5">{presetHint(p, locale)}</span>
                 </button>
               </li>
             ))}
           </ul>
           <Link href="/rooms" className="tap link-more self-center">
             <Icon name="back" size={16} />
-            Подсесть к открытой пати
+            {joinOpen}
           </Link>
         </div>
       </div>
@@ -319,7 +338,7 @@ export default function NewRoomPage() {
       <div className="flex-1 flex flex-col items-center justify-center gap-6 px-5">
         <Spinner />
         {/* aria-hidden: эту строку скринридеру говорит status выше */}
-        <p aria-hidden className="text-dim text-sm">Создаю комнату для пати…</p>
+        <p aria-hidden className="text-dim text-sm">{creatingLine}</p>
       </div>
       </>
     )
@@ -332,26 +351,31 @@ export default function NewRoomPage() {
       <div className="flex-1 flex items-center justify-center px-5 py-24">
         <div className="max-w-md w-full panel-lift p-8 text-center flex flex-col items-center gap-5 anim-reveal">
           <h1 ref={focusFailure} tabIndex={-1} className="font-display text-display-sm">
-            Комнату создаёт вошедший через Steam
+            {tr(locale, {
+              ru: 'Комнату создаёт вошедший через Steam',
+              en: 'Creating a room takes a Steam sign-in',
+            })}
           </h1>
           <p className="text-dim text-sm leading-relaxed">
-            Ссылка на профиль не доказывает, что профиль твой. По ней можно смотреть подборки и
-            голосовать в чужих пати, а создавать свои и сохранять оценки — после входа.
+            {tr(locale, {
+              ru: 'Ссылка на профиль не доказывает, что профиль твой. По ней можно смотреть подборки и голосовать в чужих пати, а создавать свои и сохранять оценки — после входа.',
+              en: "A profile link doesn't prove the profile is yours. With it you can browse picks and vote in other people's parties; creating your own and saving ratings come after you sign in.",
+            })}
           </p>
           {/* Настроение — в адрес, только если его правда выбрали: экран входа
               бывает и до выбора, и тогда после входа ждёт выбор, а не комната
               с настроением по умолчанию. Игра едет в любом случае */}
           <a
             href={steamLoginFor(
-              `/room/new?${arrivalQuery(picked || back ? preset.key : null, hint?.key ?? null, game)}`,
+              lp(locale, `/room/new?${arrivalQuery(picked || back ? preset.key : null, hint?.key ?? null, game)}`),
             )}
             className="btn-ember is-block py-3"
           >
-            Войти через Steam
+            {tr(locale, { ru: 'Войти через Steam', en: 'Sign in with Steam' })}
           </a>
           <Link href="/rooms" className="tap link-more">
             <Icon name="arrow" size={16} className="rotate-180" />
-            Подсесть к открытой пати
+            {joinOpen}
           </Link>
         </div>
       </div>
@@ -365,23 +389,31 @@ export default function NewRoomPage() {
     <div className="flex-1 flex items-center justify-center px-5 py-24">
       <div className="max-w-md w-full panel-lift p-8 text-center flex flex-col items-center gap-5 anim-reveal">
         <h1 ref={focusFailure} tabIndex={-1} className="font-display text-display-sm">
-          {view === 'busy' ? 'Слишком много комнат подряд' : 'Не получилось создать комнату'}
+          {view === 'busy'
+            ? tr(locale, { ru: 'Слишком много комнат подряд', en: 'Too many rooms in a row' })
+            : tr(locale, { ru: 'Не получилось создать комнату', en: "Couldn't create the room" })}
         </h1>
         <p className="text-dim text-sm leading-relaxed">
           {view === 'busy'
-            ? 'С твоего адреса за последний час создано много комнат. Подожди немного — или подсядь к уже открытой пати.'
-            : 'Скорее всего, это на нашей стороне. Обычно помогает повторить.'}
+            ? tr(locale, {
+                ru: 'С твоего адреса за последний час создано много комнат. Подожди немного — или подсядь к уже открытой пати.',
+                en: "A lot of rooms were created from your address in the last hour. Wait a bit — or join a party that's already open.",
+              })
+            : tr(locale, {
+                ru: 'Скорее всего, это на нашей стороне. Обычно помогает повторить.',
+                en: "It's most likely on our end. Trying again usually helps.",
+              })}
         </p>
         {/* Повтор на месте, а не ссылка на эту же страницу: перезаход сюда
             прошёл бы через started.current и снова упёрся бы в ту же попытку. */}
         {view === 'failed' && (
           <button type="button" onClick={() => create(preset)} className="btn-ember is-block py-3">
-            Попробовать снова
+            {tr(locale, { ru: 'Попробовать снова', en: 'Try again' })}
           </button>
         )}
         <Link href="/rooms" className="tap link-more">
           <Icon name="arrow" size={16} className="rotate-180" />
-          К списку пати
+          {tr(locale, { ru: 'К списку пати', en: 'All parties' })}
         </Link>
       </div>
     </div>

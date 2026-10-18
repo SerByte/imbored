@@ -3,8 +3,10 @@
 import { Icon } from '@/components/Icon'
 import { AnimatePresence, m, useReducedMotion } from 'framer-motion'
 import { useEffect, useRef } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { MotionMax } from '@/components/motion/MotionMax'
 import { focusAdrift } from '@/lib/focushandoff'
+import { tr } from '@/lib/i18n'
 import type { RoomMemberView } from '@/lib/room'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -42,7 +44,10 @@ export function MemberRoster({
   missed?: string | null
 }) {
   const reduce = useReducedMotion()
+  const locale = useLocale()
   const doneCount = members.filter((member) => member.done).length
+  // «(ты)» — у своей строки и в видимом имени, и в фразе скринридера
+  const you = tr(locale, { ru: ' (ты)', en: ' (you)' })
 
   /*
    * ✕ УНОСИТ ФОКУС ВМЕСТЕ СО СТРОКОЙ.
@@ -96,7 +101,7 @@ export function MemberRoster({
     <div className="relative panel-lift p-5 sm:p-6 flex flex-col gap-4">
       <div className="flex items-baseline justify-between gap-3">
         <h2 ref={headRef} tabIndex={-1} className="font-display text-display-xs">
-          Кто где
+          {tr(locale, { ru: 'Кто где', en: "Who's where" })}
         </h2>
         <span aria-hidden className="text-xs text-faint tabular-nums shrink-0">
           {doneCount}/{members.length}
@@ -151,7 +156,7 @@ export function MemberRoster({
                     }`}
                   >
                     {member.name}
-                    {member.me ? ' (ты)' : ''}
+                    {member.me ? you : ''}
                   </span>
 
                   <span
@@ -179,7 +184,9 @@ export function MemberRoster({
                     ошибкой («Аня сошёлся»): род по нику из Steam не узнать.
                   */}
                   <span aria-hidden className="text-xs text-faint shrink-0 hidden sm:inline">
-                    {member.done ? 'всё' : 'свайпает'}
+                    {member.done
+                      ? tr(locale, { ru: 'всё', en: 'done' })
+                      : tr(locale, { ru: 'свайпает', en: 'swiping' })}
                   </span>
                   <span aria-hidden className="text-xs text-faint tabular-nums shrink-0">
                     {deckSize ? `${shown}/${deckSize}` : shown}
@@ -208,8 +215,14 @@ export function MemberRoster({
                       // запрос в пути, а на отказе — и после (строку отказа
                       // пишет RoomWaiting внизу экрана)
                       aria-disabled={removing}
-                      title={`Убрать ${member.name} из пати`}
-                      aria-label={`Убрать ${member.name} из пати`}
+                      title={tr(locale, {
+                        ru: `Убрать ${member.name} из пати`,
+                        en: `Remove ${member.name} from party`,
+                      })}
+                      aria-label={tr(locale, {
+                        ru: `Убрать ${member.name} из пати`,
+                        en: `Remove ${member.name} from party`,
+                      })}
                       className="tap tap-tight shrink-0 -my-1.5 px-1.5 py-1.5 text-xs text-faint hover:text-danger transition-colors cursor-pointer aria-disabled:opacity-40"
                     >
                       <Icon name="close" size={14} />
@@ -218,8 +231,13 @@ export function MemberRoster({
 
                   <span className="sr-only">
                     {member.name}
-                    {member.me ? ' (ты)' : ''}: {shown}
-                    {deckSize ? ` из ${deckSize}` : ''}, {member.done ? 'колода пройдена' : 'ещё свайпает'}
+                    {member.me ? you : ''}: {shown}
+                    {deckSize ? tr(locale, { ru: ` из ${deckSize}`, en: ` of ${deckSize}` }) : ''}, {tr(
+                      locale,
+                      member.done
+                        ? { ru: 'колода пройдена', en: 'deck done' }
+                        : { ru: 'ещё свайпает', en: 'still swiping' },
+                    )}
                   </span>
                 </m.li>
               )

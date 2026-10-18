@@ -1,14 +1,24 @@
 import type { Metadata } from 'next'
+import { toLocale, tr } from '@/lib/i18n'
 
 /**
  * Экран транзитный — создаёт комнату и уводит в неё, — и заголовок ему нужен
  * ровно по одной причине: у него есть залипающее состояние. Когда комнату
  * создать не удалось, человек остаётся здесь, и вкладка при этом называется
  * именем сайта, будто он никуда и не нажимал.
+ *
+ * Язык — из params сегмента [lang]; hreflang нет: /room/new закрыта в
+ * robots.txt (lib/robots), в выдачу она не идёт.
  */
-export const metadata: Metadata = {
-  title: 'Новая комната',
-  description: 'Создаём комнату для пати и открываем её по ссылке.',
+export async function generateMetadata({ params }: LayoutProps<'/[lang]/room/new'>): Promise<Metadata> {
+  const locale = toLocale((await params).lang)
+  return {
+    title: tr(locale, { ru: 'Новая комната', en: 'New room' }),
+    description: tr(locale, {
+      ru: 'Создаём комнату для пати и открываем её по ссылке.',
+      en: "We'll create a party room and open it by its link.",
+    }),
+  }
 }
 
 /**

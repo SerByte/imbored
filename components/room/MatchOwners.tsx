@@ -1,5 +1,7 @@
+import { useLocale } from '@/components/LocaleProvider'
 import { PriceTag } from '@/components/PriceTag'
 import type { Discount } from '@/lib/discount'
+import { tr } from '@/lib/i18n'
 
 /** Что нужно строкам владения — подмножество matchedGame комнаты */
 export type MatchOwnersGame = {
@@ -41,9 +43,11 @@ export type MatchOwnersGame = {
  *     игры другого магазина — подарок там свой, и Steam его не знает.
  *
  * Без глаголов с родом: «Нет у: …», как на картах колоды, — ник не говорит,
- * «он» или «она» за ним.
+ * «он» или «она» за ним. По-английски — те же слова, что на картах колоды:
+ * «Not owned by: …» (глоссарий docs/i18n.md).
  */
 export function MatchOwners({ game }: { game: MatchOwnersGame }) {
+  const locale = useLocale()
   const others = game.missingFor ?? []
   const meLacks = game.ownedByMe === false
   if (!meLacks && others.length === 0) return null
@@ -84,10 +88,19 @@ export function MatchOwners({ game }: { game: MatchOwnersGame }) {
 
   return (
     <>
-      {meLacks && <p className="text-sm text-dim">У тебя её пока нет{price}</p>}
+      {meLacks && (
+        <p className="text-sm text-dim">
+          {tr(locale, { ru: 'У тебя её пока нет', en: "You don't own it yet" })}
+          {price}
+        </p>
+      )}
       {others.length > 0 && (
         <p className="text-sm text-dim">
-          {`${meLacks ? 'Тоже нет у' : 'Нет у'}: `}
+          {`${
+            meLacks
+              ? tr(locale, { ru: 'Тоже нет у', en: 'Also not owned by' })
+              : tr(locale, { ru: 'Нет у', en: 'Not owned by' })
+          }: `}
           <span className="text-ink">{others.join(', ')}</span>
           {meLacks ? null : price}
         </p>
@@ -99,7 +112,7 @@ export function MatchOwners({ game }: { game: MatchOwnersGame }) {
           rel="noreferrer"
           className="tap text-sm text-dim hover:text-ink transition-colors"
         >
-          Подарить — в магазине Steam
+          {tr(locale, { ru: 'Подарить — в магазине Steam', en: 'Gift it on the Steam store' })}
         </a>
       )}
     </>

@@ -1,7 +1,9 @@
 'use client'
 
+import { useLocale } from '@/components/LocaleProvider'
 import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useState } from 'react'
+import { tr } from '@/lib/i18n'
 import { parseRoomCode } from '@/lib/room'
 
 /**
@@ -22,6 +24,7 @@ import { parseRoomCode } from '@/lib/room'
  */
 export function RoomCodeForm({ className = '' }: { className?: string }) {
   const router = useLocaleRouter()
+  const locale = useLocale()
   const [raw, setRaw] = useState('')
   const [bad, setBad] = useState(false)
 
@@ -39,7 +42,7 @@ export function RoomCodeForm({ className = '' }: { className?: string }) {
       className={`flex w-full max-w-xs flex-col gap-2 ${className}`}
     >
       <label htmlFor="room-code" className="text-xs text-dim">
-        Есть код комнаты?
+        {tr(locale, { ru: 'Есть код комнаты?', en: 'Got a room code?' })}
       </label>
       {/* Поле и кнопка — одной стеклянной пилюлей, как вход на главной */}
       <div className="join">
@@ -55,7 +58,7 @@ export function RoomCodeForm({ className = '' }: { className?: string }) {
             setRaw(e.target.value)
             setBad(false)
           }}
-          placeholder="Шесть символов"
+          placeholder={tr(locale, { ru: 'Шесть символов', en: 'Six characters' })}
           autoCapitalize="characters"
           autoCorrect="off"
           autoComplete="off"
@@ -70,11 +73,16 @@ export function RoomCodeForm({ className = '' }: { className?: string }) {
           disabled={!raw.trim()}
           className="btn-glass shrink-0 disabled:opacity-40"
         >
-          Войти
+          {tr(locale, { ru: 'Войти', en: 'Join' })}
         </button>
       </div>
       <p id="room-code-error" role="status" className={bad ? 'text-xs text-danger' : 'sr-only'}>
-        {bad ? 'Код — шесть латинских букв и цифр, например FCPK8G.' : ''}
+        {bad
+          ? tr(locale, {
+              ru: 'Код — шесть латинских букв и цифр, например FCPK8G.',
+              en: 'A code is six letters and digits, like FCPK8G.',
+            })
+          : ''}
       </p>
     </form>
   )

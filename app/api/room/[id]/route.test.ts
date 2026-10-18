@@ -13,7 +13,7 @@ import {
 } from '@/lib/db'
 import { resetSwallowed } from '@/lib/errlog'
 import { nowSec } from '@/lib/server'
-import { breakDbOn, freshDb, params, post, signIn, signInAs, signOut } from '@/lib/testing/route'
+import { breakDbOn, freshDb, params, post, signIn, signInAs, signOut, STEAMID_OF } from '@/lib/testing/route'
 import { POST as join } from './join/route'
 import { POST as leave } from './leave/route'
 import { GET } from './route'
@@ -42,6 +42,15 @@ const peek = (room = ROOM, ip = '203.0.113.7') =>
     new Request(`http://localhost/api/room/${room}`, { headers: { 'x-forwarded-for': ip } }),
     params({ id: room }),
   )
+
+/** Тот же опрос с английской страницы — язык в адресе, как ставит withLang */
+const peekEn = (room = ROOM, ip = '203.0.113.7') =>
+  GET(
+    new Request(`http://localhost/api/room/${room}?lang=en`, { headers: { 'x-forwarded-for': ip } }),
+    params({ id: room }),
+  )
+
+const CYRILLIC = /[А-Яа-яЁё]/
 
 /** Комната хоста-через-Steam, в которой сидит ещё и друг */
 async function hosted(): Promise<string> {
@@ -180,6 +189,26 @@ describe('/api/room/[id]: сматченная игра и владение', ()
     await matchedOn(1091500)
     signOut()
     expect(await matched()).toMatchObject({ ownedByMe: null })
+  })
+
+  // Игра другого магазина (пул OTHER_STORE_GAMES) доходит до колоды, а в базе
+  // у неё русская страница: «Open in Epic Games» на /en вёл на /ru/ Epic
+  test('игра другого магазина — страница на языке смотрящего', async () => {
+    const ruUrl = 'https://store.epicgames.com/ru/p/fortnite'
+    await hosted()
+    await upsertGameMeta(
+      db,
+      { appid: -101, name: 'Fortnite', tags: { 'Battle Royale': 100 }, genres: [], categories: [1], store: 'epic', storeUrl: ruUrl, isFree: true },
+      nowSec(),
+    )
+    await setRoomMatched(db, ROOM, -101)
+    const on = async (res: Response) =>
+      ((await res.json()) as { matchedGame: { store: string | null; storeUrl: string | null } }).matchedGame
+    expect(await on(await peek())).toMatchObject({ store: 'epic', storeUrl: ruUrl })
+    expect(await on(await peekEn())).toMatchObject({
+      store: 'epic',
+      storeUrl: 'https://store.epicgames.com/en-US/p/fortnite',
+    })
   })
 })
 
@@ -403,5 +432,57 @@ describe('/api/room/[id]: экран приглашения', () => {
     await vi.waitFor(() => expect(issued.some((s) => s.includes('FROM games g'))).toBe(true))
     release()
     expect(((await (await res).json()) as Door).invite?.seed?.name).toBe('Valheim')
+  })
+
+  /*
+   * Английская страница опрашивает с ?lang=en: экран приглашения — теми же
+   * фразами, что английское превью (inviteDoor), а ник живого человека —
+   * как записан, его не переводят.
+   */
+  test('по-английски — те же факты английскими фразами, ник как есть', async () => {
+    await seeded()
+    signOut()
+    const got = ((await (await peekEn()).json()) as Door).invite
+    expect(got).toMatchObject({
+      title: "Серёга wants to pick tonight's game",
+      here: 'Already here: Серёга and Аня',
+      seed: {
+        name: 'Valheim',
+        line: 'First card: “Valheim”. Not into it? Next up is a deck from your libraries.',
+      },
+    })
+  })
+
+  test('по-английски хост без ника — безлично, а ростер — «Player …»', async () => {
+    await hosted()
+    signOut()
+    const res = (await (await peekEn()).json()) as Door & View
+    expect(res.invite?.title).toBe("You're invited to pick tonight's game")
+    // внутри имени — неразрывный пробел: строка на 360 рвётся между именами
+    expect(res.invite?.here).toMatch(/^Already here: Player\u00a0\w{1,4} and Player\u00a0\w{1,4}$/)
+    expect(res.members.map((m) => m.name).join(' ')).not.toMatch(CYRILLIC)
+    // а ростер — с обычным пробелом: неразрывность нужна одной строке экрана
+    expect(res.members.some((m) => m.name.includes('\u00a0'))).toBe(false)
+  })
+
+  /*
+   * Демо-хост записан русской подписью («Демо-игрок»), и без признака
+   * hostDemo английский экран назвал бы его по-русски — посреди английской
+   * фразы. Признак ставит роут по steamid; наружу steamid не уходит.
+   */
+  test('демо-хост на английском экране — «Demo player», тем же словом, что в «Already here»', async () => {
+    const now = nowSec()
+    const demo = STEAMID_OF.demo
+    await createRoom(db, { id: ROOM, steamid: demo }, now)
+    await joinRoom(db, ROOM, demo, 'Демо-игрок', now)
+    await joinRoom(db, ROOM, FRIEND, 'Аня', now)
+    signOut()
+    const en = ((await (await peekEn()).json()) as Door).invite
+    expect(en?.title).toBe("Demo player wants to pick tonight's game")
+    expect(en?.here).toBe('Already here: Demo\u00a0player and Аня')
+    // русский экран — прежний до байта: ник как записан
+    const ru = ((await (await peek(ROOM, '203.0.113.8')).json()) as Door).invite
+    expect(ru?.title).toBe('Демо-игрок зовёт выбрать игру на вечер')
+    expect(ru?.here).toBe('Уже здесь: Демо-игрок и Аня')
   })
 })

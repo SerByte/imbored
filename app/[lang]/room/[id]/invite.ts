@@ -1,4 +1,5 @@
 import { getGamesMetaLite, getRoom, roomMembers } from '@/lib/db'
+import { isDemoId } from '@/lib/demoid'
 import { parseMood } from '@/lib/mood'
 import { roomPresetOf } from '@/lib/presets'
 import type { RoomInvite } from '@/lib/roominvite'
@@ -37,7 +38,8 @@ export async function loadRoomInvite(id: string): Promise<RoomInvite | null> {
       roomMembers(db, id),
       appid !== undefined ? getGamesMetaLite(db, [appid]) : Promise.resolve(null),
     ])
-    const host = members.find((m) => m.steamid === room.createdBy)?.personaName ?? null
+    const hostRow = members.find((m) => m.steamid === room.createdBy)
+    const host = hostRow?.personaName ?? null
     const game = appid !== undefined ? games?.get(appid) : undefined
     // Арт — из той же строки, без лишнего запроса: фон карточки
     const art = game
@@ -47,6 +49,10 @@ export async function loadRoomInvite(id: string): Promise<RoomInvite | null> {
       id: room.id,
       members: members.length,
       host,
+      // Демо-хост — признаком, а не steamid: его ник записан русской подписью
+      // («Демо-игрок»), и английское превью называет его «Demo player»
+      // (inviteCopy). Языка здесь нет — RoomInvite один на оба
+      hostDemo: hostRow ? isDemoId(hostRow.steamid) : false,
       matched,
       matchedName: matched ? (game?.name ?? null) : null,
       matchedArt: matched ? art : null,

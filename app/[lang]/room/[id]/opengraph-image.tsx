@@ -4,9 +4,17 @@ import { ArtBackdrop, ogArt } from '@/lib/ogcard'
 import { CANVAS_WIDE } from '@/lib/ogwall'
 import { inviteCopy } from '@/lib/roominvite'
 import { loadRoomInvite, ROOM_ID_RE } from './invite'
-import { isLocale } from '@/lib/i18n'
+import { isLocale, tr } from '@/lib/i18n'
 
-export const alt = 'Приглашение в пати — imbored'
+/*
+ * Подпись картинки — одна на оба языка и без слов языка: alt у файловой
+ * карточки статичен, а generateImageMetadata дописал бы к адресу картинки
+ * свой хвост, и сброс кэша карточки по roomCardPath (lib/roomcard)
+ * промахивался бы. Русская подпись на английской странице — кириллица в
+ * превью, двуязычная — тоже, поэтому — имя продукта: что это приглашение,
+ * говорят заголовок и описание превью, они на языке страницы (inviteCopy).
+ */
+export const alt = 'imbored'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -70,8 +78,16 @@ export default async function Image({ params }: { params: Promise<{ lang: string
   // Без потолка room-peek, в отличие от заголовка страницы, — сознательно:
   // headers() выбил бы карточку из ISR. Почему это терпимо — lib/roompeek
   const invite = ROOM_ID_RE.test(code) ? await loadRoomInvite(code) : null
-  // Те же три состояния, что у заголовка страницы: ждёт, сошлась, неизвестна
-  const { eyebrow, headline, foot } = inviteCopy(code, invite)
+  // Те же три состояния, что у заголовка страницы: ждёт, сошлась, неизвестна —
+  // на языке адреса карточки (/en/room/…/opengraph-image — по-английски)
+  const { eyebrow, headline, foot } = inviteCopy(code, invite, lang)
+  // Английская строка с игрой («{host} invites you to “X”») длиннее русской,
+  // встаёт в две строки и рвалась на дефисе внутри названия: «… “Counter-» /
+  // «Strike 2”». Название в кавычках — отдельным куском, целиком: перенос
+  // встаёт перед ним. Влезает в одну строку — так и стоит, через пробел
+  // (columnGap ≈ пробел Manrope на 44). Русская карточка рисуется прежней
+  // веткой, до пикселя как была
+  const quote = lang === 'en' ? headline.indexOf('“') : -1
   // После матча билет погашен — и фоном встаёт игра, на которой сошлись; до
   // матча — игра, в которую звали, если она есть. Арт не дотянулся (чужой
   // магазин, сбой CDN) — прежний билет на тёмном
@@ -130,10 +146,19 @@ export default async function Image({ params }: { params: Promise<{ lang: string
                 color: OG_INK,
               }}
             >
-              {ROOM_ID_RE.test(code) ? code : 'ПАТИ'}
+              {ROOM_ID_RE.test(code) ? code : tr(lang, { ru: 'ПАТИ', en: 'PARTY' })}
             </div>
             {/* Отступ с запасом — см. lib/og про кириллические выносные */}
-            <div style={{ display: 'flex', marginTop: 36, fontSize: 44, maxWidth: 900 }}>{headline}</div>
+            {quote > 0 ? (
+              <div
+                style={{ display: 'flex', flexWrap: 'wrap', columnGap: 11, marginTop: 36, fontSize: 44, maxWidth: 900 }}
+              >
+                <span>{headline.slice(0, quote).trimEnd()}</span>
+                <span>{headline.slice(quote)}</span>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', marginTop: 36, fontSize: 44, maxWidth: 900 }}>{headline}</div>
+            )}
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

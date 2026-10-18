@@ -1,5 +1,6 @@
 import { GameArt } from '@/components/GameArt'
 import type { GameArtUrls } from '@/lib/art'
+import { pl, tr, type Locale } from '@/lib/i18n'
 import { plural } from '@/lib/plural'
 import type { NearMiss } from '@/lib/roomlikes'
 import { ScrollRail } from './ScrollRail'
@@ -18,13 +19,17 @@ export type LikedGame = {
  * Ни названия, ни арта здесь нет по устройству данных: NearMiss не содержит
  * appid (см. lib/roomlikes.ts). Это не ограничение вёрстки, а защита развязки
  * и чужих голосов — поэтому и показывать нечего, кроме расклада.
+ *
+ * Язык — пропом, а не useLocale: оба списка рисует только экран ожидания
+ * (RoomWaiting), а сторож ключей зовёт NearMissList прямо функцией, вне
+ * рендера, где хуков нет. Без пропа — русский, как было.
  */
-export function NearMissList({ near }: { near: NearMiss[] }) {
+export function NearMissList({ near, locale = 'ru' }: { near: NearMiss[]; locale?: Locale }) {
   if (!near.length) return null
 
   return (
     <section className="relative flex flex-col gap-2.5">
-      <SectionLabel as="h3">Вы почти совпали</SectionLabel>
+      <SectionLabel as="h3">{tr(locale, { ru: 'Вы почти совпали', en: 'Almost a match' })}</SectionLabel>
       <ul className="flex flex-col gap-2">
         {/*
           Ключ — место в списке, а не имена. Имена не уникальны: каждый
@@ -50,17 +55,39 @@ export function NearMissList({ near }: { near: NearMiss[] }) {
               то и другое — имя остаётся в именительном, а глагол согласуется
               с числом игр, которое мы как раз знаем.
             */}
-            <span className={i === 0 ? 'text-ink' : 'text-dim'}>
-              {n.forNames.join(' и ')}: {plural(n.games, 'совпала', 'совпало', 'совпало')}
-            </span>
-            <span className="tabular-nums text-ember-text">{n.games}</span>
-            <span className={i === 0 ? 'text-ink' : 'text-dim'}>
-              {plural(n.games, 'игра', 'игры', 'игр')}.
-            </span>
+            {/*
+              По-английски глагола с родом нет вовсе, но порядок другой: число
+              стоит после «yes on», а не после глагола, — ветка разметки целиком,
+              а не перевод кусков вокруг числа.
+            */}
+            {locale === 'en' ? (
+              <>
+                <span className={i === 0 ? 'text-ink' : 'text-dim'}>
+                  {n.forNames.join(' and ')}: yes on
+                </span>
+                <span className="tabular-nums text-ember-text">{n.games}</span>
+                <span className={i === 0 ? 'text-ink' : 'text-dim'}>
+                  {pl(locale, n.games, { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] })}.
+                </span>
+              </>
+            ) : (
+              <>
+                <span className={i === 0 ? 'text-ink' : 'text-dim'}>
+                  {n.forNames.join(' и ')}: {plural(n.games, 'совпала', 'совпало', 'совпало')}
+                </span>
+                <span className="tabular-nums text-ember-text">{n.games}</span>
+                <span className={i === 0 ? 'text-ink' : 'text-dim'}>
+                  {plural(n.games, 'игра', 'игры', 'игр')}.
+                </span>
+              </>
+            )}
             <span className="text-faint">
               {n.mePending
-                ? 'Ждём тебя.'
-                : `Ждём: ${n.pendingNames.join(', ')}.`}
+                ? tr(locale, { ru: 'Ждём тебя.', en: 'Waiting for you.' })
+                : tr(locale, {
+                    ru: `Ждём: ${n.pendingNames.join(', ')}.`,
+                    en: `Waiting for: ${n.pendingNames.join(', ')}.`,
+                  })}
             </span>
           </li>
         ))}
@@ -75,16 +102,24 @@ export function NearMissList({ near }: { near: NearMiss[] }) {
  * «Твой выбор — 5 игр», а не «Ты выбрал 5 игр»: род того, кто смотрит на
  * экран, нам неизвестен так же, как род ника в «почти совпали» выше.
  */
-export function MyLikesRail({ games }: { games: LikedGame[] }) {
+export function MyLikesRail({ games, locale = 'ru' }: { games: LikedGame[]; locale?: Locale }) {
   if (!games.length) return null
 
   return (
     <ScrollRail
       label={
-        <>
-          Твой выбор — <span className="tabular-nums text-ember-text">{games.length}</span>{' '}
-          {plural(games.length, 'игра', 'игры', 'игр')}
-        </>
+        locale === 'en' ? (
+          <>
+            {"You're in on "}
+            <span className="tabular-nums text-ember-text">{games.length}</span>{' '}
+            {pl(locale, games.length, { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] })}
+          </>
+        ) : (
+          <>
+            Твой выбор — <span className="tabular-nums text-ember-text">{games.length}</span>{' '}
+            {plural(games.length, 'игра', 'игры', 'игр')}
+          </>
+        )
       }
     >
       {games.map((g) => (

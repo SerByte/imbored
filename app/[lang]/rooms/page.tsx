@@ -7,6 +7,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { FlapCode } from '@/components/FlapCode'
 import { Icon, type IconName } from '@/components/Icon'
+import { useLocale } from '@/components/LocaleProvider'
 import { PosterFan, type FanGame } from '@/components/PosterFan'
 import { NeedSteam } from '@/components/NeedSteam'
 import { RoomCodeForm } from '@/components/room/RoomCodeForm'
@@ -23,6 +24,7 @@ import {
   onBoardVisible,
 } from '@/lib/boardpoll'
 import { minutesAgoLabel } from '@/lib/freshness'
+import { lp, tr, withLang, type Locale } from '@/lib/i18n'
 import { writerStore } from '@/lib/writer'
 
 /**
@@ -43,13 +45,27 @@ import { writerStore } from '@/lib/writer'
  * Прежний абзац убран, а не оставлен рядом: он говорил ровно то же самое,
  * только одной строкой и без подробностей. Два объяснения одного и того же
  * рядом — это не вдвое понятнее.
+ *
+ * По-английски — те же три шага теми же словами глоссария (Create a room,
+ * Invite friends), а не перевод каждой фразы: «Кинь ссылку своим» звучит как
+ * «send the link», а не как «throw».
  */
-const STEPS = [
-  // «символов», а не «букв»: в алфавите кода есть цифры 2–9 (room/create)
-  { title: 'Создай комнату', hint: 'Получишь код из шести символов и ссылку на неё' },
-  { title: 'Кинь ссылку своим', hint: 'Каждый подключает свою библиотеку Steam' },
-  { title: 'Свайпайте вместе', hint: 'Колода из общих игр; совпадут все голоса — матч' },
-]
+const STEPS = {
+  ru: [
+    // «символов», а не «букв»: в алфавите кода есть цифры 2–9 (room/create)
+    { title: 'Создай комнату', hint: 'Получишь код из шести символов и ссылку на неё' },
+    { title: 'Кинь ссылку своим', hint: 'Каждый подключает свою библиотеку Steam' },
+    { title: 'Свайпайте вместе', hint: 'Колода из общих игр; совпадут все голоса — матч' },
+  ],
+  en: [
+    { title: 'Create a room', hint: "You'll get a six-character code and a link to it" },
+    { title: 'Send the link to friends', hint: 'Everyone connects their own Steam library' },
+    // Не шире русской: длинная подсказка вставала в три строки и тянула все
+    // три карточки шагов (сетка равняет высоту) на 22 px выше русских на 768
+    // и 1280. «Everyone's in» — от кнопки голоса «I'm in» (SwipeDeck)
+    { title: 'Swipe together', hint: "A deck of shared games. Everyone's in? It's a match" },
+  ],
+} satisfies Record<Locale, Array<{ title: string; hint: string }>>
 
 /** Что делают на шаге — иконкой, по порядку STEPS */
 const STEP_ICONS: readonly IconName[] = ['plus', 'link', 'heart']
@@ -76,6 +92,7 @@ type Listing = {
 type Board = { rooms: Listing[]; fresh: Set<string> }
 
 export default function RoomsBoardPage() {
+  const locale = useLocale()
   // Свежесть держим в состоянии рядом со списком, а не в ref: читать ref во
   // время рендера нельзя, а знать «эта строка новая» нужно именно при рендере.
   const [board, setBoard] = useState<Board | null>(null)
@@ -142,7 +159,9 @@ export default function RoomsBoardPage() {
       // считая отказа (BOARD_TIMEOUT_MS в lib/boardpoll).
       const cap = window.setTimeout(() => ac.abort(), BOARD_TIMEOUT_MS)
       try {
-        const res = await fetch('/api/rooms/public', { signal: ac.signal })
+        // Язык — в адресе (withLang): ответ кэширует край, и ключ кэша — сам
+        // адрес; английская доска — английские метки и названия вечеров
+        const res = await fetch(withLang('/api/rooms/public', locale), { signal: ac.signal })
         if (!res.ok) throw new Error(String(res.status))
         const next = ((await res.json()) as { rooms: Listing[] }).rooms
         if (stopped) return
@@ -187,7 +206,7 @@ export default function RoomsBoardPage() {
       inFlight?.abort()
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [reloadKey])
+  }, [reloadKey, locale])
 
   return (
     <div className="relative flex-1 overflow-hidden">
@@ -199,16 +218,17 @@ export default function RoomsBoardPage() {
         <div aria-hidden className="rooms-fan fan-host">
           <PosterFan games={ROOMS_ART} />
         </div>
-        <h1 className="font-display text-display-lg">Пати</h1>
+        <h1 className="font-display text-display-lg">{tr(locale, { ru: 'Пати', en: 'Party' })}</h1>
         {readOnly ? (
-          // Вход вернёт прямо на создание комнаты, а не на эту доску
-          <NeedSteam from="/room/new" why="room" className="max-w-sm" />
+          // Вход вернёт прямо на создание комнаты, а не на эту доску — на
+          // языке страницы (steamLoginFor читает его из пути)
+          <NeedSteam from={lp(locale, '/room/new')} why="room" className="max-w-sm" />
         ) : (
           <Link
             href="/room/new"
             className="btn-ember px-8 py-3"
           >
-            Создать комнату
+            {tr(locale, { ru: 'Создать комнату', en: 'Create a room' })}
           </Link>
         )}
         {/* Вход по коду — всем, и сессии по ссылке тоже: создать комнату
@@ -219,7 +239,7 @@ export default function RoomsBoardPage() {
       {/* Шаг — иконкой в круге: порядок и так задан списком (ol), а
           иконка говорит, ЧТО на шаге делают */}
       <ol className="grid gap-4 sm:grid-cols-3 anim-rise" style={{ animationDelay: '80ms' }}>
-        {STEPS.map((step, i) => (
+        {STEPS[locale].map((step, i) => (
           <li key={step.title} className="panel-lift p-5 flex flex-col gap-1.5">
             <span aria-hidden className="mb-2 grid size-10 place-items-center rounded-full bg-ink/10 text-ink">
               <Icon name={STEP_ICONS[i]} size={18} />
@@ -233,7 +253,8 @@ export default function RoomsBoardPage() {
       <div className="flex flex-col gap-3">
         <SectionLabel className="flex items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-ember anim-pulse-dot" />
-          Открытые пати — ищут игроков
+          {/* Не шире русской: «… — looking for players» на 360 вставала в две строки */}
+          {tr(locale, { ru: 'Открытые пати — ищут игроков', en: 'Open parties — players wanted' })}
         </SectionLabel>
         {/*
           Доска уже на экране, а сервер молчит: последний снимок остаётся —
@@ -243,12 +264,16 @@ export default function RoomsBoardPage() {
           всегда, пустой, — появившаяся вместе с текстом звучала бы не везде.
         */}
         <StatusLine
-          text={rooms !== null && boardStale({ fails }) ? 'Доска не отвечает — пробую снова…' : null}
+          text={
+            rooms !== null && boardStale({ fails })
+              ? tr(locale, { ru: 'Доска не отвечает — пробую снова…', en: "The board isn't responding — trying again…" })
+              : null
+          }
           className="glass anim-rise rounded-[var(--radius-card)] px-4 py-2.5 text-xs leading-relaxed text-dim"
         />
         {rooms === null && fails > 0 ? (
           <div className="panel-lift p-6 text-center text-dim text-sm flex flex-col items-center gap-3">
-            Не получилось загрузить доску.
+            {tr(locale, { ru: 'Не получилось загрузить доску.', en: "Couldn't load the board." })}
             {/* Сброс отказов здесь же: пока идёт повтор, на месте ошибки
                 крутится спиннер, а не висит та же строка без ответа. */}
             <button
@@ -259,7 +284,7 @@ export default function RoomsBoardPage() {
               }}
               className="tap cursor-pointer text-sm text-ember-text hover:underline"
             >
-              Попробовать снова
+              {tr(locale, { ru: 'Попробовать снова', en: 'Try again' })}
             </button>
           </div>
         ) : rooms === null ? (
@@ -277,8 +302,14 @@ export default function RoomsBoardPage() {
                 чужих» на плитке AloneInvite, — цитата любой из них врёт
                 на двух других экранах. */}
             {readOnly
-              ? 'Сейчас открытых комнат нет — загляни чуть позже.'
-              : 'Сейчас открытых комнат нет. Создай свою и выставь её на доску — сюда придут.'}
+              ? tr(locale, {
+                  ru: 'Сейчас открытых комнат нет — загляни чуть позже.',
+                  en: 'No open rooms right now — check back a bit later.',
+                })
+              : tr(locale, {
+                  ru: 'Сейчас открытых комнат нет. Создай свою и выставь её на доску — сюда придут.',
+                  en: 'No open rooms right now. Create your own and put it on the board — people will come.',
+                })}
           </div>
         ) : (
           // layout — фича domMax, её догружает MotionMax
@@ -319,12 +350,14 @@ export default function RoomsBoardPage() {
                             <span aria-hidden>{r.preset.emoji}</span> {r.preset.label} ·{' '}
                           </>
                         )}
-                        {r.memberNames.length ? `${r.memberNames.join(', ')} · ` : 'пока никого · '}
-                        {minutesAgoLabel(r.minutesAgo)}
+                        {r.memberNames.length
+                          ? `${r.memberNames.join(', ')} · `
+                          : tr(locale, { ru: 'пока никого · ', en: 'no one yet · ' })}
+                        {minutesAgoLabel(r.minutesAgo, locale)}
                       </div>
                     </div>
                     <span className="pill shrink-0">
-                      Подсесть <Icon name="arrow" size={14} />
+                      {tr(locale, { ru: 'Подсесть', en: 'Join' })} <Icon name="arrow" size={14} />
                     </span>
                   </Link>
                 </m.div>
