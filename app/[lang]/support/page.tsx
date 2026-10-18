@@ -20,7 +20,7 @@ export const generateMetadata = ownAddress('/support')
  * «We don't sell spots in our picks. A recommendation is trust, and trust
  * isn't for sale.»); на неё ссылается и components/TagChips.tsx как на
  * обещание продукта. Неразрывные пробелы — как в русском: строка на телефоне
- * не начинается с тире и не кончается предлогом.
+ * не начинается с тире и не кончается предлогом (по-английски — артиклем «A»).
  */
 const COPY = {
   ru: {
@@ -48,7 +48,7 @@ const COPY = {
     howLead: 'We don’t take money yet: there’s no way to pay, and the service runs without it.',
     howWrite:
       'The best thank-you right now is telling someone who’d find it useful. And if a pick missed or something broke, write to',
-    rule: 'Our hard rule: we don’t sell spots in our picks. A recommendation is trust, and trust isn’t for\u00a0sale.',
+    rule: 'Our hard rule: we don’t sell spots in our picks. A\u00a0recommendation is trust, and trust isn’t for\u00a0sale.',
     back: 'Find a game',
   },
 } satisfies Record<Locale, Record<string, string>>

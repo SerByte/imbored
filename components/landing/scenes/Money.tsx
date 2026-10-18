@@ -72,11 +72,13 @@ export function Money() {
       */}
       {/*
         По-английски — та же фраза, что на /support (глоссарий): ударение — на
-        «and trust isn’t for sale», неразрывный пробел держит «for sale» вместе.
+        «and trust isn’t for sale». Неразрывные пробелы — по той же причине,
+        что в русском: на любой ширине телефона строка кончалась артиклем
+        («…in our picks. A / recommendation»), а «for sale» держится вместе.
       */}
       {locale === 'en' ? (
         <h2 className="font-display text-display-md text-balance" style={{ maxWidth: '20ch' }} data-money-line>
-          We don’t sell spots in our picks. A recommendation is trust,{' '}
+          We don’t sell spots in our picks. A&nbsp;recommendation is trust,{' '}
           <span className="text-ember-text">and trust isn’t for&nbsp;sale</span>.
         </h2>
       ) : (
@@ -102,8 +104,11 @@ export function Money() {
 
       <div className="back-block" data-money-back>
         <div className="max-w-md">
+          {/* По-английски «yours» в заголовке не на что указать — русское «твою»
+              держит библиотеку родом, — поэтому библиотека названа словом
+              глоссария, и «Rather not share yours?» ниже читается про неё же */}
           <h3 className="font-display text-display-sm">
-            {tr(locale, { ru: 'Подключим твою?', en: 'Shall we connect yours?' })}
+            {tr(locale, { ru: 'Подключим твою?', en: 'Connect your library?' })}
           </h3>
           <p className="mt-2 text-sm leading-relaxed text-dim">
             {tr(locale, {
@@ -113,7 +118,7 @@ export function Money() {
           </p>
         </div>
         <a className="btn-ember back-btn" href="#main">
-          {tr(locale, { ru: 'Наверх, к подключению ', en: 'Back up to connect ' })}
+          {tr(locale, { ru: 'Наверх, к подключению ', en: 'Back to the top ' })}
           <Icon name="up" size={18} />
         </a>
       </div>

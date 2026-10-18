@@ -118,6 +118,8 @@ describe('страница поддержки по-английски', () => {
     expect(out.replace(/\u00a0/g, ' ')).toContain(
       'we don’t sell spots in our picks. A recommendation is trust, and trust isn’t for sale.',
     )
+    // артикль не остаётся в конце строки на телефоне — та же сцепка, что в сцене денег
+    expect(out).toContain('A\u00a0recommendation')
     expect(out).not.toMatch(/[А-Яа-яЁё]/)
   })
 

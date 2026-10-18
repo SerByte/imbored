@@ -67,9 +67,16 @@ describe('сцены главной на /en', () => {
   test('сцены без данных — по-английски из провайдера', () => {
     for (const scene of [Pain, Money]) expect(en(createElement(scene))).not.toMatch(CYR)
     // лозунг денег — фраза глоссария, та же, что на /support
-    expect(en(createElement(Money)).replace(/ /g, ' ')).toContain(
+    const money = en(createElement(Money))
+    expect(money.replace(/ /g, ' ')).toContain(
       'We don’t sell spots in our picks. A recommendation is trust, <span class="text-ember-text">and trust isn’t for sale</span>.',
     )
+    // артикль не остаётся в конце строки — как предлог в русском
+    expect(money).toContain('A\u00a0recommendation')
+    // возврат к форме: «yours» есть на что указать — заголовок называет библиотеку
+    expect(money).toContain('>Connect your library?</h3>')
+    expect(money).toContain('Rather not share yours?')
+    expect(money).toMatch(/<a class="btn-ember back-btn" href="#main">Back to the top <svg/)
   })
 })
 
