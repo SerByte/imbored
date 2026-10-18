@@ -84,6 +84,43 @@ describe('entryLine', () => {
   })
 })
 
+/*
+ * Английская строка — тем же правилом: про отзывы — со ссылкой на них, про
+ * жанр — без слова reviews, часы — числом и со своей формой.
+ */
+describe('entryLine по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('часы из отзывов — числом и с формой слова', () => {
+    expect(entryLine({ level: 'high', hours: 3, basis: 'reviews' }, 'en')).toBe(
+      'Takes a while to click: reviews say it gets good after 3 hours',
+    )
+    expect(entryLine({ level: 'high', hours: 0.6, basis: 'reviews' }, 'en')).toBe(
+      'Takes a while to click: reviews say it gets good after 1 hour',
+    )
+    expect(entryLine({ level: 'high', hours: 21.4, basis: 'reviews' }, 'en')).toContain('after 21 hours')
+  })
+
+  test('про отзывы — со ссылкой на них, про жанр — как про жанр', () => {
+    expect(entryLine({ level: 'high', hours: null, basis: 'reviews' }, 'en')).toBe(
+      "Takes a while to click — that's what reviews say",
+    )
+    expect(entryLine({ level: 'low', hours: null, basis: 'reviews' }, 'en')).toBe(
+      "Hooks you from the first minutes — that's what reviews say",
+    )
+    expect(entryLine({ level: 'high', hours: null, basis: 'tags' }, 'en')).toBe(
+      "Steep learning curve: you'll have to learn the ropes first",
+    )
+    expect(entryLine({ level: 'low', hours: null, basis: 'tags' }, 'en')).toBe('Easy to get into: just sit down and play')
+    for (const level of ['high', 'low'] as const) {
+      expect(entryLine({ level, hours: null, basis: 'tags' }, 'en')).not.toMatch(/review/i)
+      for (const basis of ['reviews', 'tags'] as const) {
+        expect(entryLine({ level, hours: null, basis }, 'en')).not.toMatch(CYRILLIC)
+      }
+    }
+  })
+})
+
 describe('showsEntry', () => {
   test('строка — только у неосвоенного', () => {
     expect(showsEntry('untouched')).toBe(true)
@@ -98,6 +135,7 @@ describe('клиентобезопасность', () => {
   test('lib/entry.ts тянет только чистые модули: строку рисует /play', () => {
     const src = fs.readFileSync(path.join(__dirname, 'entry.ts'), 'utf8')
     const runtime = [...src.matchAll(/^import (?!type )[^\n]*?from '([^']+)'/gm)].map((m) => m[1])
-    expect(runtime).toEqual(['./plural', './semantics'])
+    // lib/i18n — такой же чистый модуль (только lib/plural): строка теперь и английская
+    expect(runtime).toEqual(['./i18n', './semantics'])
   })
 })

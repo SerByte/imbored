@@ -3,6 +3,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   COUNTING_STAGE,
+  countingStage,
   forgetPrewarm,
   hintChanged,
   libraryWall,
@@ -184,6 +185,24 @@ describe('warmupStage', () => {
     expect(remainingLine(1)).toBe('Осталось разобрать 1 игру')
     expect(remainingLine(3)).toBe('Осталось разобрать 3 игры')
     expect(remainingLine(812)).toBe('Осталось разобрать 812 игр')
+  })
+
+  /*
+   * Английский экран ожидания: своя строка счётчика и свой этап, а сверка —
+   * на том же языке. Русская строка на английской странице уже не «тот
+   * самый» счётчик и проходит как есть.
+   */
+  test('по-английски: счётчик со своей формой слова и сворачивается в свой этап', () => {
+    expect(remainingLine(1, 'en')).toBe('1 game left to go through')
+    expect(remainingLine(812, 'en')).toBe('812 games left to go through')
+    expect(remainingLine(1204, 'en')).toBe('1,204 games left to go through')
+    expect(countingStage('en')).toBe('Going through your library…')
+    expect(countingStage()).toBe(COUNTING_STAGE)
+    const said = new Set([812, 790, 1].map((n) => warmupStage(remainingLine(n, 'en'), { remaining: n }, 'en')))
+    expect([...said]).toEqual(['Going through your library…'])
+    expect(warmupStage(remainingLine(40), { remaining: 40 }, 'en')).toBe(remainingLine(40))
+    expect(warmupStage('Looking through your library…', null, 'en')).toBe('Looking through your library…')
+    for (const n of [1, 3, 812]) expect(remainingLine(n, 'en')).not.toMatch(/[А-Яа-яЁё]/)
   })
 })
 

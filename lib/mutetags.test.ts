@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import { MuteTags } from '../components/MuteTags'
 import { CONTENT_WARNING_TAGS } from './hook'
-import { CARD_TAGS, cookieValue, MUTE_COOKIE, muteCookie, MUTES, muteSummary, parseMutes } from './mutetags'
+import { CARD_TAGS, cookieValue, MUTE_COOKIE, muteCookie, muteLabel, MUTES, muteSummary, parseMutes } from './mutetags'
 import { topTags } from './recommend'
 import type { GameMeta } from './types'
 
@@ -67,6 +67,34 @@ describe('cookieValue', () => {
 describe('muteSummary', () => {
   test('посреди фразы — со строчной, аббревиатуры — как есть', () => {
     expect(muteSummary(parseMutes('horror.vr.early.mmo'))).toBe('хорроры, VR, ранний доступ, MMO')
+  })
+
+  test('по-английски — то же правило: со строчной, аббревиатуры как есть', () => {
+    expect(muteSummary(parseMutes('horror.vr.early.mmo'), 'en')).toBe('horror, VR, early access, MMO')
+    expect(muteSummary(parseMutes('gore.pvp'), 'en')).toBe('gore and violence, competitive')
+  })
+})
+
+describe('muteLabel', () => {
+  test('по-английски — у каждого набора своя подпись, sentence case, без кириллицы', () => {
+    const labels = MUTES.map((p) => muteLabel(p.key, 'en'))
+    expect(labels).toEqual([
+      'Horror',
+      'VR',
+      'Early access',
+      'Explicit',
+      'Gore and violence',
+      'Anime',
+      'Hardcore',
+      'Competitive',
+      'MMO',
+    ])
+    expect(new Set(labels).size).toBe(labels.length)
+    for (const l of labels) expect(l).not.toMatch(/[А-Яа-яЁё]/)
+  })
+
+  test('по умолчанию — русская подпись набора', () => {
+    for (const p of MUTES) expect(muteLabel(p.key)).toBe(p.label)
   })
 })
 

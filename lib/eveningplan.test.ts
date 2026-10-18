@@ -39,6 +39,14 @@ describe('план на вечер', () => {
     expect(planLine({ name: 'Hades', intent: 'tonight' })).toBe('Отложил «Hades» на вечер')
   })
 
+  test('по-английски — те же два обещания, своими словами', () => {
+    expect(planLine({ name: 'Hades', intent: 'install' }, 'en')).toBe('You started downloading “Hades”')
+    expect(planLine({ name: 'Hades', intent: 'tonight' }, 'en')).toBe('You saved “Hades” for tonight')
+    for (const intent of PLAN_INTENTS) {
+      expect(planLine({ name: 'Hades', intent }, 'en'), intent).not.toMatch(/[А-Яа-яЁё]/)
+    }
+  })
+
   /*
    * «Открыть в Steam» у своей на телефоне — 'launched' с intent 'store':
    * страница магазина, а не игра. Жмут его как раз после «Сыграю вечером на

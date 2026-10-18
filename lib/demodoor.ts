@@ -18,6 +18,10 @@ import { track } from './track'
  *
  * Модуль без React: адреса проверяются тестом целиком, по кругу через
  * loginTarget и destinationUrl.
+ *
+ * from — путь страницы с языком или без: с '/en/daily' обе двери ведут
+ * обратно на английскую (вход — с lang=en, ссылка — через /en), язык
+ * разбирают сами steamLoginFor и reconnectHref.
  */
 export function demoDoors(from: string): { steam: string; link: string } {
   return { steam: steamLoginFor(from), link: reconnectHref({ next: from }) }

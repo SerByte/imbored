@@ -14,7 +14,7 @@ import {
   reconnectHref,
   steamLoginFor,
 } from './destination'
-import { destinationPromise, DESTINATIONS } from './destinationtext'
+import { destinationFor, destinationPromise, DESTINATIONS, destinations } from './destinationtext'
 import { playHref, presetHref, ROOM_PRESETS, roomBridgeHref, VIBE_PRESETS } from './presets'
 
 /**
@@ -644,5 +644,239 @@ describe('«Подключить заново» ведёт к полю, а не 
   test('сторож видит ту самую кнопку', () => {
     const bad = '<Link href="/" className="btn-ember px-6 py-3">\n            Подключить заново\n'
     expect([...bad.matchAll(BARE)]).toHaveLength(1)
+  })
+})
+
+/**
+ * Английская версия. Раньше список знал только русские пути: ?next=/en/play
+ * отбрасывался целиком, и гость с английской выдачи после входа попадал на
+ * русский квиз. Теперь путь сверяется без префикса языка, а язык едет рядом —
+ * в адресе места, в адресе лендинга или параметром lang у входа.
+ */
+describe('места назначения на английском', () => {
+  const query = (href: string) => new URLSearchParams(href.split('?')[1] ?? '')
+  const q = (s: string) => new URLSearchParams(s)
+  const QUIZ = playHref({ time: 'short', vibe: 'engaged', social: 'friends' }, { lean: 'fresh', seed: 1145360 })
+
+  test('английский адрес места проходит и сохраняет язык; русский — без префикса', () => {
+    for (const p of DESTINATION_PATHS) {
+      expect(destinationUrl(`/en${p}`), p).toBe(`/en${p}`)
+      // место — ключ текстов лендинга, он без языка (см. ниже про кнопку)
+      expect(destinationPath(`/en${p}`), p).toBe(p)
+      expect(destinationPath(`/en${p}?x=1`), p).toBe(p)
+      // так страница русской ветки видит свой путь на сервере (usePathname)
+      expect(destinationUrl(`/ru${p}`), p).toBe(p)
+    }
+    expect(destinationUrl(`/en${QUIZ}`)).toBe(`/en${QUIZ}`)
+    expect(destinationUrl('/en/play?time=short&vibe=chill&social=solo&x=%3Cscript%3E')).toBe(
+      '/en/play?time=short&vibe=chill&social=solo',
+    )
+    expect(destinationUrl('/en/library?x=1')).toBe('/en/library')
+    expect(destinationUrl('/en/room/new?preset=quick&game=548430')).toBe('/en/room/new?preset=quick&game=548430')
+  })
+
+  test('префикс языка не открывает дыр в списке', () => {
+    for (const raw of [
+      '/en',
+      '/en/',
+      '/en//evil.example',
+      '/en/https://evil.example',
+      '/EN/library',
+      '/en/LIBRARY',
+      '/enx/play',
+      '/en-us/play',
+      '/de/play',
+      '/en/en/play',
+      '/en/play/',
+      '/en/play#x?time=short',
+      '/en/room/ABCDEF',
+      '/en/api/auth/logout',
+      '/en/toString',
+      '/en/__proto__',
+      'en/play',
+    ]) {
+      expect(destinationUrl(raw), raw).toBeNull()
+      expect(destinationPath(raw), raw).toBeNull()
+    }
+  })
+
+  test('лендинг — на языке места, next — без языка', () => {
+    expect(bounceTo('/en/library')).toBe('/en?next=%2Flibrary')
+    expect(bounceTo('/en/play', query(QUIZ))).toBe(`/en?next=${encodeURIComponent(QUIZ)}`)
+    expect(bounceTo(`/en${QUIZ}`)).toBe(bounceTo('/en/play', query(QUIZ)))
+    expect(bounceTo('/en/room/new', q('preset=quick'))).toBe('/en?next=%2Froom%2Fnew%3Fpreset%3Dquick')
+    // тот же адрес, что у разворота прокси
+    for (const hub of GUEST_HUBS) expect(bounceTo(`/en${hub}`), hub).toBe(guestBounce(`/en${hub}`, false))
+    // чужое — голая главная того же языка, а не русская
+    expect(bounceTo('/en/rooms')).toBe('/en')
+    expect(bounceTo('/en//evil.example')).toBe('/en')
+    // русский — как был
+    expect(bounceTo('/play', query(QUIZ))).toBe(`/?next=${encodeURIComponent(QUIZ)}`)
+    expect(bounceTo('/ru/library')).toBe('/?next=%2Flibrary')
+  })
+
+  test('вход везёт язык места параметром lang, а next — без языка', () => {
+    expect(loginCarry(q('next=%2Fen%2Flibrary')).toString()).toBe('next=%2Flibrary&lang=en')
+    expect(loginCarry(q(`next=${encodeURIComponent(`/en${QUIZ}`)}`)).get('next')).toBe(QUIZ)
+    // голый ?lang= ставит и читает сам роут: отказ не несёт его в адрес лендинга
+    expect(loginCarry(q('next=%2Flibrary&lang=en')).toString()).toBe('next=%2Flibrary')
+    expect(loginCarry(q('join=ABC123&lang=en')).toString()).toBe('join=ABC123')
+    // пати и совместимость по-прежнему важнее
+    expect(loginCarry(q('join=ABC123&next=%2Fen%2Fdaily')).toString()).toBe('join=ABC123')
+    // мусор с префиксом — не место
+    expect(loginCarry(q('next=%2Fen%2F%2Fevil.example')).toString()).toBe('')
+  })
+
+  test('после входа — туда же и на том же языке', () => {
+    expect(loginTarget(q('next=%2Fdaily&lang=en'))).toBe('/en/daily')
+    expect(loginTarget(q('next=%2Fen%2Fdaily'))).toBe('/en/daily')
+    expect(loginTarget(q('join=ABC123&lang=en&state=x'))).toBe('/en/room/ABC123')
+    expect(loginTarget(q('compat=76561197960287930&lang=en'))).toBe('/en/compat/76561197960287930')
+    expect(loginTarget(q('lang=en'))).toBe('/en/quiz')
+    expect(loginTarget(q('next=https%3A%2F%2Fevil.example&lang=en'))).toBe('/en/quiz')
+    // чужой язык — русский, как у всего сайта
+    expect(loginTarget(q('next=%2Fdaily&lang=de'))).toBe('/daily')
+  })
+
+  test('подсказка «войди через Steam» с английской страницы', () => {
+    expect(steamLoginFor('/en/library')).toBe('/api/auth/steam?next=%2Flibrary&lang=en')
+    expect(steamLoginFor('/en/room/ABC234')).toBe('/api/auth/steam?join=ABC234&lang=en')
+    expect(steamLoginFor('/en/whatsnew?feed=popular')).toBe('/api/auth/steam?next=%2Fwhatsnew&lang=en')
+    // незнакомое место — голый вход, но на своём языке
+    expect(steamLoginFor('/en/game/730')).toBe('/api/auth/steam?lang=en')
+    expect(steamLoginFor('/en')).toBe('/api/auth/steam?lang=en')
+    // русский путь сервера пререндера — тот же вход, что в браузере
+    expect(steamLoginFor('/ru/library')).toBe(steamLoginFor('/library'))
+  })
+
+  test('круг целиком: английская страница → Steam → та же английская страница', () => {
+    for (const where of [
+      '/en/play',
+      `/en${QUIZ}`,
+      '/en/library',
+      '/en/room/new?preset=quick',
+      '/en/room/ABC234',
+      '/en/whatsnew',
+    ]) {
+      expect(loginTarget(query(steamLoginFor(where))), where).toBe(where)
+    }
+  })
+
+  /*
+   * Гость с /en/play → /en?next=/play (next без языка) → «Sign in with Steam»
+   * на английском лендинге: карточка кладёт next как есть, а язык старт
+   * входа берёт из Referer и ставит lang=en сам (app/api/auth/steam). Возврат
+   * — снова на английскую выдачу с тем же настроением.
+   */
+  test('круг через лендинг: next без языка и lang от старта входа', () => {
+    const landing = bounceTo('/en/play', query(QUIZ))
+    expect(landing.startsWith('/en?')).toBe(true)
+    const next = query(landing).get('next')
+    const start = loginCarry(new URLSearchParams({ next: next ?? '' }))
+    start.set('lang', 'en')
+    start.set('state', 'x')
+    expect(loginTarget(start)).toBe(`/en${QUIZ}`)
+  })
+
+  // ?next=/en/play прямо в адресе лендинга (ссылка извне, старая вкладка):
+  // раньше отбрасывался, теперь доезжает на английскую выдачу и без Referer
+  test('next с префиксом языка переживает вход и без Referer', () => {
+    const start = loginCarry(new URLSearchParams({ next: `/en${QUIZ}` }))
+    expect(start.get('lang')).toBe('en')
+    expect(loginTarget(start)).toBe(`/en${QUIZ}`)
+  })
+
+  /*
+   * Карточка входа (components/landing/ConnectCard) ищет кнопку по
+   * DESTINATIONS[destinationPath(next)], а строка над заголовком — по
+   * destinationPromise(next). На /?next=/en/library место с языком не
+   * находилось в текстах: обещание говорило про библиотеку, кнопка — общее
+   * «Подобрать игру», а вела в библиотеку. Кнопка, обещание и адрес обязаны
+   * называть одно место.
+   */
+  test('кнопка карточки, обещание и адрес — про одно место и для адреса с языком', () => {
+    for (const p of DESTINATION_PATHS) {
+      for (const raw of [`/en${p}`, `/ru${p}`, p]) {
+        const next = destinationUrl(raw)
+        const key = destinationPath(next)
+        expect(key, raw).toBe(p)
+        const dest = key ? DESTINATIONS[key] : null
+        expect(dest, raw).toBe(DESTINATIONS[p])
+        expect(destinationFor(next), raw).toBe(dest)
+        expect(destinationPromise(next), raw).toBe(dest?.promise)
+      }
+    }
+  })
+
+  test('«Подключить заново» — на главную языка места', () => {
+    expect(reconnectHref({ next: '/en/daily' })).toBe('/en?next=%2Fdaily&reconnect=1')
+    expect(reconnectHref({ next: `/en${QUIZ}` })).toBe(`/en?next=${encodeURIComponent(QUIZ)}&reconnect=1`)
+    expect(reconnectHref({ compat: '76561197960287930', next: '/en/daily' })).toBe(
+      '/en?compat=76561197960287930&reconnect=1',
+    )
+    expect(reconnectHref({ next: '/en/rooms' })).toBe('/?reconnect=1')
+    expect(reconnectHref()).toBe('/?reconnect=1')
+  })
+})
+
+/**
+ * Тексты английского лендинга — те же правила, что у русских: текст ровно у
+ * каждого места, кнопка называет действие, гость с /play читает про одну игру.
+ */
+describe('тексты лендинга по-английски', () => {
+  const EN = destinations('en')
+  const CYRILLIC = /[А-Яа-яЁё]/
+  const MOOD = { time: 'medium', vibe: 'chill', social: 'solo' } as const
+
+  test('текст есть ровно у каждого адреса', () => {
+    expect(Object.keys(EN).sort()).toEqual([...DESTINATION_PATHS].sort())
+    expect(destinations()).toBe(DESTINATIONS)
+  })
+
+  /*
+   * У русской кнопки глагол узнаётся по «-ть». У английской — повелительное
+   * наклонение, и проверить его можно только списком: окончания у него нет.
+   * Список — глаголы, а не места: «Library» или «Your library» не пройдут.
+   */
+  test('кнопка начинается с глагола в повелительном наклонении', () => {
+    const IMPERATIVES = ['Open', 'Show', 'Find', 'Browse', 'Build', 'Get', 'Create']
+    for (const [p, d] of Object.entries(EN)) {
+      expect(IMPERATIVES, `${p}: «${d.action}»`).toContain(d.action.split(' ')[0])
+      expect(d.promise.length, `${p}: пустое обещание`).toBeGreaterThan(20)
+      expect(d.promise, p).not.toMatch(CYRILLIC)
+      expect(d.action, p).not.toMatch(CYRILLIC)
+    }
+  })
+
+  test('гость, развёрнутый с /play, читает про одну игру; кнопки — из глоссария', () => {
+    expect(EN['/play'].promise).toMatch(/^One game/)
+    expect(EN['/play'].action).toBe('Find a game')
+    expect(EN['/room/new'].action).toBe('Create a room')
+    expect(EN['/compat'].action).toBe('Get the link')
+    // комната — из библиотек всех, кто в ней, а не из нескольких своих
+    expect(EN['/room/new'].promise).toBe("A room is built from everyone's libraries — connect yours and we'll create it.")
+  })
+
+  test('ответы квиза — над заголовком, подписями английского квиза', () => {
+    expect(destinationPromise(playHref(MOOD), 'en')).toBe(
+      "A couple of hours · Unwind · Solo — got it. One last step: connect Steam and we'll pick one game from your library.",
+    )
+    // адрес с языком — то же место
+    expect(destinationPromise(`/en${playHref(MOOD)}`, 'en')).toBe(destinationPromise(playHref(MOOD), 'en'))
+    expect(destinationPromise(`/en${playHref(MOOD)}`)).toBe(destinationPromise(playHref(MOOD)))
+    expect(destinationPromise(playHref(MOOD, { roulette: true }), 'en')).toBe(EN['/play'].promise)
+    for (const p of DESTINATION_PATHS) expect(destinationPromise(p, 'en'), p).toBe(EN[p].promise)
+    for (const raw of [null, '', '/rooms', '/en/rooms', 'toString', '__proto__', '/en/__proto__']) {
+      expect(destinationPromise(raw, 'en'), String(raw)).toBeNull()
+    }
+  })
+
+  test('destinationFor узнаёт место по адресу с языком и без', () => {
+    expect(destinationFor('/en/play?time=short', 'en')).toBe(EN['/play'])
+    expect(destinationFor('/play', 'en')).toBe(EN['/play'])
+    expect(destinationFor('/en/library')).toBe(DESTINATIONS['/library'])
+    for (const raw of [null, '', '/rooms', 'toString', '/en/constructor']) {
+      expect(destinationFor(raw, 'en'), String(raw)).toBeNull()
+    }
   })
 })

@@ -21,7 +21,7 @@
  *     уходит вместе со страницей (opts.signal).
  */
 
-import { plural } from './plural'
+import { fmtNumber, pl, tr, type Locale } from './i18n'
 import type { SessionHint } from './sessionhint'
 
 /**
@@ -597,12 +597,22 @@ export function warmupPercent(p: Pick<WarmupProgress, 'remaining' | 'total'> | n
  * Строка статуса, пока идёт разбор. Одна на /play и /daily: по ней экран
  * ожидания узнаёт счётчик и не отдаёт его скринридеру (см. warmupStage).
  */
-export function remainingLine(remaining: number): string {
-  return `Осталось разобрать ${remaining} ${plural(remaining, 'игру', 'игры', 'игр')}`
+export function remainingLine(remaining: number, locale: Locale = 'ru'): string {
+  const games = pl(locale, remaining, { ru: ['игру', 'игры', 'игр'], en: ['game', 'games'] })
+  // Русское число — как было, без разрядов; английскому — с запятой: «1,204 games»
+  return tr(locale, {
+    ru: `Осталось разобрать ${remaining} ${games}`,
+    en: `${fmtNumber('en', remaining)} ${games} left to go through`,
+  })
 }
 
 /** Этап разбора для скринридера — вместо счётчика, который меняется на каждом ответе */
 export const COUNTING_STAGE = 'Разбираю библиотеку…'
+
+/** Тот же этап на языке страницы; COUNTING_STAGE — русский, как был */
+export function countingStage(locale: Locale = 'ru'): string {
+  return tr(locale, { ru: COUNTING_STAGE, en: 'Going through your library…' })
+}
 
 /**
  * Что экран ожидания отдаёт в живую область: этап, а не счётчик.
@@ -614,12 +624,15 @@ export const COUNTING_STAGE = 'Разбираю библиотеку…'
  * Сколько разобрано, говорит кольцо — своим именем, по запросу, а не вслух.
  *
  * Счётчик опознаётся точным совпадением с remainingLine, а не по началу
- * строки: подпись, которой нет в этом модуле, проходит как есть.
+ * строки: подпись, которой нет в этом модуле, проходит как есть. Сверка —
+ * на том же языке, на каком страница строку и напечатала: английский
+ * счётчик, сверенный с русским, ушёл бы в живую область очередью чисел.
  */
 export function warmupStage(
   message: string,
   p: Pick<WarmupProgress, 'remaining'> | null,
+  locale: Locale = 'ru',
 ): string {
-  if (p && p.remaining > 0 && message === remainingLine(p.remaining)) return COUNTING_STAGE
+  if (p && p.remaining > 0 && message === remainingLine(p.remaining, locale)) return countingStage(locale)
   return message
 }

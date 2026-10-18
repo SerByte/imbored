@@ -251,6 +251,12 @@ describe('строка для скринридера', () => {
   test('без знаменателя — без «из 0»', () => {
     expect(deckCardLine(deckPosition(0, 0), 'Dota 2')).toBe('Карта 1: Dota 2')
   })
+
+  test('по-английски — «Card N of M» и без «of 0»', () => {
+    expect(deckCardLine(deckPosition(2, 20), 'Dota 2', 'en')).toBe('Card 3 of 20: Dota 2')
+    expect(deckCardLine(deckPosition(0, 0), 'Dota 2', 'en')).toBe('Card 1: Dota 2')
+    expect(deckCardLine(deckPosition(2, 20), 'Dota 2', 'en')).not.toMatch(/[А-Яа-яЁё]/)
+  })
 })
 
 describe('голос стрелкой', () => {

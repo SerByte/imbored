@@ -52,6 +52,21 @@ describe('двери полосы демо', () => {
     expect(loginTarget(query(steam))).toContain('time=')
     expect(query(link).get('next')).toContain('time=')
   })
+
+  /*
+   * Полоса на английской странице: обе двери возвращают на неё же. Вход —
+   * с lang=en, ссылка — через английскую главную, next в ней без языка
+   * (язык уже у главной, как у bounceTo).
+   */
+  test.each([`/en${PLAY}`, '/en/daily', '/en/library'])('%s: обе двери — обратно на английскую', (from) => {
+    const { steam, link } = demoDoors(from)
+    expect(new URLSearchParams(steam.split('?')[1]).get('lang')).toBe('en')
+    expect(loginTarget(query(steam))).toBe(from)
+    expect(link.startsWith('/en?')).toBe(true)
+    const q = query(link)
+    expect(q.get('reconnect')).toBe('1')
+    expect(`/en${destinationUrl(q.get('next'))}`).toBe(from)
+  })
 })
 
 describe('полоса', () => {
