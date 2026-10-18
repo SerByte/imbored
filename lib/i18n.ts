@@ -16,7 +16,7 @@ export const LOCALES = ['ru', 'en'] as const
 export type Locale = (typeof LOCALES)[number]
 export const DEFAULT_LOCALE: Locale = 'ru'
 
-/** Явный выбор человека в переключателе (components/LocaleSwitch.tsx). Читает его proxy.ts. */
+/** Явный выбор человека в переключателе (components/LocaleSwitch.tsx). Читают его правила «/» в next.config (lib/homelocale.ts). */
 export const LANG_COOKIE = 'lang'
 
 /**
@@ -261,7 +261,12 @@ function acceptedLanguages(header: string): Array<{ lang: string; q: number }> {
 }
 
 /**
- * Какой язык показать на «/» — решение proxy.ts. null — оставить как есть.
+ * Какой язык показать на «/». null — оставить как есть.
+ *
+ * Эталон решения, а не его исполнитель: «/» уводят правила redirects из
+ * next.config, без функции, и Accept-Language там проверяет регулярка
+ * ENGLISH_FIRST (lib/homelocale.ts). Что она решает так же, как эта
+ * функция, сверяет lib/homelocale.test.ts.
  *
  * cookie — значение куки LANG_COOKIE: явный выбор человека в переключателе,
  * он важнее браузера в обе стороны. Без куки — Accept-Language: английский,

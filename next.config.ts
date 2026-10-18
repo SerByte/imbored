@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { cspMode, securityHeaders } from "./lib/csp";
+import { homeLocaleRedirects } from "./lib/homelocale";
 import { garbageRewrites, localeRedirects, localeRewrites } from "./lib/i18nroutes";
 import { noindexHeaders } from "./lib/robots";
 
@@ -23,9 +24,11 @@ const nextConfig: NextConfig = {
     ];
   },
   // Русский — без префикса снаружи и под /ru внутри (app/[lang]); почему
-  // rewrites, а не прокси, и что с /ru снаружи — в lib/i18nroutes.ts
+  // rewrites, а не прокси, и что с /ru снаружи — в lib/i18nroutes.ts.
+  // Кого «/» уводит на /en и почему правилом, а не в proxy.ts, — в
+  // lib/homelocale.ts
   async redirects() {
-    return localeRedirects();
+    return [...homeLocaleRedirects(), ...localeRedirects()];
   },
   // beforeFiles — разделы русской ветки, afterFiles — мусорный адрес в
   // статическую 404; почему одно до файлов, а другое после — там же

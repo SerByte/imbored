@@ -1,54 +1,92 @@
-import { LANG_COOKIE, preferredLocale } from './i18n'
+/**
+ * Язык главной: кого «/» уводит на /en — правилами redirects из next.config.
+ *
+ * Модуль без Next и без базы — его читает next.config.ts ещё до сборки (как
+ * lib/i18nroutes.ts).
+ *
+ * Правилами конфига, а не в proxy.ts. Прокси стоит перед кэшем на КАЖДОМ
+ * запросе, который совпал с его matcher, — а «/» просят и все, кто входит на
+ * сайт, и префетч ссылки-логотипа в шапке на каждой странице. С «/» в matcher
+ * каждый просмотр будил функцию ради ответа «оставайся», хотя главная —
+ * статика, которую отдаёт CDN (bundle-budget.json, static). Условия has и
+ * missing CDN Vercel проверяет сам, без функции.
+ *
+ * Уводят только по просьбе:
+ *   • кука lang=en — явный выбор в переключателе (components/LocaleSwitch);
+ *   • английский браузер — Accept-Language ставит английский раньше
+ *     русского (ENGLISH_FIRST) — и только при входе на сайт.
+ *
+ * Только вход, а не ходьба по сайту. Запрос роутера (RSC, префетч логотипа)
+ * и переход со своей же страницы не уводятся: человек читал русскую
+ * карточку игры, пришедшую из поиска, нажал логотип — и обязан попасть на
+ * русскую главную, а не сменить язык на полпути. Браузер помечает такие
+ * запросы сам: у fetch роутера заголовок RSC, у перехода со своей страницы —
+ * Sec-Fetch-Site: same-origin. Вход — закладка, ввод адреса, ссылка извне,
+ * запуск приложения с домашнего экрана (start_url манифеста — «/»).
+ *
+ * Английский браузер — ещё и только документ (Sec-Fetch-Dest: document). Без
+ * этих заголовков ходят краулеры и скрипты, и «/» — x-default в hreflang —
+ * обязан отдать им русскую главную, а не редирект.
+ *
+ * И только без сессии. Кука lang появилась вместе с английской версией, у
+ * тех, кто входил раньше, её нет — а вошедшие раньше входили на русском.
+ * Без этого условия каждый такой человек с английским браузером (частая
+ * настройка и у русскоязычных) на следующем же входе уезжал бы на /en, и
+ * приложение на домашнем экране — на каждом запуске.
+ *
+ * 307, и строка запроса едет сама: /?next=%2Fplay приезжает на /en?next=%2Fplay.
+ */
+import { LANG_COOKIE } from './i18n'
+import { SESSION_COOKIE } from './session'
 
-/** То, что homeLocale читает из запроса; NextRequest подходит как есть */
-export type HomeRequest = {
-  method: string
-  nextUrl: { pathname: string; search: string; host: string }
-  headers: { get(name: string): string | null }
-  cookies: { get(name: string): { value: string } | undefined }
+type Condition = { type: 'header' | 'cookie'; key: string; value?: string }
+type Redirect = {
+  source: string
+  destination: string
+  permanent: boolean
+  has?: Condition[]
+  missing?: Condition[]
 }
 
 /**
- * Куда увести с «/» по языку, либо null — главная как есть.
+ * Accept-Language, в котором английский стоит раньше русского — или русского
+ * нет вовсе: «de-DE,de;q=0.9,en;q=0.8» по-русски не читает.
  *
- * Только английский и только по просьбе: кука lang из переключателя
- * (components/LocaleSwitch) или Accept-Language, где английский выше
- * русского (preferredLocale в lib/i18n.ts). Без заголовка — как ходят
- * краулеры — главная остаётся русской. Кука lang=ru держит русскую и при
- * английском браузере.
+ * Регулярка для has.value: элементы до английского (сколько угодно, ни один
+ * не ru), затем en или en-XX. Порядок, а не q: браузеры пишут языки по
+ * убыванию q, и на таких заголовках решение совпадает с preferredLocale из
+ * lib/i18n (сверяет lib/homelocale.test.ts). Расходится оно только на
+ * заголовке не по порядку («ru;q=0.5,en») и на en;q=0 — так браузеры не пишут.
  *
- * Только вход на сайт, а не ходьба по нему. Запрос роутера (RSC, префетч
- * ссылки «домой» из шапки) и переход со своей же страницы не уводятся:
- * человек читал русскую карточку игры, пришедшую из поиска, нажал логотип —
- * и обязан попасть на русскую главную, а не сменить язык на полпути.
- *
- * Заголовки роутера (RSC, Next-Router-Prefetch) прокси не видит: Next снимает
- * их до прокси (FLIGHT_HEADERS в next/dist/server/web/adapter.js). Поэтому
- * по тому, что ставит браузер: Sec-Fetch-Dest не document — это fetch
- * роутера, а не переход; Sec-Fetch-Site: same-origin или Referer того же
- * хоста — переход со своей страницы. Без них (закладка, ввод адреса,
- * ссылка извне) — вход.
- *
- * 307 и запрос с собой: /?next=%2Fplay приезжает на /en?next=%2Fplay.
- * Статику главной это не трогает — прокси стоит перед кэшем, а сама
- * страница по-прежнему пререндерится (bundle-budget.json, static).
+ * Якоря ^ и $ — свои: Next оборачивает значение в ^…$ сам, а поиск без них
+ * нашёл бы «en-US» и в хвосте «ru-RU,ru;q=0.9,en-US;q=0.8».
  */
-export function homeLocale(req: HomeRequest): string | null {
-  if (req.method !== 'GET' || req.nextUrl.pathname !== '/') return null
-  const dest = req.headers.get('sec-fetch-dest')
-  if (dest && dest !== 'document') return null
-  if (req.headers.get('sec-fetch-site') === 'same-origin') return null
-  const referer = req.headers.get('referer')
-  if (referer) {
-    try {
-      if (new URL(referer).host === req.nextUrl.host) return null
-    } catch {
-      // битый Referer — как его нет
-    }
-  }
-  const want = preferredLocale({
-    acceptLanguage: req.headers.get('accept-language'),
-    cookie: req.cookies.get(LANG_COOKIE)?.value,
-  })
-  return want === 'en' ? `/en${req.nextUrl.search}` : null
+export const ENGLISH_FIRST = '^(?:\\s*(?![rR][uU](?:[-_;,\\s]|$))[^,]*,)*\\s*[eE][nN](?:[-_;,\\s].*)?$'
+
+/** Запрос роутера или переход со своей страницы — не вход на сайт */
+const WALKING: Condition[] = [
+  { type: 'header', key: 'rsc' },
+  { type: 'header', key: 'sec-fetch-site', value: 'same-origin' },
+]
+
+export function homeLocaleRedirects(): Redirect[] {
+  return [
+    {
+      source: '/',
+      has: [{ type: 'cookie', key: LANG_COOKIE, value: 'en' }],
+      missing: WALKING,
+      destination: '/en',
+      permanent: false,
+    },
+    {
+      source: '/',
+      has: [
+        { type: 'header', key: 'accept-language', value: ENGLISH_FIRST },
+        { type: 'header', key: 'sec-fetch-dest', value: 'document' },
+      ],
+      missing: [...WALKING, { type: 'cookie', key: LANG_COOKIE }, { type: 'cookie', key: SESSION_COOKIE }],
+      destination: '/en',
+      permanent: false,
+    },
+  ]
 }

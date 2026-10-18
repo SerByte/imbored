@@ -20,8 +20,8 @@ import { LANG_COOKIE, LOCALES, switchLocaleHref, tr, type Locale } from '@/lib/i
  * начинает заново.
  *
  * Нажатие пишет куку lang: явный выбор человека важнее языка браузера, и
- * proxy.ts больше не уведёт его с «/» (lib/homelocale.ts). Год, Lax, на весь
- * сайт.
+ * правила «/» в next.config ведут по ней, а не по Accept-Language
+ * (lib/homelocale.ts). Год, Lax, на весь сайт.
  *
  * Строка запроса едет с адресом — с выдачи /play?time=… человек попадает на
  * ту же выдачу на другом языке. useSearchParams на статической странице
@@ -36,7 +36,7 @@ const SHORT: Record<Locale, string> = { ru: 'RU', en: 'EN' }
 /** Год: выбор языка — не настройка на один заход */
 const YEAR_SEC = 31_536_000
 
-/** Запомнить выбор: кука, которую читает proxy.ts на «/». doc — ради теста */
+/** Запомнить выбор: кука, которую читают правила «/» в next.config. doc — ради теста */
 export function rememberLocale(target: Locale, doc: { cookie: string } = document): void {
   try {
     doc.cookie = `${LANG_COOKIE}=${target}; Path=/; Max-Age=${YEAR_SEC}; SameSite=Lax`

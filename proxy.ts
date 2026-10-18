@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { guestBounce } from '@/lib/destination'
-import { homeLocale } from '@/lib/homelocale'
 import { appBaseUrl, isSafeMethod, sameOrigin } from '@/lib/origin'
 import { SESSION_COOKIE } from '@/lib/session'
 
@@ -9,7 +8,7 @@ import { SESSION_COOKIE } from '@/lib/session'
  * называется proxy.ts, см. node_modules/next/dist/docs/01-app/03-api-reference/
  * 03-file-conventions/proxy.md).
  *
- * Правил три.
+ * Правил два.
  *
  * Первое: всё, что меняет состояние в /api, принимается только с нашей же
  * страницы. Сверка Origin у Next встроена лишь в Server Actions, а route
@@ -29,13 +28,12 @@ import { SESSION_COOKIE } from '@/lib/session'
  * страницу с мета-обновлением и статусом 200. Почему это нельзя сделать в
  * самой странице — в докблоке GUEST_BOUNCE.
  *
- * Третье: на «/» тот, кто просит английский, уезжает на /en — см.
- * lib/homelocale.ts.
+ * Язык главной — не здесь: «/» уводят на /en правила redirects из
+ * next.config, без функции (lib/homelocale.ts). Прокси на «/» будил бы
+ * функцию на каждом входе и каждом префетче логотипа.
  */
 export function proxy(req: NextRequest) {
   if (isSafeMethod(req.method)) {
-    const home = homeLocale(req)
-    if (home) return NextResponse.redirect(new URL(home, req.url), 307)
     // Пустое значение — это кука, которую выход только что погасил
     const bounce = guestBounce(req.nextUrl.pathname, Boolean(req.cookies.get(SESSION_COOKIE)?.value))
     // От адреса запроса, а не от appBaseUrl: на превью гость должен остаться
@@ -58,10 +56,7 @@ export function proxy(req: NextRequest) {
  * Хабы — точными адресами: так matcher и понимает строку без :path*, и
  * личные /compat/<steamid> и /portrait/<steamid> прокси не будят вовсе.
  * Список обязан совпадать с GUEST_BOUNCE — это стережёт lib/origin.test.ts.
- *
- * '/' — ради выбора языка главной (homeLocale): только корень, точным
- * адресом, остальные страницы прокси по-прежнему не будят.
  */
 export const config = {
-  matcher: ['/api/:path*', '/library', '/compat', '/portrait', '/en/library', '/en/compat', '/en/portrait', '/'],
+  matcher: ['/api/:path*', '/library', '/compat', '/portrait', '/en/library', '/en/compat', '/en/portrait'],
 }

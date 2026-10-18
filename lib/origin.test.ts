@@ -122,15 +122,17 @@ describe('proxy.ts', () => {
     expect(passed(call('GET', `${BASE}/api/news`, { 'sec-fetch-site': 'cross-site' }))).toBe(true)
   })
 
-  test('прокси стоит на всём /api, на хабах обоих языков и на корне, остальные страницы не трогает', () => {
-    // '/' — выбор языка главной (lib/homelocale.ts, сторож lib/homelocale.test.ts)
-    expect(config.matcher).toEqual(['/api/:path*', ...GUEST_BOUNCE, '/'])
+  test('прокси стоит на всём /api и на хабах обоих языков, остальные страницы не трогает', () => {
+    expect(config.matcher).toEqual(['/api/:path*', ...GUEST_BOUNCE])
     expect(GUEST_BOUNCE).toEqual(['/library', '/compat', '/portrait', '/en/library', '/en/compat', '/en/portrait'])
-    for (const url of ['/api/connect', '/api/auth/logout', '/api/room/ABC123/vote', ...GUEST_BOUNCE, '/']) {
+    for (const url of ['/api/connect', '/api/auth/logout', '/api/room/ABC123/vote', ...GUEST_BOUNCE]) {
       expect(unstable_doesMiddlewareMatch({ config, url }), url).toBe(true)
     }
-    // личные страницы по ссылке из чата прокси не будят вовсе
+    // личные страницы по ссылке из чата прокси не будят вовсе, а главную —
+    // ни вход, ни префетч логотипа: язык «/» решают redirects (lib/homelocale.ts)
     for (const url of [
+      '/',
+      '/?next=%2Fplay',
       '/play',
       '/en',
       '/en/play',
