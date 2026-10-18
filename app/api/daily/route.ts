@@ -254,7 +254,9 @@ export async function GET(req: Request) {
       // публичной странице получатель прочтёт про себя, а дату запуска она
       // выдаст любому (lib/comeback.ts). Поэтому основа записи (shareBase), а
       // не dailyReasonBase. Язык — в подписи: английский текст не годится
-      // русской ссылке, и наоборот (lib/pickshare)
+      // русской ссылке, и наоборот (lib/pickshare). Обратно его везёт
+      // SharePick (share.lang в теле), и /api/pick сверяет подпись с ним же —
+      // без этого английская подпись не сходилась бы никогда (403 badsig)
       ...shareView(sessionSecret(), {
         steamid,
         appid: pick.appid,
