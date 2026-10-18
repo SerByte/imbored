@@ -739,16 +739,23 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   подписью, потому что текущий ценник (обычный или продлённой
                   акции) отсюда не узнать. Без неё герой молчал о цене, хотя
                   «Steam возвращает деньги» под кнопками стоял. Без ShownUntil:
-                  срока у этой строки нет, её снимает перезамер цены */}
+                  срока у этой строки нет, её снимает перезамер цены.
+
+                  Подпись — видимым текстом, а не title: подсказку при
+                  наведении не видят ни на телефоне, ни скринридером, а без
+                  неё «обычная цена» читалась бы как «сейчас столько». И
+                  правдивая в обоих случаях, что прячет trustedPrice: срок
+                  акции вышел (её могли и продлить) или замер без срока
+                  протух — кончилась ли скидка, отсюда не узнать */}
               {!meta.isFree && !meta.storeHidden && regular !== null && (
-                <span
-                  className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-sm"
-                  title="Скидка, при которой мы снимали цену, кончилась — ценник в Steam может отличаться"
-                >
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-sm">
                   <span className="text-dim">обычная цена</span>
                   {/* бесплатной строки здесь не бывает — её отсекает условие выше */}
                   <PriceTag priceFinal={regular} cc={meta.priceCc ?? null} isFree={false} size="hero" />
                   <PriceWhere cc={meta.priceCc} />
+                  <span className="basis-full text-xs text-dim">
+                    Цену сняли во время скидки, а идёт ли она ещё, мы не знаем — в Steam может быть дешевле
+                  </span>
                 </span>
               )}
             </div>

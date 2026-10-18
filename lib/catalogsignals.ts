@@ -19,8 +19,8 @@
  *     языки, которые видят люди (shownReviews в lib/gametraits). Русские —
  *     вторым запросом той же пачки, в русском контексте.
  *   • Пульс — отзывы за последний месяц, по игре за запрос и только у верха
- *     пула (refreshReviewPulse ниже): ходит в магазин, а не в API, и потому
- *     скупо.
+ *     пула и у разгромленных, снятых с подбора (refreshReviewPulse ниже):
+ *     ходит в магазин, а не в API, и потому скупо.
  *   • Онлайн — по игре за запрос (другого API нет), и только у совместных:
  *     живость гейтит только их, ровно как в promote-catalog.
  *   • Цены — тот же GetItems, но в регионе цен (lib/deals), той же пачкой, и
@@ -89,9 +89,11 @@ import { priceRegion } from './steamregion'
 
 /**
  * Раз в сколько сверять игру. Неделя: пул — около шести тысяч игр, и при
- * пачке в двести это тридцать запросов отзывов и пара тысяч замеров онлайна в
- * неделю — капля на фоне лимитов Steam, а для фильтра живости и процента в
- * сниппете недельная точность с запасом.
+ * пачке в двести это тридцать пачек в неделю, по два GetItems на пачку
+ * (англоязычные вместе со всеми языками и русские, см. fetchStoreReviews), —
+ * около шестидесяти запросов отзывов и пара тысяч замеров онлайна в неделю.
+ * Капля на фоне лимитов Steam, а для фильтра живости и процента в сниппете
+ * недельная точность с запасом.
  */
 export const SIGNALS_MAX_AGE_SEC = 7 * 86_400
 
@@ -419,17 +421,38 @@ export async function refreshCatalogSignals(
  * карточек, и шаг пульса — это полкарточки, не обогащённой в этом звене.
  * Поэтому пульс скупой: не больше PULSE_PER_LINK игр на звено и только верх
  * пула (PULSE_TOP, reviewPulseQueue) — у хвоста полусотни отзывов в месяц
- * нет, и строке там нечего сказать. При девяти звеньях в сутки это около
- * четырёхсот замеров в неделю, ровно верх по кругу; без модели звеньев
- * больше, и круг короче.
+ * нет, и строке там нечего сказать, — плюс разгромленные, снятые с подбора
+ * (PULSE_PANNED_TOP): их вердикт молчит по месяцу похвал. При девяти звеньях
+ * в сутки это около четырёхсот замеров в неделю, то есть круг — неделя с
+ * небольшим; без модели звеньев больше, и круг короче.
  */
 export const PULSE_TOP = 400
+
+/**
+ * Сколько разгромленных, снятых с подбора, ходит в очередь пульса — по числу
+ * отзывов. В каталоге их полсотни (data/catalog.db на 24.09.2026 — 48), так
+ * что потолок берёт всех, а держит очередь, если курация однажды снимет
+ * больше.
+ */
+export const PULSE_PANNED_TOP = 50
 
 /** Потолок замеров пульса на звено — см. PULSE_TOP */
 export const PULSE_PER_LINK = 6
 
 /** Пульс моложе этого не перемеряем: шаг тот же, что у сверки, — неделя */
 export const PULSE_MAX_AGE_SEC = SIGNALS_MAX_AGE_SEC
+
+/**
+ * Показанный пульс старше этого переписывается любым новым замером, сдвинулся
+ * он или нет (updateReviewPulse в lib/db). Половина срока показа
+ * (PULSE_SHOW_MAX_AGE_SEC в lib/gamepage, 30 суток): проверка приходит раз в
+ * неделю с небольшим (PULSE_MAX_AGE_SEC), и даже вдвое реже устоявшийся месяц
+ * освежается раньше, чем строка с ним состарится и пропадёт. Больше — и
+ * строка рискует состариться между проверками; меньше — и месяц, в котором
+ * ничего не случилось, переписывался бы чаще, каждый раз записью ISR.
+ * Сторож соотношения — в lib/catalogsignals.test.ts.
+ */
+export const PULSE_RESHOW_SEC = 15 * 86_400
 
 /** Отказов подряд, после которых звено пульса встаёт: магазин закрылся от нас */
 const PULSE_FAIL_STREAK = 2
@@ -465,7 +488,12 @@ export async function refreshReviewPulse(
       return fetchRecentPulse(appid, at)
     })
 
-  const due = await reviewPulseQueue(db, { top: PULSE_TOP, before: now - PULSE_MAX_AGE_SEC, limit })
+  const due = await reviewPulseQueue(db, {
+    top: PULSE_TOP,
+    panned: PULSE_PANNED_TOP,
+    before: now - PULSE_MAX_AGE_SEC,
+    limit,
+  })
   const rows: Array<{ appid: number; pulse: RecentPulse | undefined }> = []
   let stopped: PulseResult['stopped'] = due.length < limit ? 'done' : 'budget'
   let streak = 0
@@ -486,6 +514,6 @@ export async function refreshReviewPulse(
       }
     }
   }
-  await updateReviewPulse(db, rows, now)
+  await updateReviewPulse(db, rows, now, { reshowBefore: now - PULSE_RESHOW_SEC })
   return { measured: rows.length, stopped }
 }

@@ -334,12 +334,14 @@ const CASES: Case[] = [
     indexes: ['idx_games_reviews_at'],
     sortFree: true,
   },
-  // Пульс отзывов: верх пула — по порядку частичного idx_games_pool, чтение
-  // обрывает LIMIT верха; сортируются по отметке только эти строки, а не пул
+  // Пульс отзывов: верх пула — по порядку частичного idx_games_pool,
+  // разгромленные — по порядку idx_games_panned, чтение каждой ветки обрывает
+  // её LIMIT; сортируются по отметке только эти строки, а не пул. Без своего
+  // индекса ветка разгромленных читала бы всю games на каждое звено крона
   {
     name: 'очередь пульса отзывов',
-    run: (db) => reviewPulseQueue(db, { top: 400, before: NOW, limit: 6 }),
-    indexes: ['idx_games_pool'],
+    run: (db) => reviewPulseQueue(db, { top: 400, panned: 50, before: NOW, limit: 6 }),
+    indexes: ['idx_games_panned', 'idx_games_pool'],
     sortFree: false,
   },
   // «Ещё у этой студии» на карточке: диапазон developer=? частичного индекса,

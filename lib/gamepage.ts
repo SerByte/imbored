@@ -471,6 +471,10 @@ export function deadVerdict(meta: GameMeta, nowSec?: number): string | null {
    * кольцом («за 30 дней: 82% — выше, чем за всё время») спорила бы с ним в
    * сантиметре. Свежий месяц с полусотней отзывов и долей не ниже
    * PULSE_RECOVERED — свежее число, которое с курацией спорит: молчим.
+   *
+   * Месяц у мёртвой игры есть не случайно: пул (ALIVE_POOL) мёртвых не
+   * содержит, и разгромленных пульс меряет своей веткой очереди
+   * (reviewPulseQueue в lib/db, PULSE_PANNED_TOP в lib/catalogsignals).
    */
   if ((reason ?? stored) === 'panned' && nowSec !== undefined && recovered(meta, nowSec)) return null
   if (reason) return DEAD_VERDICT[reason]
