@@ -17,6 +17,7 @@ import {
   type Db,
 } from '@/lib/db'
 import { feedTokenHash, newFeedToken } from '@/lib/feedlink'
+import { OTHER_STORE_GAMES } from '@/lib/otherstores'
 import { nowSec } from '@/lib/server'
 import { freshDb, signInAs, STEAMID_OF, type SessionKind } from '@/lib/testing/route'
 import LibraryPage, { generateMetadata } from './page'
@@ -427,6 +428,31 @@ describe('/library на /en', () => {
     expect(item.played).toBe('not checked yet')
     // Полка желаемого берёт язык пропом: getLocale() у неё в тесте не работает
     expect(propsOf(tree, WishlistShelf)[0].locale).toBe('en')
+  })
+
+  /*
+   * Вечер с игрой другого магазина (пул, appid < 0): /play на /en ведёт в
+   * английский магазин (storeCardView → storeUrlFor), и «Store page» на
+   * полке вечеров обязана вести туда же, а не на русскую страницу из записи
+   * пула. Русская полка — прежний адрес записи.
+   */
+  test('вечер с игрой другого магазина ведёт в магазин на языке страницы', async () => {
+    const FORTNITE = OTHER_STORE_GAMES.find((g) => g.appid === -101)!
+    const steamid = await signInAs(db, 'openid')
+    await seed(steamid)
+    await upsertGamesMeta(db, [FORTNITE], nowSec())
+    await recordOutcome(db, { steamid, appid: FORTNITE.appid, source: null, launched: true }, nowSec() - 30)
+    const storeOf = async (lang?: string) => {
+      const tree = await LibraryPage({
+        params: Promise.resolve(lang ? { lang } : {}),
+        searchParams: Promise.resolve({}),
+      } as PageProps<'/[lang]/library'>)
+      const [evenings] = propsOf(tree, Evenings)
+      const items = evenings.items as Array<{ appid: number; storeUrl: string | null }>
+      return items.find((i) => i.appid === FORTNITE.appid)?.storeUrl
+    }
+    expect(await storeOf('en')).toBe('https://store.epicgames.com/en-US/p/fortnite')
+    expect(await storeOf()).toBe('https://store.epicgames.com/ru/p/fortnite')
   })
 
   test('сессия по ссылке: строка о входе ведёт обратно на английскую библиотеку', async () => {

@@ -59,6 +59,7 @@ import { RailToCurrent } from '@/components/RailToCurrent'
 import { ShelfToStart } from '@/components/ShelfToStart'
 import { StatusLine } from '@/components/StatusLine'
 import { dateLabel } from '@/lib/freshness'
+import { storeUrlFor } from '@/lib/gamedesc'
 import {
   askableNow,
   eveningPlayed,
@@ -378,7 +379,9 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
       playedEnough: playedEnough(e.minutes),
       verdict: e.verdict,
       owned: ownedNow.has(e.appid),
-      storeUrl: meta?.storeUrl ?? null,
+      // Пул других магазинов хранит русскую страницу; на /en — английская
+      // (storeUrlFor), как у той же игры на /play. Steam — null: адрес собирает островок
+      storeUrl: storeUrlFor(meta, locale),
       // Мера та же, что у «Продолжить» на /play (continueView): без меты — не знаем
       finishable: !!meta && !isReplayable(meta),
       finished: doneNow.has(e.appid),
