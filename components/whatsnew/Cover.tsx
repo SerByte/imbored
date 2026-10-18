@@ -225,8 +225,11 @@ export function Cover({
               <Link href={newsPath(item.appid, item.gid)} className="btn-ember px-6 py-3">
                 {tr(locale, { ru: 'Читать патч', en: 'Read the patch' })}
               </Link>
+              {/* Английская подпись короче «What else changed»: на 360 px та
+                  не вставала в ряд с кнопкой и уходила второй строкой, а
+                  русская стоит в одну */}
               <Link href={`/game/${item.appid}`} className="tap link-more">
-                {tr(locale, { ru: 'Что ещё меняли', en: 'What else changed' })}
+                {tr(locale, { ru: 'Что ещё меняли', en: 'More patches' })}
                 <Icon name="arrow" size={16} />
               </Link>
             </div>

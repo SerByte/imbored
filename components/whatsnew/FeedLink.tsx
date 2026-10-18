@@ -116,12 +116,23 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
       // Права кончились, пока страница была открыта: остальные кнопки записи
       // на других островках узнают это из того же хранилища
       writerStore.set(false)
-      return (
+      // Вход вернёт сюда же, к ссылке, а не на квиз (steamLoginFor)
+      const href = steamLoginFor(lp(locale, '/whatsnew'))
+      // Английская фраза — своя целиком: ссылка в ней — цель («To get this
+      // link, sign in with Steam»), а в русской — призыв после тире
+      return locale === 'en' ? (
         <>
-          {tr(locale, { ru: 'Ссылку выпускает вошедший через Steam —', en: 'Only a Steam sign-in can issue the link —' })}{' '}
-          {/* Вход вернёт сюда же, к ссылке, а не на квиз (steamLoginFor) */}
-          <a href={steamLoginFor(lp(locale, '/whatsnew'))} className="tap tap-tight underline underline-offset-4">
-            {tr(locale, { ru: 'войди', en: 'sign in' })}
+          To get this link,{' '}
+          <a href={href} className="tap tap-tight underline underline-offset-4">
+            sign in with Steam
+          </a>
+          .
+        </>
+      ) : (
+        <>
+          Ссылку выпускает вошедший через Steam —{' '}
+          <a href={href} className="tap tap-tight underline underline-offset-4">
+            войди
           </a>
           .
         </>

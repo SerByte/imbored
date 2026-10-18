@@ -92,7 +92,7 @@ describe('строки ленты и карточки игры на /en', () => 
         }),
       ),
     )
-    for (const s of ["What&#x27;s new", 'playing right now', 'change in this patch', 'Read the patch', 'What else changed', 'July 31']) {
+    for (const s of ["What&#x27;s new", 'playing right now', 'change in this patch', 'Read the patch', 'More patches', 'July 31']) {
       expect(out, s).toContain(s)
     }
     expect(out).not.toMatch(CYR)
