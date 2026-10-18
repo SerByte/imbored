@@ -18,6 +18,8 @@
  * или участника из комнаты убрали.
  */
 
+import { tr, type Locale } from './i18n'
+
 /**
  * Голос за карту уходит один раз.
  *
@@ -268,8 +270,10 @@ export function deckPosition(
  * заголовок сменился Dota 2 → Counter-Strike 2 молча. Название — ради него
  * строка и звучит; номер — тот же, что на полосе под колодой.
  */
-export function deckCardLine(pos: { n: number; total: number | null }, name: string): string {
-  return pos.total === null ? `Карта ${pos.n}: ${name}` : `Карта ${pos.n} из ${pos.total}: ${name}`
+export function deckCardLine(pos: { n: number; total: number | null }, name: string, locale: Locale = 'ru'): string {
+  return pos.total === null
+    ? tr(locale, { ru: `Карта ${pos.n}: ${name}`, en: `Card ${pos.n}: ${name}` })
+    : tr(locale, { ru: `Карта ${pos.n} из ${pos.total}: ${name}`, en: `Card ${pos.n} of ${pos.total}: ${name}` })
 }
 
 /**
