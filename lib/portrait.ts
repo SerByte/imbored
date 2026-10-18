@@ -1,10 +1,19 @@
+import { archetypeKey, archetypeLabel, isKnownArchetype } from './archetypes'
 import { looksLikeNonGame } from './junk'
 import { playtimeHidden } from './playtime'
 import { buildTagProfile, isUnplayed } from './recommend'
 import type { GameMeta, LibraryGame } from './types'
 
 export type Archetype = {
+  /** первый тег архетипа в профиле — по нему подбираются улики (archetypeEvidence) */
   tag: string
+  /**
+   * Язык-нейтральный ключ архетипа — канонический тег (lib/archetypes): по
+   * нему схлопнуты синонимы, по нему же подпись на любом языке —
+   * archetypeLabel(key, locale)
+   */
+  key: string
+  /** русская подпись, archetypeLabel(key, 'ru'); на другом языке — archetypeLabel(key, locale) */
   label: string
   /** доля внутри показанной четвёрки — на ней держатся тексты («ты на 37% стрелок») */
   percent: number
@@ -53,45 +62,9 @@ const STOP_TAGS = new Set([
   'Casual',
 ])
 
-const ARCHETYPE_LABELS: Record<string, string> = {
-  Automation: 'строитель фабрик',
-  'Base Building': 'строитель баз',
-  Roguelike: 'рогалик-энтузиаст',
-  Roguelite: 'рогалик-энтузиаст',
-  'Action Roguelike': 'рогалик-энтузиаст',
-  'Story Rich': 'охотник за историями',
-  MOBA: 'ветеран MOBA',
-  FPS: 'стрелок',
-  Shooter: 'стрелок',
-  'Tactical FPS': 'тактический стрелок',
-  Competitive: 'соревновательный зверь',
-  'Open World': 'исследователь открытых миров',
-  Survival: 'выживальщик',
-  'Farming Sim': 'мирный фермер',
-  Strategy: 'стратег',
-  Tactical: 'тактик',
-  RPG: 'ролевик',
-  'Action RPG': 'ролевик',
-  'Co-op': 'кооп-игрок',
-  'Online Co-Op': 'кооп-игрок',
-  Puzzle: 'головоломщик',
-  Sandbox: 'архитектор песочниц',
-  Metroidvania: 'картограф метроидваний',
-  'Souls-like': 'терпеливый соулслайкер',
-  'Card Game': 'мастер колоды',
-  'Deck Building': 'мастер колоды',
-  Difficult: 'любитель боли',
-  Simulation: 'симуляторщик',
-  'Colony Sim': 'управляющий колонией',
-  Horror: 'любитель ужасов',
-  Platformer: 'платформер-про',
-  Crafting: 'крафтер',
-  Exploration: 'исследователь',
-  MMORPG: 'житель MMO',
-  'Battle Royale': 'боец королевских битв',
-  Mining: 'шахтёр',
-  'Turn-Based': 'пошаговый мыслитель',
-}
+// Словарь подписей и синонимов — в lib/archetypes: его берут и запасной
+// текст портрета, и промпт модели, а этот модуль тянет движок подбора
+export { archetypeKey, archetypeLabel, isKnownArchetype } from './archetypes'
 
 export function buildPortrait(
   library: LibraryGame[],
@@ -99,27 +72,29 @@ export function buildPortrait(
 ): Portrait {
   const profile = buildTagProfile(library, metaOf)
 
-  // синонимы (FPS и Shooter → «стрелок») схлопываем в один архетип
-  const byLabel = new Map<string, { tag: string; weight: number; known: boolean }>()
+  // Синонимы (FPS и Shooter → «стрелок») схлопываем в один архетип — по
+  // ключу, а не по подписи: подписи на двух языках разные, а четвёрка,
+  // проценты и заголовок обязаны быть одни (см. lib/archetypes)
+  const byKey = new Map<string, { tag: string; weight: number }>()
   for (const [tag, weight] of Object.entries(profile)) {
     if (STOP_TAGS.has(tag)) continue
-    const known = tag in ARCHETYPE_LABELS
-    const label = ARCHETYPE_LABELS[tag] ?? `фанат ${tag}`
-    const prev = byLabel.get(label)
+    const key = archetypeKey(tag)
+    const prev = byKey.get(key)
     if (prev) prev.weight += weight
-    else byLabel.set(label, { tag, weight, known })
+    else byKey.set(key, { tag, weight })
   }
 
-  const top = [...byLabel.entries()].sort((a, b) => b[1].weight - a[1].weight).slice(0, 4)
+  const top = [...byKey.entries()].sort((a, b) => b[1].weight - a[1].weight).slice(0, 4)
   const weightSum = top.reduce((s, [, v]) => s + v.weight, 0)
   const maxWeight = top[0]?.[1].weight ?? 0
   const archetypes: Archetype[] = weightSum
-    ? top.map(([label, v]) => ({
+    ? top.map(([key, v]) => ({
         tag: v.tag,
-        label,
+        key,
+        label: archetypeLabel(key, 'ru'),
         percent: Math.round((v.weight / weightSum) * 100),
         barPercent: Math.round((v.weight / maxWeight) * 100),
-        known: v.known,
+        known: isKnownArchetype(key),
       }))
     : []
 

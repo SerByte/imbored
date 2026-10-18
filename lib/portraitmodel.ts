@@ -40,7 +40,16 @@ export type PortraitModel = {
   /** Без unplayed: см. докблок модуля */
   wrapped: Omit<Wrapped, 'unplayed'>
   backlog: ReturnType<typeof backlogValue>
-  /** Архетип для заголовка: только со словарной подписью */
+  /**
+   * Архетип для заголовка: только со словарной подписью.
+   *
+   * Модель одна на оба языка: архетипы в ней несут ключ (Archetype.key,
+   * lib/archetypes), и подпись на языке страницы берётся по нему —
+   * archetypeLabel(key, locale), а не из русского label. Ключ появился в
+   * форме модели позже неё самой: запись кэша, собранная до него, ключа не
+   * знает, поэтому смена формы — это новая версия ключа кэша на странице
+   * (portrait-model:vN), а не правка на месте.
+   */
   headline: Archetype | null
   evidence: LibraryGame[]
   starter: LibraryGame | null
