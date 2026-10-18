@@ -18,6 +18,7 @@ import { dailyRecord } from '@/lib/dailyrecord'
 import { getGamesMeta, saveDailyPick } from '@/lib/db'
 import { refreshDealsWithin } from '@/lib/deals'
 import { dayLabel } from '@/lib/freshness'
+import { localeFromRequest, type Locale } from '@/lib/i18n'
 import { heuristicPicks, reasonPrice } from '@/lib/llm'
 import { NEUTRAL_MOOD } from '@/lib/mood'
 import { checkRate, clientIp, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
@@ -67,6 +68,13 @@ const DAILY_WINDOW_SEC = 3600
  */
 
 export async function GET(req: Request) {
+  /*
+   * Язык ответа — из адреса (?lang=en, withLang на странице): ответ свой на
+   * язык — причина, подпись даты, «О чём» и срок скидки, — а ключом любого
+   * кэша обязан быть сам адрес. Запись дня при этом одна на оба языка: отбор
+   * пишет основу причины сразу по-русски и по-английски (selectDaily).
+   */
+  const locale = localeFromRequest(req)
   const session = await currentSession()
   if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
   const { steamid } = session
@@ -180,7 +188,15 @@ export async function GET(req: Request) {
   if (!stored) await saveDailyPick(db, steamid, today.key, selection, now)
 
   const { pick, shelf, hoursPlayed, sharedTags, via, hideUrgency, alt } = selection
-  const reasonBase = dailyReasonBase(selection, writer)
+  /*
+   * null — запись сделана до английской версии и английской основы не несёт
+   * (только на /en и только до полуночи по Москве: следующий отбор пишет
+   * обе). Русскую причину посреди английского героя не показываем, а
+   * пересчитывать ради неё отбор дня — восемьсот строк и, возможно, другая
+   * игра посреди суток у той же записи. Поэтому у такого героя абзаца причины
+   * нет (пустую страница не рисует), а игра, цена и кнопки — на месте.
+   */
+  const reasonBase = dailyReasonBase(selection, writer, locale)
 
   // Цены обновляем ДО того, как пишется текст: и хвост причины, и подпись
   // под ценой называют одну и ту же сумму, а расходиться им нельзя.
@@ -203,47 +219,66 @@ export async function GET(req: Request) {
   const shownShelf = shelf.filter((c) => shown(c.appid))
   const shownAlt = alt && shown(alt.pick.appid) && !namesMutedTaste(alt, mutes) ? alt : null
 
-  const reason = reasonBase + reasonPrice(pick.source, metaNow(pick.appid), now, hideUrgency)
+  // Хвост — на том же языке, что основа: в нём и цена на языке страницы
+  const reason =
+    reasonBase === null ? '' : reasonBase + reasonPrice(pick.source, metaNow(pick.appid), now, hideUrgency, locale)
+  /*
+   * Основа для «Отправить другу» на языке ответа — без факта о патче (см.
+   * ниже). Английской основы у старой записи нет — пустой текст, и кнопки нет
+   * (shareView): русский текст под английской ссылкой /en/pick был бы той же
+   * русской фразой на английской странице.
+   */
+  const shareBase = (s: Pick<DailyAlternate, 'reasonBase' | 'en'>) =>
+    locale === 'en' ? (s.en?.reasonBase ?? '') : s.reasonBase
 
   return NextResponse.json({
     // см. докблок в PlayersNow: подпись «сейчас» требует серверных часов
     nowSec: now,
     // Карточка — lib/cards: тот же контракт, по которому /daily берёт тип
     pick: {
-      ...dailyCardView(pick, metaNow(pick.appid), now, {
-        reason,
-        sharedTags,
-        hoursPlayed,
-        hideUrgency,
-        via,
-      }),
+      ...dailyCardView(
+        pick,
+        metaNow(pick.appid),
+        now,
+        {
+          reason,
+          sharedTags,
+          hoursPlayed,
+          hideUrgency,
+          via,
+        },
+        locale,
+      ),
       // «Отправить другу» (/pick) — основа причины, без свежего ценового хвоста
       // и без факта о патче даже у writer: «С твоего последнего захода…» на
       // публичной странице получатель прочтёт про себя, а дату запуска она
-      // выдаст любому (lib/comeback.ts). Поэтому selection.reasonBase, а не
-      // dailyReasonBase
+      // выдаст любому (lib/comeback.ts). Поэтому основа записи (shareBase), а
+      // не dailyReasonBase. Язык — в подписи: английский текст не годится
+      // русской ссылке, и наоборот (lib/pickshare)
       ...shareView(sessionSecret(), {
         steamid,
         appid: pick.appid,
         source: pick.source,
-        text: shareText(selection.reasonBase, ''),
+        text: shareText(shareBase(selection), ''),
+        lang: locale,
       }),
     },
-    discoveries: shownShelf.map((c) => storeCardView(c, metaNow(c.appid), now, hideUrgency)),
+    discoveries: shownShelf.map((c) => storeCardView(c, metaNow(c.appid), now, hideUrgency, locale)),
     // «Сегодня хочу из своего» — только в магазинный день и только по нажатию
     ownAlternate: shownAlt
       ? {
-          ...alternateView(shownAlt, metaNow(shownAlt.pick.appid), now, hideUrgency, writer),
+          ...alternateView(shownAlt, metaNow(shownAlt.pick.appid), now, hideUrgency, writer, locale),
           ...shareView(sessionSecret(), {
             steamid,
             appid: shownAlt.pick.appid,
             source: shownAlt.pick.source,
-            text: shareText(shownAlt.reasonBase, ''),
+            text: shareText(shareBase(shownAlt), ''),
+            lang: locale,
           }),
         }
       : null,
     // Из того же dateStr, что и ключ записи — см. dayLabel.
-    dateLabel: dayLabel(dateStr),
+    dateLabel: dayLabel(dateStr, locale),
     // «Вчера была: …» — из вчерашней записи, без сети; null — строки нет
     // (см. yesterdayLine: нет записи, нет имени или вчерашняя снова на экране;
     // скрытую сегодня стирает /api/feedback вместе с записью)
@@ -251,21 +286,32 @@ export async function GET(req: Request) {
   })
 }
 
-/** Запасная своя — той же карточкой, что герой: цена и хвост причины свежие */
+/**
+ * Запасная своя — той же карточкой, что герой: цена и хвост причины свежие.
+ * Без английской основы (запись до /en) — без причины, как у героя.
+ */
 function alternateView(
   alt: DailyAlternate,
   meta: GameMeta | undefined,
   now: number,
   hideUrgency: boolean,
   writer: boolean,
+  locale: Locale,
 ) {
-  return dailyCardView(alt.pick, meta, now, {
-    reason: dailyReasonBase(alt, writer) + reasonPrice(alt.pick.source, meta, now, hideUrgency),
-    sharedTags: alt.sharedTags,
-    hoursPlayed: alt.hoursPlayed,
-    hideUrgency,
-    via: alt.via,
-  })
+  const base = dailyReasonBase(alt, writer, locale)
+  return dailyCardView(
+    alt.pick,
+    meta,
+    now,
+    {
+      reason: base === null ? '' : base + reasonPrice(alt.pick.source, meta, now, hideUrgency, locale),
+      sharedTags: alt.sharedTags,
+      hoursPlayed: alt.hoursPlayed,
+      hideUrgency,
+      via: alt.via,
+    },
+    locale,
+  )
 }
 
 /** Отличаем «библиотеки нет» от «кандидатов нет»: у них разные коды ответа */
@@ -338,13 +384,32 @@ async function selectDaily(
   // профиля, а видеть его вправе только writer (см. DailySelection). Сбой
   // базы на этом чтении отбор не роняет: comebackPatches отдаёт пустую карту,
   // и день выбирается с прежней причиной
-  const patches = await comebackPatches(db, set, alternate ? [pick, alternate] : [pick])
+  //
+  // Пересказ — на каждом языке свой: английский факт берётся только из
+  // tldr_en (latestMajorPatchSince), русский пересказ в английской причине
+  // был бы русской фразой на /en. Оба чтения параллельно; без заброшенной с
+  // датой запросов нет ни одного
+  const heroes = alternate ? [pick, alternate] : [pick]
+  const [patches, patchesEn] = await Promise.all([
+    comebackPatches(db, set, heroes),
+    comebackPatches(db, set, heroes, 'en'),
+  ])
   const ctx = pickContext(set, set.metaOf, patches)
   const hideUrgency = ctx.hideUrgency
+  // Английскому нужен только свой пересказ: якорь, часы и срочность от языка
+  // не зависят, и второй контекст (с поиском якорей заново) ни к чему
+  const patchOfEn = (appid: number) => patchesEn.get(appid) ?? null
 
-  /** Герой — в запись: публичные поля, часы, причина без цены и отметки чипсов */
+  /**
+   * Герой — в запись: публичные поля, часы, причина без цены и отметки чипсов.
+   *
+   * Причина — сразу на обоих языках (DailySelection.en): запись одна на
+   * steamid, а читают её и /daily, и /en/daily, и отбор ценой в восемьсот
+   * строк ради второго языка не повторяется. Шаблоны эвристики дешёвые:
+   * вторая причина — те же данные другим словарём.
+   */
   const describe = (c: ScoredCandidate): DailyAlternate => {
-    const reasonOf = (patchOf?: (appid: number) => string | null) => {
+    const reasonOf = (locale: Locale, patchOf?: (appid: number) => string | null) => {
       const reason =
         heuristicPicks([c], metaOf, 1, now, profile, {
           tagWeight,
@@ -353,23 +418,28 @@ async function selectDaily(
           hideUrgency,
           playtimeHidden: set.playtimeHidden,
           patchOf,
+          locale,
         })[0]?.reason ?? ''
       // В запись уходит причина БЕЗ ценового хвоста: heuristicPicks клеит его
       // последним (reasonPrice), и на каждом заходе он пересчитывается по
-      // свежей цене. Хвост тут считается по тем же метаданным, что и сама
-      // причина, — поэтому срез всегда попадает ровно по шву.
-      const tail = reasonPrice(c.source, metaOf(c.appid), now, hideUrgency)
+      // свежей цене. Хвост тут считается по тем же метаданным и на том же
+      // языке, что и сама причина, — поэтому срез всегда попадает ровно по шву.
+      const tail = reasonPrice(c.source, metaOf(c.appid), now, hideUrgency, locale)
       return tail && reason.endsWith(tail) ? reason.slice(0, -tail.length) : reason
     }
-    const reasonBase = reasonOf()
+    const reasonBase = reasonOf('ru')
     // Вторая причина — только когда факт есть и фразу поменял: иначе поля нет
-    const reasonPatched = ctx.patchOf(c.appid) ? reasonOf(ctx.patchOf) : reasonBase
+    const reasonPatched = ctx.patchOf(c.appid) ? reasonOf('ru', ctx.patchOf) : reasonBase
+    // То же по-английски — со своим пересказом патча
+    const enBase = reasonOf('en')
+    const enPatched = patchOfEn(c.appid) ? reasonOf('en', patchOfEn) : enBase
     const meta = metaOf(c.appid)
     return {
       pick: publicPick(c),
       hoursPlayed: ctx.hoursOf(c.appid),
       reasonBase,
       ...(reasonPatched !== reasonBase ? { reasonPatched } : {}),
+      en: { reasonBase: enBase, ...(enPatched !== enBase ? { reasonPatched: enPatched } : {}) },
       sharedTags: meta ? sharedTasteTags(profile, meta, tagWeight) : [],
       via: ctx.anchorOf(c.appid),
     }

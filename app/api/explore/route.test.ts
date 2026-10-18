@@ -169,6 +169,25 @@ describe('/api/explore', () => {
     expect(body.liked[0].appid).toBe(1013)
   })
 
+  /*
+   * /en/explore спрашивает с ?lang=en (withLang): причины карт — шаблоны
+   * эвристики на языке запроса. Названия в тестовой базе русские («Игра
+   * 10») — кириллица ищется в причине без них. Без языка — прежний русский.
+   */
+  test('?lang=en — причины карт по-английски, без языка — по-русски', async () => {
+    await signIn(db, STEAMID, { verified: true })
+    await seed()
+    const bare = (text: string) => text.replace(/Игра \d+/g, '')
+    const en = (await (await GET(new Request('http://localhost/api/explore?lang=en'))).json()) as Body
+    expect(en.cards.length).toBeGreaterThan(0)
+    for (const c of en.cards) {
+      expect(c.reason.length, `${c.appid}`).toBeGreaterThan(0)
+      expect(bare(c.reason), `${c.appid}: ${c.reason}`).not.toMatch(/[А-Яа-яЁё]/)
+    }
+    const ru = (await (await get()).json()) as Body
+    expect(ru.cards.some((c) => /[А-Яа-яЁё]/.test(bare(c.reason)))).toBe(true)
+  })
+
   test('сессия по ссылке колоду получает: это чтение', async () => {
     const steamid = await signInAs(db, 'claimed')
     const now = nowSec()
