@@ -64,7 +64,7 @@ export default function Error({
         <p className="text-dim text-sm leading-relaxed">
           {tr(locale, {
             ru: 'Скорее всего, это на нашей стороне. Можно попробовать ещё раз — обычно помогает.',
-            en: "It's most likely on our end. Try again — that usually helps.",
+            en: 'It’s most likely on our end. Try again — that usually helps.',
           })}
         </p>
         <button
@@ -79,7 +79,8 @@ export default function Error({
           {tr(locale, { ru: 'На главную', en: 'Back to home' })}
         </Link>
         <span className="text-[11px] tabular-nums text-faint">
-          {tr(locale, { ru: 'код', en: 'code' })}: {code}
+          {tr(locale, { ru: 'код: ', en: 'code: ' })}
+          {code}
         </span>
       </div>
     </div>

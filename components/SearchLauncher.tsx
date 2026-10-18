@@ -119,7 +119,7 @@ const NAME = { ru: 'Найти игру', en: 'Search games' } satisfies Record<
 /** Чанк окна не пришёл на нажатие. Одной константой — по той же причине, что NAME */
 const MISSED = {
   ru: 'Поиск не загрузился — обнови страницу',
-  en: "Search didn't load — reload the page",
+  en: 'Search didn’t load — reload the page',
 } satisfies Record<Locale, string>
 
 /** Подпись строки-поля на /games и 404 */
