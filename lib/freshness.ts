@@ -76,6 +76,26 @@ export function freshness(publishedAt: number, nowSec: number, locale: Locale = 
 }
 
 /**
+ * fmtDate, который на битой дате отвечает строкой, а не исключением.
+ *
+ * Intl.DateTimeFormat#format на Invalid Date бросает RangeError, а
+ * toLocaleDateString, на котором эти подписи жили до перевода, отвечал
+ * строкой «Invalid Date». Разница не косметическая: подпись даты стоит
+ * посреди страниц без своей границы ошибок (портрет, библиотека, лента), и
+ * одна кривая дата в данных — NaN, Infinity, ключ суток вида «2026-8-1» —
+ * уронила бы в error.tsx всю страницу вместо одной странной подписи.
+ *
+ * Строка та же, что печатал движок, и на обоих языках:
+ * toLocaleDateString('en-US') на битой дате отвечает ровно так же. Проверка
+ * по getTime(), а не по Number.isFinite(atSec): конечное, но слишком большое
+ * число секунд (за ±8,64e15 мс) тоже даёт Invalid Date.
+ */
+function dateOrInvalid(locale: Locale, d: Date, opts: Intl.DateTimeFormatOptions): string {
+  if (Number.isNaN(d.getTime())) return 'Invalid Date'
+  return fmtDate(locale, d, opts)
+}
+
+/**
  * Дата события словами, В ЗОНЕ UTC.
  *
  * Зона зафиксирована, и это чинит расхождение гидратации, а не вкусовщину.
@@ -103,7 +123,7 @@ export function dateLabel(atSec: number, opts: { year?: boolean; locale?: Locale
   // toLocaleDateString('ru-RU'), а английская — «August 12, 2026».
   // timeZone задан здесь явно, хотя fmtDate и сам ставит UTC: причина
   // зафиксирована в докблоке выше, и она не должна держаться на чужом дефолте
-  return fmtDate(opts.locale ?? 'ru', atSec, {
+  return dateOrInvalid(opts.locale ?? 'ru', new Date(atSec * 1000), {
     day: 'numeric',
     month: 'long',
     ...(opts.year ? { year: 'numeric' as const } : {}),
@@ -155,7 +175,7 @@ export function minutesAgoLabel(minutes: number, locale: Locale = 'ru'): string 
  * ключом навсегда, а не только на границе суток.
  */
 export function dayLabel(dateStr: string, locale: Locale = 'ru'): string {
-  return fmtDate(locale, new Date(`${dateStr}T00:00:00Z`), {
+  return dateOrInvalid(locale, new Date(`${dateStr}T00:00:00Z`), {
     day: 'numeric',
     month: 'long',
     timeZone: 'UTC',

@@ -209,3 +209,51 @@ describe('по-английски', () => {
     }
   })
 })
+
+/**
+ * Битая дата в данных — одна странная подпись, а не упавшая страница.
+ * Intl.DateTimeFormat#format на Invalid Date бросает RangeError, а
+ * toLocaleDateString, на котором подписи жили до перевода, отвечал строкой
+ * «Invalid Date». Подписи держат прежний ответ на обоих языках.
+ */
+describe('битая дата', () => {
+  // 1e16 секунд — конечное число, но за пределом Date (±8,64e15 мс)
+  const BAD_SECS = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 1e16]
+  const BAD_KEYS = ['', 'garbage', '2026-13-01', '2026-8-1', '2026-08-01T00:00:00Z']
+
+  test('dateLabel отвечает как прежний toLocaleDateString, а не бросает', () => {
+    for (const at of BAD_SECS) {
+      for (const year of [false, true]) {
+        // ровно то, что печатала русская подпись до перевода
+        const before = new Date(at * 1000).toLocaleDateString('ru-RU', {
+          day: 'numeric',
+          month: 'long',
+          ...(year ? { year: 'numeric' as const } : {}),
+          timeZone: 'UTC',
+        })
+        expect(dateLabel(at, { year }), `${at} ${year}`).toBe(before)
+        expect(dateLabel(at, { year, locale: 'en' }), `${at} ${year}`).toBe('Invalid Date')
+      }
+    }
+    expect(dateLabel(Number.NaN)).toBe('Invalid Date')
+  })
+
+  test('dayLabel — так же на кривом ключе суток', () => {
+    for (const key of BAD_KEYS) {
+      const before = new Date(`${key}T00:00:00Z`).toLocaleDateString('ru-RU', {
+        day: 'numeric',
+        month: 'long',
+        timeZone: 'UTC',
+      })
+      expect(dayLabel(key), key).toBe(before)
+      expect(dayLabel(key), key).toBe('Invalid Date')
+      expect(dayLabel(key, 'en'), key).toBe('Invalid Date')
+    }
+  })
+
+  test('годная дата на краю диапазона по-прежнему печатается', () => {
+    // проверка идёт по самой дате, а не по «разумности» числа
+    expect(dateLabel(0, { year: true })).toBe('1 января 1970 г.')
+    expect(dateLabel(0, { year: true, locale: 'en' })).toBe('January 1, 1970')
+  })
+})

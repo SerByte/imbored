@@ -237,6 +237,21 @@ describe('срок скидки по-английски', () => {
     expect(discountView(meta, NOW, { locale: 'ru' })).toEqual(discountView(meta, NOW))
   })
 
+  test('битый срок — без подписи, а не исключение на всю страницу', () => {
+    // Intl на Invalid Date бросает RangeError; срок NaN или Infinity из кривой
+    // записи уронил бы страницу с ценой в error.tsx
+    for (const endsAt of [Number.NaN, Number.POSITIVE_INFINITY, 1e16]) {
+      for (const calendar of [false, true]) {
+        expect(discountEndsLabel(endsAt, NOW, { calendar, locale: 'en' }), `${endsAt} ${calendar}`).toBeNull()
+        // русская ветка не бросала и не бросает
+        expect(() => discountEndsLabel(endsAt, NOW, { calendar })).not.toThrow()
+      }
+    }
+    const view = discountView(onSale({ discountEndsAt: Number.NaN }), NOW, { locale: 'en' })
+    expect(view?.percent).toBe(50)
+    expect(view?.endsLabel).toBeUndefined()
+  })
+
   test('ни одной русской буквы ни на одном сроке', () => {
     for (const left of [HOUR, 1.2 * DAY, 2.2 * DAY, 3.2 * DAY, 10 * DAY, 200 * DAY]) {
       for (const calendar of [false, true]) {

@@ -119,8 +119,15 @@ export function discountEndsLabel(
   // Английская дата — через Intl, в той же зоне UTC, что и русская ниже: сервер
   // и браузер обязаны сойтись в дне. Русская остаётся своей таблицей
   // родительного падежа — так она печаталась всегда
-  if (en) return `until ${fmtDate('en', endsAt, { month: 'short', day: 'numeric', timeZone: 'UTC' })}`
   const d = new Date(endsAt * 1000)
+  if (en) {
+    // Intl на битой дате (срок NaN или Infinity из кривой записи) бросает
+    // RangeError, и цена уронила бы всю страницу в error.tsx. Срока, которому
+    // нельзя верить, на английской странице просто нет — как и истёкшего выше.
+    // Русская ветка битую дату не роняет и печатает как печатала
+    if (Number.isNaN(d.getTime())) return null
+    return `until ${fmtDate('en', d, { month: 'short', day: 'numeric', timeZone: 'UTC' })}`
+  }
   return `до ${d.getUTCDate()} ${MONTHS_GEN[d.getUTCMonth()]}`
 }
 
