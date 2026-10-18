@@ -61,7 +61,10 @@ export function DemoBar({
       <span className="font-semibold">
         {tr(locale, { ru: 'Это чужая демо-библиотека.', en: 'This is a demo library, not yours.' })}
       </span>{' '}
-      <span className="text-dim">{tr(locale, { ru: 'Подбор по твоей —', en: 'For picks from yours —' })}</span>{' '}
+      {/* По-английски — вопрос, а не обрубок «For picks from yours —»: двери
+          за ним читаются ответами, и «Sign in with Steam» с заглавной не
+          встаёт посреди фразы. Строк на телефоне не больше, чем у русской */}
+      <span className="text-dim">{tr(locale, { ru: 'Подбор по твоей —', en: 'Want picks from yours?' })}</span>{' '}
       {/* Обычная ссылка: вход через Steam — переход на чужой сайт через наш роут */}
       <a
         href={doors.steam}
