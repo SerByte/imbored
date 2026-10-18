@@ -12,6 +12,8 @@ vi.mock('next/headers', () => import('@/lib/testing/headers'))
  */
 vi.mock('next/og', () => ({
   ImageResponse: class {
+    /** Тот же заголовок, что ставит настоящий next/og: его снимает isrImage */
+    headers = new Headers({ 'content-type': 'image/png', 'cache-control': 'public, max-age=0, must-revalidate' })
     constructor(
       public element: unknown,
       public init: unknown,
@@ -88,6 +90,21 @@ describe('карточка игры в чате', () => {
     // а 404 он запоминает пустым местом — та самая тёмная карточка без арта
     expect(img?.props?.src).toBe('data:image/jpeg;base64,CQ==')
     expect(calls).toEqual([legacyArtUrl(FNAF.appid, 'hero'), FNAF.art!.capsule])
+  })
+
+  test('ответ без Cache-Control next/og — и у игры, и у заглушки неизвестного appid', async () => {
+    // С `max-age=0` от next/og запись ISR на Vercel жила ноль секунд: каждый
+    // заход краулера превью отвечал STALE и рисовал мегабайт PNG заново
+    // (lib/ogresponse.ts). Срок обязан ставить revalidate маршрута — неделя.
+    await upsertGameMeta(db, FNAF, T0)
+    vi.stubGlobal('fetch', vi.fn(async () => jpeg()))
+    for (const appid of [FNAF.appid, 999_999_999]) {
+      const res = (await Image({ params: Promise.resolve({ appid: String(appid) }) })) as unknown as {
+        headers: Headers
+      }
+      expect(res.headers.get('cache-control'), String(appid)).toBeNull()
+      expect(res.headers.get('content-type'), String(appid)).toBe('image/png')
+    }
   })
 
   test('не дотянулся ни один кандидат — карточка без <img>, а не с битым адресом', async () => {

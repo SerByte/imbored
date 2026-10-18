@@ -9,7 +9,7 @@ import {
   type Variants,
 } from 'framer-motion'
 import { MotionMax } from '@/components/motion/MotionMax'
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, type Ref } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { Icon } from '@/components/Icon'
 import { PlayersNow } from '@/components/PlayersNow'
@@ -116,6 +116,7 @@ const FLY: Variants = {
  *    матовых панелей читается дороже, чем веер игральных карт.
  */
 function TopCard({
+  ref,
   nowSec,
   card,
   alone,
@@ -123,6 +124,20 @@ function TopCard({
   focusOn,
   onCommit,
 }: {
+  /**
+   * Узел карты для AnimatePresence mode="popLayout" — ставит его PopChild, а
+   * не колода. Улетающую карту popLayout на время вылета делает absolute в
+   * её прежней высоте, прибитой к низу стопки (anchorY у AnimatePresence
+   * ниже): низ колоды голос не двигает, и карта уходит ровно оттуда, где
+   * стояла, а следующая встаёт в поток сразу. Меряет и вынимает он узел
+   * по этому ref, а в React 19 ref приходит компоненту обычным пропом: пока
+   * TopCard его не передавал, popLayout молча ничего не делал. Карта уходила
+   * в потоке, новая стояла под ней — стопка на 220 мс вылета становилась
+   * вдвое выше (278–709 и 709–1140 на 390×844), и полоса прогресса со всем,
+   * что под колодой, прыгала вниз и обратно на каждом голосе — и в /explore,
+   * и в комнате. Сторож — lib/swipedeck.test.ts.
+   */
+  ref?: Ref<HTMLDivElement>
   /** серверные часы ответа /deck — см. PlayersNow */
   nowSec: number
   card: DeckCard
@@ -183,11 +198,19 @@ function TopCard({
 
   return (
     <m.div
+      ref={ref}
       /* panel-lift — общий материал панелей продукта: замерено, у колоды был
          box-shadow ровно none, то есть плоское стекло. Карточка, которую
          листают и по которой голосуют, — тот же предмет, что карточка ответа в
          квизе и карточка подключения на первом экране. */
-      className="deck-card media-card relative touch-pan-y"
+      /* z-10 — только у улетающей. popLayout вынимает её из потока на то же
+         место, где уже встаёт следующая, а в DOM она стоит ПЕРЕД следующей:
+         AnimatePresence держит уходящего ребёнка на его прежнем индексе. При
+         равном z-index позиционированные рисуются в порядке разметки, и
+         проголосованная карта уезжала ПОД проступающую новую — на 70 мс
+         вылета из-под той торчал только её край. Теперь улетает она поверх,
+         а следующая проступает из стопки под ней. */
+      className={`deck-card media-card relative touch-pan-y${present ? '' : ' z-10'}`}
       style={{ x, rotate }}
       inert={!present}
       drag="x"
@@ -473,7 +496,29 @@ export function SwipeDeck({
             </m.div>
           ))}
 
-          <AnimatePresence mode="popLayout" custom={flyOut} onExitComplete={() => setFlyOut(null)}>
+          {/*
+            anchorY="bottom": вынутую карту PopChild прибивает к НИЗУ стопки,
+            а не к верху, как по умолчанию. В /explore на телефоне голос в
+            том же коммите меняет высоту колоды: первый «Мимо» ставит над ней
+            «Вернуть «X»», «Интересно» после «Мимо» строку убирает, и карта
+            короче или длиннее ровно на ряд строки, 33 px
+            (.explore-deck:has(> .skip-undo) в globals.css). Сдвигается при
+            этом верх стопки, низ с кнопками голоса стоит. С верхним якорем
+            улетающая карта в замороженной высоте на первом «Мимо» съезжала
+            на 33 px вниз и на весь вылет закрывала полосу прогресса и «N/M»
+            (у неё z-10), а на «Интересно» после «Мимо» прыгала на 33 вверх —
+            кнопки уезжали из-под пальца, и из-под неё торчал низ новой карты
+            с её кнопками. От низа она уходит ровно оттуда, где стояла. Где
+            высота не меняется — комната, десктоп, любой следующий голос, —
+            якоря неотличимы: min-height стопки — та же --deck-h, что у
+            карты, и отступ снизу у неё 0. Сторож — lib/swipedeck.test.ts.
+          */}
+          <AnimatePresence
+            mode="popLayout"
+            anchorY="bottom"
+            custom={flyOut}
+            onExitComplete={() => setFlyOut(null)}
+          >
             {/* key по appid: каждая карточка получает СВОИ motion-значения.
                 Общий x на всю колоду оставлял бы следующей карте смещение
                 предыдущей и дрался бы с exit-анимацией улетающей. */}

@@ -8,6 +8,7 @@ import {
   burnoutInvite,
   burnoutOffer,
   dealFrom,
+  genreLine,
   landingIndex,
   nextStep,
   switchLine,
@@ -52,6 +53,19 @@ describe('dealFrom', () => {
     }
   })
 
+  test('жанр со страницы /games — из эха; мусор — выдача без жанра', () => {
+    const genre = { title: 'Рогалики', own: true }
+    expect(dealFrom({ picks: [pick], nowSec: 1, genre }, 'all')?.genre).toEqual(genre)
+    expect(dealFrom({ picks: [pick], nowSec: 1, genre: { title: 'Рогалики' } }, 'all')?.genre).toEqual({
+      title: 'Рогалики',
+      own: false,
+    })
+    expect(dealFrom({ picks: [pick], nowSec: 1 }, 'all')?.genre).toBeNull()
+    for (const bad of [null, 'Рогалики', { title: '' }, { own: true }, 3]) {
+      expect(dealFrom({ picks: [pick], nowSec: 1, genre: bad }, 'all')?.genre, JSON.stringify(bad)).toBeNull()
+    }
+  })
+
   test('ось — из эха сервера, источник — из запроса', () => {
     const d = dealFrom({ picks: [pick], engine: 'claude', lean: 'fresh', scope: 'library', nowSec: 1 }, 'all')
     expect(d?.lean).toBe('fresh')
@@ -90,6 +104,27 @@ describe('dealFrom', () => {
     )
     expect(dealFrom({ picks: [pick], nowSec: 1 }, 'all')?.viewer).toBeNull()
     expect(dealFrom({ picks: [pick], nowSec: 1, viewer: '' }, 'all')?.viewer).toBeNull()
+  })
+})
+
+/*
+ * Подпись выдачи по жанру. «Только», а не «из твоей библиотеки»: при своих
+ * до двух мест пятёрки всё равно магазинные. Своих нет — так и сказано, иначе
+ * пришедший со страницы «Рогалики» принял бы магазинные за свои.
+ */
+describe('genreLine', () => {
+  test('свои есть — что за жанр; своих нет — что эти из магазина', () => {
+    expect(genreLine({ title: 'Рогалики', own: true })).toBe('Только рогалики')
+    expect(genreLine({ title: 'Игры с открытым миром', own: false })).toBe(
+      'Только игры с открытым миром: своих таких не нашлось — эти из магазина',
+    )
+    expect(genreLine({ title: 'Tower defense', own: true })).toBe('Только tower defense')
+  })
+
+  // own: false — и когда свои рогалики есть, но все под баном или паузой:
+  // «в твоей библиотеке таких нет» им было бы неправдой
+  test('своих нет в пятёрке — подпись не утверждает, что их нет на полке', () => {
+    expect(genreLine({ title: 'Рогалики', own: false })).not.toMatch(/библиотеке таких нет/)
   })
 })
 

@@ -20,6 +20,7 @@ import {
   getGamesMeta,
   getUnsummarized,
   pruneNewsForApp,
+  resetFlawedDigests,
   setNewsDigest,
   upsertNewsItems,
   type Db,
@@ -64,8 +65,15 @@ export type SliceResult = {
   digested: number
   /**
    * Игры, у которых опрос поменял ленту патчей карточки: роут сбрасывает их
-   * адреса в ISR (lib/gamecache). Лента без единого патча сюда не попадает —
-   * карточка показывает только патчи (getGameNews).
+   * адреса в ISR (lib/gamecache) — карточку и архив обновлений игры. Лента
+   * без единого патча сюда не попадает — карточка показывает только патчи
+   * (getGameNews).
+   *
+   * Переопрос, переписавший «патч» в новость после правки классификатора,
+   * карточку не меняет и сброса не требует: карточка сама сверяет каждую
+   * строку с нынешним правилом (isStoredPatch в lib/gamepage), то есть
+   * перестала показывать её с первой перегенерации на новом коде. Архив
+   * обновлений сверяет так же (app/game/[appid]/news/load.ts).
    */
   cards: number[]
   hasMore: boolean
@@ -353,9 +361,12 @@ export async function runNewsSlice(
 export type DigestResult = {
   digested: number
   /**
-   * Игры, патчам которых срез дописал пересказ: он стоит на карточке строкой
-   * под заголовком и делает заголовок ссылкой (indexedNewsPath) — роут
-   * сбрасывает их адреса в ISR (lib/gamecache).
+   * Игры, патчам которых срез дописал пересказ или снял битый
+   * (resetFlawedDigests): он стоит на карточке строкой под заголовком и делает
+   * заголовок ссылкой (indexedNewsPath) — роут сбрасывает их адреса в ISR
+   * (lib/gamecache): карточку и архив обновлений. Вердикт «не патч» (scale
+   * 'none') — тоже сюда: строка уходит с карточки и из архива, а карточка
+   * живёт неделю.
    */
   cards: number[]
   hasMore: boolean
@@ -401,16 +412,31 @@ export async function runDigestSlice(
   const digest = opts.digestFn ?? claudeNewsDigest
   const log = opts.onProgress ?? (() => {})
 
+  /*
+   * Битые пересказы, записанные до проверки текста модели, — вон из базы и
+   * обратно в очередь (resetFlawedDigests, раз на базу). До проверки ключа:
+   * мусор снимается со страниц и без модели, а пересказ заново дождётся её.
+   * Сбой уборки пересказ не останавливает — она повторится следующим звеном.
+   */
+  const cards = new Set<number>()
+  try {
+    const swept = await resetFlawedDigests(db)
+    if (swept?.length) log(`  битых пересказов снято: игр ${swept.length}`)
+    for (const appid of swept ?? []) cards.add(appid)
+  } catch (e) {
+    logSwallowed('newsjob:tldr-sweep', e)
+  }
+
   // Нет ключа — не ходим в очередь вовсе. Иначе каждая запись впустую тратит
   // попытку, и после трёх прогонов сотни патчей НАВСЕГДА выпадают из очереди
   // пересказа: причина-то временная (ключ забыли положить), а отметка вечная.
   // Попытка должна засчитываться за отказ модели, а не за её отсутствие.
   if (!opts.digestFn && !llmAvailable()) {
-    return { digested: 0, cards: [], hasMore: false, stopped: 'unavailable' }
+    return { digested: 0, cards: [...cards], hasMore: false, stopped: 'unavailable' }
   }
 
   const pending = await getUnsummarized(db, limit)
-  if (!pending.length) return { digested: 0, cards: [], hasMore: false, stopped: 'done' }
+  if (!pending.length) return { digested: 0, cards: [...cards], hasMore: false, stopped: 'done' }
 
   const metas = await getGamesMeta(
     db,
@@ -418,7 +444,6 @@ export async function runDigestSlice(
   )
 
   let digested = 0
-  const cards = new Set<number>()
   let stopped: DigestResult['stopped'] = 'done'
 
   for (const item of pending) {

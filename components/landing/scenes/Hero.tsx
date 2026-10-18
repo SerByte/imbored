@@ -3,13 +3,22 @@
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
-import { Suspense, useRef } from 'react'
+import { Suspense, useRef, useState, useSyncExternalStore } from 'react'
 import { ConnectCard } from '@/components/landing/ConnectCard'
 import { ConnectFallback } from '@/components/landing/ConnectFallback'
 import { HeroNotice } from '@/components/landing/HeroNotice'
 import { DUR, EASE_GSAP } from '@/lib/motion'
 
 gsap.registerPlugin(ScrollTrigger, useGSAP)
+
+/*
+ * Снимки «рисует ли это клиент»: на сервере и при гидрации React берёт
+ * серверный (false), при монтировании на клиенте — клиентский (true).
+ * Подписываться не на что — снимок за жизнь страницы не меняется.
+ */
+const noSubscribe = () => () => {}
+const onClient = () => true
+const onServer = () => false
 
 /**
  * ПЕРВЫЙ ЭКРАН: ДОСТУП СРАЗУ.
@@ -32,6 +41,11 @@ gsap.registerPlugin(ScrollTrigger, useGSAP)
  */
 export function Hero() {
   const ref = useRef<HTMLElement>(null)
+  // Гидрирует ли эта отрисовка HTML с сервера — тогда титр уже на экране и
+  // вход его не прячет (ниже). Первое значение — на всю жизнь компонента:
+  // после гидрации снимок станет true, а решение остаться должно
+  const clientRender = useSyncExternalStore(noSubscribe, onClient, onServer)
+  const [fromServer] = useState(!clientRender)
 
   useGSAP(
     () => {
@@ -69,7 +83,7 @@ export function Hero() {
        * увидит собранный экран без церемонии, и это правильный размен.
        */
       if (document.visibilityState === 'visible') {
-        gsap
+        const tl = gsap
           .timeline()
           /*
            * СВЕТ ПРИХОДИТ ПЕРВЫМ И РАСТЁТ ДОЛЬШЕ ВСЕХ.
@@ -89,15 +103,35 @@ export function Hero() {
             duration: 1.1,
             ease: 'power2.out',
           }, 0)
-          .from('[data-hero-eyebrow]', { y: 10, opacity: 0, duration: DUR.base, ease: EASE_GSAP }, 0.1)
-          .from('[data-hero-wordmark]', {
-            y: 22,
-            opacity: 0,
-            duration: DUR.slow,
-            ease: EASE_GSAP,
-          }, 0.2)
-          .from('[data-hero-lede]', { y: 12, opacity: 0, duration: DUR.base, ease: EASE_GSAP }, 0.42)
-          .from('[data-hero-card]', { y: 18, opacity: 0, duration: DUR.slow, ease: EASE_GSAP }, 0.56)
+        /*
+         * ТИТР, ЕСЛИ ОН ПРИШЁЛ С СЕРВЕРА, НЕ ПРЯЧЕТСЯ.
+         *
+         * Знак, надзаголовок и обещание — статический HTML, и человек видит
+         * их с первого кадра. Вход же запускается после гидрации: на
+         * телефоне это на полсекунды-секунду позже, и gsap.from гасил уже
+         * прочитанный текст, чтобы проявить его снова, — тот же «мигал», что
+         * описан у SplitHeading. Заодно он двигал LCP главной: знак — её
+         * LCP, и Chrome засчитывал его по перерисовке после гидрации, а не по
+         * первому кадру (замер на проде: FCP 1.8–1.95 с, LCP 2.5–2.8 с).
+         *
+         * Поэтому при гидрации титр не трогаем — он уже на месте (первый
+         * кадр лишь чуть сдвигает его, см. .anim-page-in:has(.hero)). Вход
+         * титра играет, когда главную собирает клиент: переход на неё по
+         * ссылке — там текста до входа на экране не было, и прятать нечего.
+         * Свет, карточка и подсказка входят как прежде: свет декоративный,
+         * а вход карточки прикрывает подмену ConnectFallback → ConnectCard.
+         */
+        if (!fromServer) {
+          tl.from('[data-hero-eyebrow]', { y: 10, opacity: 0, duration: DUR.base, ease: EASE_GSAP }, 0.1)
+            .from('[data-hero-wordmark]', {
+              y: 22,
+              opacity: 0,
+              duration: DUR.slow,
+              ease: EASE_GSAP,
+            }, 0.2)
+            .from('[data-hero-lede]', { y: 12, opacity: 0, duration: DUR.base, ease: EASE_GSAP }, 0.42)
+        }
+        tl.from('[data-hero-card]', { y: 18, opacity: 0, duration: DUR.slow, ease: EASE_GSAP }, 0.56)
           .from('[data-hero-cue]', { opacity: 0, duration: DUR.base, ease: EASE_GSAP }, 0.9)
           /*
            * Стрелка подсказки качается с этого мига, а не с первой

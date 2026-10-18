@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest'
 import {
   assembleHub,
+  facetPath,
+  HUB_FACETS,
   HUB_FETCH,
   HUB_GENRES,
   HUB_MIN_SHELF,
@@ -8,15 +10,21 @@ import {
   HUB_MIN_WEIGHT,
   HUB_SHELF,
   HUB_TAGS,
+  hubFacetOf,
   hubPath,
   hubTagOf,
+  playsAgainst,
+  inGenre,
   primaryGenre,
+  SHORT_SESSION_MIN,
   storedTagWeights,
   TAGS_PER_GAME,
   type HubRow,
 } from './gamehub'
+import { sessionTrait, VERSUS_TAGS } from './gametraits'
 import { GENERIC_TAGS } from './hook'
 import { hasTagRu } from './tagsru'
+import type { GameSemantics } from './types'
 
 /** Строки выборки одного тега: игры в том порядке, в каком их отдаёт база */
 function rowsOf(tag: string, appids: number[], total = appids.length): HubRow[] {
@@ -140,6 +148,31 @@ describe('главный жанр игры', () => {
   })
 })
 
+/*
+ * «Стоит ли на странице жанра» — правило, которым выдача «Подобрать рогалики
+ * из своей библиотеки» отбирает свои (genre в lib/candidates). Не только
+ * главный: у игры может быть два жанра, и на обеих страницах она стоит.
+ */
+describe('игра в жанре', () => {
+  test('не легче половины главного и среди двенадцати — в жанре', () => {
+    expect(inGenre({ Action: 1000, Roguelike: 900 }, 'Roguelike')).toBe(true)
+    expect(inGenre({ Action: 1000, Roguelike: 499 }, 'Roguelike')).toBe(false)
+    // тот же порог, что у главного жанра: CS2 — не «тактика»
+    expect(inGenre({ Shooter: 1000, Tactical: 453 }, 'Tactical')).toBe(false)
+    // двенадцать тегов тяжелее — Roguelike уходит за край game_tags
+    const tail: Record<string, number> = { Roguelike: 990 }
+    for (let i = 0; i < TAGS_PER_GAME; i++) tail[`Heavy${i}`] = 1000 + i
+    expect(inGenre(tail, 'Roguelike')).toBe(false)
+    expect(inGenre(undefined, 'Roguelike')).toBe(false)
+    expect(inGenre({}, 'Roguelike')).toBe(false)
+  })
+
+  test('главный жанр игры — всегда и её жанр', () => {
+    const tags = { Action: 2000, Roguelike: 1800, 'Action Roguelike': 1700, Indie: 900 }
+    expect(inGenre(tags, primaryGenre(tags)!)).toBe(true)
+  })
+})
+
 describe('полки хаба', () => {
   test('полка — первые shelf игр тега, в порядке базы', () => {
     const hub = assembleHub(['A'], rowsOf('A', range(1, 20)), { shelf: 12, minShelf: 6 })
@@ -200,5 +233,181 @@ describe('полки хаба', () => {
     )
     expect(hub.map((s) => s.tag)).toEqual(['Полная'])
     expect(hub[0].games).toHaveLength(HUB_SHELF)
+  })
+})
+
+describe('подборки по факту: /games/coop, /games/split-screen, /games/free, /games/short', () => {
+  /*
+   * Подборка живёт под тем же /games/<slug>, что и жанр, и тем же сегментом
+   * (app/games/[tag]): совпади адрес подборки с адресом жанра — одна из двух
+   * страниц пропала бы молча, а карта сайта назвала бы адрес дважды.
+   */
+  test('адреса — латиницей через дефис, без повторов и не совпадают с жанрами', () => {
+    const slugs = HUB_FACETS.map((f) => f.slug)
+    expect(new Set(slugs).size).toBe(slugs.length)
+    const genres = new Set(Object.values(HUB_GENRES).map((g) => g.slug))
+    for (const slug of slugs) {
+      expect(slug).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/)
+      expect(genres.has(slug), slug).toBe(false)
+      expect(hubTagOf(slug), slug).toBeNull()
+    }
+  })
+
+  test('адрес обратно даёт ту же подборку; чужой — null', () => {
+    for (const f of HUB_FACETS) {
+      expect(hubFacetOf(f.slug)).toBe(f)
+      expect(facetPath(f)).toBe(`/games/${f.slug}`)
+    }
+    expect(hubFacetOf('roguelike')).toBeNull()
+    expect(hubFacetOf('constructor')).toBeNull()
+    expect(hubFacetOf('Coop')).toBeNull()
+  })
+
+  test('четыре подборки: с другом, на одном экране, бесплатные, на двадцать минут', () => {
+    expect(HUB_FACETS.map((f) => f.slug)).toEqual(['coop', 'split-screen', 'free', 'short'])
+  })
+
+  test('тексты по-русски и с большой буквы; основание списка названо', () => {
+    for (const f of HUB_FACETS) {
+      expect(f.title, f.slug).toMatch(/^[А-ЯЁ]/)
+      expect(f.heading.startsWith(f.title), f.slug).toBe(true)
+      expect(f.label, f.slug).toMatch(/^[А-ЯЁ]/)
+      // основание — продолжение фразы «40 игр — …», со строчной и с точкой в конце
+      expect(f.basis, f.slug).toMatch(/^[а-яё].{40,}\.$/)
+    }
+  })
+
+  test('«с другом» — кооператив Steam, без соперничества; «на одном экране» — и кооп, и дуэли', () => {
+    const coop = hubFacetOf('coop')!
+    expect(coop.query).toEqual({ kind: 'categories', ids: [9, 38] })
+    expect(coop.drop).toBe('versus')
+    expect(coop.party).toBe(true)
+    const split = hubFacetOf('split-screen')!
+    expect(split.query).toEqual({ kind: 'categories', ids: [24, 37, 39] })
+    // диван с двумя геймпадами — это и Cuphead вдвоём, и TEKKEN друг против друга
+    expect(split.drop).toBeUndefined()
+    expect(split.party).toBe(true)
+  })
+
+  test('«на 20 минут» — заход короче получаса и не матч; бесплатные — по отметке Steam', () => {
+    const short = hubFacetOf('short')!
+    expect(short.query).toEqual({ kind: 'session', belowMinutes: SHORT_SESSION_MIN })
+    expect(short.drop).toBe('match')
+    expect(short.party).toBe(false)
+    // минуты — теги, уточнённые отзывами, а не «по отзывам»: так и сказано
+    expect(short.basis).toContain('по тегам и разобранным отзывам')
+    expect(short.basis).not.toMatch(/сессия по отзывам/)
+    expect(hubFacetOf('free')!.query).toEqual({ kind: 'free' })
+  })
+})
+
+describe('играют ли друг против друга (playsAgainst)', () => {
+  /*
+   * Голоса тегов — как они лежат в tags_json у живых игр каталога, верхушки
+   * «Кооператива» по отзывам (выписаны 13 октября). Правило сравнивает
+   * суммы: и соперничество, и кооператив у игры размазаны по нескольким тегам.
+   */
+  const DOTA = {
+    'Free to Play': 3010, MOBA: 1019, Multiplayer: 778, Strategy: 723, eSports: 598, 'Team-Based': 554,
+    Competitive: 422, Action: 401, 'Online Co-Op': 378, PvP: 308, Difficult: 275, 'Co-op': 220,
+  }
+  const SIEGE = {
+    FPS: 733, PvP: 678, Multiplayer: 673, Shooter: 672, Tactical: 671, eSports: 668, Competitive: 663,
+    'Online Co-Op': 660, Action: 658, 'Hero Shooter': 655, 'Team-Based': 418, 'Co-op': 363,
+  }
+  const IT_TAKES_TWO = {
+    'Co-op': 1486, Multiplayer: 1078, 'Split Screen': 892, 'Local Co-Op': 864, 'Online Co-Op': 733,
+    Puzzle: 681, Adventure: 564, 'Story Rich': 468, 'Co-op Campaign': 407,
+  }
+  const DIVINITY_2 = {
+    'Tactical RPG': 670, RPG: 670, 'Turn-Based Strategy': 657, 'Story Rich': 641, Fantasy: 630,
+    'Character Customization': 624, CRPG: 623, Exploration: 615, 'Party-Based RPG': 611, 'Strategy RPG': 590,
+    PvP: 563, 'Female Protagonist': 554, 'Co-op Campaign': 367, 'Local Co-Op': 336, 'Choices Matter': 324,
+  }
+  const TEKKEN_7 = {
+    Fighting: 1976, Action: 1040, Multiplayer: 994, Competitive: 782, Arcade: 730, 'Local Multiplayer': 621,
+    Controller: 510, '3D Fighter': 429, Singleplayer: 374, eSports: 350,
+  }
+
+  test('Dota 2 и Rainbow Six: за соперничество голосов больше — не «с другом»', () => {
+    expect(playsAgainst(DOTA)).toBe(true)
+    expect(playsAgainst(SIEGE)).toBe(true)
+  })
+
+  test('It Takes Two, HELLDIVERS 2 и Sea of Thieves — кооператив главнее', () => {
+    expect(playsAgainst(IT_TAKES_TWO)).toBe(false)
+    expect(playsAgainst({ 'Online Co-Op': 1000, PvE: 896, 'Co-op': 689, 'Third-Person Shooter': 600 })).toBe(false)
+    // PvP есть, но кооператив перевешивает: корабль на двоих против моря
+    expect(playsAgainst({ Adventure: 1000, 'Co-op': 727, 'Online Co-Op': 686, PvP: 616, Pirates: 600 })).toBe(false)
+  })
+
+  /*
+   * Ради этого случая правило — суммой по всем тегам. Самым весомым из
+   * двенадцати верхних (окно game_tags) Divinity уходила: её PvP-арена стоит
+   * одиннадцатой, а оба кооперативных тега — тринадцатым и четырнадцатым.
+   */
+  test('Divinity: Original Sin 2 — кооператив за окном двенадцати тегов всё равно считается', () => {
+    expect(playsAgainst(DIVINITY_2)).toBe(false)
+  })
+
+  test('файтинг — друг против друга', () => {
+    expect(playsAgainst(TEKKEN_7)).toBe(true)
+  })
+
+  /*
+   * Словарь соперничества — один с «Матчем» карточки (VERSUS_TAGS в
+   * lib/gametraits). Своя копия здесь уже расходилась: в ней не было «Online
+   * PvP» и тегов файтинга, и тег, дописанный для карточки, подборку не трогал.
+   */
+  test('каждый тег соперничества карточки весит и здесь', () => {
+    expect(VERSUS_TAGS.size).toBeGreaterThan(0)
+    for (const tag of VERSUS_TAGS) {
+      expect(playsAgainst({ [tag]: 2, 'Co-op': 1 }), tag).toBe(true)
+      expect(playsAgainst({ [tag]: 1, 'Co-op': 2 }), tag).toBe(false)
+    }
+  })
+
+  /*
+   * Ради чего общий словарь сдвинул подборку: на выгрузке прода от 24.09.2026
+   * из восьмидесяти верхних «кооперативных» — одна игра, Brawlhalla. По
+   * старой копии (Fighting и eSports) кооператив у неё перевешивал.
+   */
+  test('Brawlhalla — платформенный файтинг: «2D Fighter» тоже соперничество', () => {
+    expect(
+      playsAgainst({
+        'Free to Play': 962, Multiplayer: 700, Fighting: 668, '2D Fighter': 513, '2D Platformer': 489,
+        Casual: 468, 'Local Multiplayer': 462, Platformer: 458, 'Co-op': 457, Controller: 457, Action: 447,
+        'Local Co-Op': 446, 'Online Co-Op': 444, Fantasy: 438, '4 Player Local': 436, 'Family Friendly': 431,
+        eSports: 431, Cartoony: 430, Singleplayer: 429, Indie: 423,
+      }),
+    ).toBe(true)
+  })
+
+  /*
+   * Вопросы разные, и разногласие подборки с карточкой бывает только в одну
+   * сторону: «с другом» оставляет командную игру против людей, а карточка
+   * зовёт её заход «Матчем» — и то и другое правда. Кампания на двоих матчем
+   * не бывает нигде.
+   */
+  test('кампания на двоих — «с другом» и «Сессия»; командная против людей — «с другом» и «Матч»', () => {
+    const semantics: GameSemantics = {
+      v: 1,
+      axes: { challenge: 50, complexity: 50, pace: 50 },
+      session: { bucket: 'medium', minutes: 40, canStopAnytime: false },
+      timeToFun: { bucket: null, hours: null },
+      confidence: 0.7,
+      n: 60,
+      basis: 'tags+reviews',
+    }
+    expect(playsAgainst(IT_TAKES_TWO)).toBe(false)
+    expect(sessionTrait({ semantics, categories: [1, 9, 38, 39, 24], tags: IT_TAKES_TWO })?.label).toBe('Сессия')
+    const squad = { Horror: 1000, 'Online Co-Op': 900, Survival: 800, PvP: 600 }
+    expect(playsAgainst(squad)).toBe(false)
+    expect(sessionTrait({ semantics, categories: [1, 49, 36, 9, 38], tags: squad })?.label).toBe('Матч')
+  })
+
+  test('нет ни соперничества, ни кооператива в тегах — решают категории, не мешаем', () => {
+    expect(playsAgainst({ Survival: 1000, Crafting: 800, 'Open World': 700 })).toBe(false)
+    expect(playsAgainst({})).toBe(false)
   })
 })

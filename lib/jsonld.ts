@@ -1,5 +1,6 @@
 import { discountOf, trustedPrice } from './discount'
 import { newsHeading, newsPath } from './newspage'
+import { patchArchivePath } from './patcharchive'
 import { OG_SITE, SITE_DESCRIPTION } from './site'
 import { STORE_LABEL } from './stores'
 import { tagRu } from './tagsru'
@@ -43,6 +44,8 @@ export type GameLd = {
   '@context': 'https://schema.org'
   '@type': 'VideoGame'
   name: string
+  /** русское название магазина — то же, что вторым рядом под заголовком */
+  alternateName?: string
   url: string
   gamePlatform: 'PC'
   description?: string
@@ -76,6 +79,12 @@ const TAGS_AS_GENRE = 8
 
 export type GameLdInput = {
   meta: GameMeta
+  /**
+   * Русское название магазина (GamePageData.nameRu). Страница рисует его
+   * вторым рядом под заголовком, разметка называет alternateName — и только
+   * тогда, когда оно на странице есть (pageNameRu).
+   */
+  nameRu?: string | null
   /** абсолютный адрес сайта — schema.org требует полных ссылок */
   baseUrl: string
   /**
@@ -100,8 +109,21 @@ const PLAY_MODES: Array<[number[], string]> = [
   [[9, 38], 'CoOp'],
 ]
 
+/**
+ * Второе название, которое карточка показывает под заголовком, — или null.
+ *
+ * Одно правило на страницу и разметку: alternateName без строки на странице
+ * — ровно та разметка, что говорит больше видимого. Совпадающее с name не
+ * показываем — повтор заголовка ничего не называет.
+ */
+export function pageNameRu(meta: Pick<GameMeta, 'name'>, nameRu: string | null | undefined): string | null {
+  const alt = nameRu?.trim()
+  return alt && alt !== meta.name ? alt : null
+}
+
 export function gameJsonLd({
   meta,
+  nameRu,
   baseUrl,
   currency,
   now,
@@ -114,6 +136,17 @@ export function gameJsonLd({
     // Каталог — только PC-игры: и Steam, и кураторский пул других магазинов.
     gamePlatform: 'PC',
   }
+  /*
+   * Русское название — вторым именем, а не вместо: название карточки —
+   * английское, как в магазине (STORE_LANGUAGE в lib/catalog), а русское
+   * у ~70 игр верха каталога («Ведьмак 3: Дикая Охота», «Призрак Цусимы»)
+   * — то, как их ищут в русской выдаче. До правила двух названий (nameSql в
+   * lib/db) крон карточек клал его прямо в name, и <title> с H1 этих страниц
+   * были русскими; теперь они английские, а русское остаётся на странице
+   * вторым рядом — и здесь.
+   */
+  const alt = pageNameRu(meta, nameRu)
+  if (alt) ld.alternateName = alt
 
   if (meta.shortDescription) ld.description = meta.shortDescription
   const image = meta.art?.header2x ?? meta.art?.header ?? meta.headerImage
@@ -422,8 +455,10 @@ export function patchArticleLd({
 }
 
 /**
- * Крошки патча: главная → игра → патч — ровно та ссылка назад, что стоит над
- * заголовком. Игры нет в каталоге — нет и ссылки на неё: два уровня.
+ * Крошки патча: главная → игра → обновления → патч — ровно тот путь, что
+ * стоит над заголовком. «Обновления» — архив обновлений игры
+ * (/game/<appid>/news, lib/patcharchive): патч — одна его строка. Игры нет в
+ * каталоге — нет ни её карточки, ни архива: два уровня.
  */
 export function patchBreadcrumbLd({
   item,
@@ -436,13 +471,45 @@ export function patchBreadcrumbLd({
 }): BreadcrumbLd {
   const steps = [
     { name: 'imbored', item: `${baseUrl}/` },
-    ...(game ? [{ name: game.name, item: `${baseUrl}/game/${item.appid}` }] : []),
+    ...(game
+      ? [
+          { name: game.name, item: `${baseUrl}/game/${item.appid}` },
+          { name: ARCHIVE_CRUMB, item: `${baseUrl}${patchArchivePath(item.appid)}` },
+        ]
+      : []),
     { name: newsHeading(item.title, game?.name), item: `${baseUrl}${newsPath(item.appid, item.gid)}` },
   ]
   return {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: steps.map((step, i) => ({ '@type': 'ListItem' as const, position: i + 1, ...step })),
+  }
+}
+
+/** Имя архива в крошках — тот же текст, что в видимом пути над заголовком */
+export const ARCHIVE_CRUMB = 'Обновления'
+
+/**
+ * Крошки архива обновлений игры: главная → игра → обновления — путь, который
+ * архив показывает строкой над заголовком.
+ */
+export function archiveBreadcrumbLd({
+  appid,
+  gameName,
+  baseUrl,
+}: {
+  appid: number
+  gameName: string
+  baseUrl: string
+}): BreadcrumbLd {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { name: 'imbored', item: `${baseUrl}/` },
+      { name: gameName, item: `${baseUrl}/game/${appid}` },
+      { name: ARCHIVE_CRUMB, item: `${baseUrl}${patchArchivePath(appid)}` },
+    ].map((step, i) => ({ '@type': 'ListItem' as const, position: i + 1, ...step })),
   }
 }
 

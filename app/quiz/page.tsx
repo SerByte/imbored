@@ -18,7 +18,8 @@ import { CONFIRM_MS, DUR, EASE, EASE_IN, OUTRO } from '@/lib/motion'
 import { NEUTRAL_MOOD, type Lean } from '@/lib/mood'
 import { hasFreshWarm, warmMarkStore } from '@/lib/warmmark'
 import { timeHiddenStore } from '@/lib/playtime'
-import { parseSeedParam, playHref, VIBE_PRESETS } from '@/lib/presets'
+import { HUB_GENRES, hubTagOf } from '@/lib/gamehub'
+import { parseGenreParam, parseSeedParam, playHref, VIBE_PRESETS } from '@/lib/presets'
 import { STEPS } from '@/lib/quiz'
 import { isSoundOn } from '@/lib/quizsound'
 import type { Focus } from '@/lib/recommend'
@@ -196,6 +197,19 @@ function Quiz() {
     () => (focus ? null : parseSeedParam(new URLSearchParams(search).get('seed'))),
     [search, focus],
   )
+  /*
+   * Жанр со страницы /games/<slug> («Подобрать рогалики из своей библиотеки»,
+   * quizHref): квиз спрашивает настроение и несёт жанр в адрес выдачи. Здесь,
+   * в отличие от /play, — по словарю жанров (hubTagOf): подпись над рядом
+   * называет жанр по имени, и чужой адрес не должен стать подписью. С фокусом
+   * и затравкой не едет — их вопрос уже задан (quizHref).
+   */
+  const genre = useMemo(() => {
+    if (focus || seed) return null
+    const slug = parseGenreParam(new URLSearchParams(search).get('genre'))
+    const tag = slug ? hubTagOf(slug) : null
+    return slug && tag ? { slug, title: HUB_GENRES[tag].title } : null
+  }, [search, focus, seed])
   // Скрыто ли время в Steam — с прошлой выдачи на этом устройстве (lib/playtime)
   const timeHidden =
     useSyncExternalStore(timeHiddenStore.subscribe, timeHiddenStore.get, timeHiddenStore.server) === true
@@ -312,10 +326,16 @@ function Quiz() {
     (mood: Mood, opts: { roulette?: boolean; focus?: Focus; lean?: Lean } = {}) => {
       // Любой уход на выдачу — финал квиза, пресет или рулетка
       track('quiz_done')
-      const href = playHref(mood, { roulette: opts.roulette, focus: opts.focus ?? focus, lean: opts.lean, seed })
+      const href = playHref(mood, {
+        roulette: opts.roulette,
+        focus: opts.focus ?? focus,
+        lean: opts.lean,
+        seed,
+        genre: genre?.slug,
+      })
       router.push(knownGuest() ? bounceTo(href) : href)
     },
-    [focus, seed, router],
+    [focus, seed, genre, router],
   )
 
   function pick(value: string) {
@@ -407,12 +427,19 @@ function Quiz() {
       <div className="relative w-full max-w-3xl flex flex-col items-center gap-10">
         {stepIndex === 0 && (
           <div className="w-full flex flex-col items-center gap-3 anim-rise">
+            {/* С жанром — «сначала свои», а не «из твоей библиотеки»: до двух
+                мест пятёрки магазинные и при своих, а своих нет — все пять
+                (genreLine в lib/playflow). Квиз, обещавший «рогалики из твоей
+                библиотеки», спорил бы со следующим экраном — «своих таких не
+                нашлось — эти из магазина» */}
             <span className="text-xs text-faint">
               {focus
                 ? 'Только нераспакованное — одним тапом:'
                 : seed
                   ? 'Похожее на выбранную игру — одним тапом:'
-                  : 'Одним тапом:'}
+                  : genre
+                    ? `${genre.title} — сначала свои, одним тапом:`
+                    : 'Одним тапом:'}
             </span>
             {/*
               На телефоне пилюли едут одной лентой, а не переносятся.
@@ -461,9 +488,10 @@ function Quiz() {
                 С затравкой «Как «X», но…» броска и «нераспакованного» нет:
                 подпись над рядом обещает похожее на X, а обе кнопки уводят
                 в выдачу, где затравки не бывает (askSeed на /play) — они
-                молча отменили бы то, о чём человек пришёл просить.
+                молча отменили бы то, о чём человек пришёл просить. С жанром —
+                по той же причине: в рулетке и «нераспакованном» его нет.
               */}
-              {!seed && (
+              {!seed && !genre && (
                 <button
                   onClick={() => {
                     // Время — из прошлого настроения, если оно свежее: сколько у
@@ -497,7 +525,7 @@ function Quiz() {
               {/* При скрытом в Steam времени нетронутого не узнать: сервер
                   отдаёт на этот фокус всё своё, и подпись говорит, что
                   приедет (timeHiddenStore — признак с прошлой выдачи) */}
-              {!focus && !seed && (
+              {!focus && !seed && !genre && (
                 <button
                   onClick={() => go(NEUTRAL_MOOD, { focus: 'untouched' })}
                   className="pill shrink-0 py-3 text-ember-text"

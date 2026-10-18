@@ -1,19 +1,21 @@
 import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
 import { after, NextResponse } from 'next/server'
-import { refreshCatalogSignals, type SignalsResult } from '@/lib/catalogsignals'
+import { refreshCatalogSignals, refreshReviewPulse, type PulseResult, type SignalsResult } from '@/lib/catalogsignals'
 import { openRun, runChain } from '@/lib/chain'
 import { cronAuthorized, pagesDailyLinks, pagesLinkVerdict } from '@/lib/cron'
 import { countPageEnrichDue, STEAM_LEASE } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
-import { resetSliceCards, revalidateEndedDeals } from '@/lib/gamecache'
+import { resetSliceCards, revalidateEndedDeals, revalidateGamePages } from '@/lib/gamecache'
 import { llmAvailable } from '@/lib/llm'
 import { llmDailyCap } from '@/lib/llmcap'
 import {
   PAGE_MAX_AGE_SEC,
   PAGE_MAX_TRIES,
   PAGE_REDO_AFTER_SEC,
+  runCardCatchUp,
   runPageSlice,
+  type CatchUpResult,
   type PageSliceResult,
 } from '@/lib/pagejob'
 import { getDb, nowSec } from '@/lib/server'
@@ -37,10 +39,12 @@ export const maxDuration = 300
  */
 const MAX_LINKS = 8
 
-type PagesLink = Omit<PageSliceResult, 'cards'> & { сброшено: number; сигналы?: SignalsResult }
+type PagesLink = Omit<PageSliceResult, 'cards'> &
+  Partial<Omit<CatchUpResult, 'cards'>> & { сброшено: number; сигналы?: SignalsResult; пульс?: PulseResult }
 
 /**
- * Обогащение карточек игр: скриншоты, вердикт отзывов, pros/cons.
+ * Обогащение карточек игр: скриншоты, вердикт отзывов, pros/cons, — и догон
+ * уже обогащённых: русский язык и «Наиграли» (runCardCatchUp в lib/pagejob).
  *
  * Устроено как /api/cron/news: 202 сразу, работа в after() — звенья подряд
  * внутри этого же вызова (lib/chain). Зовут сюда суточное расписание в
@@ -78,7 +82,7 @@ export async function GET(req: Request) {
       maxDurationSec: maxDuration,
       maxLinks: MAX_LINKS,
       dailyCap,
-      totals: ['enriched', 'withShots', 'withProsCons', 'viaClaude', 'withSemantics', 'сброшено'],
+      totals: ['enriched', 'withShots', 'withProsCons', 'viaClaude', 'withSemantics', 'русский', 'наиграли', 'сброшено'],
       link: async ({ deadlineAt }) => {
         /*
          * Сигналы каталога — рядом со срезом карточек, а не после него.
@@ -96,18 +100,62 @@ export async function GET(req: Request) {
           logSwallowed('cron/pages:signals', err)
           return null
         })
+        /*
+         * Пульс отзывов — тоже рядом, но лимит он со срезом карточек ДЕЛИТ:
+         * оба ходят в store.steampowered.com через pace('steam-store'). Пейсер
+         * общий на процесс и сам разводит их по шагам, а потолок пульса на
+         * звено (PULSE_PER_LINK) держит его долю — несколько шагов из
+         * тридцати. Своё исключение он глотает так же, как сверка.
+         */
+        const пульсЗвена = refreshReviewPulse(db, { deadlineAt }).catch((err: unknown) => {
+          logSwallowed('cron/pages:pulse', err)
+          return null
+        })
         try {
-          // Карточки, которые срез поменял, — в перегенерацию: страница живёт
-          // неделю (lib/gamecache), и без сброса свежие pros/cons и кадры
-          // ждали бы её конца. Сверка сигналов карточки не сбрасывает: её
-          // шаг — неделя, ровно срок кэша, и он доезжает сам
-          const slice = resetSliceCards(await runPageSlice(db, { deadlineAt }), revalidatePath)
-          const сигналы = await сверка
-          return { ...slice, ...(сигналы ? { сигналы } : {}) }
+          /*
+           * Догон уже обогащённых карточек — русский язык и «Наиграли»
+           * (runCardCatchUp) — до среза, а не после: срез съедает звено
+           * целиком, пока в его очереди есть работа, и после него догон не
+           * начался бы никогда. Сам догон короткий (CATCHUP_PLAYED_MS), а
+           * когда догонять нечего — две отметки, единицы строк и ни шага в
+           * Steam (пул целиком — раз в сутки, CATCHUP_PLAYED_IDLE_KEY).
+           *
+           * Сбои догон держит в себе и карточки, которые успел поменять,
+           * отдаёт всё равно (см. его докблок). catch здесь — страховка на
+           * непредвиденное: срез карточек от догона не зависит и идёт.
+           */
+          const догон = await runCardCatchUp(db, { deadlineAt }).catch((err: unknown) => {
+            logSwallowed('cron/pages:catchup', err)
+            return null
+          })
+          // Карточки, которые срез или догон поменяли, — в перегенерацию:
+          // страница живёт неделю (lib/gamecache), и без сброса свежие
+          // pros/cons, кадры, язык и «Наиграли» ждали бы её конца. Сверка
+          // сигналов и пульс карточки не сбрасывают: их шаг — неделя, ровно
+          // срок кэша, и он доезжает сам.
+          //
+          // Карточки догона — сразу, до среза, а не вместе с его карточками:
+          // из очереди догона их строки уже ушли, и упади срез — следующее
+          // звено их не вернуло бы. Срезу остаются те, что догон не сбросил
+          const сброшеныДогоном = new Set(догон?.cards ?? [])
+          const сброшеноДогоном = revalidateGamePages(сброшеныДогоном, revalidatePath)
+          const срез = await runPageSlice(db, { deadlineAt })
+          const slice = resetSliceCards(
+            { ...срез, cards: срез.cards.filter((appid) => !сброшеныДогоном.has(appid)) },
+            revalidatePath,
+          )
+          const [сигналы, пульс] = await Promise.all([сверка, пульсЗвена])
+          return {
+            ...slice,
+            сброшено: slice.сброшено + сброшеноДогоном,
+            ...(догон ? { русский: догон.русский, наиграли: догон.наиграли } : {}),
+            ...(сигналы ? { сигналы } : {}),
+            ...(пульс ? { пульс } : {}),
+          }
         } finally {
-          // Упал срез — сверку всё равно дожидаемся: иначе она шла бы рядом со
-          // следующим звеном, а у того своя
-          await сверка
+          // Упал срез — сверку и пульс всё равно дожидаемся: иначе они шли бы
+          // рядом со следующим звеном, а у того свои
+          await Promise.all([сверка, пульсЗвена])
         }
       },
       // Работа — у среза карточек или у сверки сигналов; см. pagesLinkVerdict

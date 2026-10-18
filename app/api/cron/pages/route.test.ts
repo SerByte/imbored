@@ -4,7 +4,7 @@ import { CRON_JOBS } from '@/lib/cron'
 import { acquireLease, getCatalogMeta, setCatalogMeta, STEAM_LEASE, upsertGameMeta, type Db } from '@/lib/db'
 import { PRICE_TRUST_SEC } from '@/lib/discount'
 import { DEALS_SWEPT_KEY } from '@/lib/gamecache'
-import { runPageSlice } from '@/lib/pagejob'
+import { runCardCatchUp, runPageSlice } from '@/lib/pagejob'
 import { freshDb } from '@/lib/testing/route'
 import { GET } from './route'
 
@@ -28,10 +28,10 @@ vi.mock('next/cache', async (importOriginal) => ({
   },
 }))
 
-// Срез настоящий, но тест может подменить его итог: какие карточки поменялись
+// Срез и догон настоящие, но тест может подменить их итог: какие карточки поменялись
 vi.mock('@/lib/pagejob', async (importOriginal) => {
   const real = await importOriginal<typeof import('@/lib/pagejob')>()
-  return { ...real, runPageSlice: vi.fn(real.runPageSlice) }
+  return { ...real, runPageSlice: vi.fn(real.runPageSlice), runCardCatchUp: vi.fn(real.runCardCatchUp) }
 })
 
 async function settled(): Promise<void> {
@@ -85,6 +85,8 @@ describe('/api/cron/pages', () => {
     expect(await linksToday(db, 'pages', T0)).toBe(1)
     const mark = JSON.parse((await getCatalogMeta(db, CRON_JOBS.pages.lastKey)) ?? '{}') as Record<string, unknown>
     expect(mark).toMatchObject({ links: 1, ended: 'done', claimed: 0, сигналы: { stopped: 'done' } })
+    // пульс отзывов идёт тем же звеном и тоже отмечается — на пустом пуле пустым
+    expect(mark).toMatchObject({ пульс: { measured: 0, stopped: 'done' } })
     // ничего не поменялось — ни одной карточки в перегенерацию
     expect(revalidated).toEqual([])
     expect(mark).toMatchObject({ сброшено: 0, итого: { сброшено: 0 } })
@@ -107,6 +109,70 @@ describe('/api/cron/pages', () => {
     const mark = JSON.parse((await getCatalogMeta(db, CRON_JOBS.pages.lastKey)) ?? '{}') as Record<string, unknown>
     expect(mark).not.toHaveProperty('cards')
     expect(mark).toMatchObject({ сброшено: 2, итого: { сброшено: 2 } })
+  })
+
+  /**
+   * Догон русского и «Наиграли» (runCardCatchUp) — на каждом звене, до среза:
+   * после среза он не начался бы никогда. Его карточки уходят в тот же сброс,
+   * что и карточки среза, — иначе строка ждала бы недельного срока ISR.
+   */
+  test('догон идёт в звене до среза, его карточки — в тот же сброс, счёт — в отметку', async () => {
+    const order: string[] = []
+    vi.mocked(runCardCatchUp).mockImplementationOnce(async () => {
+      order.push('догон')
+      return { русский: 2, наиграли: 1, cards: [730, 570] }
+    })
+    const real = (await vi.importActual<typeof import('@/lib/pagejob')>('@/lib/pagejob')).runPageSlice
+    vi.mocked(runPageSlice).mockImplementationOnce(async (...a) => {
+      order.push('срез')
+      return { ...(await real(...a)), cards: [570, 440] }
+    })
+
+    expect((await ask()).status).toBe(202)
+    await settled()
+
+    expect(order).toEqual(['догон', 'срез'])
+    expect([...revalidated].sort()).toEqual(['/game/440', '/game/570', '/game/730'])
+    const mark = JSON.parse((await getCatalogMeta(db, CRON_JOBS.pages.lastKey)) ?? '{}') as Record<string, unknown>
+    expect(mark).toMatchObject({
+      русский: 2,
+      наиграли: 1,
+      сброшено: 3,
+      итого: { русский: 2, наиграли: 1, сброшено: 3 },
+    })
+  })
+
+  test('упавший догон не роняет звено: срез идёт, счёта догона в отметке нет', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(runCardCatchUp).mockRejectedValueOnce(new Error('Turso: operation timed out'))
+
+    expect((await ask()).status).toBe(202)
+    await settled()
+
+    expect(runPageSlice).toHaveBeenCalled()
+    const mark = JSON.parse((await getCatalogMeta(db, CRON_JOBS.pages.lastKey)) ?? '{}') as Record<string, unknown>
+    expect(mark).toMatchObject({ links: 1, ended: 'done', claimed: 0 })
+    expect(mark).not.toHaveProperty('упало')
+    expect(mark).not.toHaveProperty('русский')
+  })
+
+  /**
+   * Строки, которые догон поменял, из его очереди уже ушли: язык записан,
+   * отметка разбора за отсечкой. Сбрасывай их роут только вместе с карточками
+   * среза — упавший срез унёс бы и их сброс, и следующее звено их бы не
+   * вернуло: страницы ждали бы конца недельного кэша.
+   */
+  test('упавший срез не теряет карточек догона: они сброшены до него', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(runCardCatchUp).mockResolvedValueOnce({ русский: 1, наиграли: 1, cards: [730, 570] })
+    vi.mocked(runPageSlice).mockRejectedValueOnce(new Error('Turso: operation timed out'))
+
+    expect((await ask()).status).toBe(202)
+    await settled()
+
+    // Следующее звено идёт по настоящей пустой базе, и сбросить ему нечего:
+    // эти адреса — от звена, чей срез упал
+    expect([...revalidated].sort()).toEqual(['/game/570', '/game/730'])
   })
 
   test('скидка, погасшая с прошлого запуска, — карточка в перегенерацию, и один раз', async () => {

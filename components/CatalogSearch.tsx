@@ -328,12 +328,27 @@ export function CatalogSearch({
                 }}
                 className={`flex min-h-11 items-center justify-between gap-3 rounded-(--radius-control) px-3 py-2.5 font-medium ${i === current ? 'bg-ink/10 text-ink' : 'text-dim'}`}
               >
-                {/* Длинное название обрезано глазу, но не скринридеру: текст
-                    строки целиком, а полное видно подсказкой */}
-                <span className="truncate" title={g.name}>
+                {/* Длинное название переносится, а не режется многоточием:
+                    серии различаются хвостом — «Trails of Cold Steel», «… II»,
+                    «… III», — и на телефоне (~265 px у текста при ширине 375)
+                    одна строка показывала четыре одинаковых «Trails of C…».
+                    Полное название в title пальцу не видно — подсказок у
+                    касания нет. Строка от второй линии растёт, а список и так
+                    листается внутри окна (min-h-0 overflow-y-auto выше).
+                    Русское название — вторым рядом, когда нашлось по нему
+                    (SearchHit.alias в lib/catalogsearch) */}
+                <span className="min-w-0 break-words leading-snug">
                   {g.name}
+                  {g.alias && <span className="block text-sm font-normal text-dim">{g.alias}</span>}
                 </span>
-                <Icon name="arrow" size={16} className={i === current ? 'shrink-0' : 'invisible shrink-0'} />
+                {/* Стрелка — знак выбранной строки для мыши и клавиатуры. На
+                    касании выбора нет, и место под невидимую стрелку (28 px
+                    с отступом) отдано названию */}
+                <Icon
+                  name="arrow"
+                  size={16}
+                  className={`shrink-0 [@media(pointer:coarse)]:hidden ${i === current ? '' : 'invisible'}`}
+                />
               </GameLink>
             ))}
           </div>

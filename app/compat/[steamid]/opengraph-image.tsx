@@ -1,7 +1,7 @@
-import { ImageResponse } from 'next/og'
 import { loadCompatInvite } from '@/lib/compatpage'
 import { ogFonts, OG_BG, OG_INK } from '@/lib/og'
 import { postersOf, WALL_POSTERS } from '@/lib/ogcard'
+import { isrImage } from '@/lib/ogresponse'
 import { getDb } from '@/lib/server'
 import { CompatCardImage } from './share-card'
 
@@ -48,7 +48,7 @@ export default async function Image({ params }: { params: Promise<{ steamid: str
     : null
 
   if (!invite) {
-    return new ImageResponse(
+    return isrImage(
       (
         <div
           style={{
@@ -74,7 +74,7 @@ export default async function Image({ params }: { params: Promise<{ steamid: str
   const byId = new Map(invite.topGames.map((g) => [g.appid, g]))
   const posters = await postersOf(invite.topGames, (id) => byId.get(id))
 
-  return new ImageResponse(<CompatCardImage invite={invite} posters={posters} />, {
+  return isrImage(<CompatCardImage invite={invite} posters={posters} />, {
     ...size,
     fonts: await ogFonts,
   })

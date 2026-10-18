@@ -3,11 +3,26 @@ import {
   CCU_FRESH_SEC,
   fetchStoreReviews,
   parseStoreReviews,
+  PULSE_MAX_AGE_SEC,
+  PULSE_PER_LINK,
+  PULSE_RESHOW_SEC,
   refreshCatalogSignals,
+  refreshReviewPulse,
   SIGNALS_MAX_AGE_SEC,
   type StoreReviews,
 } from './catalogsignals'
-import { createDb, getGameMeta, updateGamePrices, upsertGameMeta, type Db, type PriceQuote } from './db'
+import {
+  createDb,
+  getGameMeta,
+  reviewPulseQueue,
+  updateGamePrices,
+  upsertGameMeta,
+  type Db,
+  type PriceQuote,
+} from './db'
+import { trustedPrice } from './discount'
+import { deadVerdict, PULSE_SHOW_MAX_AGE_SEC } from './gamepage'
+import type { RecentPulse } from './ingest'
 
 const NOW = 1_790_000_000
 /** Срок звена: заведомо в будущем — время в этих тестах не кончается */
@@ -57,11 +72,27 @@ const LIVE = {
 }
 
 describe('parseStoreReviews', () => {
-  test('берёт англоязычную шкалу — ту же, что у посева каталога', () => {
+  test('пара — англоязычная шкала, та же, что у посева каталога', () => {
     const got = parseStoreReviews(LIVE)
     // у CS2 в каталоге 2 593 099 — это язык, а не все 9 878 407
-    expect(got.get(730)).toEqual({ total: 2620088, percent: 85 })
-    expect(got.get(570)).toEqual({ total: 839557, percent: 87 })
+    expect(got.get(730)).toMatchObject({ total: 2620088, percent: 85 })
+    expect(got.get(570)).toMatchObject({ total: 839557, percent: 87 })
+  })
+
+  /*
+   * Все языки — рядом, из того же ответа: их показывают людям (shownReviews).
+   * Англоязычные на плитке хаба давали Isaac «из 165 тыс.» при 459 857 на
+   * его карточке. Оценка словами — той же сводки, и только кодом Steam.
+   */
+  test('все языки с оценкой Steam — полем all, без лишнего запроса', () => {
+    const got = parseStoreReviews(LIVE)
+    expect(got.get(730)).toEqual({
+      total: 2620088,
+      percent: 85,
+      all: { total: 9878407, percent: 85, score: 8 },
+    })
+    // без review_score — оценки нет, числа есть
+    expect(got.get(570)?.all).toEqual({ total: 2784988, percent: 80, score: null })
   })
 
   test('игра в ответе без отзывов на языке — null, ноль — тоже null', () => {
@@ -108,7 +139,48 @@ describe('fetchStoreReviews', () => {
 
   test('настоящий ответ разбирается как прежде', async () => {
     const live = (async () => new Response(JSON.stringify(LIVE), { status: 200, headers: { 'x-eresult': '1' } })) as unknown as typeof fetch
-    expect((await fetchStoreReviews([730], live)).get(730)).toEqual({ total: 2620088, percent: 85 })
+    expect((await fetchStoreReviews([730], live)).get(730)).toMatchObject({ total: 2620088, percent: 85 })
+  })
+
+  /**
+   * Русские отзывы — вторым GetItems той же пачки в русском контексте: там
+   * summary_language_specific — отзывы на русском. Одна пачка из двухсот на
+   * api.steampowered.com, а не двести походов в магазин.
+   */
+  function storeByLanguage(ru: () => Response) {
+    const asked: string[] = []
+    const fn = (async (url: string) => {
+      const lang = JSON.parse(new URL(url).searchParams.get('input_json')!).context.language as string
+      asked.push(lang)
+      return lang === 'russian' ? ru() : new Response(JSON.stringify(LIVE), { status: 200 })
+    }) as unknown as typeof fetch
+    return { fn, asked }
+  }
+  /** Ответ в русском контексте — синтетический, той же формы, что LIVE */
+  const RU = {
+    response: {
+      store_items: [
+        { appid: 730, reviews: { summary_language_specific: { review_count: 1_402_311, percent_positive: 83 } } },
+        // на русском отзывов нет — записывать нечего
+        { appid: 570, reviews: { summary_filtered: { review_count: 2784988, percent_positive: 80 } } },
+      ],
+    },
+  }
+
+  test('русские — вторым запросом в русском контексте, только тем, у кого сверка есть', async () => {
+    const store = storeByLanguage(() => new Response(JSON.stringify(RU), { status: 200 }))
+    const got = await fetchStoreReviews([730, 570, 1234], store.fn)
+    expect(store.asked).toEqual(['english', 'russian'])
+    expect(got.get(730)?.ru).toEqual({ total: 1_402_311, percent: 83 })
+    expect(got.get(570)).not.toHaveProperty('ru')
+    expect(got.get(1234)).toBeNull()
+  })
+
+  test('отказ русского запроса — пачка без русских, а не без сверки', async () => {
+    const store = storeByLanguage(() => new Response('', { status: 429 }))
+    const got = await fetchStoreReviews([730], store.fn)
+    expect(got.get(730)).toMatchObject({ total: 2620088, all: { total: 9878407 } })
+    expect(got.get(730)).not.toHaveProperty('ru')
   })
 })
 
@@ -199,7 +271,8 @@ describe('refreshCatalogSignals', () => {
     // онлайн меряем только у совместных — живость гейтит только их
     expect(polled).toEqual([730])
     expect((await row(db, 620)).ccu).toBeNull()
-    // и meta видит новое число — на нём стоят сниппет /game и порядок пула
+    // и meta видит новое число — на нём стоят пороги живости и порядок пула
+    // (сниппет /game с этой правки берёт все языки — shownReviews)
     expect((await getGameMeta(db, 730))?.reviewsTotal).toBe(730_000)
   })
 
@@ -323,6 +396,45 @@ describe('refreshCatalogSignals', () => {
     })
     expect(r.stopped).toBe('budget')
     expect(reviews.calls).toEqual([])
+  })
+
+  /*
+   * Все языки и русские — отзывы для людей: их читают кольцо /game, хабы и
+   * /play (shownReviews). Пишутся рядом с англоязычной шкалой порогов, но
+   * переписываются, только когда показанное число сдвинулось на 2% или
+   * поменялась доля: кольцо печатает число до единицы, и еженедельная
+   * прибавка в десяток отзывов иначе делала бы каждую перегенерацию карточки
+   * новой страницей — записью ISR.
+   */
+  test('все языки и русские пишутся рядом с англоязычными — и не дёргаются от мелочи', async () => {
+    const db = await createDb(':memory:')
+    await pool(db, 1145360, 142_000)
+    const answer = (allTotal: number, allPercent: number, ruTotal: number) =>
+      reviewsStub(() => ({
+        total: 142_783,
+        percent: 98,
+        all: { total: allTotal, percent: allPercent, score: 9 },
+        ru: { total: ruTotal, percent: 96 },
+      })).fn
+    const shown = async () => {
+      const m = (await getGameMeta(db, 1145360))!
+      return [m.reviewsAllTotal, m.reviewsAllPercent, m.reviewsAllScore, m.reviewsRuTotal, m.reviewsRuPercent]
+    }
+
+    await refreshCatalogSignals(db, { fetchPrices: noPrices, deadlineAt: FAR, nowSec: NOW, fetchReviews: answer(286_667, 97, 16_893) })
+    expect(await shown()).toEqual([286_667, 97, 9, 16_893, 96])
+    // англоязычная шкала порогов — своими колонками, как прежде
+    expect(await row(db, 1145360)).toMatchObject({ reviews_total: 142_783, reviews_percent: 98 })
+
+    // Неделя: +1 500 отзывов (0,5%) и +40 русских — показанное не трогаем
+    const week = NOW + SIGNALS_MAX_AGE_SEC + 1
+    await refreshCatalogSignals(db, { fetchPrices: noPrices, deadlineAt: FAR, nowSec: week, fetchReviews: answer(288_167, 97, 16_933) })
+    expect(await shown()).toEqual([286_667, 97, 9, 16_893, 96])
+
+    // Доля сдвинулась — переписываем сразу; 2% набежало — тоже
+    const later = week + SIGNALS_MAX_AGE_SEC + 1
+    await refreshCatalogSignals(db, { fetchPrices: noPrices, deadlineAt: FAR, nowSec: later, fetchReviews: answer(289_000, 96, 17_300) })
+    expect(await shown()).toEqual([289_000, 96, 9, 17_300, 96])
   })
 
   test('мёртвые и вытесненные в очередь не попадают: их судьба — дело промоута', async () => {
@@ -511,6 +623,52 @@ describe('refreshCatalogSignals: цены пачки', () => {
     }
   })
 
+  /*
+   * Исключение из «свою цену не переснимаем»: погасшая распродажа. Витрина
+   * такую цену прячет (trustedPrice), и без сверки она стояла бы спрятанной,
+   * пока до игры не дойдёт заход человека, — у Hades неделями. Переснимается
+   * только она: живая скидка и обычная цена, даже давние, остаются как были.
+   */
+  test('погасшая распродажа своего региона переснимается, живая скидка и обычная цена — нет', async () => {
+    const db = await createDb(':memory:')
+    for (const id of [1, 2, 3]) await pool(db, id, 1000 - id)
+    const sale = { priceFinal: 1499, priceInitial: 2499, discountPercent: 40 }
+    // 1 — распродажа кончилась вчера; 2 — идёт ещё неделю; 3 — обычная цена месячной давности
+    await updateGamePrices(db, [{ appid: 1, ...sale, discountEndsAt: NOW - 86_400 }], NOW - 10 * 86_400, 'us')
+    await updateGamePrices(db, [{ appid: 2, ...sale, discountEndsAt: NOW + 7 * 86_400 }], NOW - 10 * 86_400, 'us')
+    await updateGamePrices(
+      db,
+      [{ appid: 3, priceFinal: 2499, priceInitial: 2499, discountPercent: 0 }],
+      NOW - 30 * 86_400,
+      'us',
+    )
+    expect((await getGameMeta(db, 1))?.priceFinal).toBe(1499)
+    vi.stubEnv('STEAM_STORE_CC', 'us')
+    try {
+      const asked: number[][] = []
+      const r = await refreshCatalogSignals(db, {
+        deadlineAt: FAR,
+        nowSec: NOW,
+        fetchReviews: reviewsStub(() => ({ total: 1000, percent: 90 })).fn,
+        fetchPrices: async (ids) => {
+          asked.push(ids)
+          // Steam: распродажа кончилась, цена обычная
+          return ids.map((appid) => ({ appid, priceFinal: 2499, priceInitial: 2499, discountPercent: 0 }))
+        },
+      })
+      expect(asked).toEqual([[1]])
+      expect(r).toMatchObject({ checked: 3, prices: 1 })
+      expect(await price(db, 1)).toMatchObject({ price_final: 2499, price_at: NOW })
+      // и витрина снова её показывает
+      const meta = (await getGameMeta(db, 1))!
+      expect(trustedPrice(meta, NOW)).toBe(2499)
+      expect(await price(db, 2)).toMatchObject({ price_final: 1499, price_at: NOW - 10 * 86_400 })
+      expect(await price(db, 3)).toMatchObject({ price_final: 2499, price_at: NOW - 30 * 86_400 })
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   test('при постоянном регионе и замеренном пуле сверка в цены не ходит вовсе', async () => {
     const db = await createDb(':memory:')
     for (const id of [1, 2]) await pool(db, id, 100)
@@ -531,5 +689,266 @@ describe('refreshCatalogSignals: цены пачки', () => {
     } finally {
       vi.unstubAllEnvs()
     }
+  })
+})
+
+/**
+ * Пульс отзывов: за последний месяц, все языки — строка под кольцом /game.
+ * Запрос по игре в магазин, тем же пейсером, что у крона карточек, — поэтому
+ * скупо: верх пула, разгромленные и несколько игр на звено (PULSE_TOP,
+ * PULSE_PANNED_TOP, PULSE_PER_LINK).
+ */
+describe('refreshReviewPulse', () => {
+  const DAY = 86_400
+  type PulseRow = {
+    reviews_30d: number | null
+    reviews_recent_total: number | null
+    reviews_recent_percent: number | null
+    reviews_recent_at: number | null
+    reviews_recent_checked_at: number | null
+    updated_at: number
+  }
+  async function pulseRow(db: Db, appid: number): Promise<PulseRow> {
+    const r = await db.execute({
+      sql: `SELECT reviews_30d, reviews_recent_total, reviews_recent_percent, reviews_recent_at,
+                   reviews_recent_checked_at, updated_at
+            FROM games WHERE appid = ?`,
+      args: [appid],
+    })
+    return r.rows[0] as unknown as PulseRow
+  }
+
+  /** Звено пульса с одним ответом Steam на любую игру */
+  const measure = (db: Db, nowSec: number, answer: RecentPulse | undefined) =>
+    refreshReviewPulse(db, { deadlineAt: FAR, nowSec, fetchPulse: async () => answer })
+
+  test('пишет месяц узко: сколько, доля, отметки и reviews_30d для живости', async () => {
+    const db = await createDb(':memory:')
+    await pool(db, 1145360, 142_000)
+    const before = await pulseRow(db, 1145360)
+    const asked: Array<[number, number]> = []
+    const r = await refreshReviewPulse(db, {
+      deadlineAt: FAR,
+      nowSec: NOW,
+      fetchPulse: async (appid, at) => {
+        asked.push([appid, at])
+        return { total: 7948, positive: 7551 }
+      },
+    })
+    expect(r).toEqual({ measured: 1, stopped: 'done' })
+    expect(asked).toEqual([[1145360, NOW]])
+    expect(await pulseRow(db, 1145360)).toEqual({
+      reviews_30d: 7948,
+      reviews_recent_total: 7948,
+      reviews_recent_percent: 95,
+      reviews_recent_at: NOW,
+      reviews_recent_checked_at: NOW,
+      updated_at: before.updated_at,
+    })
+    expect(await getGameMeta(db, 1145360)).toMatchObject({
+      reviewsRecentTotal: 7948,
+      reviewsRecentPercent: 95,
+      reviewsRecentAt: NOW,
+    })
+  })
+
+  test('неделю пульс не перемеряется, потом — снова', async () => {
+    const db = await createDb(':memory:')
+    await pool(db, 1, 1000)
+    let calls = 0
+    const fetchPulse = async () => {
+      calls++
+      return { total: 100, positive: 90 }
+    }
+    await refreshReviewPulse(db, { deadlineAt: FAR, nowSec: NOW, fetchPulse })
+    expect(await refreshReviewPulse(db, { deadlineAt: FAR, nowSec: NOW + DAY, fetchPulse })).toEqual({
+      measured: 0,
+      stopped: 'done',
+    })
+    expect(calls).toBe(1)
+    await refreshReviewPulse(db, { deadlineAt: FAR, nowSec: NOW + PULSE_MAX_AGE_SEC + 1, fetchPulse })
+    expect(calls).toBe(2)
+  })
+
+  /*
+   * Строка под кольцом несёт дату, и с каждой недельной проверкой в ней
+   * менялось бы что-нибудь — а с ней и карточка верха пула в ISR, каждую
+   * неделю. Показанный замер переписывается новостью; проверка и reviews_30d
+   * — каждым ответом.
+   */
+  test('мелочь показанный замер не трогает: пункт доли и +5% отзывов', async () => {
+    const db = await createDb(':memory:')
+    await pool(db, 1, 1000)
+    await measure(db, NOW, { total: 8000, positive: 5680 }) // 71%
+    const week = NOW + PULSE_MAX_AGE_SEC + 1
+    await measure(db, week, { total: 8400, positive: 6048 }) // 72%
+    expect(await pulseRow(db, 1)).toMatchObject({
+      reviews_30d: 8400,
+      reviews_recent_checked_at: week,
+      reviews_recent_total: 8000,
+      reviews_recent_percent: 71,
+      reviews_recent_at: NOW,
+    })
+  })
+
+  test('новость переписывает: доля на два пункта или счёт больше чем на пятую часть', async () => {
+    const db = await createDb(':memory:')
+    for (const id of [1, 2]) await pool(db, id, id * 1000)
+    await measure(db, NOW, { total: 8000, positive: 5680 }) // 71% у обеих
+    const week = NOW + PULSE_MAX_AGE_SEC + 1
+    await refreshReviewPulse(db, {
+      deadlineAt: FAR,
+      nowSec: week,
+      // 1 — 73% при том же счёте; 2 — те же 71%, но отзывов на 21% больше
+      fetchPulse: async (appid) => (appid === 1 ? { total: 8000, positive: 5840 } : { total: 9700, positive: 6887 }),
+    })
+    expect(await pulseRow(db, 1)).toMatchObject({ reviews_recent_percent: 73, reviews_recent_at: week })
+    expect(await pulseRow(db, 2)).toMatchObject({ reviews_recent_total: 9700, reviews_recent_at: week })
+  })
+
+  test('месяц без перемен переписывается, когда показанному полсрока: строка не стареет до пропажи', async () => {
+    const db = await createDb(':memory:')
+    await pool(db, 1, 1000)
+    const same = { total: 8000, positive: 5680 }
+    await measure(db, NOW, same)
+    const early = NOW + PULSE_RESHOW_SEC - DAY
+    await measure(db, early, same)
+    expect(await pulseRow(db, 1)).toMatchObject({ reviews_recent_at: NOW, reviews_recent_checked_at: early })
+    const late = early + PULSE_MAX_AGE_SEC + 1
+    await measure(db, late, same)
+    expect(await pulseRow(db, 1)).toMatchObject({ reviews_recent_at: late, reviews_recent_checked_at: late })
+  })
+
+  /*
+   * Полсрока показа — с запасом на вдвое реже проверку: устоявшийся месяц
+   * освежается раньше, чем freshPulse (lib/gamepage) сочтёт его давним.
+   */
+  test('срок перезаписи и шаг проверки укладываются в срок показа', () => {
+    expect(PULSE_RESHOW_SEC + 2 * PULSE_MAX_AGE_SEC).toBeLessThanOrEqual(PULSE_SHOW_MAX_AGE_SEC)
+  })
+
+  test('Steam промолчал — отметка проверки, а показанный замер стоит со своей датой', async () => {
+    const db = await createDb(':memory:')
+    await pool(db, 1, 1000)
+    await measure(db, NOW, { total: 100, positive: 90 })
+    const later = NOW + PULSE_MAX_AGE_SEC + 1
+    await measure(db, later, undefined)
+    expect(await pulseRow(db, 1)).toMatchObject({
+      reviews_30d: 100,
+      reviews_recent_total: 100,
+      reviews_recent_percent: 90,
+      reviews_recent_at: NOW,
+      reviews_recent_checked_at: later,
+    })
+    // дата — та, что в подписи: свежим замер себя не выдаёт и гаснет по сроку показа
+    expect((await getGameMeta(db, 1))?.reviewsRecentAt).toBe(NOW)
+    // а в голову очереди игра не возвращается
+    expect(await reviewPulseQueue(db, { top: 10, panned: 10, before: later - 1, limit: 10 })).toEqual([])
+  })
+
+  test('ноль за месяц — число для живости есть, доли и строки нет', async () => {
+    const db = await createDb(':memory:')
+    await pool(db, 1, 1000)
+    await measure(db, NOW, { total: 0, positive: 0 })
+    expect(await pulseRow(db, 1)).toMatchObject({ reviews_30d: 0, reviews_recent_total: 0, reviews_recent_percent: null })
+    expect((await getGameMeta(db, 1))?.reviewsRecentTotal).toBeUndefined()
+  })
+
+  test('не больше PULSE_PER_LINK на звено: сперва ни разу не спрошенные, среди них — верх', async () => {
+    const db = await createDb(':memory:')
+    for (let i = 1; i <= PULSE_PER_LINK + 2; i++) await pool(db, i, i * 1000)
+    const asked: number[] = []
+    const r = await refreshReviewPulse(db, {
+      deadlineAt: FAR,
+      nowSec: NOW,
+      fetchPulse: async (appid) => {
+        asked.push(appid)
+        return { total: 10, positive: 9 }
+      },
+    })
+    expect(r).toEqual({ measured: PULSE_PER_LINK, stopped: 'budget' })
+    // верх по отзывам первым: у него карточки читают чаще
+    expect(asked).toEqual(Array.from({ length: PULSE_PER_LINK }, (_, i) => PULSE_PER_LINK + 2 - i))
+  })
+
+  test('отказы подряд — звено встаёт, а замеренное до них пишется', async () => {
+    const db = await createDb(':memory:')
+    for (const id of [1, 2, 3, 4]) await pool(db, id, 5000 - id)
+    const r = await refreshReviewPulse(db, {
+      deadlineAt: FAR,
+      nowSec: NOW,
+      fetchPulse: async (appid) => {
+        if (appid === 1) return { total: 50, positive: 40 }
+        throw new Error('appreviews: HTTP 429')
+      },
+    })
+    expect(r).toEqual({ measured: 1, stopped: 'blocked' })
+    expect(await pulseRow(db, 1)).toMatchObject({ reviews_recent_total: 50, reviews_recent_at: NOW })
+    expect(await pulseRow(db, 4)).toMatchObject({ reviews_recent_at: null, reviews_recent_checked_at: null })
+  })
+
+  test('срок звена вышел — в магазин не ходим', async () => {
+    const db = await createDb(':memory:')
+    await pool(db, 1, 1000)
+    let calls = 0
+    const r = await refreshReviewPulse(db, {
+      deadlineAt: Date.now() - 1,
+      nowSec: NOW,
+      fetchPulse: async () => {
+        calls++
+        return { total: 1, positive: 1 }
+      },
+    })
+    expect(r.stopped).toBe('budget')
+    expect(calls).toBe(0)
+  })
+
+  test('очередь — верх пула и разгромленные: хвосту и пустым серверам месяцем сказать нечего', async () => {
+    const db = await createDb(':memory:')
+    for (const id of [1, 2, 3, 4, 5]) await pool(db, id, id * 1000)
+    await db.execute("UPDATE games SET alive = 0, dead_reason = 'dead-multiplayer' WHERE appid = 3")
+    await db.execute("UPDATE games SET alive = 0, dead_reason = 'panned' WHERE appid IN (4, 5)")
+    // верх из двух живых — 2 и 1, из разгромленных — одна верхняя, 5; пустые
+    // серверы 3 — ни там ни там. Среди ни разу не спрошенных — по отзывам
+    expect(await reviewPulseQueue(db, { top: 2, panned: 1, before: NOW, limit: 10 })).toEqual([5, 2, 1])
+    expect(await reviewPulseQueue(db, { top: 1, panned: 0, before: NOW, limit: 10 })).toEqual([2])
+    // свежая проверка у 2 — в очереди остаётся 1, и давняя идёт после ни разу не спрошенных
+    await db.execute({ sql: 'UPDATE games SET reviews_recent_checked_at = ? WHERE appid = 2', args: [NOW - 60] })
+    expect(await reviewPulseQueue(db, { top: 2, panned: 0, before: NOW - 3600, limit: 10 })).toEqual([1])
+    expect(await reviewPulseQueue(db, { top: 2, panned: 0, before: NOW, limit: 10 })).toEqual([1, 2])
+  })
+
+  /*
+   * Разгромленная, снятая с подбора, — вне пула, и без своей ветки очереди
+   * её месяц не мерил бы никто: «большинство отзывов отрицательные» стояло
+   * бы на карточке, сколько бы игру ни хвалили после починки.
+   */
+  test('разгромленную, которую за месяц хвалят, пульс меряет — и вердикт молчит', async () => {
+    const KSP2 = 954850
+    const db = await createDb(':memory:')
+    await upsertGameMeta(
+      db,
+      {
+        appid: KSP2,
+        name: 'Kerbal Space Program 2',
+        tags: { Simulation: 100 },
+        genres: [],
+        categories: [2],
+        reviewsTotal: 22_302,
+        reviewsPercent: 25,
+      },
+      NOW - 30 * DAY,
+    )
+    await db.execute({
+      sql: "UPDATE games SET alive = 0, dead_reason = 'panned', signals_at = ? WHERE appid = ?",
+      args: [NOW - 30 * DAY, KSP2],
+    })
+    expect(deadVerdict((await getGameMeta(db, KSP2))!, NOW)).toMatch(/отрицательные/)
+
+    const r = await measure(db, NOW, { total: 120, positive: 98 })
+    expect(r.measured).toBe(1)
+    const meta = (await getGameMeta(db, KSP2))!
+    expect(meta).toMatchObject({ alive: false, deadReason: 'panned', reviewsRecentTotal: 120, reviewsRecentPercent: 82 })
+    expect(deadVerdict(meta, NOW)).toBeNull()
   })
 })

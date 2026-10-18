@@ -216,5 +216,26 @@ describe('pickCopy', () => {
     const reason = 'Слово '.repeat(60).trim()
     const c = pickCopy({ name: 'Hades', reason, kind: 'play' })
     expect(c.description.length).toBeLessThanOrEqual(155)
+    // кавычки — внутри потолка, а не сверх него
+    expect(c.description).toMatch(/^«.*…»$/)
+  })
+
+  /**
+   * Причина обращена к тому, кто делился: «У тебя в «Terraria» уже 130 ч…».
+   * Голой строкой под заголовком «imbored выбрал мне на вечер» превью в
+   * Telegram и VK читалось как сказанное получателю — что это он наиграл
+   * сто тридцать часов в игру, которой у него, может, и нет. В кавычках это
+   * цитата того, что imbored сказал отправителю, — как в цитате на самой
+   * странице и на карточке в чате (quoted у обеих).
+   */
+  test('описание — причина в кавычках, как цитата на странице и на карточке', () => {
+    const reason = 'У тебя в «Terraria» уже 130 ч. Теги по-прежнему в твоём вкусе — вернись и проверь.'
+    const c = pickCopy({ name: 'Terraria', reason, kind: 'play' })
+    expect(c.description).toBe(quoted(reason))
+    expect(c.description).toBe('«У тебя в „Terraria“ уже 130 ч. Теги по-прежнему в твоём вкусе — вернись и проверь.»')
+  })
+
+  test('нет выбора — описание сайта, без кавычек: цитировать нечего', () => {
+    expect(pickCopy(null).description).not.toMatch(/^«/)
   })
 })

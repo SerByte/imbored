@@ -56,11 +56,14 @@ import {
   burnoutInvite,
   burnoutOffer,
   dealFrom,
+  genreLine,
   landingIndex,
   nextStep,
+  parseGenreRef,
   parseSeedRef,
   switchLine,
   type Deal,
+  type GenreRef,
   type Miss,
   type PlayPick,
   type SeedRef,
@@ -80,7 +83,7 @@ import {
   whoAmI,
 } from '@/lib/playcache'
 import { timeHiddenStore } from '@/lib/playtime'
-import { parseSeedParam, quizHref, roomBridgeHref } from '@/lib/presets'
+import { parseGenreParam, parseSeedParam, quizHref, roomBridgeHref } from '@/lib/presets'
 import { moodCaption } from '@/lib/quiz'
 import type { ContinueGame, Focus, Scope } from '@/lib/recommend'
 import { SOURCE_BADGE, SOURCE_BADGE_SHORT, suggestsInstall } from '@/lib/sources'
@@ -94,6 +97,7 @@ import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
 import { track, trackWait, type WaitPath } from '@/lib/track'
 import { parseWallMemo, remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
+import { CHOSEN_POSTER_WAIT_MS, chosenPoster, posterReady } from '@/lib/warmupwall'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { plural } from '@/lib/plural'
 import { TagChips } from '@/components/TagChips'
@@ -247,8 +251,11 @@ const STEP = {
  * настроение нет (seedFail), и у «Всё под «Не предлагать»», где соседи есть,
  * но все под фильтром при любом настроении. Кнопка встаёт, только если
  * затравка и правда была: «Не предлагать» бывает и у обычной выдачи.
+ *
+ * `genreless` — тот же выход для жанра со страницы /games («Подобрать без
+ * жанра», genreFail ниже).
  */
-type FailCard = { title: string; text: string; retry?: boolean; seedless?: boolean }
+type FailCard = { title: string; text: string; retry?: boolean; seedless?: boolean; genreless?: boolean }
 
 const FAIL: Record<string, FailCard> = {
   nocandidates: {
@@ -293,6 +300,22 @@ function seedFail(name: string | null): FailCard {
     title: 'Похожих не нашлось',
     text: `Под это настроение не прошла ни одна игра, похожая на ${name ? `«${name}»` : 'выбранную'}. Можно подобрать без «похожих» или сменить настроение.`,
     seedless: true,
+  }
+}
+
+/**
+ * nocandidates у выдачи по жанру со страницы /games (название — из тела
+ * отказа, как имя затравки). Общий текст винил бы баны, а пусто чаще всего
+ * от самого жанра: «с друзьями» оставляет из своих только сетевые
+ * (fitsSocial), а пул магазина того же жанра — только мультиплеер, и у
+ * визуальных новелл или головоломок там не остаётся ничего. Выход —
+ * та же выдача без жанра (кнопкой) или другое настроение.
+ */
+function genreFail(title: string): FailCard {
+  return {
+    title: 'В этом жанре ничего не нашлось',
+    text: `Под это настроение не прошла ни одна игра жанра «${title}» — ни своя, ни из магазина. Можно подобрать без жанра или сменить настроение.`,
+    genreless: true,
   }
 }
 
@@ -393,6 +416,23 @@ function Player({ say }: { say: (line: string) => void }) {
   const search = useSearchParams()
   const roulette = search.get('roulette') === '1'
   const focus: Focus | null = search.get('from') === 'untouched' ? 'untouched' : null
+  /*
+   * Жанр со страницы /games — адресом (/play?…&genre=roguelike, quizHref →
+   * квиз → playHref). Как mood и focus, из строки запроса: едет с каждым
+   * запросом выдачи, а сервер решает, применился ли он (при затравке — нет),
+   * и говорит это эхом (genre ниже). В рулетке и «нераспакованном» его нет —
+   * по той же причине, что затравки. Здесь — только форма адреса
+   * (parseGenreParam): словарь жанров /play не везёт, название приходит с
+   * эхом.
+   *
+   * askGenre — с адреса и для ключа выдачи (снят с первого рендера, как и
+   * всё в cacheKey), а запрос читает genreAsk: «Подобрать без жанра» на
+   * экране отказа (genreFail) снимает жанр насовсем, как «без «похожих»» —
+   * затравку. Ref, а не состояние: fetchPicks собран один раз и иначе
+   * помнил бы жанр первого рендера.
+   */
+  const askGenre = roulette || focus ? null : parseGenreParam(search.get('genre'))
+  const genreAsk = useRef(askGenre)
   // Дефолты — из NEUTRAL_MOOD, а не выписаны здесь: третья копия того же
   // настроения разошлась бы с квизом и «Игрой дня» при первой правке
   const mood: Mood = {
@@ -499,6 +539,8 @@ function Player({ say }: { say: (line: string) => void }) {
    * как переключатели. null — обычная выдача.
    */
   const [seed, setSeed] = useState<SeedRef | null>(null)
+  /** Жанр, под который собрана выдача на экране, — только из эха, как seed */
+  const [genre, setGenre] = useState<GenreRef | null>(null)
   /**
    * Затравка, с которой ИДТИ за выдачей, — адресом (/play?…&seed=).
    *
@@ -519,6 +561,8 @@ function Player({ say }: { say: (line: string) => void }) {
   )
   /** Чьих соседей не нашлось — имя из тела отказа nocandidates, для экрана отказа */
   const [failSeed, setFailSeed] = useState<string | null>(null)
+  /** Какого жанра не нашлось — название оттуда же: роут кладёт его, только если жанр применился */
+  const [failGenre, setFailGenre] = useState<string | null>(null)
   /**
    * Подталкивание под героем (lib/nudge.ts), под которое собрана выдача на
    * экране, — тоже только из эха. null — обычная выдача.
@@ -542,7 +586,7 @@ function Player({ say }: { say: (line: string) => void }) {
    * выдачу под ключом нового настроения.
    */
   const [cacheKey] = useState(() =>
-    playCacheKey({ mood, focus, roulette, lean: parseLean(search.get('lean')), seed: askSeed }),
+    playCacheKey({ mood, focus, roulette, lean: parseLean(search.get('lean')), seed: askSeed, genre: askGenre }),
   )
   /** На экране выдача с прошлого захода — рядом «Подобрать заново» */
   const [restored, setRestored] = useState(false)
@@ -800,6 +844,7 @@ function Player({ say }: { say: (line: string) => void }) {
             scope: next.scope,
             ...(next.lean ? { lean: next.lean } : {}),
             ...(next.seed ? { seed: next.seed } : {}),
+            ...(genreAsk.current ? { genre: genreAsk.current } : {}),
             ...(next.nudge ? { nudge: next.nudge } : {}),
             ...(next.exclude?.length ? { exclude: next.exclude } : {}),
           }),
@@ -850,13 +895,14 @@ function Player({ say }: { say: (line: string) => void }) {
            * осталось», — и советы у них противоположные. Там же — чьих соседей
            * не нашлось у «Как «X», но…» (seed у nocandidates, см. роут).
            */
-          const d = (await res.json().catch(() => null)) as { error?: unknown; seed?: unknown } | null
+          const d = (await res.json().catch(() => null)) as { error?: unknown; seed?: unknown; genre?: unknown } | null
           const code = d && typeof d.error === 'string' ? d.error : null
           // Ушёл, пока читалось тело, — причину писать уже некуда
           if (signal?.aborted) return { miss: 'gone' }
           setLimitedFor(null)
           setReason(code)
           setFailSeed(parseSeedRef(d?.seed)?.name ?? null)
+          setFailGenre(parseGenreRef(d?.genre)?.title ?? null)
           return { miss: 'failed', code }
         }
         const body: unknown = await res.json()
@@ -895,7 +941,7 @@ function Player({ say }: { say: (line: string) => void }) {
       }
     },
     // mood, focus, askedMood и roulette собираются из строки запроса и в рамках
-    // страницы неизменны
+    // страницы неизменны, а жанр читается из ref (genreAsk)
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   )
@@ -937,6 +983,7 @@ function Player({ say }: { say: (line: string) => void }) {
       setScope(deal.scope)
       setLean(deal.lean)
       setSeed(deal.seed)
+      setGenre(deal.genre)
       setNudge(deal.nudge)
       // Серверные часы — по ним подпись онлайна решает, имеет ли право
       // сказать «сейчас». См. докблок в components/PlayersNow. У выдачи с
@@ -989,6 +1036,7 @@ function Player({ say }: { say: (line: string) => void }) {
         lean,
         scope,
         seed,
+        genre,
         nudge,
         nowSec: meta.nowSec,
         viewer: meta.viewer,
@@ -1002,7 +1050,7 @@ function Player({ say }: { say: (line: string) => void }) {
       // (heldPlanned): время выдачи (meta.at) старит цены, а не план
       seenAt: Date.now(),
     })
-  }, [phase, picks, discoveries, continueGame, plan, timeHidden, engine, lean, scope, seed, nudge, index, liked, planned, cacheKey])
+  }, [phase, picks, discoveries, continueGame, plan, timeHidden, engine, lean, scope, seed, genre, nudge, index, liked, planned, cacheKey])
 
   useEffect(() => {
     /*
@@ -1064,11 +1112,27 @@ function Player({ say }: { say: (line: string) => void }) {
        * той свой барабан, и два выбора подряд читались бы как заминка.
        */
       const hero = got.picks[at]
-      // У игры не из Steam вертикального постера нет — выходить из стены нечему
-      if (!roulette && hero.appid > 0 && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      /*
+       * Такт — только с постером, который УЖЕ здесь. Он держит экран 1.6 с
+       * ради картинки, и на медленной сети шёл на пустой рамке: постер
+       * просился в ту же секунду и доезжал через десяток (замер на проде —
+       * запрос на 4.1 с, конец на 16.4 с), а герой выдачи всё это время
+       * ждал. Не успел за CHOSEN_POSTER_WAIT_MS — такта нет, герой встаёт
+       * сразу (lib/warmupwall). У игры не из Steam постера нет вовсе.
+       */
+      const poster = chosenPoster(hero)
+      const ceremony =
+        !roulette &&
+        poster !== undefined &&
+        !window.matchMedia('(prefers-reduced-motion: reduce)').matches &&
+        (await posterReady(poster, CHOSEN_POSTER_WAIT_MS))
+      // Ожидание постера — тоже await: ушедшему за эти доли секунды ни такта,
+      // ни выдачи, ни реплики не положено, как и после fetchPicks выше
+      if (ac.signal.aborted) return false
+      if (ceremony && poster) {
         // прерванный показ мог оставить такт ухода взведённым
         setLeaving(false)
-        setChosen({ appid: hero.appid, name: hero.name, art: hero.art })
+        setChosen({ appid: hero.appid, name: hero.name, art: hero.art, poster })
         await new Promise((done) => window.setTimeout(done, CHOSEN_MS))
         if (ac.signal.aborted) return false
         setLeaving(true)
@@ -1316,9 +1380,14 @@ function Player({ say }: { say: (line: string) => void }) {
    * и снимает её насовсем: «Подобрать заново» потом её не вернёт. Снимает
    * после ответа, а не до: экран отказа читает askSeed, и на время запроса
    * он подменился бы общим текстом, а нажатая кнопка ушла бы из-под фокуса.
+   *
+   * genreless — «Подобрать без жанра»: снимает жанр насовсем (genreAsk).
+   * Здесь — до запроса: экран отказа читает не его, а эхо отказа (failGenre),
+   * и оно меняется только с новым ответом.
    */
-  const retry = useCallback(async (withSeed: number | null = askSeed) => {
+  const retry = useCallback(async (withSeed: number | null = askSeed, genreless = false) => {
     if (retrying) return
+    if (genreless) genreAsk.current = null
     setRetrying(true)
     try {
       const got = await fetchPicks({ scope, lean, seed: withSeed })
@@ -1585,7 +1654,9 @@ function Player({ say }: { say: (line: string) => void }) {
         }
       : reason === 'nocandidates' && askSeed !== null
         ? seedFail(failSeed)
-        : (FAIL[reason ?? ''] ?? FAIL_UNKNOWN)
+        : reason === 'nocandidates' && failGenre !== null
+          ? genreFail(failGenre)
+          : (FAIL[reason ?? ''] ?? FAIL_UNKNOWN)
 
   /*
    * ЭКРАН ОШИБКИ ЗВУЧИТ.
@@ -1686,6 +1757,17 @@ function Player({ say }: { say: (line: string) => void }) {
             className="btn-ember px-6 py-3"
           >
             {retrying ? 'Подбираю…' : 'Подобрать без «похожих»'}
+          </button>
+        )}
+        {/* Жанра под это настроение нет — та же выдача без него, тем же
+            повтором (genreFail). Затравки тут нет: при ней экран — seedFail */}
+        {fail.genreless && (
+          <button
+            onClick={() => void retry(null, true)}
+            aria-disabled={retrying}
+            className="btn-ember px-6 py-3"
+          >
+            {retrying ? 'Подбираю…' : 'Подобрать без жанра'}
           </button>
         )}
 
@@ -2611,12 +2693,15 @@ function Player({ say }: { say: (line: string) => void }) {
                 приходит и адресом — со страницы игры и из библиотеки (askSeed):
                 подпись и «Вернуть обычную выдачу» у неё те же.
               */}
-              {(seed || (!roulette && !focus && pick.tags.length > 0)) && (
+              {(seed || genre || (!roulette && !focus && pick.tags.length > 0)) && (
                 <m.div
                   variants={STEP}
                   className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm"
                 >
                   {seed && <span className="text-faint">Похожие на «{seed.name}»</span>}
+                  {/* Жанр со страницы /games — подписью, как затравка: подо что
+                      собрана выдача и есть ли в ней свои (genreLine) */}
+                  {genre && <span className="text-faint">{genreLine(genre)}</span>}
                   {!roulette && !focus && pick.tags.length > 0 && (
                     <button
                       type="button"

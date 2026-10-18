@@ -9,7 +9,9 @@ import {
   type FeedbackRow,
 } from './db'
 import { editionKey } from './editions'
+import { inGenre } from './gamehub'
 import { nearGames } from './gamepage'
+import { playContextOf } from './liveness'
 import type { Lean } from './mood'
 import type { NudgePlan } from './nudge'
 import { playtimeHidden } from './playtime'
@@ -74,6 +76,14 @@ const POOL_LIMIT = 400
 const ROTATION_SLOTS = 5
 const REROLL_WILDCARD = 60
 
+/**
+ * Игр каталога одного жанра на выбор магазинной части (genre ниже): самые
+ * характерные по весу тега. Страница жанра показывает сорок, здесь втрое
+ * больше — с запасом на баны, «с друзьями», купленное и порог HUB_MIN_WEIGHT
+ * (inGenre), который вес тега в выборке ещё не гарантирует.
+ */
+const GENRE_POOL = 120
+
 export type CandidateOpts = {
   /** Серверные часы запроса */
   nowSec: number
@@ -94,6 +104,13 @@ export type CandidateOpts = {
   focus?: Focus | null
   /** «Как «X», но…» — appid игры, из соседей которой собирать */
   seed?: number | null
+  /**
+   * Жанр со страницы /games/<slug> — ключ тега Steam (hubTagOf в
+   * lib/gamehub), а не адрес. Свои — только игры этого жанра (inGenre), пул
+   * каталога — только он же. С затравкой не складывается: «как Hades» уже
+   * сказало, из чего выбирать, и затравка побеждает.
+   */
+  genre?: string | null
   /**
    * Подталкивание после выдачи (lib/nudge.ts). Настроение и источник план уже
    * поменял — маршрут передаёт их вместо спрошенных; здесь — отсев, наклоны и
@@ -148,6 +165,8 @@ export type CandidateSet = {
   playtimeHidden: boolean
   /** Затравка, если она применилась: чьи соседи в кандидатах */
   seed: { appid: number; name: string } | null
+  /** Жанр, если он применился (ключ тега Steam); при затравке — null */
+  genre: string | null
   /** Отранжированные кандидаты — с частями скора */
   candidates: ScoredCandidate[]
   /** Они же после актуальности (filterActual) */
@@ -273,9 +292,36 @@ export async function buildCandidates(
    */
   const seedId = opts.seed ?? null
   let seed: CandidateSet['seed'] = null
+  /*
+   * ЖАНР СО СТРАНИЦЫ /games/<slug> — «РОГАЛИКИ ИЗ ТВОЕЙ БИБЛИОТЕКИ».
+   *
+   * Тот же приём, что у затравки ниже: скорится только своё, прошедшее
+   * правило страницы жанра (inGenre), а пул каталога — игры того же жанра
+   * вместо тегов профиля. Профиль вкуса, якоря и «Продолжить» по-прежнему по
+   * всей библиотеке. Своих этого жанра нет — выдача соберётся из магазинных
+   * (mixHeroPool отдаёт им места, которых своим не хватило), и маршрут скажет
+   * об этом строкой. «Не предлагать» судит внутри скоринга, как всегда: жанр
+   * под фильтром — тот же отказ allmuted.
+   */
+  const genre = seedId === null ? (opts.genre ?? null) : null
   let scoredLibrary = games
   let newPool: GameMeta[]
-  if (seedId !== null) {
+  if (genre !== null) {
+    scoredLibrary = games.filter((g) => inGenre(libMetas.get(g.appid)?.tags, genre))
+    newPool = (
+      await fetchDiscoveryPool(db, {
+        tags: [genre],
+        bannedAppids: [...hidden],
+        requireMultiplayer: mood.social === 'friends',
+        perTag: GENRE_POOL,
+        limit: GENRE_POOL,
+      })
+    ).filter(
+      (m) =>
+        // те же правила покупки, что у пула по вкусу ниже, и правило жанра
+        !owned.has(m.appid) && !ownedKeys.has(editionKey(m.name)) && !m.storeHidden && inGenre(m.tags, genre),
+    )
+  } else if (seedId !== null) {
     const seedMeta = libMetas.get(seedId) ?? (await getGamesMetaLite(db, [seedId])).get(seedId)
     if (!seedMeta) return 'nocandidates'
     const seedKey = editionKey(seedMeta.name)
@@ -371,6 +417,10 @@ export async function buildCandidates(
 
   // Игры из библиотеки не проходят офлайн-фильтры каталога — считаем здесь.
   // «С друзьями» судим строже: в компанию не годится то, во что вместе не сесть.
+  // «Один» — тоже строже мягкого вердикта каталога: кооп без одиночного режима
+  // проходит, только если напарника найдёт толпа (playContextOf, 'alone').
+  // Каталожные находки судятся здесь же заново: их games.alive посчитан
+  // мягким 'solo' и такой кооп пропускает.
   //
   // Метаданные каталога идут в тот же расчёт, а не только библиотечные: серии
   // определяются по группе целиком, и без пула вопрос «у тебя старая часть, а
@@ -383,7 +433,7 @@ export async function buildCandidates(
   for (const [appid, meta] of poolByAppid) {
     if (judged.has(appid) && !allMetas.has(appid)) allMetas.set(appid, meta)
   }
-  const actual = filterActual(candidates, allMetas, mood.social === 'friends' ? 'party' : 'solo')
+  const actual = filterActual(candidates, allMetas, playContextOf(mood, opts.moodless === true))
 
   // Своё и «нет в библиотеке» — разные разговоры и разные блоки. Потолок
   // знакомого ставится ДО смешивания с каталогом: mixHeroPool считает, сколько
@@ -408,6 +458,7 @@ export async function buildCandidates(
     tagWeight,
     playtimeHidden: timeHidden,
     seed,
+    genre,
     candidates,
     actual,
     own,

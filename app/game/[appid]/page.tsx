@@ -13,8 +13,9 @@ import { PlayersNow } from '@/components/PlayersNow'
 import { ProgressRing } from '@/components/ProgressRing'
 import { RefundNote } from '@/components/RefundNote'
 import { OwnedLaunch } from '@/components/OwnedLaunch'
+import { OwnedNear } from '@/components/OwnedNear'
 import { sitemapGames } from '@/lib/db'
-import { discountTrustedUntil, discountView, trustedPrice } from '@/lib/discount'
+import { discountTrustedUntil, discountView, lapsedRegularPrice, trustedPrice } from '@/lib/discount'
 import { trimArt } from '@/lib/art'
 import { PRERENDER_TOP, prerenderAtBuild } from '@/lib/gamecache'
 import { HUB_GENRES, hubPath, primaryGenre } from '@/lib/gamehub'
@@ -26,9 +27,11 @@ import {
   isRussianText,
   loadGamePage,
   reviewFacts,
+  reviewPulse,
   type StudioLine,
 } from '@/lib/gamepage'
-import { gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
+import { gameBreadcrumbLd, gameJsonLd, ldScript, pageNameRu } from '@/lib/jsonld'
+import { patchArchivePath } from '@/lib/patcharchive'
 import { priceRegion, regionCurrency } from '@/lib/steamregion'
 import { OG_SITE } from '@/lib/site'
 import { plural } from '@/lib/plural'
@@ -37,8 +40,10 @@ import { isReplayable } from '@/lib/recommend'
 import { refundEligible } from '@/lib/refund'
 import { seedable } from '@/lib/roomseed'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
+import { shotUrl } from '@/lib/shots'
 import { STORE_LABEL } from '@/lib/stores'
 import { tagRu } from '@/lib/tagsru'
+import { heroTitleClass } from '@/lib/titlesize'
 import { SectionLabel } from '@/components/Labels'
 import { TrailerPreview } from '@/components/TrailerPreview'
 import { GameCardBody } from '@/components/GameCard'
@@ -123,7 +128,7 @@ export async function generateMetadata({
     meta,
     facts: reviewFacts(meta, reviewsSummary),
     prosCons,
-    verdict: deadVerdict(meta),
+    verdict: deadVerdict(meta, nowSec()),
   })
 
   const canonical = `/game/${appid}`
@@ -272,6 +277,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   if (!data) notFound()
 
   const { meta, reviewsSummary, prosCons } = data
+  // Второе, русское название под заголовком — по тому же правилу, что
+  // alternateName в разметке: видимое и размеченное не расходятся
+  const nameRu = pageNameRu(meta, data.nameRu)
   const now = nowSec()
   // Срок — датой: отсчёт «осталось 2 дня» менял бы страницу каждые сутки и
   // врал бы из недельного кэша (см. докблок revalidate)
@@ -281,14 +289,27 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   // null — цене верить нечему (сгоревшая распродажа), см. trustedPrice. Плашку
   // тогда не рисуем вовсе: пустое стекло в герое хуже отсутствия цены.
   const price = trustedPrice(meta, now)
+  // Спрятанная цена погасшей распродажи — не молчание: обычную цену той же
+  // пары герой называет с подписью, пока сверка не переснимет (lapsedRegularPrice)
+  const regular = price === null ? lapsedRegularPrice(meta, now) : null
   // Страница публичная и не знает, куплена ли игра у читающего, — поэтому
   // строка про возврат здесь нейтральная, без «не зайдёт»
   const refund = refundEligible(meta, now)
   const studio = byline(meta.developer, meta.releaseYear)
   const facts = reviewFacts(meta, reviewsSummary)
+  // Месяц и русские под кольцом (reviewPulse): пустой список — строк нет
+  const pulse = reviewPulse(meta, facts, now)
   // Ответ мёртвой игре — он же прячет «Запустить»: звать в пустой матчмейкинг
-  // кнопкой запуска значит спорить с собственным вердиктом
-  const verdict = deadVerdict(meta)
+  // кнопкой запуска значит спорить с собственным вердиктом. Часы — ради
+  // пульса: свежий месяц похвал снимает «большинство отзывов отрицательные»
+  const verdict = deadVerdict(meta, now)
+  /*
+   * «Похожее уже есть у тебя» (lib/ownednear) — у игры Steam, где стоит
+   * OwnedLaunch (он и спрашивает), и только при готовых соседях: полка по
+   * тегу (similarTag) значит, что таблицы соседей у игры нет, и роут
+   * искать своих будет не в чем — спрашивать незачем.
+   */
+  const nearAsk = !meta.storeUrl && !verdict && data.similar.length > 0 && !data.similarTag
   // При равных весах — по имени: тот же порядок, что у жанров в разметке
   // (gameJsonLd), иначе видимое и размеченное расходились бы на ничьих
   const topTags = Object.entries(meta.tags)
@@ -331,6 +352,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           __html: ldScript([
             gameJsonLd({
               meta,
+              // то же второе название, что рядом под заголовком (pageNameRu)
+              nameRu: data.nameRu,
               // Оценки (facts) здесь нет намеренно: доля отзывов — Steam, а
               // чужие оценки размечать нельзя. Почему — докблок lib/jsonld
               baseUrl: appBaseUrl(),
@@ -402,7 +425,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           тегов в ряд, описание в три строки, все кнопки в ряд, пустоты нет.
 
           Десктоп не тронут: max-w-5xl держит контейнер на 984, и с 1024 разрез
-          даёт те же 380 и 572, что и до правки.
+          даёт те же колонки, что и до правки: 380 и 556 (984 − 380 − зазор
+          lg:gap-12 в 48; 572 — это ещё при gap-8).
 
           Порог в sizes у обеих картинок героя сдвинут вместе с разрезом: между
           768 и 1024 арт теперь во всю ширину, и подсказка «380px» дала бы
@@ -450,7 +474,26 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 </Link>
               </nav>
             )}
-            <h1 className="font-display text-display-lg">{meta.name}</h1>
+            {/* Кегль — по длине имени: у 108-знаковых display-lg давал стену в
+                восемь строк, и оценка с кнопками уходили за первый экран. И
+                по самому широкому слову: «TROUBLESHOOTER:» в display-lg шире
+                колонки, а рваться посреди слова ему незачем — ступенью ниже
+                оно целое. Пороги и замеры — lib/titlesize */}
+            <h1 className={heroTitleClass(meta.name)}>{meta.name}</h1>
+            {/*
+              Русское название магазина — вторым рядом, если оно у игры своё.
+              Заголовок — английское, как в Steam (nameSql в lib/db), а по
+              русскому игру ищут здесь: «Ведьмак 3: Дикая Охота» под «The
+              Witcher 3: Wild Hunt». Без этой строки ~70 страниц верха
+              каталога потеряли бы русское название вовсе — до правила двух
+              названий оно стояло прямо в заголовке. Та же строка — в
+              alternateName разметки, и по тому же правилу (pageNameRu).
+            */}
+            {nameRu && (
+              <p className="-mt-2 text-dim text-lg [overflow-wrap:anywhere]">
+                {nameRu}
+              </p>
+            )}
             {/*
               Студия и год. Оба поля заполнены у ВСЕХ игр каталога (1000 из
               1000, проверено запросом), а страница не показывала ни одного из
@@ -465,7 +508,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               MetaLine, а не свои классы: роль ровно её — строка фактов через
               разделитель.
             */}
-            {(studio || meta.ccu) && (
+            {/* typeof, а не голый meta.ccu: у игры без студии ноль онлайна
+                иначе выпал бы в разметку литералом «0» вместо строки */}
+            {(studio || typeof meta.ccu === 'number') && (
               <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 {studio && <MetaLine>{studio}</MetaLine>}
                 {/*
@@ -486,15 +531,17 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               </p>
             )}
             {/*
-              Оценка собирается из того, что есть: сводка точнее, но её нет у
-              278 игр из тысячи — там числа берутся из колонок, заполненных у
-              всех. Раньше блок целиком висел на сводке, и почти треть страниц
-              не отвечала на вопрос из собственного заголовка.
+              Оценка собирается из того, что есть (reviewFacts): все языки из
+              сверки каталога — те же, что на плитках хабов и /play, — а пока
+              сверка до игры не дошла, сводка карточки. Англоязычная шкала
+              порогов сюда не выходит: «из 143 тыс.» у Hades при 309 тысячах.
+              Раньше блок целиком висел на сводке, и почти треть страниц не
+              отвечала на вопрос из собственного заголовка.
 
-              Слово — только из сводки. Проценты и количество мы пересказываем,
-              а словесную шкалу Steam придумывать за неё нельзя; без сводки
-              рядом с кольцом остаётся «положительных из N отзывов», и этого
-              хватает — процент уже стоит внутри кольца.
+              Слово — только той же сводки, что числа. Проценты и количество мы
+              пересказываем, а словесную шкалу Steam придумывать за неё нельзя;
+              без слова рядом с кольцом остаётся «положительных из N отзывов»,
+              и этого хватает — процент уже стоит внутри кольца.
             */}
             {facts && (
               <div className="flex items-center gap-3.5 text-sm">
@@ -521,6 +568,24 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   </span>
                 </div>
               </div>
+            )}
+            {/*
+              Пульс отзывов — прямо под кольцом: последний месяц, когда он
+              расходится со всем временем, и отзывы на русском (reviewPulse).
+              Это то же «стоит ли играть», только про сейчас и про своих: «раньше
+              ругали — сейчас хвалят» не видно ни по какому числу за всё время.
+              dl, как у фактов ниже: пары «подпись — значение» скринридер
+              читает парами.
+            */}
+            {pulse.length > 0 && (
+              <dl className="-mt-1 flex flex-col gap-0.5 text-xs text-dim">
+                {pulse.map((t) => (
+                  <div key={t.label} className="flex flex-wrap gap-x-1.5">
+                    <dt>{t.label}:</dt>
+                    <dd className="tabular-nums text-ink/80">{t.value}</dd>
+                  </div>
+                ))}
+              </dl>
             )}
             {/*
               Вердикт мёртвой игре — сразу под оценкой, выше тегов: это и есть
@@ -636,6 +701,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                       name={meta.name}
                       finishable={!isReplayable(meta)}
                       follow={data.similar.length > 0}
+                      near={nearAsk}
                       className="btn-glass"
                     />
                   )}
@@ -705,6 +771,30 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   </span>
                 </PriceLine>
               )}
+              {/* Погасшая распродажа: само акционное число прячет
+                  trustedPrice, а обычную цену той же пары называем — с
+                  подписью, потому что текущий ценник (обычный или продлённой
+                  акции) отсюда не узнать. Без неё герой молчал о цене, хотя
+                  «Steam возвращает деньги» под кнопками стоял. Без ShownUntil:
+                  срока у этой строки нет, её снимает перезамер цены.
+
+                  Подпись — видимым текстом, а не title: подсказку при
+                  наведении не видят ни на телефоне, ни скринридером, а без
+                  неё «обычная цена» читалась бы как «сейчас столько». И
+                  правдивая в обоих случаях, что прячет trustedPrice: срок
+                  акции вышел (её могли и продлить) или замер без срока
+                  протух — кончилась ли скидка, отсюда не узнать */}
+              {!meta.isFree && !meta.storeHidden && regular !== null && (
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-sm">
+                  <span className="text-dim">обычная цена</span>
+                  {/* бесплатной строки здесь не бывает — её отсекает условие выше */}
+                  <PriceTag priceFinal={regular} cc={meta.priceCc ?? null} isFree={false} size="hero" />
+                  <PriceWhere cc={meta.priceCc} />
+                  <span className="basis-full text-xs text-dim">
+                    Цену сняли во время скидки, а идёт ли она ещё, мы не знаем — в Steam может быть дешевле
+                  </span>
+                </span>
+              )}
             </div>
             {refund && <RefundNote tone="neutral" />}
           </div>
@@ -724,7 +814,14 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         {meta.trailer && (
           <section>
             <SectionLabel className="mb-4">В движении</SectionLabel>
-            <TrailerPreview trailer={meta.trailer} name={meta.name} className="max-w-3xl" />
+            <TrailerPreview
+              trailer={meta.trailer}
+              name={meta.name}
+              // Телефону — кадр 600×338 вместо movie_full 1920×1080: тот же
+              // файл, что берёт блок «Скриншоты» ниже (см. TrailerPreview)
+              smallPoster={meta.screenshots?.[0] ? shotUrl(meta.screenshots[0], 'small') : undefined}
+              className="max-w-3xl"
+            />
           </section>
         )}
 
@@ -788,6 +885,22 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           <section>
             <SectionLabel className="mb-4">Что нового</SectionLabel>
             <GameNews items={data.news} name={meta.name} />
+            {/*
+              Архив обновлений (/game/<appid>/news) — все патчи, что держит
+              ретенция, а карточка показывает восемь. Ссылка — только когда
+              патчей у игры больше, чем мест (newsMore, cardPatches в
+              lib/gamepage): при восьми и меньше все они уже здесь, и архив
+              повторил бы эти строки. Полная лента об этом не говорит —
+              восемь из восьми и восемь из тридцати выглядят одинаково. Без
+              префетча: архив на ISR и рендерится по первому заходу, а
+              карточку смотрят тысячи раз.
+            */}
+            {data.newsMore && (
+              <Link href={patchArchivePath(appid)} prefetch={false} className="tap link-more mt-4">
+                Все обновления «{meta.name}»
+                <Icon name="arrow" size={16} />
+              </Link>
+            )}
           </section>
         )}
 
@@ -808,6 +921,10 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             GameLink без префетча: шесть холодных рендеров с записью ISR на
             каждый просмотр карточки, до которой доскроллили, — не цена за
             шесть ссылок, по которым уйдут в лучшем случае по одной. */}
+        {/* Свои из этих же соседей — над ними: до покупки сначала то, что
+            уже лежит на полке. Разметка ISR пуста, строку дорисовывает
+            островок по ответу владения (lib/ownednear) */}
+        {nearAsk && <OwnedNear appid={appid} />}
         {data.similar.length > 0 && (
           <section>
             <SectionLabel className="mb-4">

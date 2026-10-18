@@ -92,6 +92,98 @@ describe('индекс каталога: провод и чтение', () => {
   })
 })
 
+/*
+ * Два названия у одной игры. Каталог хранит английское название магазина
+ * (games.name — lib/catalog, STORE_LANGUAGE), а обогащение карточки
+ * приносит ещё и русское, если оно у игры в Steam своё (games.name_ru —
+ * правило названий в апсерте, lib/db). Прежде русское затирало английское,
+ * и «witcher 3» отвечал «Ничего не нашлось» на «Ведьмак 3: Дикая Охота» —
+ * одну из тридцати самых популярных игр каталога, а с ней «Хогвартс.
+ * Наследие», «Призрак Цусимы» и ещё шесть десятков.
+ */
+describe('два названия: английское из магазина и русское', () => {
+  const WITCHER = { appid: 292030, name: 'The Witcher 3: Wild Hunt', nameRu: 'Ведьмак 3: Дикая Охота' }
+  const GWENT = { appid: 1284410, name: 'GWENT: The Witcher Card Game', nameRu: 'ГВИНТ: Ведьмак. Карточная игра' }
+  const both = (...rows: Array<{ appid: number; name: string; nameRu?: string | null }>) =>
+    readSearchIndex(encodeSearchIndex(rows)) ?? []
+
+  test('второе название едет, только если оно другое, — по номеру строки', () => {
+    expect(
+      encodeSearchIndex([
+        { appid: 570, name: 'Dota 2' },
+        WITCHER,
+        // Русское название магазина и есть английское — второго нет
+        { appid: 873190, name: 'ЕСТЬ ДВА СТУЛА', nameRu: 'ЕСТЬ ДВА СТУЛА' },
+        // Свёртка та же — искать по нему нечего
+        { appid: 7670, name: 'BioShock™', nameRu: 'BioShock' },
+        { appid: 1, name: 'Foo', nameRu: '   ' },
+        { appid: 2, name: 'Bar', nameRu: null },
+      ]),
+    ).toEqual({
+      ids: [570, 292030, 873190, 7670, 1, 2],
+      names: ['Dota 2', 'The Witcher 3: Wild Hunt', 'ЕСТЬ ДВА СТУЛА', 'BioShock™', 'Foo', 'Bar'],
+      alt: { 1: 'Ведьмак 3: Дикая Охота' },
+    })
+  })
+
+  test('номер строки — после выброшенных пустых названий, пробелы схлопнуты', () => {
+    expect(
+      encodeSearchIndex([{ appid: 1, name: '  ' }, { ...WITCHER, nameRu: ' Ведьмак 3:\n Дикая Охота ' }]),
+    ).toEqual({ ids: [292030], names: ['The Witcher 3: Wild Hunt'], alt: { 0: 'Ведьмак 3: Дикая Охота' } })
+  })
+
+  test('«witcher 3» и «ведьмак 3» находят одну и ту же игру', () => {
+    const catalog = both({ appid: 570, name: 'Dota 2' }, WITCHER)
+    expect(searchCatalog(catalog, 'witcher 3').games.map((g) => g.appid)).toEqual([292030])
+    expect(searchCatalog(catalog, 'ведьмак 3').games.map((g) => g.appid)).toEqual([292030])
+    expect(searchCatalog(catalog, 'дикая охота').games.map((g) => g.appid)).toEqual([292030])
+  })
+
+  /*
+   * Строка списка называет игру английским названием — тем же, что у её
+   * карточки. Нашлась она по русскому — русское вторым рядом: иначе на
+   * «ведьмак» человек видел бы строку, где его слова нет вовсе.
+   */
+  test('нашлось по русскому — оно в находке вторым названием, по английскому — нет', () => {
+    const catalog = both(WITCHER)
+    expect(searchCatalog(catalog, 'ведьмак').games).toStrictEqual([
+      { appid: 292030, name: 'The Witcher 3: Wild Hunt', alias: 'Ведьмак 3: Дикая Охота' },
+    ])
+    expect(searchCatalog(catalog, 'witcher').games).toStrictEqual([
+      { appid: 292030, name: 'The Witcher 3: Wild Hunt' },
+    ])
+    // Оба подходят одинаково («3») — второе название ничего не объясняет
+    expect(searchCatalog(catalog, '3').games).toStrictEqual([{ appid: 292030, name: 'The Witcher 3: Wild Hunt' }])
+  })
+
+  test('из двух названий считается лучшее совпадение', () => {
+    // У ГВИНТа отзывов больше, но «ведьмак» с начала русского названия — только у Ведьмака 3
+    const catalog = both(GWENT, WITCHER)
+    expect(names(searchCatalog(catalog, 'ведьмак'))).toEqual([WITCHER.name, GWENT.name])
+    expect(names(searchCatalog(catalog, 'witcher'))).toEqual([GWENT.name, WITCHER.name])
+  })
+
+  test('русский запрос, нашедший игру по русскому названию, раскладку не пробует', () => {
+    const r = searchCatalog(both(WITCHER, { appid: 1, name: 'Dtlmvfr Simulator' }), 'ведьмак')
+    expect(names(r)).toEqual([WITCHER.name])
+    expect(r.layout).toBeNull()
+    expect(searchStatus('ready', 'ведьмак', r)).toBe('Нашлась 1 игра')
+  })
+
+  test('битые вторые названия пропускаются, а строки и индекс остаются', () => {
+    const body = { ids: [1, 2, 3], names: ['Alpha', 'Beta', 'Gamma'] }
+    for (const alt of ['x', [1], null, 7]) {
+      expect(readSearchIndex({ ...body, alt })?.map((e) => e.alt), String(alt)).toEqual([
+        undefined,
+        undefined,
+        undefined,
+      ])
+    }
+    const got = readSearchIndex({ ...body, alt: { 0: 7, 1: 'Бета', 2: ' ™ ', 9: 'Лишнее' } })
+    expect(got?.map((e) => e.alt?.name)).toEqual([undefined, 'Бета', undefined])
+  })
+})
+
 describe('поиск по каталогу', () => {
   test('пустой запрос — пусто: каталог из шести тысяч строк не список', () => {
     const r = searchCatalog(index('Portal', 'Dota 2'), '  — ')
@@ -394,7 +486,10 @@ describe('запрос, набранный не в той раскладке', (
       expect(r.games, q).toEqual([])
       expect(r.total, q).toBe(0)
       expect(r.layout, q).toBeNull()
-      expect(searchStatus('ready', q, r), q).toBe('Ничего не нашлось. Названия здесь — как в Steam, обычно латиницей')
+      // Подсказка — та же, что у любого русского запроса без находки (см. «строка статуса»)
+      expect(searchStatus('ready', q, r), q).toBe(
+        'Ничего не нашлось. Русское название есть не у каждой игры — попробуй как в Steam, латиницей',
+      )
     }
   })
 
@@ -541,10 +636,17 @@ describe('строка статуса', () => {
     expect(searchStatus('ready', 'цшесрук', found(2, 2, 'witcher'))).toBe('Нашлись 2 игры по «witcher»')
   })
 
+  /*
+   * Русский запрос ищет и русские названия (второе название игры, см.
+   * «два названия»), но они есть только у игр, которым его дал Steam. Прежняя
+   * подсказка — «названия здесь… обычно латиницей» — говорила, что по-русски
+   * искать незачем, а теперь «ведьмак» находит; сказано, почему не нашлось
+   * здесь и что набрать.
+   */
   test('ничего — и подсказка, если искали по-русски', () => {
     expect(searchStatus('ready', 'zzz', found(0))).toBe('Ничего не нашлось')
-    expect(searchStatus('ready', 'ведьмак', found(0))).toBe(
-      'Ничего не нашлось. Названия здесь — как в Steam, обычно латиницей',
+    expect(searchStatus('ready', 'гонки', found(0))).toBe(
+      'Ничего не нашлось. Русское название есть не у каждой игры — попробуй как в Steam, латиницей',
     )
   })
 })
@@ -620,5 +722,26 @@ describe('окно поиска — комбобокс по шаблону ARIA'
     expect(option).toContain('aria-selected={')
     expect(option).toContain('tabIndex={-1}')
     expect(option).toContain('id={optionId(i)}')
+  })
+
+  /*
+   * Серии различаются хвостом названия: «The Legend of Heroes: Trails of Cold
+   * Steel», «… II», «… III», «… IV»; «The Dark Pictures Anthology: House of
+   * Ashes» и она же «- Friend's Pass». Строка в одну линию с многоточием
+   * на телефоне (~265 px у текста при ширине 375) показывала четыре
+   * одинаковых «Trails of C…», а полное название жило только в title —
+   * подсказке, которой у пальца нет. Название переносится, и хвост виден.
+   * Сторож — против «прибраться» обратно в truncate.
+   */
+  test('название в строке переносится, а не режется многоточием', () => {
+    const row = src.slice(src.indexOf('<GameLink'), src.indexOf('</GameLink>'))
+    expect(row, 'строка найдена').toContain('{g.name}')
+    expect(row).not.toMatch(/\btruncate\b|line-clamp-|title=\{g\.name\}/)
+    expect(row).toMatch(/min-w-0[^"]*break-words|break-words[^"]*min-w-0/)
+  })
+
+  test('нашлось по русскому названию — оно в строке вторым рядом', () => {
+    const row = src.slice(src.indexOf('<GameLink'), src.indexOf('</GameLink>'))
+    expect(row).toMatch(/\{g\.alias && /)
   })
 })

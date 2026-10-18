@@ -1,17 +1,21 @@
-import { ImageResponse } from 'next/og'
 import { ogFonts, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { PosterWall, postersOf, WallShade, WALL_POSTERS } from '@/lib/ogcard'
+import { isrImage } from '@/lib/ogresponse'
 import { CANVAS_WIDE, WALL_WIDE } from '@/lib/ogwall'
 import { plural } from '@/lib/plural'
 import { loadGenre } from './load'
 
-export const alt = 'Жанр — imbored'
+// Одна на сегмент — и для жанра, и для подборки (/games/coop…): «Жанр» у
+// карточки «Кооперативных игр» говорил бы скринридеру неправду
+export const alt = 'Подборка игр — imbored'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
 /**
  * Карточка жанра для чатов и выдачи: стена постеров его верхних игр — тот же
- * жест, что у портрета и сравнения (lib/ogcard), — и название жанра.
+ * жест, что у портрета и сравнения (lib/ogcard), — и название жанра. У
+ * подборки (HUB_FACETS: «с другом», «бесплатные»…) — то же самое с её
+ * заголовком: «во что поиграть с другом» пересылают чаще любого жанра.
  *
  * Сутки кэша, как у страницы: список меняется не чаще. Пустой
  * generateStaticParams регистрирует сегмент — без него revalidate не значит
@@ -41,7 +45,7 @@ export default async function Image({ params }: { params: Promise<{ tag: string 
   const posters = await postersOf(games.slice(0, WALL_POSTERS), (id) => byId.get(id))
   const n = games.length
 
-  return new ImageResponse(
+  return isrImage(
     (
       <div
         style={{
@@ -67,17 +71,27 @@ export default async function Image({ params }: { params: Promise<{ tag: string 
             flexDirection: 'column',
           }}
         >
+          {/* Подборка (/games/coop…) — не жанр: и шапка, и подпись говорят,
+              по чему отобрано, а не «жанр главный» */}
           <div style={{ fontSize: 20, letterSpacing: 6, color: OG_EMBER, marginBottom: 18 }}>
-            IMBORED.CC · ИГРЫ ПО ЖАНРАМ
+            {genre?.kind === 'facet' ? 'IMBORED.CC · ПОДБОРКИ' : 'IMBORED.CC · ИГРЫ ПО ЖАНРАМ'}
           </div>
           {/* Запас снизу — под хвосты кириллицы (см. карточку портрета) */}
           <div style={{ fontSize: 76, lineHeight: 1.12, marginBottom: 22 }}>
             {genre ? genre.title : 'Игры по жанрам'}
           </div>
+          {/* Пустой список — сборка без базы или подборка, которой ещё нечем
+              ответить («на 20 минут» ждёт уверенной семантики). Подборке —
+              своя строка: «Тридцать жанров» под «Играми на 20 минут» звали бы
+              её жанром и обещали бы то, чего на странице нет */}
           <div style={{ fontSize: 26, color: OG_DIM }}>
-            {n > 0
-              ? `${n} ${plural(n, 'игра', 'игры', 'игр')}, для которых жанр главный, — по отзывам игроков`
-              : 'Тридцать жанров — по отзывам игроков Steam'}
+            {genre?.kind === 'facet'
+              ? n > 0
+                ? `${n} ${plural(n, 'игра', 'игры', 'игр')} — по отзывам игроков Steam`
+                : 'Подборка собирается — по отзывам игроков Steam'
+              : n > 0
+                ? `${n} ${plural(n, 'игра', 'игры', 'игр')}, для которых жанр главный, — по отзывам игроков`
+                : 'Тридцать жанров — по отзывам игроков Steam'}
           </div>
         </div>
       </div>

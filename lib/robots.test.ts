@@ -65,7 +65,6 @@ describe('robots.txt', () => {
     for (const url of [
       '/portrait',
       '/compat',
-      '/room/new',
       '/play',
       '/play?time=short',
       '/explore',
@@ -73,6 +72,22 @@ describe('robots.txt', () => {
       '/api/prepare',
     ]) {
       expect(allowed(rules, url), url).toBe(false)
+    }
+  })
+
+  /**
+   * «Позвать в эту игру» ставит /room/new?game=<appid> обычной ссылкой на
+   * карточке каждой сетевой игры — это тысячи разных адресов,
+   * и все со страниц из карты сайта (ещё /pick, /compat и подборки про
+   * компанию /games/coop, /games/split-screen — HubFacet.party). Под Disallow
+   * Google индексирует такой адрес голым, по тексту ссылки, — та же механика,
+   * что у /quiz ниже. Открыт он ради noindex заголовком (/room/:path*), а не
+   * ради выдачи.
+   */
+  test('создание комнаты открыто краулеру — и с игрой в адресе', () => {
+    const rules = rulesOf()
+    for (const url of ['/room/new', '/room/new?game=730', '/room/new?game=-5&preset=evening']) {
+      expect(allowed(rules, url), url).toBe(true)
     }
   })
 
@@ -98,9 +113,12 @@ describe('robots.txt', () => {
       '/',
       '/game/730',
       '/game/730/news/5123894512345',
+      // архив обновлений игры и подборки хаба (lib/patcharchive, HUB_FACETS)
+      '/game/730/news',
       '/games',
       '/games/roguelike',
       '/games/point-and-click',
+      '/games/coop',
       '/whatsnew',
       '/whatsnew/feed.xml',
       '/indexnow-key.txt',
@@ -160,6 +178,15 @@ describe('noindex заголовком', () => {
     expect(noindexed('/roomsx')).toBe(false)
   })
 
+  /**
+   * Без Disallow единственное, что держит /room/new?game=… вне выдачи, —
+   * заголовок. Сопоставитель Next смотрит на путь без строки запроса, так
+   * что правило /room/:path* накрывает все варианты ?game= разом.
+   */
+  test('создание комнаты — с noindex заголовком: robots.txt его больше не прячет', () => {
+    expect(noindexed('/room/new')).toBe(true)
+  })
+
   test('правило /room/:path* не задевает /rooms — у того своё, точное', () => {
     expect(getPathMatch('/room/:path*')('/rooms')).toBe(false)
   })
@@ -186,8 +213,10 @@ describe('noindex заголовком', () => {
       '/quiz',
       '/game/730',
       '/game/730/news/5123894512345',
+      '/game/730/news',
       '/games',
       '/games/roguelike',
+      '/games/coop',
       '/whatsnew',
       '/portraits',
       '/compatibility',

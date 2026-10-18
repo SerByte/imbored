@@ -26,12 +26,19 @@ export function ScaleBadge({ scale }: { scale: StoredNews['scale'] }) {
  * Дата через lib/freshness, а не через свой toLocaleDateString: зона обязана
  * быть зафиксирована, иначе сервер и браузер печатают разные дни и React
  * перерисовывает всё тело страницы. Подробности там же.
+ *
+ * Неразрывная всегда: это одна метка шириной около 115 px, а не фраза. В
+ * строке «Что нового» карточки игры её сжимал сосед, и на проде при 1440 шесть
+ * дат из восьми ломались в «28 сентября 2026 / г.», а на 390 — в три строки по
+ * слову. Пробелы в «2026 г.» обычные, переноса Intl не запрещает — запрещаем
+ * здесь, одним местом на все вызовы, архив обновлений игры в их числе
+ * (сторож — lib/newsrow.test.ts).
  */
 export function NewsDate({ at, className = '' }: { at: number; className?: string }) {
   return (
     <time
       dateTime={new Date(at * 1000).toISOString()}
-      className={`tabular-nums text-xs text-dim ${className}`}
+      className={`tabular-nums whitespace-nowrap text-xs text-dim ${className}`}
     >
       {dateLabel(at, { year: true })}
     </time>

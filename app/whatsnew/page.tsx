@@ -6,7 +6,7 @@ import { FeedLink } from '@/components/whatsnew/FeedLink'
 import { FeedWatch } from '@/components/whatsnew/FeedWatch'
 import { PatchRow } from '@/components/whatsnew/PatchRow'
 import { Stage } from '@/components/whatsnew/Stage'
-import { artCandidates } from '@/lib/art'
+import { artCandidates, artSrcSet } from '@/lib/art'
 import {
   getFeedForApps,
   getFeedLink,
@@ -156,6 +156,7 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
   }
 
   const heroMeta = metas.get(hero.appid)
+  const heroArt = { appid: hero.appid, art: heroMeta?.art, headerImage: heroMeta?.headerImage }
   // Базовая линия для плашки «N новых»: что именно сейчас нарисовано и докуда
   // достаёт хвост. Порядок тот же, что у /api/whatsnew/head.
   const keys = items.map((i) => `${i.appid}:${i.gid}`)
@@ -185,12 +186,11 @@ export default async function WhatsNewPage(props: PageProps<'/whatsnew'>) {
         // уверять, что патч вышел «сегодня»
         nowSec={now}
         publishedAts={items.map((i) => i.publishedAt)}
-        initialWash={
-          artCandidates(
-            { appid: hero.appid, art: heroMeta?.art, headerImage: heroMeta?.headerImage },
-            'hero',
-          )[0]
-        }
+        // Заливка начинается с арта обложки — тем же srcSet, что у неё
+        // самой: тогда браузер берёт тот же файл из кэша, а не качает
+        // второй (см. initialWashSrcSet в Stage)
+        initialWash={artCandidates(heroArt, 'hero')[0]}
+        initialWashSrcSet={artSrcSet(heroArt, 'hero')}
       >
         <Cover
           item={withoutBody(hero)}

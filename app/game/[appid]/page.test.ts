@@ -10,18 +10,21 @@ import { OwnedLaunch } from '@/components/OwnedLaunch'
 import { ProgressRing } from '@/components/ProgressRing'
 import { ShownUntil } from '@/components/ShownUntil'
 import { TrailerPreview } from '@/components/TrailerPreview'
+import { PULSE_RESHOW_SEC } from '@/lib/catalogsignals'
 import {
   replaceGameTags,
   setGameJson,
   setNewsDigest,
+  updateReviewPulse,
   upsertGameMeta,
   upsertNewsItems,
   type Db,
   type StoredNews,
 } from '@/lib/db'
+import { PRICE_TRUST_SEC } from '@/lib/discount'
 import { GAME_PAGE_REVALIDATE_SEC, PRERENDER_TOP } from '@/lib/gamecache'
 import { roomSeedHref } from '@/lib/presets'
-import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
+import { classOfTag, flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
 import type { GameMeta } from '@/lib/types'
 import GamePage, { generateMetadata, generateStaticParams, revalidate } from './page'
@@ -290,6 +293,78 @@ describe('кэш карточки игры', () => {
     expect(text).toContain('играли')
     expect(text).not.toContain('сейчас играют')
   })
+
+  /*
+   * Кольцо — все языки из сверки каталога, а под ним пульс: месяц, который
+   * разошёлся со всем временем, и отзывы на русском. Подписи датой, а не «месяц
+   * назад», — и вывод за неделю кэша не меняется от одних часов.
+   */
+  test('кольцо — все языки, под ним месяц и русские; через три дня — та же страница', async () => {
+    await seed()
+    await db.execute({
+      sql: `UPDATE games SET reviews_total = 142783, reviews_percent = 98,
+              reviews_all_total = 309180, reviews_all_percent = 97, reviews_all_score = 9,
+              reviews_ru_total = 16893, reviews_ru_percent = 96,
+              reviews_recent_total = 7948, reviews_recent_percent = 71, reviews_recent_at = ?
+            WHERE appid = ?`,
+      args: [T0 - DAY, APPID],
+    })
+    const text = textOf(flight(await GamePage(params)))
+    expect(text).toContain('Крайне положительные')
+    expect(text).toMatch(/из 309\s180 отзывов/)
+    // англоязычная шкала порогов людям не показывается
+    expect(text).not.toMatch(/142\s783/)
+    // 1_760_000_000 — 9 октября 2025 UTC, замер — сутками раньше
+    expect(text).toMatch(/За 30 дней до 8 октября:71% положительных из 7\s948 отзывов — ниже, чем за всё время/)
+    expect(text).toMatch(/На русском:96% положительных из 16\s893 отзывов/)
+
+    const first = await snapshot()
+    at(T0 + 3 * DAY)
+    expect(await snapshot()).toBe(first)
+  })
+
+  /*
+   * Пульс меряется раз в неделю, и каждый замер чуть другой: на пункт другая
+   * доля, на пару сотен другой счёт и всегда другая дата. Перепиши он строку
+   * под кольцом — карточка верха пула, самая читаемая, была бы новой
+   * страницей в ISR каждую неделю. Мелочь показанный замер не трогает
+   * (updateReviewPulse), а подпись датой честна и про прежний.
+   */
+  test('пульс не дёргает карточку от мелочи: два недельных замера на пункт врозь — та же страница', async () => {
+    await seed()
+    await db.execute({
+      sql: 'UPDATE games SET reviews_all_total = 309180, reviews_all_percent = 97, reviews_all_score = 9 WHERE appid = ?',
+      args: [APPID],
+    })
+    const pulse = (nowSec: number, total: number, positive: number) =>
+      updateReviewPulse(db, [{ appid: APPID, pulse: { total, positive } }], nowSec, {
+        reshowBefore: nowSec - PULSE_RESHOW_SEC,
+      })
+    await pulse(T0 - DAY, 7948, 5643) // 71%
+
+    // Неделя спустя — 72% из 8 211: тот же месяц на глаз. Часы одни и те же
+    // у обоих снимков: здесь проверяется замер, а не время
+    const week = T0 + 6 * DAY
+    at(week)
+    const first = await snapshot()
+    expect(textOf(flight(await GamePage(params)))).toMatch(/За 30 дней до 8 октября:71% положительных из 7\s948/)
+    await pulse(week, 8211, 5912)
+    expect(await snapshot()).toBe(first)
+
+    // Сторож не слепой: доля ушла на пять пунктов — это уже новость
+    await pulse(week, 8211, 5420) // 66%
+    expect(await snapshot()).not.toBe(first)
+    expect(textOf(flight(await GamePage(params)))).toMatch(/За 30 дней до 15 октября:66% положительных из 8\s211/)
+  })
+
+  test('ноль онлайна — «онлайн при замере: 0», а не «0 играли»', async () => {
+    // /game/711810: «0 играли» рядом с «72% из 1 886 отзывов» читалось как
+    // «в неё не играл никто». И у игры без студии ноль не выпадает литералом
+    await upsertGameMeta(db, game(APPID, { ccu: 0, ccuAt: T0 - 3 * DAY }), T0)
+    const text = textOf(flight(await GamePage(params)))
+    expect(text).toContain('онлайн при замере: 0')
+    expect(text).not.toMatch(/0\s*играли/)
+  })
 })
 
 /** JSON-LD страницы, как он уходит в HTML: первый <script type="application/ld+json"> */
@@ -328,6 +403,46 @@ describe('микроразметка говорит не больше стран
     expect(video.offers).toMatchObject({ '@type': 'Offer', price: '19.99' })
   })
 
+  /*
+   * Погасшая распродажа: замер пришёлся на акцию, а она кончилась. Сама цена
+   * — акционная, и показывать её нельзя (trustedPrice), но герой без цены и
+   * с «Steam возвращает деньги» под кнопками читался сбоем — так неделями
+   * стояли Hades и ICARUS, пока сверка не переснимет цену. Обычную цену мы
+   * знаем — «было» той же пары, — и подписанная как обычная, она правдива,
+   * кончилась акция или продлена. Ценой она не названа, поэтому Offer нет.
+   */
+  test('погасшая распродажа: в герое — обычная цена с подписью, в разметке Offer нет', async () => {
+    // Оба случая, что прячет trustedPrice: срок, названный Steam, вышел — и
+    // срока не было, а замер старше срока доверия
+    for (const lapsed of [
+      { discountEndsAt: T0 - DAY, priceAt: T0 - 10 * DAY },
+      { discountEndsAt: undefined, priceAt: T0 - PRICE_TRUST_SEC - DAY },
+    ]) {
+      await upsertGameMeta(
+        db,
+        game(APPID, { priceFinal: 999, priceInitial: 1999, discountPercent: 50, ...lapsed }),
+        T0,
+      )
+      const page = flight(await GamePage(params))
+      expect(textOf(page)).toContain('обычная цена')
+      expect(textOf(page)).toContain('19,99')
+      // Подпись — видимым текстом (title не видят ни телефон, ни скринридер), и
+      // без «кончилась»: продлённую акцию отсюда от кончившейся не отличить
+      expect(textOf(page)).toContain('идёт ли она ещё, мы не знаем — в Steam может быть дешевле')
+      expect(JSON.stringify(page)).not.toMatch(/кончилась/)
+      // акционное число не всплывает ни в каком виде
+      expect(textOf(page)).not.toMatch(/(^|[^\d])9,99/)
+      expect(jsonLdOf(page)[0]).not.toHaveProperty('offers')
+    }
+  })
+
+  test('сторож не слепой: у живой скидки и у обычной цены подписи «обычная цена» нет', async () => {
+    await seed()
+    expect(textOf(flight(await GamePage(params)))).not.toContain('обычная цена')
+    await upsertGameMeta(db, game(APPID, { priceFinal: 1999, priceInitial: 1999, discountPercent: 0, priceAt: T0 }), T0)
+    expect(textOf(flight(await GamePage(params)))).not.toContain('обычная цена')
+  })
+
   test('русский: строка — при любом ответе Steam, inLanguage — только при «есть»', async () => {
     await upsertGameMeta(db, game(APPID, { ruLang: 2 }), T0)
     let page = flight(await GamePage(params))
@@ -339,6 +454,27 @@ describe('микроразметка говорит не больше стран
     page = flight(await GamePage(params))
     expect(textOf(page)).toContain('нет — по данным Steam')
     expect(jsonLdOf(page)[0]).not.toHaveProperty('inLanguage')
+  })
+
+  test('русское название — вторым рядом под заголовком и alternateName; нет его — ни того, ни другого', async () => {
+    // Заголовок — английское название магазина (nameSql в lib/db). До правила
+    // двух названий крон карточек клал русское прямо в name, и у верха
+    // каталога оно стояло в H1 и <title>; теперь оно второе, но со страницы
+    // не пропадает
+    await upsertGameMeta(db, game(APPID, { name: 'The Witcher 3: Wild Hunt' }), T0)
+    let page = flight(await GamePage(params))
+    expect(textOf(page)).not.toContain('Ведьмак')
+    expect(jsonLdOf(page)[0]).not.toHaveProperty('alternateName')
+
+    // Карточка (appdetails с l=russian) принесла русское — апсерт кладёт его вторым
+    await upsertGameMeta(db, game(APPID, { name: 'Ведьмак 3: Дикая Охота' }), T0 + 10)
+    page = flight(await GamePage(params))
+    expect(textOf(page)).toContain('Ведьмак 3: Дикая Охота')
+    expect(jsonLdOf(page)[0]).toMatchObject({
+      name: 'The Witcher 3: Wild Hunt',
+      alternateName: 'Ведьмак 3: Дикая Охота',
+    })
+    expect((await generateMetadata(params)).title).toBe('The Witcher 3: Wild Hunt — стоит ли играть')
   })
 
   test('русский неизвестен — ни строки, ни разметки', async () => {
@@ -427,5 +563,89 @@ describe('«Позвать в эту игру»', () => {
     await upsertGameMeta(db, game(22, { categories: [2, 1, 9], ccu: 100 }), T0)
     expect(await partyLinks(21)).toEqual([])
     expect(await partyLinks(22)).toEqual([roomSeedHref(22)])
+  })
+})
+
+/** Класс h1 раскрытой страницы — заголовок героя у карточки один */
+function h1ClassOf(page: unknown): string {
+  const cls = classOfTag(page, 'h1')
+  expect(cls, 'h1 на карточке не найден — сторож ослеп').toBeDefined()
+  return cls!
+}
+
+/**
+ * Длинное название не уводит кнопки героя за первый экран. Замер на проде при
+ * 1440×900: /game/3191050 (108 знаков) — h1 в 8 строк display-lg, «Страница
+ * в Steam» на y=1063. Порог и его вывод — lib/titlesize.
+ */
+describe('кегль названия в герое', () => {
+  const LONG =
+    'BRAZILIAN DRUG DEALER 3: I OPENED A PORTAL TO HELL IN THE FAVELA TRYING TO REVIVE MIT AIA I NEED TO CLOSE IT'
+
+  test('обычное имя — кегль героя', async () => {
+    await upsertGameMeta(db, game(APPID, { name: 'Counter-Strike 2' }), T0)
+    const cls = h1ClassOf(flight(await GamePage(params)))
+    expect(cls).toMatch(/\btext-display-lg\b/)
+  })
+
+  test('108 знаков — титул экрана, а не стена из восьми строк', async () => {
+    await upsertGameMeta(db, game(APPID, { name: LONG }), T0)
+    const cls = h1ClassOf(flight(await GamePage(params)))
+    expect(cls).toMatch(/\btext-display-md\b/)
+    expect(cls).not.toMatch(/\btext-display-lg\b/)
+  })
+
+  test('длинное слово — ступенью ниже, а не разрыв посреди слова', async () => {
+    // 34 знака, но «TROUBLESHOOTER:» в display-lg шире колонки: 611 из 556 при
+    // 1440, и с одним лишь разрывом h1 читался «TROUBLESHOOTE / R»
+    await upsertGameMeta(db, game(APPID, { name: 'TROUBLESHOOTER: Abandoned Children' }), T0)
+    const cls = h1ClassOf(flight(await GamePage(params)))
+    expect(cls).toMatch(/\btext-display-md\b/)
+    // разрыв остаётся последним рубежом — для того, что не влезло и так
+    expect(cls).toContain('[overflow-wrap:anywhere]')
+  })
+})
+
+/*
+ * «Что нового» на карточке — восемь последних патчей, а хранится до
+ * тридцати: остальные — в архиве обновлений игры (/game/<appid>/news,
+ * lib/patcharchive). Ссылка туда — только когда патчей больше, чем мест: при
+ * трёх, да и при ровно восьми архив повторил бы те же строки.
+ */
+describe('ссылка на архив обновлений', () => {
+  const archiveLinks = async () =>
+    islandsOf(flight(await GamePage(params)), 'Link').filter((l) => l.href === `/game/${APPID}/news`)
+
+  test('девятый патч не влез на карточку — «Все обновления», без префетча', async () => {
+    await upsertGameMeta(db, game(APPID, { name: 'Counter-Strike 2' }), T0)
+    await upsertNewsItems(
+      db,
+      Array.from({ length: 9 }, (_, i) => patch(String(i + 1), T0 - (i + 1) * DAY, 9000)),
+      T0,
+    )
+    const links = await archiveLinks()
+    expect(links).toHaveLength(1)
+    expect(links[0]?.prefetch).toBe(false)
+    expect(textOf(links[0]?.children)).toContain('Все обновления «Counter-Strike 2»')
+  })
+
+  /*
+   * Полная лента — ещё не повод: восемь патчей из восьми выглядят так же, как
+   * восемь из тридцати, а архив в первом случае — те же восемь строк.
+   */
+  test('ровно восемь патчей — лента полна, но ссылки нет: архиву нечего добавить', async () => {
+    await upsertGameMeta(db, game(APPID), T0)
+    await upsertNewsItems(
+      db,
+      Array.from({ length: 8 }, (_, i) => patch(String(i + 1), T0 - (i + 1) * DAY, 9000)),
+      T0,
+    )
+    expect(await archiveLinks()).toEqual([])
+  })
+
+  test('патчей меньше, чем мест на карточке, — ссылки нет: все и так здесь', async () => {
+    await upsertGameMeta(db, game(APPID), T0)
+    await upsertNewsItems(db, [patch('1', T0 - DAY, 9000), patch('2', T0 - 2 * DAY, 9000)], T0)
+    expect(await archiveLinks()).toEqual([])
   })
 })

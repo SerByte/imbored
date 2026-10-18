@@ -1,11 +1,19 @@
 import { createClient, type InStatement } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
 import { buildCandidates } from './candidates'
-import { logFeedback, migrateDb, saveLibrarySnapshot, upsertGamesMeta, upsertNeighbors, type Db } from './db'
+import {
+  logFeedback,
+  migrateDb,
+  replaceGameTags,
+  saveLibrarySnapshot,
+  upsertGamesMeta,
+  upsertNeighbors,
+  type Db,
+} from './db'
 import { NEUTRAL_MOOD } from './mood'
 import { parseMutes } from './mutetags'
 import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
-import type { GameMeta, LibraryGame } from './types'
+import type { GameMeta, LibraryGame, Mood } from './types'
 
 /**
  * Конвейер кандидатов — один на /play и «Игру дня». Здесь то, что раньше
@@ -271,6 +279,59 @@ describe('buildCandidates: игры, которых нет в магазине �
 })
 
 /**
+ * «Один — только я и игра»: кооп без одиночного режима с пустым онлайном не
+ * доходит до выдачи того, кто сам сказал, что играет один. Режимы и онлайн —
+ * с продакшна: Never Split the Party (кооп и PvP на четверых, 6 игроков на весь
+ * мир) стояла героем у гостя, ответившего «Один», а Dota 2 ([1, 9] — для
+ * Steam тоже «кооп») с толпой в сотни тысяч из такой выдачи уходить не должна.
+ */
+describe('buildCandidates: «Один» и кооп, где напарника не найти', () => {
+  const ALONE: Mood = { time: 'long', vibe: 'engaged', social: 'solo' }
+  const FRIENDS: Mood = { ...ALONE, social: 'friends' }
+  const NEVER_SPLIT = 97
+  const DOTA = 96
+
+  /** Своё — одиночное; две находки каталога ближе всего к вкусу */
+  async function seedCoop(db: Db): Promise<void> {
+    await seed(db)
+    await upsertGamesMeta(
+      db,
+      [
+        { ...meta(NEVER_SPLIT, { Puzzle: 120, Casual: 80 }), categories: [1, 49, 36, 9, 38, 27], ccu: 6 },
+        { ...meta(DOTA, { Puzzle: 110, Casual: 70 }), categories: [1, 9], ccu: 896_573 },
+      ],
+      NOW,
+    )
+  }
+
+  async function actualIds(opts: { mood: Mood; moodless?: boolean }): Promise<number[]> {
+    const db = await freshDb()
+    await seedCoop(db)
+    const set = await buildCandidates(db, ME, opts.mood, 'all', { nowSec: NOW, moodless: opts.moodless })
+    if (typeof set === 'string') throw new Error(set)
+    // обе находки дошли до кандидатов — отсев ниже решает живость, а не пул
+    expect(set.candidates.map((c) => c.appid)).toEqual(expect.arrayContaining([NEVER_SPLIT, DOTA]))
+    return set.actual.map((c) => c.appid)
+  }
+
+  test('«Один»: мёртвый кооп снят, живой — на месте', async () => {
+    const ids = await actualIds({ mood: ALONE })
+    expect(ids).not.toContain(NEVER_SPLIT)
+    expect(ids).toContain(DOTA)
+  })
+
+  test('«С друзьями» кооп не гейтится онлайном — друзей приводишь своих', async () => {
+    expect(await actualIds({ mood: FRIENDS })).toEqual(expect.arrayContaining([NEVER_SPLIT, DOTA]))
+  })
+
+  test('колода «Полистать» — без настроения, и кооп в ней остаётся', async () => {
+    // Колода — не «во что сесть сейчас»: кооп в ней — находка на вечер с
+    // друзьями, о котором здесь не спрашивали
+    expect(await actualIds({ mood: NEUTRAL_MOOD, moodless: true })).toContain(NEVER_SPLIT)
+  })
+})
+
+/**
  * «Не предлагать» (lib/mutetags.ts) — один отсев на все три выдачи: /play,
  * «Игру дня» и колоду «Полистать» собирает этот конвейер. Отказ «всё под
  * фильтром» — свой код: совет у него другой, чем у «всё в бане».
@@ -400,5 +461,79 @@ describe('buildCandidates: «Не предлагать»', () => {
       expect(muted.profile, t).not.toHaveProperty(t)
     }
     expect(muted.profile.Puzzle).toBeGreaterThan(0)
+  })
+})
+
+/**
+ * Жанр со страницы /games/<slug> — «Подобрать рогалики из своей библиотеки».
+ * Своё — по правилу самой страницы жанра (inGenre: тег среди двенадцати и не
+ * легче половины главного), каталог — только тот же жанр. С затравкой не
+ * складывается, «Не предлагать» судит как всегда.
+ */
+describe('buildCandidates: жанр', () => {
+  /**
+   * Своё: два пазловых якоря вкуса, рогалик 20, рогалик 22 (Roguelike не
+   * первый, но тяжелее половины главного) и 21, где Roguelike — хвост (300
+   * из 1000). Каталог: рогалик 30 и пазл 31 — пазл ближе ко вкусу, но не жанр.
+   */
+  async function seedGenre(db: Db): Promise<void> {
+    const metas = [
+      meta(1, { Puzzle: 100, Casual: 60 }),
+      meta(2, { Puzzle: 100, Casual: 60 }),
+      meta(20, { Roguelike: 1000, Indie: 400 }),
+      meta(21, { Indie: 1000, Roguelike: 300 }),
+      meta(22, { Action: 1000, Roguelike: 900 }),
+      meta(30, { Roguelike: 1000, Action: 500 }),
+      meta(31, { Puzzle: 1000, Casual: 600 }),
+    ]
+    await upsertGamesMeta(db, metas, NOW)
+    for (const m of metas) {
+      await replaceGameTags(db, m.appid, Object.entries(m.tags).map(([tag, weight]) => ({ tag, weight })))
+    }
+    await saveLibrarySnapshot(db, ME, [game(1, 40), game(2, 25), game(20, 0), game(21, 0), game(22, 0)], NOW)
+  }
+
+  test('своё — только жанр по правилу страницы, каталог — только жанр', async () => {
+    const db = await freshDb()
+    await seedGenre(db)
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW, genre: 'Roguelike' })
+    if (typeof set === 'string') throw new Error(set)
+    expect(set.genre).toBe('Roguelike')
+    expect(set.own.map((c) => c.appid).sort()).toEqual([20, 22])
+    expect(set.discovery.map((c) => c.appid)).toEqual([30])
+    // вкус — по всей библиотеке: пазлы в нём остались
+    expect(set.profile.Puzzle).toBeGreaterThan(0)
+  })
+
+  test('своих этого жанра нет — выдача из магазинных того же жанра', async () => {
+    const db = await freshDb()
+    await seedGenre(db)
+    await saveLibrarySnapshot(db, ME, [game(1, 40), game(2, 25), game(21, 0)], NOW + 1)
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW, genre: 'Roguelike' })
+    if (typeof set === 'string') throw new Error(set)
+    expect(set.own).toEqual([])
+    // 20 и 22 больше не свои — теперь это магазинные рогалики, как и 30
+    expect(set.heroPool.map((c) => c.appid).sort()).toEqual([20, 22, 30])
+    expect(set.heroPool.every((c) => c.source === 'new')).toBe(true)
+  })
+
+  test('затравка побеждает жанр: «как X» уже сказало, из чего выбирать', async () => {
+    const db = await freshDb()
+    await seedGenre(db)
+    await upsertNeighbors(db, new Map([[1, [2, 21, 31].map((neighbor, i) => ({ neighbor, score: 0.9 - i / 10, shared: [] }))]]))
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW, seed: 1, genre: 'Roguelike' })
+    if (typeof set === 'string') throw new Error(set)
+    expect(set.genre).toBeNull()
+    expect(set.seed?.appid).toBe(1)
+    expect(set.candidates.map((c) => c.appid)).not.toContain(20)
+  })
+
+  test('жанр под «Не предлагать» — allmuted, а не «рогаликов нет»', async () => {
+    const db = await freshDb()
+    await seedGenre(db)
+    const hard = parseMutes('hard')
+    await upsertGamesMeta(db, [meta(20, { Roguelike: 1000, Difficult: 900 }), meta(22, { Roguelike: 1000, Difficult: 900 }), meta(30, { Roguelike: 1000, Difficult: 900 })], NOW)
+    const set = await buildCandidates(db, ME, NEUTRAL_MOOD, 'all', { nowSec: NOW, genre: 'Roguelike', muted: hard })
+    expect(set).toBe('allmuted')
   })
 })

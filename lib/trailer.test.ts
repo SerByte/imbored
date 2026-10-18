@@ -1,6 +1,9 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
+import { TrailerPreview } from '../components/TrailerPreview'
 import { shotUrl } from './shots'
 import {
   parseStoreScreenshots,
@@ -251,5 +254,67 @@ describe('видео на страницах', () => {
       expect(v.tag, v.file).toMatch(/\bmuted\b/)
       expect(v.tag, v.file).toMatch(/\bplaysInline\b/)
     }
+  })
+})
+
+/**
+ * Плеер трейлера — тёмная поверхность в обеих темах, как сам ролик.
+ *
+ * Кнопка «В движении · без звука» на постере — .btn-glass, а он берёт текст и
+ * подложку из --ink. В светлой теме --ink почти чёрный, и над тёмным кадром
+ * Steam кнопка становилась тёмным пятном: замер на проде, светлая тема —
+ * 1.34:1 на CS2, 1.70:1 на Cyberpunk 2077, 2.48:1 на Hades при пороге 4.5.
+ * В тёмной та же кнопка белая и читается.
+ *
+ * Поэтому рамка плеера несёт .media-card — тёмные токены внутри обычной
+ * страницы, тот же приём, что у лайтбокса (lib/lightbox.test.ts). Рамка, а не
+ * только слой над постером: постера у трейлера бывает и нет (lib/trailer,
+ * posterOf), и тогда под кнопкой — фон самой рамки; светлый, он вернул бы ту
+ * же беду наоборот — белую подпись на молочном.
+ *
+ * Строка-кнопка компактного вида (/play) стоит в потоке страницы, вне рамки, и
+ * держит цвета темы.
+ */
+describe('плеер трейлера тёмный в обеих темах', () => {
+  const trailer = {
+    mp4: 'https://video.fastly.steamstatic.com/store_trailers/730/1/microtrailer.mp4',
+    poster: 'https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/730/movie.293x165.jpg',
+  }
+  const html = (compact: boolean, withPoster = true) =>
+    renderToStaticMarkup(
+      createElement(TrailerPreview, {
+        trailer: withPoster ? trailer : { mp4: trailer.mp4 },
+        name: 'Counter-Strike 2',
+        compact,
+      }),
+    )
+  /** Открывающий тег рамки плеера — блока, в котором стоит <video> */
+  const playerTag = (h: string): string => {
+    const video = h.indexOf('<video')
+    expect(video, 'ролик не найден — сторож ослеп').toBeGreaterThan(-1)
+    const open = h.lastIndexOf('<div', video)
+    return h.slice(open, h.indexOf('>', open) + 1)
+  }
+
+  test('рамка плеера — тёмная поверхность, но не кино-зона', () => {
+    for (const withPoster of [true, false]) {
+      const tag = playerTag(html(false, withPoster))
+      expect(tag, 'без тёмных токенов кнопка на постере в светлой теме — 1.3:1').toMatch(/\bmedia-card\b/)
+      // .media-dark перекрасил бы шапку сайта, когда плеер доедет до неё
+      expect(tag).not.toMatch(/\bmedia-dark\b/)
+    }
+  })
+
+  test('кнопка на постере — внутри рамки', () => {
+    const h = html(false)
+    const player = h.indexOf(playerTag(h))
+    const button = h.indexOf('btn-glass')
+    expect(button).toBeGreaterThan(player)
+  })
+
+  test('строка компактного вида — до рамки, в цветах темы', () => {
+    const h = html(true)
+    expect(h.indexOf('btn-glass')).toBeGreaterThan(-1)
+    expect(h.indexOf('btn-glass')).toBeLessThan(h.indexOf('media-card'))
   })
 })

@@ -1,4 +1,12 @@
-import { fillUnknownSql, keepFilledSql, keepRussianSql, newerMeasureSql, type GameJsonRepair } from '../lib/db'
+import {
+  fillUnknownSql,
+  keepFilledSql,
+  keepRussianSql,
+  nameRuSql,
+  nameSql,
+  newerMeasureSql,
+  type GameJsonRepair,
+} from '../lib/db'
 import { plural } from '../lib/plural'
 
 /**
@@ -33,6 +41,15 @@ const ПО_ОТМЕТКЕ: Readonly<Record<string, string>> = {
   // заливка не трогает; не сверенные — едут, как раньше.
   reviews_total: 'reviews_at',
   reviews_percent: 'reviews_at',
+  // Отзывы за 30 дней: в облаке их меряет пульс (refreshReviewPulse в
+  // lib/catalogsignals) и ставит отметку проверки, а локальное число — снимок
+  // промоута, тоже без отметки. Отметки нет в колонках заливки, как и
+  // reviews_at, — значит, замеренное пульсом облачное число переживает
+  // заливку, а у ни разу не замеренных едет промоутное. Без этого каждый
+  // catalog:publish откатывал бы reviews_30d к промоуту, а по нему судит
+  // живость совместной игры без замера онлайна (judgeLiveness), — и рядом
+  // остался бы свежий пульс под кольцом, с другим числом за тот же месяц
+  reviews_30d: 'reviews_recent_checked_at',
 }
 
 /**
@@ -68,6 +85,13 @@ export function buildSetList(cols: readonly string[]): string {
     .map((c) => {
       if (ОТ_ОБОГАЩЕНИЯ.has(c)) return `${c} = ${keepFilledSql(c)}`
       if (c === 'short_description') return `${c} = ${keepRussianSql(c)}`
+      // Название — по тем же правилам, что у апсерта (nameSql в lib/db):
+      // русское, которое крон карточек клал в name облака до этих правил,
+      // заливка английским локальным уводит во второе название, а не
+      // выбрасывает. name_ru в списке колонок нет — локальный каталог его
+      // не везёт, — и колонка выводится из name: прежний русский name облака
+      // становится вторым, а свой name_ru облака остаётся
+      if (c === 'name') return `name = ${nameSql()}, name_ru = ${nameRuSql()}`
       // Русский язык в облаке привозят крон карточек и доливка медиа, а
       // локальный каталог знает его только у игр, прошедших промоут после
       // появления колонки. NULL отсюда — «не спрашивали», а не «русского нет».
@@ -83,7 +107,8 @@ export function buildSetList(cols: readonly string[]): string {
       if (c === 'ru_lang') return `${c} = ${fillUnknownSql(c)}`
       // Отметки нет в списке колонок — excluded.<отметка> равен NULL, и
       // локальный замер считается безотметочным, то есть старше любого
-      // датированного облачного. Для отзывов это и нужно (см. ПО_ОТМЕТКЕ)
+      // датированного облачного. Для отзывов и их месяца это и нужно (см.
+      // ПО_ОТМЕТКЕ)
       const stamp = ПО_ОТМЕТКЕ[c]
       if (stamp) return `${c} = ${newerMeasureSql(c, stamp)}`
       return `${c} = excluded.${c}`

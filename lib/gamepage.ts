@@ -20,12 +20,16 @@ import {
   languageTrait,
   lengthTrait,
   sessionTrait,
+  shownReviews,
   type GameTrait,
 } from './gametraits'
 import { distinctiveTags } from './hook'
 import { looksLikeJunkName } from './junk'
 import { judgeLiveness, type DeadReason } from './liveness'
+import { claimsNoUpdates, modelTextFlaw, point } from './modeltext'
 import { NEIGHBORS_K } from './neighbors'
+import { isStoredPatch } from './news'
+import { CARD_PATCHES } from './patcharchive'
 import { plural } from './plural'
 import { isEndless } from './recommend'
 import type { ProsCons } from './reviews'
@@ -38,6 +42,13 @@ import type { GameMeta } from './types'
 
 export type GamePageData = {
   meta: GameMeta
+  /**
+   * Русское название магазина, когда оно у игры своё (GamePageRow.nameRu);
+   * null — его нет. Заголовок карточки — английское название магазина, а
+   * это — второй ряд под ним и alternateName в разметке: по нему игру ищут
+   * в русской выдаче («ведьмак 3 стоит ли играть»).
+   */
+  nameRu: string | null
   reviewsSummary: {
     scoreDesc: string
     totalPositive: number
@@ -46,6 +57,12 @@ export type GamePageData = {
   prosCons: ProsCons | null
   /** без тел патчей — их отдаёт app/api/news по раскрытию; см. cardNews */
   news: CardNews[]
+  /**
+   * Есть ли патчи сверх тех, что стоят в news, — тогда под лентой ссылка на
+   * архив обновлений (/game/<appid>/news). Не «news полна»: ровно восемь
+   * патчей у игры — тоже полная лента, и архив повторил бы её строка в строку.
+   */
+  newsMore: boolean
   /**
    * «Похожие»: готовые соседи по всему вектору тегов (nearGames), а пока их
    * не залили — соседи по тегу полки (topTagOf, pickSimilar); пусто, если
@@ -103,6 +120,45 @@ export function cardNews(item: StoredNews): CardNews {
   }
 }
 
+/**
+ * Лента карточки: восемь свежих патчей (CARD_PATCHES; остальные — в архиве
+ * обновлений, lib/patcharchive) — по нынешнему правилу классификатора,
+ * тому же, что у страницы патча (isStoredPatch, loadPatch). Строка, которую та
+ * отдаёт 404, не должна стоять здесь патчем со ссылкой туда.
+ *
+ * Отсев идёт в памяти — правилу нужно тело, а SQL его не прочтёт, — и потому
+ * после LIMIT. Если остановиться на этом, каждая отсеянная строка съедала бы
+ * место настоящего патча: две «дорожные карты» среди восьми свежих — и
+ * карточка показывает шесть, хотя патчи постарше в базе есть. Само это не
+ * проходит: запись за окном ленты опрос не перечитывает (MAX_ITEMS в
+ * lib/news) и kind её не перепишет никогда.
+ *
+ * Поэтому дочитываем — но только когда отсеивать было что. Читать с запасом
+ * всегда значило бы везти лишние blocks_json (до десятков килобайт у
+ * строки) на каждой перегенерации каждой карточки, хотя самой карточке тела
+ * не нужны вовсе (cardNews), а у большинства игр отсеивать нечего. Втрое —
+ * с запасом, а не впритык: постов у игры в базе не больше тридцати (NEWS_KEEP
+ * в lib/newsjob). На выгрузке прода от 24.09.2026 отсев задевал восемь свежих
+ * патчей у 76 игр из 485, недобор без дочитывания был бы у 19, с ним — ни у
+ * одной.
+ *
+ * Первое чтение — на одну строку больше мест: девятая отвечает, есть ли что
+ * показать в архиве сверх ленты (more). По одной длине ленты этого не узнать —
+ * восемь патчей у игры всего и восемь из тридцати выглядят одинаково, а ссылка
+ * в первом случае вела бы на те же восемь строк. Цена — одна строка с телом
+ * на перегенерацию карточки. Если и после дочитывания патчей не больше
+ * восьми, а за двадцатью четырьмя строками ещё что-то лежит, ссылки не будет —
+ * архив тогда открыт со страниц патчей («Другие патчи»).
+ */
+async function cardPatches(db: Db, appid: number): Promise<{ items: CardNews[]; more: boolean }> {
+  const head = await getGameNews(db, appid, CARD_PATCHES + 1)
+  let kept = head.filter(isStoredPatch)
+  if (kept.length < head.length && head.length === CARD_PATCHES + 1) {
+    kept = (await getGameNews(db, appid, CARD_PATCHES * 3)).filter(isStoredPatch)
+  }
+  return { items: kept.slice(0, CARD_PATCHES).map(cardNews), more: kept.length > CARD_PATCHES }
+}
+
 export type ReviewFacts = {
   /** Доля положительных отзывов, 0…100. */
   percent: number
@@ -117,28 +173,63 @@ export type ReviewFacts = {
 }
 
 /**
+ * Оценка Steam словами по её коду (EUserReviewScore) — английской строкой,
+ * той же, что приходит в review_score_desc сводки appreviews: русскую подпись
+ * к ней карточка берёт из одной таблицы для обоих источников. Здесь, а не
+ * рядом с shownReviews: слово пишет только карточка, плиткам /play оно ни к
+ * чему, и в клиентский бандл таблица не едет.
+ */
+export const STEAM_SCORE_LABEL: Readonly<Record<number, string>> = {
+  9: 'Overwhelmingly Positive',
+  8: 'Very Positive',
+  7: 'Positive',
+  6: 'Mostly Positive',
+  5: 'Mixed',
+  4: 'Mostly Negative',
+  3: 'Negative',
+  2: 'Very Negative',
+  1: 'Overwhelmingly Negative',
+}
+
+/**
  * Оценка игры из того, что есть.
  *
  * Страница называется «стоит ли играть», а кольцо с процентом рисовалось
  * только из reviews_summary_json — отдельной сводки, которую наполняет крон.
  * В каталоге на тысячу игр её нет у 278. То есть 28% страниц не отвечали на
- * вопрос из собственного заголовка — при том что reviews_percent и
- * reviews_total лежат в той же строке базы и заполнены у ВСЕХ до одной.
- * Half-Life: Opposing Force — 95% из 13 440 отзывов — показывал пустое место
- * там, где должно стоять число.
+ * вопрос из собственного заголовка. Half-Life: Opposing Force — 95% из 13 440
+ * отзывов — показывал пустое место там, где должно стоять число.
  *
- * Порядок источников: сводка точнее (в ней сырые количества, из которых
- * процент считается на месте), поэтому она первая. Колонки — запасной путь.
+ * Порядок источников:
+ *   • все языки из сверки каталога (shownReviews в lib/gametraits) — первыми.
+ *     Они есть у всего пула и свежие (неделя), а главное — те же самые стоят
+ *     на плитках хабов и /play: одна игра везде одним числом. Сводка карточки
+ *     этого не могла: её перечитывают раз в полгода (PAGE_MAX_AGE_SEC), и
+ *     плиткам без лишнего чтения она недоступна;
+ *   • сводка карточки (appreviews, тоже все языки) — пока сверка до игры не
+ *     дошла и у мёртвых игр, которых сверка не обходит;
+ *   • англоязычные reviews_total и reviews_percent — НИКОГДА. Запасным путём
+ *     они стояли, пока были «заполнены у всех», но это шкала порогов: Hades с
+ *     ними — «98% из 143 тыс.» против 309 тысяч на самом деле, и подпись «N
+ *     отзывов» без слова «англоязычных» выдавала треть за целое.
  *
- * Слово при этом берётся только из сводки. Числа — факт площадки, и мы их
+ * Слово — только той же сводки, что числа. Числа — факт площадки, и мы их
  * пересказываем; словесная шкала — её суждение, и придумывать его за неё
- * нельзя. Без сводки рядом с кольцом остаётся «положительных из N отзывов», и
+ * нельзя. Без слова рядом с кольцом остаётся «положительных из N отзывов», и
  * этого достаточно: процент уже стоит внутри кольца.
  */
 export function reviewFacts(
-  meta: Pick<GameMeta, 'reviewsPercent' | 'reviewsTotal'>,
+  meta: Pick<GameMeta, 'reviewsAllTotal' | 'reviewsAllPercent'> & Partial<Pick<GameMeta, 'reviewsAllScore'>>,
   summary: GamePageData['reviewsSummary'],
 ): ReviewFacts | null {
+  const shown = shownReviews(meta)
+  if (shown) {
+    return {
+      percent: shown.percent,
+      total: shown.total,
+      label: shown.score === null ? null : (STEAM_SCORE_LABEL[shown.score] ?? null),
+    }
+  }
   const counted = summary ? summary.totalPositive + summary.totalNegative : 0
   if (summary && counted > 0) {
     return {
@@ -146,10 +237,6 @@ export function reviewFacts(
       total: counted,
       label: summary.scoreDesc,
     }
-  }
-  const { reviewsPercent, reviewsTotal } = meta
-  if (typeof reviewsPercent === 'number' && typeof reviewsTotal === 'number' && reviewsTotal > 0) {
-    return { percent: Math.max(0, Math.min(100, Math.round(reviewsPercent))), total: reviewsTotal, label: null }
   }
   return null
 }
@@ -259,6 +346,11 @@ export function pickSimilar<T>(ranked: readonly T[], pageAppid: number, shown = 
  * 48 входящих (было 45) — и это соседи по сути, а не шесть случайных из тысяч
  * игр с тем же Action. Поэтому готовые показываются просто по порядку, без
  * выборки pickSimilar: разносить ссылки им уже не нужно.
+ *
+ * С тех пор соседи меряют, как в игру играют, а не о чём она (тема весит
+ * меньше механики, см. THEME_TAGS в lib/neighbors). Повторный замер на той же
+ * копии: 5240 карточек со входящей ссылкой, самая «популярная» — 54. Ушли в
+ * основном игры, которых держала одна общая тема или нагота.
  *
  * Меньше шести живых — прежняя полка по тегу: таблицу ещё не залили (или
  * игры не было в каталоге при сборке), а половинная полка хуже полной по
@@ -421,7 +513,7 @@ const SIGNAL_OF: Record<DeadReason, (m: GameMeta) => boolean> = {
  * заведён. Если свежие числа с курацией спорят — молчим; если согласны, но по
  * другой причине, — называем ту, что видно на странице.
  */
-export function deadVerdict(meta: GameMeta): string | null {
+export function deadVerdict(meta: GameMeta, nowSec?: number): string | null {
   if (meta.alive !== false) return null
   const now = judgeLiveness({
     categories: meta.categories,
@@ -430,10 +522,112 @@ export function deadVerdict(meta: GameMeta): string | null {
     reviewsTotal: meta.reviewsTotal,
     reviewsPercent: meta.reviewsPercent,
   })
-  if (!now.alive && now.reason) return DEAD_VERDICT[now.reason]
+  const reason = !now.alive && now.reason ? now.reason : null
   const stored = meta.deadReason
+  /*
+   * «Большинство отзывов отрицательные» — суждение за всё время. Игре, которую
+   * починили и за последний месяц хвалят, оно врёт ровно так же, как «почти
+   * не осталось людей» игре с вернувшимся онлайном, — и строка пульса под
+   * кольцом («за 30 дней: 82% — выше, чем за всё время») спорила бы с ним в
+   * сантиметре. Свежий месяц с полусотней отзывов и долей не ниже
+   * PULSE_RECOVERED — свежее число, которое с курацией спорит: молчим.
+   *
+   * Месяц у мёртвой игры есть не случайно: пул (ALIVE_POOL) мёртвых не
+   * содержит, и разгромленных пульс меряет своей веткой очереди
+   * (reviewPulseQueue в lib/db, PULSE_PANNED_TOP в lib/catalogsignals).
+   */
+  if ((reason ?? stored) === 'panned' && nowSec !== undefined && recovered(meta, nowSec)) return null
+  if (reason) return DEAD_VERDICT[reason]
   if (!stored) return DEAD_VERDICT_UNKNOWN
   return SIGNAL_OF[stored](meta) ? null : DEAD_VERDICT[stored]
+}
+
+/** С какой доли положительных за месяц игру больше не зовём разгромленной */
+export const PULSE_RECOVERED = 70
+
+function recovered(meta: GameMeta, nowSec: number): boolean {
+  const p = freshPulse(meta, nowSec)
+  return p !== null && p.percent >= PULSE_RECOVERED
+}
+
+/** Меньше стольких отзывов за месяц — доля случайна, и строки пульса нет */
+export const PULSE_MIN_RECENT = 50
+
+/**
+ * Насколько месяц должен разойтись со всем временем, чтобы о нём сказать.
+ * При полусотне отзывов (PULSE_MIN_RECENT) один отзыв — два пункта, и разница
+ * меньше пяти — шум выборки месяца, а не новость; строка «за месяц — то же
+ * самое» места под кольцом не стоит.
+ */
+export const PULSE_MIN_GAP = 5
+
+/**
+ * Сколько пульс показывается после замера. Подпись несёт дату («за 30 дней до
+ * 3 октября»), так что старым он не врёт, но месяц двухмесячной давности —
+ * уже не «как сейчас»: тогда строки нет.
+ */
+export const PULSE_SHOW_MAX_AGE_SEC = 30 * 86_400
+
+/** Меньше стольких отзывов на русском — строки нет: две сотни — уже мнение, а не случай */
+export const RU_MIN_REVIEWS = 200
+
+/** Пульс игры, если он свежий и в нём достаточно отзывов */
+function freshPulse(meta: GameMeta, nowSec: number): { total: number; percent: number; at: number } | null {
+  const { reviewsRecentTotal: total, reviewsRecentPercent: percent, reviewsRecentAt: at } = meta
+  if (total === undefined || percent === undefined || at === undefined) return null
+  if (total < PULSE_MIN_RECENT || nowSec - at > PULSE_SHOW_MAX_AGE_SEC) return null
+  return { total, percent: Math.max(0, Math.min(100, Math.round(percent))), at }
+}
+
+/** «7 948 отзывов» — с тем же склонением, что у кольца */
+function reviewsCount(n: number): string {
+  return `${n.toLocaleString('ru-RU')} ${plural(n, 'отзыва', 'отзывов', 'отзывов')}`
+}
+
+/**
+ * Пульс отзывов под кольцом карточки — строки «подпись — значение»; пустой
+ * список — строк нет.
+ *
+ * За последний месяц — только когда он расходится со всем временем
+ * (PULSE_MIN_GAP) и отзывов в нём достаточно: «раньше ругали — сейчас хвалят»
+ * и обратное не видно ни по одному числу за всё время, а совпадающий месяц
+ * ничего не добавляет. Сравнение — с кольцом (facts): тем числом, что стоит
+ * рядом. Дата — календарная, не «месяц назад»: страница живёт в кэше неделю,
+ * и относительная подпись врала бы уже назавтра, а каждая её новая цифра
+ * была бы записью ISR.
+ *
+ * На русском — простым фактом, когда отзывов набралось RU_MIN_REVIEWS: что
+ * думают русскоязычные игроки, сайт на русском до сих пор не говорил нигде.
+ * Без «выше» и «ниже»: другая аудитория, а не другое время, и разница с
+ * кольцом — не новость про игру.
+ *
+ * Причин («после патча») здесь нет намеренно: связи мы не знаем, а выдумать её
+ * — то самое, чего страница себе не позволяет.
+ */
+export function reviewPulse(meta: GameMeta, facts: ReviewFacts | null, nowSec: number): GameTrait[] {
+  const out: GameTrait[] = []
+  const recent = freshPulse(meta, nowSec)
+  if (recent && facts && Math.abs(recent.percent - facts.percent) >= PULSE_MIN_GAP) {
+    const day = new Date(recent.at * 1000).toLocaleDateString('ru-RU', {
+      day: 'numeric',
+      month: 'long',
+      timeZone: 'UTC',
+    })
+    out.push({
+      label: `За 30 дней до ${day}`,
+      value: `${recent.percent}% положительных из ${reviewsCount(recent.total)} — ${
+        recent.percent > facts.percent ? 'выше' : 'ниже'
+      }, чем за всё время`,
+    })
+  }
+  const { reviewsRuTotal: ruTotal, reviewsRuPercent: ruPercent } = meta
+  if (ruTotal !== undefined && ruPercent !== undefined && ruTotal >= RU_MIN_REVIEWS) {
+    out.push({
+      label: 'На русском',
+      value: `${Math.max(0, Math.min(100, Math.round(ruPercent)))}% положительных из ${reviewsCount(ruTotal)}`,
+    })
+  }
+  return out
 }
 
 /** Потолок описания — в lib/clip, рядом с обрезкой; отсюда его берут тесты карточки */
@@ -446,10 +640,13 @@ export { DESCRIPTION_MAX }
  */
 export { isRussianText }
 
-/** Пункт из pros/cons как предложение: без своей точки в конце, одной строкой */
-function point(text: string): string {
-  return text.replace(/\s+/g, ' ').trim().replace(/[.,;:!?…]+$/, '')
-}
+/**
+ * Меньше этого остатка описание магазина в сниппет не обрезается: в узкий
+ * хвост помещалось только начало первой фразы — «DARK SOULS™…» после плюса на
+ * /game/335300, то есть обрубок имени, которое и так стоит в начале. Целая
+ * короткая фраза встаёт и в узкий хвост — обрубком она не будет.
+ */
+const STORE_CLIP_MIN = 40
 
 /**
  * meta description карточки игры.
@@ -463,8 +660,24 @@ function point(text: string): string {
  * Теперь фразы идут по важности и берутся целиком, пока влезают:
  *   вердикт мёртвой игре — он и есть ответ на «стоит ли играть»;
  *   доля положительных и число отзывов — те же, что в кольце на странице;
- *   первый пункт «любят» и первый «ругают»;
- *   описание магазина — только русское и одно оно обрезается по слову.
+ *   «любят» и «ругают» — парой, см. ниже;
+ *   описание магазина — только русское и одно оно обрезается по слову, и то
+ *   если остаток не меньше STORE_CLIP_MIN.
+ *
+ * «Любят» и «Ругают» — пара, а не две независимые фразы. Раньше брались
+ * pros[0] и cons[0] по отдельности, и плюс, который не влез, просто
+ * пропускался — а следом вставал минус покороче. У DARK SOULS II (84%,
+ * «Очень положительные», имя в 40 знаков) в сниппете и превью в мессенджерах
+ * об игре стояла одна жалоба. Теперь плюс — первый по порядку из тех, что
+ * влезают целиком (порядок модели — порядок важности; обрезанный посреди
+ * мысли первый хуже целого второго), а минус — первый влезающий и только
+ * если плюс встал.
+ *
+ * Исключение — плюсов нет вовсе: модель честно не нашла, за что хвалить
+ * (claudeProsCons такой ответ публикует, а карточка показывает блок минусов
+ * одним). Это не плюс, который не влез, а ответ отзывов — у игры с 25%
+ * «В основном отрицательные» одна жалоба в сниппете и есть правда, и
+ * прятать её значит оставить сниппет без мнения игроков вовсе.
  */
 export function gameDescription({
   meta,
@@ -477,28 +690,35 @@ export function gameDescription({
   prosCons: ProsCons | null
   verdict: string | null
 }): string {
-  const phrases: Array<{ text: string; clip?: boolean }> = []
-  if (verdict) phrases.push({ text: verdict })
+  const head = `${meta.name}:`
+  let out = head
+  const room = () => DESCRIPTION_MAX - out.length - 1
+  /** Целую фразу — если влезает, иначе ничего; true — встала */
+  const add = (text: string): boolean => {
+    if (text.length > room()) return false
+    out += ` ${text}`
+    return true
+  }
+
+  if (verdict) add(verdict)
   if (facts) {
     const total = facts.total.toLocaleString('ru-RU')
     const noun = plural(facts.total, 'отзыва', 'отзывов', 'отзывов')
-    phrases.push({ text: `${facts.percent}% из ${total} ${noun} — положительные.` })
+    add(`${facts.percent}% из ${total} ${noun} — положительные.`)
   }
-  const pro = prosCons?.pros[0]
-  const con = prosCons?.cons[0]
-  if (pro) phrases.push({ text: `Любят: ${point(pro)}.` })
-  if (con) phrases.push({ text: `Ругают: ${point(con)}.` })
+  const pros = (prosCons?.pros ?? []).map((t) => `Любят: ${point(t)}.`)
+  const cons = (prosCons?.cons ?? []).map((t) => `Ругают: ${point(t)}.`)
+  const proPlaced = pros.some(add)
+  if (proPlaced || !pros.length) cons.some(add)
   if (meta.shortDescription && isRussianText(meta.shortDescription)) {
-    phrases.push({ text: meta.shortDescription.replace(/\s+/g, ' ').trim(), clip: true })
+    const store = meta.shortDescription.replace(/\s+/g, ' ').trim()
+    const text = clip(store, room())
+    // Целиком или целой первой фразой — встаёт в любой остаток; обрезанное по
+    // слову с многоточием — только в достаточно широкий
+    const stub = text !== store && text?.endsWith('…')
+    if (text && (!stub || room() >= STORE_CLIP_MIN)) out += ` ${text}`
   }
 
-  const head = `${meta.name}:`
-  let out = head
-  for (const p of phrases) {
-    const room = DESCRIPTION_MAX - out.length - 1
-    const text = p.clip ? clip(p.text, room) : p.text.length <= room ? p.text : null
-    if (text) out += ` ${text}`
-  }
   if (out === head) out = `${meta.name} — отзывы, теги и патчноуты на русском.`
   // Длинное название само по себе может не влезть — режем и его, по слову
   return clip(out, DESCRIPTION_MAX) ?? out.slice(0, DESCRIPTION_MAX)
@@ -613,9 +833,11 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   if (appid < 0) {
     return {
       meta,
+      nameRu: строка.nameRu,
       reviewsSummary: null,
       prosCons: null,
       news: [],
+      newsMore: false,
       ...(await similarOf()),
       studio: null,
     }
@@ -626,8 +848,8 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   // Игры студии — параллельно с полкой, а отсев — после неё: строка не
   // повторяет того, что уже стоит в «Похожих». Лимит на одну больше порога —
   // так studioLine узнаёт корпоративный каталог, не читая его целиком
-  const [news, shelf, studioGames] = await Promise.all([
-    getGameNews(db, appid, 8).then((rows) => rows.map(cardNews)),
+  const [patches, shelf, studioGames] = await Promise.all([
+    cardPatches(db, appid),
     similarOf(),
     meta.developer?.trim()
       ? gamesByDeveloper(db, meta.developer, STUDIO_MAX_GAMES + 1)
@@ -653,7 +875,60 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
    * где полезных отзывов слишком мало, чтобы звать модель (lib/pagejob.ts);
    * её не показываем тем более.
    */
-  const prosCons = stored?.source === 'claude' ? stored : null
+  const news = patches.items
+  const prosCons = shownProsCons(stored, news, Math.floor(Date.now() / 1000))
 
-  return { meta, reviewsSummary, prosCons, news, ...shelf, studio }
+  return {
+    meta,
+    nameRu: строка.nameRu,
+    reviewsSummary,
+    prosCons,
+    news,
+    newsMore: patches.more,
+    ...shelf,
+    studio,
+  }
+}
+
+/**
+ * Окно, в котором свежий патч опровергает минус «игру не обновляют». Три
+ * месяца: патч полугодовой давности такому минусу уже не противоречит —
+ * затишье бывает и у живых игр, — а патч прошлой недели противоречит прямо.
+ */
+const FRESH_PATCH_SEC = 90 * 86_400
+
+/**
+ * Что из сохранённых pros/cons показывать. Только собранное моделью (см.
+ * докблок выше в loadGamePage) — и из него только то, что проходит проверку
+ * сегодня.
+ *
+ * Проверка после модели (modelTextFlaw) появилась позже сотен карточек в
+ * базе, а пересобирает их крон раз в полгода. Поэтому битое прячется и здесь,
+ * при чтении: «…справедливо'],», «в каждой матч», «неработает» уходят со
+ * страницы, из её meta description и og-карточки сразу, без похода в модель.
+ *
+ * Минус «разработчики не обновляют игру» сверяется с фактом, который страница
+ * показывает сама: свежий патч в «Что нового» (news — ровно эти строки). На
+ * CS2 такой минус стоял над восемью патчами за три недели. Сверка — при
+ * чтении, а не при записи: факт меняется, а пересказ отзывов живёт полгода.
+ *
+ * Плюсы были, но не уцелел ни один, — блока нет вовсе: «только ругают» у игры,
+ * которую хвалят, врёт перекосом (то же правило у записи, в claudeProsCons).
+ */
+function shownProsCons(
+  stored: ProsCons | null,
+  news: ReadonlyArray<Pick<CardNews, 'kind' | 'publishedAt'>>,
+  nowSec: number,
+): ProsCons | null {
+  if (stored?.source !== 'claude') return null
+  const fresh = news.some((n) => n.kind === 'patch' && n.publishedAt >= nowSec - FRESH_PATCH_SEC)
+  const ok = (t: unknown): t is string => typeof t === 'string' && !modelTextFlaw(t)
+  const storedPros = Array.isArray(stored.pros) ? stored.pros : []
+  const pros = storedPros.filter(ok)
+  const cons = (Array.isArray(stored.cons) ? stored.cons : []).filter(
+    (t) => ok(t) && !(fresh && claimsNoUpdates(t)),
+  )
+  if (storedPros.length && !pros.length) return null
+  if (!pros.length && !cons.length) return null
+  return { ...stored, pros, cons }
 }

@@ -36,6 +36,7 @@ import {
   neutralParts,
   normalizedTags,
   nudgeMultiplier,
+  ownFirst,
   parseFocus,
   parseScope,
   PICK_COUNT,
@@ -1690,6 +1691,34 @@ describe('mixHeroPool', () => {
 
   test('пустой каталог ничего не меняет', () => {
     expect(mixHeroPool(own(3), [])).toHaveLength(3)
+  })
+})
+
+/*
+ * «Своё идёт первым» — обещание главной, и держит его порядок готовой
+ * пятёрки, а не пул: пул общий по скору (см. выше), чтобы сильная покупка
+ * вообще попала в пятёрку, а показывается она после своих.
+ */
+describe('ownFirst', () => {
+  const pick = (appid: number, source: ScoredCandidate['source']) => ({ appid, source })
+
+  test('покупки — после своих, порядок внутри каждой группы прежний', () => {
+    const out = ownFirst([pick(100, 'new'), pick(1, 'untouched'), pick(101, 'new'), pick(2, 'backlog'), pick(3, 'familiar')])
+    expect(out.map((p) => p.appid)).toEqual([1, 2, 3, 100, 101])
+  })
+
+  test('без своих или без покупок — порядок не трогается', () => {
+    const bought = [pick(101, 'new'), pick(100, 'new')]
+    expect(ownFirst(bought)).toEqual(bought)
+    const mine = [pick(2, 'backlog'), pick(1, 'comeback'), pick(3, 'owned')]
+    expect(ownFirst(mine)).toEqual(mine)
+    expect(ownFirst([])).toEqual([])
+  })
+
+  test('вход не меняется — возвращается новый список', () => {
+    const input = [pick(100, 'new'), pick(1, 'untouched')]
+    ownFirst(input)
+    expect(input.map((p) => p.appid)).toEqual([100, 1])
   })
 })
 

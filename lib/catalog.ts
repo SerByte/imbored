@@ -393,6 +393,14 @@ export function mergeMeta(existing: GameMeta | null | undefined, fresh: GameMeta
     out.shortDescription = existing.shortDescription
   }
   /*
+   * Название — тоже про язык, но здесь его НЕ берегут, и намеренно. Русское
+   * название из appdetails (обогащение карточки, l=russian) едет в запись
+   * как есть, и апсерт сам раскладывает его: английское остаётся в name,
+   * русское встаёт вторым, в name_ru (nameSql в lib/db). Сбереги его здесь —
+   * апсерт русского не увидел бы вовсе, и «ведьмак 3» в «Найти игру» снова
+   * не находил бы ничего.
+   */
+  /*
    * Замер без цены (priceAt есть, priceFinal нет — fetchStoreItems в регионе
    * цен, когда блока покупки не пришло) гасит скидку нулём, а цену спред
    * переносит из прежней записи. Обычную — пусть: правило то же, что в
@@ -638,7 +646,9 @@ const STORE_ITEMS_DATA_REQUEST = {
  * списке 29 языков по пять полей. Прогреву язык ни к чему — подбор по нему
  * не фильтрует, — а карточке, герою выдачи и полке покупок он нужен там же,
  * где кадры. Отдельным запросом в кроне карточек это был бы ещё один поход
- * в GetItems на каждое звено ради двадцати строк.
+ * в GetItems на каждое звено ради двадцати строк. (Отдельный поход за одними
+ * языками у крона всё же есть — догон уже обогащённых игр, по сотне за
+ * звено и только пока догонять есть кого: fetchStoreLanguages ниже.)
  */
 const STORE_MEDIA_DATA_REQUEST = {
   include_screenshots: true,
@@ -665,6 +675,48 @@ export async function fetchStoreMedia(
     const chunk = positive.slice(i, i + STORE_ITEMS_BATCH)
     const json = await callStoreItems(chunk, STORE_MEDIA_DATA_REQUEST, fetchFn, MEDIA_MS_PER_APP)
     for (const [appid, media] of parseStoreMedia(json)) out.set(appid, media)
+  }
+  return out
+}
+
+/**
+ * Один флаг — языки, и ничего больше: для догона русского кроном карточек.
+ * На двухстах играх языки весят около 255 КБ сверх обычного ответа (замер у
+ * STORE_MEDIA_DATA_REQUEST) — 1,3 КБ на игру против ~8 КБ у кадров с
+ * трейлером.
+ */
+const STORE_LANGUAGES_DATA_REQUEST = { include_supported_languages: true }
+
+/** Таймаут на игру у ответа из одних языков: вшестеро легче медиа */
+const LANGUAGES_MS_PER_APP = 100
+
+/**
+ * Ступень русского (RuLang) для пачки игр — одним GetItems с одним флагом.
+ *
+ * Для догона кроном карточек (runCardCatchUp в lib/pagejob): уже обогащённым
+ * играм крон вернётся только через полгода (PAGE_MAX_AGE_SEC), и без догона
+ * верх каталога ждал бы языка до весны — или ручной доливки, которую на
+ * проде так и не запустили. Кадров и трейлеров здесь нет намеренно: их везут
+ * срез карточек и доливка медиа, а догону они утяжелили бы каждую пачку
+ * вшестеро.
+ *
+ * Игры, о языках которых Steam промолчал (невидимые, пустой список), в карту
+ * не попадают: «не знаем» — не ноль (ruLangOf).
+ */
+export async function fetchStoreLanguages(
+  appids: number[],
+  opts: { fetchFn?: typeof fetch } = {},
+): Promise<Map<number, RuLang>> {
+  const positive = appids.filter((id) => id > 0)
+  const out = new Map<number, RuLang>()
+  if (!positive.length) return out
+  const { fetchFn = fetch } = opts
+  for (let i = 0; i < positive.length; i += STORE_ITEMS_BATCH) {
+    const chunk = positive.slice(i, i + STORE_ITEMS_BATCH)
+    const json = await callStoreItems(chunk, STORE_LANGUAGES_DATA_REQUEST, fetchFn, LANGUAGES_MS_PER_APP)
+    for (const [appid, media] of parseStoreMedia(json)) {
+      if (media.ruLang !== undefined) out.set(appid, media.ruLang)
+    }
   }
   return out
 }

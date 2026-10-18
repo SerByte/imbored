@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest'
 import {
   bannedAppidsOf,
   catalogSignalsQueue,
+  reviewPulseQueue,
   claimNewsPollBatch,
   countNewsPollDue,
   createDb,
@@ -48,12 +49,16 @@ import {
   searchIndexGames,
   sitemapGames,
   sitemapNews,
+  sitemapPatchArchives,
   freshlyDigestedPatches,
   gamesByDeveloper,
+  gamesMissingPlayed,
+  gamesMissingRuLang,
   getStaleAppids,
   stalePriceAppids,
   sweepStale,
   topCatalogAppids,
+  topGamesByFacet,
   topGamesByTag,
   topGamesByTags,
   upsertNewsItems,
@@ -61,6 +66,7 @@ import {
 } from './db'
 import { PRICE_TRUST_SEC } from './discount'
 import { fetchDiscoveryPool } from './pool'
+import { PLAYED_SINCE } from './semantics'
 import { loadTriviaCatalog } from './trivia'
 import { MINE_FRESH_SEC } from './whatsnewfeed'
 
@@ -211,6 +217,17 @@ const CASES: Case[] = [
     indexes: ['idx_news_feed'],
     sortFree: true,
   },
+  // Архивы обновлений для карты сайта: крупные патчи игр каталога — тот же
+  // частичный индекс, что у карты патчей, без окна по дате; свежий патч
+  // любого масштаба — поиском по idx_news_app на каждую игру. Группировка по
+  // игре сортирует только эти строки (≤ тридцати на игру, NEWS_KEEP), раз в
+  // сутки на ISR
+  {
+    name: 'архивы обновлений для карты сайта',
+    run: async (db) => sitemapPatchArchives(await withPatches(db), 3, 5000),
+    indexes: ['idx_news_feed', 'idx_news_app'],
+    sortFree: false,
+  },
   // IndexNow после среза пересказов: то же окно и тот же индекс, что у
   // карты сайта, tldr_at — остаточным фильтром. Сортировка по tldr_at —
   // по окну крупных патчей за девяносто дней, намеренно (см. докблок)
@@ -325,12 +342,63 @@ const CASES: Case[] = [
     indexes: ['idx_games_pool'],
     sortFree: true,
   },
+  // Подборки хаба (/games/coop, /games/free, /games/short): верх пула по
+  // отзывам — порядок из частичного индекса, условие — подзапрос на строку
+  // (json_each категорий самой строки или поиск по ключу game_semantics), и
+  // LIMIT обрывает проход. Сортировки и скана каталога нет ни у одной
+  {
+    name: 'подборка по категориям Steam',
+    run: (db) => topGamesByFacet(db, { kind: 'categories', ids: [9, 38] }, 80),
+    indexes: ['idx_games_pool'],
+    sortFree: true,
+  },
+  {
+    name: 'подборка бесплатных',
+    run: (db) => topGamesByFacet(db, { kind: 'free' }, 40),
+    indexes: ['idx_games_pool'],
+    sortFree: true,
+  },
+  {
+    name: 'подборка коротких заходов',
+    run: (db) => topGamesByFacet(db, { kind: 'session', belowMinutes: 30 }, 80),
+    indexes: ['idx_games_pool'],
+    sortFree: true,
+  },
   // Отсечки по возрасту в запросе нет — см. catalogSignalsQueue: иначе при
   // пустой очереди SQLite читал бы весь пул
   {
     name: 'очередь сигналов каталога',
     run: (db) => catalogSignalsQueue(db, 200),
     indexes: ['idx_games_reviews_at'],
+    sortFree: true,
+  },
+  // Пульс отзывов: верх пула — по порядку частичного idx_games_pool,
+  // разгромленные — по порядку idx_games_panned, чтение каждой ветки обрывает
+  // её LIMIT; сортируются по отметке только эти строки, а не пул. Без своего
+  // индекса ветка разгромленных читала бы всю games на каждое звено крона
+  {
+    name: 'очередь пульса отзывов',
+    run: (db) => reviewPulseQueue(db, { top: 400, panned: 50, before: NOW, limit: 6 }),
+    indexes: ['idx_games_panned', 'idx_games_pool'],
+    sortFree: false,
+  },
+  // Догон русского кроном карточек — на каждом звене. Индекс держит только
+  // неспрошенных: пачку читает LIMIT, а пустой догон — одних промолчавших,
+  // которых пропускает skip (он фильтр поверх индекса, а не повод для скана)
+  {
+    name: 'догон русского языка',
+    run: (db) => gamesMissingRuLang(db, 100, [730, 570]),
+    indexes: ['idx_games_ru_unknown'],
+    sortFree: true,
+  },
+  // Догон «Наиграли»: пул по порядку частичного индекса и одна строка
+  // семантики по ключу к каждой игре — запись, которой нет, индексом по
+  // game_semantics не найти. Без сортировки: чтение обрывает LIMIT, а
+  // пустой проход догон делает раз в сутки (CATCHUP_PLAYED_IDLE_KEY)
+  {
+    name: 'догон «Наиграли»',
+    run: (db) => gamesMissingPlayed(db, PLAYED_SINCE, 5),
+    indexes: ['idx_games_pool'],
     sortFree: true,
   },
   // «Ещё у этой студии» на карточке: диапазон developer=? частичного индекса,
@@ -752,6 +820,12 @@ describe('выборки по списку appid', () => {
     [
       'stalePriceAppids со скрытыми',
       (db) => stalePriceAppids(db, IDS, Number.MAX_SAFE_INTEGER, NOW, 200, 'us', { hidden: true }),
+    ],
+    // и с погасшими скидками — ещё одно OR, тот же поиск по ключу
+    [
+      'stalePriceAppids с погасшими скидками',
+      (db) =>
+        stalePriceAppids(db, IDS, Number.MAX_SAFE_INTEGER, NOW, 200, 'us', { hidden: true, deadDeals: true }),
     ],
   ]
 
