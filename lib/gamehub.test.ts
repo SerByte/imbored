@@ -10,6 +10,7 @@ import {
   HUB_TAGS,
   hubPath,
   hubTagOf,
+  hubTitle,
   primaryGenre,
   storedTagWeights,
   TAGS_PER_GAME,
@@ -92,6 +93,40 @@ describe('страницы жанров', () => {
   test('заголовок — по-русски и с большой буквы', () => {
     for (const tag of HUB_TAGS) expect(HUB_GENRES[tag].title, tag).toMatch(/^[А-ЯЁA-Z]/)
     expect(HUB_PAGE).toBeGreaterThanOrEqual(HUB_SHELF)
+  })
+
+  test('hubTitle без языка и на ru — ровно русский заголовок', () => {
+    for (const tag of HUB_TAGS) {
+      expect(hubTitle(tag), tag).toBe(HUB_GENRES[tag].title)
+      expect(hubTitle(tag, 'ru'), tag).toBe(HUB_GENRES[tag].title)
+    }
+  })
+
+  test('английский заголовок — у каждого жанра свой, с большой буквы и без кириллицы', () => {
+    const titles = HUB_TAGS.map((tag) => hubTitle(tag, 'en'))
+    for (const [i, title] of titles.entries()) {
+      expect(title, HUB_TAGS[i]).toMatch(/^[A-Z]/)
+      expect(title, HUB_TAGS[i]).not.toMatch(/[А-Яа-яЁё]/)
+      // не голый ключ тега: заголовок — множественным числом, как жанр ищут
+      expect(title, HUB_TAGS[i]).not.toBe(HUB_TAGS[i])
+    }
+    expect(new Set(titles).size).toBe(titles.length)
+  })
+
+  test('английский — множественным числом, аббревиатуры заглавными', () => {
+    expect(hubTitle('Roguelike', 'en')).toBe('Roguelikes')
+    expect(hubTitle('Souls-like', 'en')).toBe('Soulslikes')
+    expect(hubTitle('Metroidvania', 'en')).toBe('Metroidvanias')
+    expect(hubTitle('Open World', 'en')).toBe('Open-world games')
+    expect(hubTitle('City Builder', 'en')).toBe('City builders')
+    expect(hubTitle('JRPG', 'en')).toBe('JRPGs')
+    expect(hubTitle('CRPG', 'en')).toBe('CRPGs')
+  })
+
+  test('тег без страницы — сам ключ на обоих языках', () => {
+    expect(hubTitle('Indie')).toBe('Indie')
+    expect(hubTitle('Indie', 'en')).toBe('Indie')
+    expect(hubTitle('constructor', 'en')).toBe('constructor')
   })
 })
 

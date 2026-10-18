@@ -19,6 +19,7 @@
  * Модуль чистый: из других модулей — только типы.
  */
 import type { SimilarGame } from './db'
+import type { Locale } from './i18n'
 
 /**
  * Полки хаба в порядке показа — английскими ключами тегов, как они лежат в
@@ -105,6 +106,62 @@ export const HUB_GENRES: Readonly<Record<string, { slug: string; title: string }
   Cozy: { slug: 'cozy', title: 'Уютные игры' },
   Platformer: { slug: 'platformer', title: 'Платформеры' },
   Racing: { slug: 'racing', title: 'Гонки' },
+}
+
+/**
+ * Заголовки страниц жанров по-английски — тем же правилом, что русские:
+ * множественным числом, как жанр ищут («roguelikes», «city builders»), а не
+ * подписью тега в единственном (tagLabel даёт «Roguelike»).
+ *
+ * Sentence case, но аббревиатуры остаются заглавными (JRPGs, CRPGs, RTS):
+ * поэтому заголовок нигде не приводится к строчным целиком — и в пути над
+ * названием игры, и в крошках он стоит как есть. Слаги и ключи HUB_GENRES
+ * общие для обоих языков: адрес /en/games/roguelike — тот же раздел.
+ */
+const HUB_TITLES_EN: Readonly<Record<string, string>> = {
+  'Open World': 'Open-world games',
+  'Souls-like': 'Soulslikes',
+  Metroidvania: 'Metroidvanias',
+  Roguelike: 'Roguelikes',
+  'Hack and Slash': 'Hack-and-slash games',
+  FPS: 'First-person shooters',
+  Stealth: 'Stealth games',
+  'Immersive Sim': 'Immersive sims',
+  'Action RPG': 'Action RPGs',
+  JRPG: 'JRPGs',
+  CRPG: 'CRPGs',
+  'Visual Novel': 'Visual novels',
+  'Point & Click': 'Point-and-click adventures',
+  Detective: 'Detective games',
+  Puzzle: 'Puzzle games',
+  Horror: 'Horror games',
+  Survival: 'Survival games',
+  Sandbox: 'Sandbox games',
+  'City Builder': 'City builders',
+  'Colony Sim': 'Colony sims',
+  Automation: 'Automation games',
+  'Grand Strategy': 'Grand strategy games',
+  RTS: 'Real-time strategy games',
+  'Turn-Based Tactics': 'Turn-based tactics games',
+  'Tower Defense': 'Tower defense games',
+  Deckbuilding: 'Deckbuilders',
+  'Farming Sim': 'Farming sims',
+  Cozy: 'Cozy games',
+  Platformer: 'Platformers',
+  Racing: 'Racing games',
+}
+
+/**
+ * Заголовок страницы жанра на языке страницы: «Рогалики» / «Roguelikes».
+ *
+ * Для ru — ровно HUB_GENRES[tag].title. Тег без своей страницы — сам ключ:
+ * сюда приходят только теги, прошедшие hubTagOf или primaryGenre, и пустая
+ * строка в заголовке была бы хуже честного ключа. hasOwn — ключ из данных.
+ */
+export function hubTitle(tag: string, locale: Locale = 'ru'): string {
+  if (!Object.hasOwn(HUB_GENRES, tag)) return tag
+  if (locale === 'en') return Object.hasOwn(HUB_TITLES_EN, tag) ? HUB_TITLES_EN[tag] : tag
+  return HUB_GENRES[tag].title
 }
 
 /** Адрес страницы жанра; null — у тега нет своей страницы */
