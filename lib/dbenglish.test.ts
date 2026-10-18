@@ -39,7 +39,7 @@ import {
   type Db,
   type StoredNews,
 } from './db'
-import { freshPortraitText, PORTRAIT_TEXT_V } from './portraitvoice'
+import { freshPortraitText, PORTRAIT_TEXT_V, portraitTextFresh } from './portraitvoice'
 import type { GameMeta, LibraryGame } from './types'
 
 /*
@@ -94,7 +94,13 @@ describe('портрет: слот на язык', () => {
     await setUserPortrait(db, 'u1', { takenAt: NOW, text: 'ты — легенда бэклога', v: 2 })
     await setUserPortrait(db, 'u1', { takenAt: NOW, text: 'you are a backlog legend', v: 2 }, 'en')
 
-    expect(await getUserPortrait(db, 'u1', 'en')).toEqual({ takenAt: NOW, text: 'you are a backlog legend', v: 2 })
+    // Английский — верхним уровнем и им же в en (зеркало: см. getUserPortrait)
+    expect(await getUserPortrait(db, 'u1', 'en')).toEqual({
+      takenAt: NOW,
+      text: 'you are a backlog legend',
+      v: 2,
+      en: { takenAt: NOW, text: 'you are a backlog legend', v: 2 },
+    })
     // Русский — верхний уровень, как раньше; английский слот едет рядом
     expect(await getUserPortrait(db, 'u1')).toEqual({
       takenAt: NOW,
@@ -121,29 +127,52 @@ describe('портрет: слот на язык', () => {
     const db = await withSnapshot('u3')
     await setUserPortrait(db, 'u3', { takenAt: NOW, text: 'an English-only portrait' }, 'en')
     expect(await getUserPortrait(db, 'u3')).toBeNull()
-    expect(await getUserPortrait(db, 'u3', 'en')).toEqual({ takenAt: NOW, text: 'an English-only portrait' })
+    expect(await getUserPortrait(db, 'u3', 'en')).toEqual({
+      takenAt: NOW,
+      text: 'an English-only portrait',
+      en: { takenAt: NOW, text: 'an English-only portrait' },
+    })
   })
 
   /*
-   * Как страница портрета сводит чтение и свежесть: язык уходит в чтение
-   * (getUserPortrait(…, locale) отдаёт слот своего языка верхним уровнем), а
-   * freshPortraitText (lib/portraitvoice) судит уже выбранный слот — без
-   * locale. Язык в обоих местах сразу выбрал бы слот дважды: у прочтённого
-   * английского слота вложенного en нет, и текст не находился бы никогда.
+   * Как страница портрета сводит чтение и свежесть. Правило страниц — язык в
+   * каждую функцию, где он есть, — и тогда он уходит и в чтение, и в
+   * свежесть. Раньше чтение отдавало английский слот одним верхним уровнем,
+   * и язык в обоих местах выбирал слот дважды: у прочтённого слота
+   * вложенного en нет, текст не находился никогда, а /en/portrait звал модель
+   * на каждый рендер. Теперь годится любой порядок — и текст всегда своего
+   * языка.
    */
-  test('чтение по языку + свежесть без языка — текст своего языка, и при одном английском', async () => {
+  test('чтение и свежесть с языком в любом порядке — текст своего языка, и при одном английском', async () => {
     const db = await withSnapshot('u6')
     await setUserPortrait(db, 'u6', { takenAt: NOW, text: 'an English-only portrait', v: PORTRAIT_TEXT_V }, 'en')
     expect(freshPortraitText(await getUserPortrait(db, 'u6', 'en'), NOW, true)).toBe('an English-only portrait')
     expect(freshPortraitText(await getUserPortrait(db, 'u6'), NOW, true)).toBeNull()
-    // язык в обоих местах — ровно та ошибка, которую сторожит этот тест
-    expect(freshPortraitText(await getUserPortrait(db, 'u6', 'en'), NOW, true, 'en')).toBeNull()
+    // язык в обоих местах — тот же английский текст, а не вечный промах
+    expect(freshPortraitText(await getUserPortrait(db, 'u6', 'en'), NOW, true, 'en')).toBe('an English-only portrait')
+    expect(portraitTextFresh((await getUserPortrait(db, 'u6', 'en'))!, NOW, true, 'en')).toBe(true)
+    // язык только в свежести, поверх русского чтения: русского нет — и записи нет
+    expect(freshPortraitText(await getUserPortrait(db, 'u6'), NOW, true, 'en')).toBeNull()
 
     await setUserPortrait(db, 'u6', { takenAt: NOW, text: 'портрет по-русски', v: PORTRAIT_TEXT_V })
     expect(freshPortraitText(await getUserPortrait(db, 'u6'), NOW, true)).toBe('портрет по-русски')
     expect(freshPortraitText(await getUserPortrait(db, 'u6', 'en'), NOW, true)).toBe('an English-only portrait')
-    // снимок сменился — устарели оба
+    expect(freshPortraitText(await getUserPortrait(db, 'u6', 'en'), NOW, true, 'en')).toBe('an English-only portrait')
+    expect(freshPortraitText(await getUserPortrait(db, 'u6'), NOW, true, 'en')).toBe('an English-only portrait')
+    // снимок сменился — устарели оба, в любом порядке
     expect(freshPortraitText(await getUserPortrait(db, 'u6', 'en'), NOW + 60, true)).toBeNull()
+    expect(freshPortraitText(await getUserPortrait(db, 'u6', 'en'), NOW + 60, true, 'en')).toBeNull()
+  })
+
+  test('прочтённая английская запись, отданная обратно в запись, не вкладывает en в en', async () => {
+    const db = await withSnapshot('u7')
+    await setUserPortrait(db, 'u7', { takenAt: NOW, text: 'you, in one line', v: PORTRAIT_TEXT_V }, 'en')
+    const read = await getUserPortrait(db, 'u7', 'en')
+    await setUserPortrait(db, 'u7', read!, 'en')
+    const raw = await db.execute("SELECT portrait_json FROM users WHERE steamid = 'u7'")
+    expect(JSON.parse(String(raw.rows[0]?.portrait_json))).toEqual({
+      en: { takenAt: NOW, text: 'you, in one line', v: PORTRAIT_TEXT_V },
+    })
   })
 
   test('английский — под тем же условием снимка, что и русский', async () => {

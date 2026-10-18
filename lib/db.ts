@@ -1776,7 +1776,13 @@ export async function setUserPortrait(
   locale: Locale = 'ru',
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000)
-  const slot = JSON.stringify(value)
+  // Только поля слота: запись, прочтённая getUserPortrait(…, 'en'), несёт свой
+  // слот ещё и в en, и, отданная сюда обратно, легла бы в en вложенным en
+  const slot = JSON.stringify({
+    takenAt: value.takenAt,
+    text: value.text,
+    ...(value.v !== undefined ? { v: value.v } : {}),
+  })
   const merge =
     locale === 'en'
       ? `json_set(CASE WHEN json_valid(users.portrait_json) THEN
@@ -1799,13 +1805,17 @@ export async function setUserPortrait(
 
 /**
  * Текст портрета на языке locale. Русский — запись целиком, как раньше (с
- * английским слотом в en, если он есть); английский — сам слот en. null —
- * текста на этом языке нет: строки нет, слот битый или записан только другой
- * язык (первый заход на портрет был с /en).
+ * английским слотом в en, если он есть); английский — слот en верхним
+ * уровнем И им же в en. null — текста на этом языке нет: строки нет, слот
+ * битый или записан только другой язык (первый заход на портрет был с /en).
  *
- * Английский слот приходит верхним уровнем, как русский, — поэтому свежесть
- * после такого чтения судится без языка: freshPortraitText(cached, снимок,
- * скрыто) из lib/portraitvoice, а не с locale (тот искал бы en внутри слота).
+ * Зачем английский дважды: страница передаёт язык в каждую функцию, где он
+ * есть (docs/i18n.md), — и в чтение, и в свежесть. Отдай чтение один слот
+ * верхним уровнем, freshPortraitText / portraitTextFresh с locale 'en' искали
+ * бы en внутри уже выбранного слота, не находили — и /en/portrait звал бы
+ * модель на каждый рендер, а tsc промолчал бы (en в PortraitCache
+ * необязателен). С зеркалом годится любой порядок: язык в обоих местах, в
+ * одном чтении или в одной свежести поверх русского чтения — текст тот же.
  */
 export async function getUserPortrait(
   db: Db,
@@ -1824,7 +1834,10 @@ export async function getUserPortrait(
   } catch {
     return null
   }
-  if (locale === 'en') return portraitSlot((parsed as { en?: unknown } | null)?.en)
+  if (locale === 'en') {
+    const slot = portraitSlot((parsed as { en?: unknown } | null)?.en)
+    return slot ? { ...slot, en: { ...slot } } : null
+  }
   // Русский — верхний уровень как есть, только если он сам целый: строка, в
   // которую писали лишь английский, русского текста не несёт
   return portraitSlot(parsed) ? (parsed as PortraitCache) : null
