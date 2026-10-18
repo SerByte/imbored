@@ -1201,16 +1201,16 @@ async function RefreshedPill({
 /**
  * «Нашлось» поиска по библиотеке — целой фразой на язык: по-русски запрос
  * впереди («По «portal» нашлись 3 игры»), по-английски — в конце («Found 3
- * games for “portal”»). Число и слово при нём — одной формой pl().
+ * games for “portal”»). Число стоит отдельно от слов, а формы — через pl():
+ * у русского глагола их три, как у слова при числе, английский «Found» от
+ * числа не зависит.
  */
 function foundLine(locale: Locale, q: string, n: number, onShelf: boolean): string {
-  const hit = pl(locale, n, {
-    ru: [`нашлась ${n} игра`, `нашлись ${n} игры`, `нашлось ${n} игр`],
-    en: [`Found ${n} game`, `Found ${n} games`],
-  })
+  const found = pl(locale, n, { ru: ['нашлась', 'нашлись', 'нашлось'], en: ['Found', 'Found'] })
+  const games = pl(locale, n, { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] })
   return tr(locale, {
-    ru: `По «${q}»${onShelf ? ' на этой полке' : ''} ${hit}.`,
-    en: `${hit} for “${q}”${onShelf ? ' on this shelf' : ''}.`,
+    ru: `По «${q}»${onShelf ? ' на этой полке' : ''} ${found} ${n} ${games}.`,
+    en: `${found} ${n} ${games} for “${q}”${onShelf ? ' on this shelf' : ''}.`,
   })
 }
 
