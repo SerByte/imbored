@@ -2,6 +2,8 @@
 
 import gsap from 'gsap'
 import { Stage } from '@/components/landing/Stage'
+import { useLocale } from '@/components/LocaleProvider'
+import { tr } from '@/lib/i18n'
 
 /**
  * СЦЕНА 2: ЗАЧЕМ ВСЁ ЭТО.
@@ -17,10 +19,12 @@ import { Stage } from '@/components/landing/Stage'
  * build не вызывается, и титр просто стоит на месте целиком.
  */
 export function Pain() {
+  const locale = useLocale()
+  const slate = tr(locale, { ru: 'Зачем всё это', en: 'Why this exists' })
   return (
     <Stage
       id="pain"
-      label="Зачем всё это"
+      label={slate}
       end="+=110%"
       build={(tl, root) => {
         /*
@@ -89,19 +93,23 @@ export function Pain() {
 
       <p className="slate">
         <b>02</b>
-        <span>Зачем всё это</span>
+        <span>{slate}</span>
       </p>
 
+      {/* Три такта — три глагола: по-английски тот же ритм, «закрыл» бьёт последним */}
       <h2 className="pain-title font-display text-display-lg">
-        <span data-pain-word>Открыл Steam.</span>
-        <span data-pain-word>Полистал.</span>
+        <span data-pain-word>{tr(locale, { ru: 'Открыл Steam.', en: 'Opened Steam.' })}</span>
+        <span data-pain-word>{tr(locale, { ru: 'Полистал.', en: 'Scrolled.' })}</span>
         <span data-pain-word className="text-ember-text">
-          Закрыл.
+          {tr(locale, { ru: 'Закрыл.', en: 'Closed it.' })}
         </span>
       </h2>
 
       <p className="scene-lede mt-8" data-pain-after>
-        Знакомо. Игр много, а зайти не во что.
+        {tr(locale, {
+          ru: 'Знакомо. Игр много, а зайти не во что.',
+          en: 'Familiar? Lots of games, nothing to play.',
+        })}
       </p>
     </Stage>
   )
