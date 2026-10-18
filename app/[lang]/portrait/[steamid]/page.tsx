@@ -29,7 +29,8 @@ import {
 import { claudePortraitText, llmAvailable } from '@/lib/llm'
 import { takeLlmBudgetForIp } from '@/lib/llmcap'
 import { reconnectHref } from '@/lib/destination'
-import { OG_SITE } from '@/lib/site'
+import { lp, toLocale } from '@/lib/i18n'
+import { localeAlternates, ogSite } from '@/lib/site'
 import { gamesCaption, playedFact, unplayedCaption } from '@/lib/factcaptions'
 import { dateLabel } from '@/lib/freshness'
 import { playedLine } from '@/lib/outcome'
@@ -120,9 +121,10 @@ const personaOf = cache(async (steamid: string) => getPersonaName(await getDb(),
 export async function generateMetadata({
   params,
 }: {
-  params: Promise<{ steamid: string }>
+  params: Promise<{ steamid: string; lang?: string }>
 }): Promise<Metadata> {
-  const { steamid } = await params
+  const { steamid, lang } = await params
+  const locale = toLocale(lang)
   if (!/^\d{17}$/.test(steamid)) return {}
 
   // Ник от снапшота не зависит — читаем вместе; страница возьмёт оба из cache()
@@ -148,7 +150,7 @@ export async function generateMetadata({
   return {
     title,
     description,
-    alternates: { canonical: url },
+    alternates: localeAlternates(locale, url),
     // Из индекса убираем, из шеринга — нет. Заголовок содержит настоящий ник
     // Steam, а страница строится по снапшоту без всякой авторизации: место
     // такому в переписке по прямой ссылке, а не в поисковой выдаче.
@@ -156,7 +158,7 @@ export async function generateMetadata({
     // поиска по картинкам их убирает X-Robots-Tag (lib/robots.ts): метатега
     // у PNG нет.
     robots: { index: false, follow: true },
-    openGraph: { ...OG_SITE, title, description, type: 'profile', url },
+    openGraph: { ...ogSite(locale), title, description, type: 'profile', url: lp(locale, url) },
     twitter: { card: 'summary_large_image', title, description },
   }
 }

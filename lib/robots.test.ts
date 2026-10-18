@@ -112,6 +112,34 @@ describe('robots.txt', () => {
     }
   })
 
+  /**
+   * Английская версия — те же правила под /en: личные страницы и карточки
+   * открыты ради noindex и превью, состояние сессии и хабы закрыты.
+   */
+  test('английская версия закрыта и открыта там же, где русская', () => {
+    const rules = rulesOf()
+    for (const url of [
+      `/en/portrait/${STEAMID}`,
+      `/en/portrait/${STEAMID}/opengraph-image`,
+      `/en/compat/${STEAMID}`,
+      '/en/room/ABC234',
+      '/en',
+      '/en/quiz',
+      '/en/game/730',
+      '/en/games',
+      '/en/whatsnew',
+      '/en/privacy',
+      // og:image русской страницы — по внутреннему пути
+      `/ru/portrait/${STEAMID}/opengraph-image`,
+      '/ru/game/730/opengraph-image',
+    ]) {
+      expect(allowed(rules, url), url).toBe(true)
+    }
+    for (const url of ['/en/portrait', '/en/compat', '/en/room/new', '/en/play', '/en/play?time=short', '/en/explore', '/en/library']) {
+      expect(allowed(rules, url), url).toBe(false)
+    }
+  })
+
   test('сопоставитель в тесте понимает $ и префиксы — иначе проверки выше пустые', () => {
     const rules = { allow: ['/'], disallow: ['/portrait$', '/room'] }
     expect(allowed(rules, '/portrait')).toBe(false)
@@ -149,6 +177,30 @@ describe('noindex заголовком', () => {
    * закрыт). Открыты они ради того, чтобы краулер увидел noindex, а не ради
    * выдачи.
    */
+  test('английские личные страницы, карточки и заглушки — тоже noindex', () => {
+    for (const url of [
+      `/en/portrait/${STEAMID}`,
+      `/en/portrait/${STEAMID}/card.png`,
+      `/en/portrait/${STEAMID}/opengraph-image`,
+      `/en/compat/${STEAMID}`,
+      '/en/room/ABC234',
+      '/en/pick/abcdefghjkmn',
+      `/en/whatsnew/feed/${'a'.repeat(32)}`,
+      '/en/daily',
+      '/en/rooms',
+      // карточки русских страниц по внутреннему пути, мимо редиректа с /ru
+      `/ru/portrait/${STEAMID}/opengraph-image`,
+      `/ru/compat/${STEAMID}/opengraph-image`,
+      '/ru/room/ABC234/opengraph-image',
+      '/ru/pick/abcdefghjkmn/opengraph-image',
+    ]) {
+      expect(noindexed(url), url).toBe(true)
+    }
+    for (const url of ['/en', '/en/quiz', '/en/game/730', '/en/games', '/en/whatsnew', '/en/whatsnew/feed.xml', '/en/rooms/x']) {
+      expect(noindexed(url), url).toBe(false)
+    }
+  })
+
   test('открытые заглушки шапки — с noindex заголовком, /quiz — без', () => {
     expect([...NOINDEX_PAGES]).toEqual(['/daily', '/rooms'])
     expect(noindexed('/daily')).toBe(true)

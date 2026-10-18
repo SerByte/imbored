@@ -72,7 +72,8 @@ describe('превью в мессенджерах', () => {
       if (!/\bopenGraph:\s*\{/.test(src)) continue
       if (file.endsWith(path.join('app', '[lang]', 'layout.tsx'))) continue // корень и есть источник
       for (const m of src.matchAll(/openGraph:\s*\{([\s\S]{0,220}?)\}/g)) {
-        if (!m[1].includes('...OG_SITE')) offenders.push(path.relative(ROOT, file))
+        // ...ogSite(locale) — тот же OG_SITE, но og:locale на языке страницы
+        if (!m[1].includes('...OG_SITE') && !m[1].includes('...ogSite(')) offenders.push(path.relative(ROOT, file))
       }
     }
     expect([...new Set(offenders)], 'openGraph без ...OG_SITE теряет siteName и locale').toEqual([])
@@ -118,7 +119,8 @@ describe('превью в мессенджерах', () => {
       for (const m of src.matchAll(/\bopenGraph:\s*\{/g)) {
         if (!/\burl\b/.test(objectAt(src, m.index))) offenders.push(path.relative(ROOT, file))
       }
-      if (/\bopenGraph:\s*\{/.test(src) && !/alternates:\s*\{\s*canonical\b/.test(src)) {
+      // localeAlternates(locale, url) — canonical на языке страницы и hreflang (lib/site.ts)
+      if (/\bopenGraph:\s*\{/.test(src) && !/alternates:\s*(\{\s*canonical\b|localeAlternates\()/.test(src)) {
         offenders.push(path.relative(ROOT, file))
       }
     }

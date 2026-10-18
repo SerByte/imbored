@@ -39,6 +39,27 @@ describe('карта сайта и осечка базы', () => {
     expect(got).toContain('/game/730')
   })
 
+  test('каждый адрес — на обоих языках, и у каждого — все версии и x-default', async () => {
+    const entries = await sitemap()
+    const paths = entries.map((e) => new URL(e.url).pathname)
+    for (const p of ['/', '/quiz', '/games', '/whatsnew', '/privacy', '/support', '/game/730']) {
+      expect(paths, p).toContain(p)
+      expect(paths, p).toContain(p === '/' ? '/en' : `/en${p}`)
+    }
+    expect(paths.filter((p) => p.startsWith('/en')).length * 2).toBe(paths.length)
+    const game = entries.filter((e) => /\/game\/730$/.test(new URL(e.url).pathname))
+    expect(game).toHaveLength(2)
+    for (const e of game) {
+      expect(e.alternates?.languages).toEqual({
+        ru: 'http://localhost:3000/game/730',
+        en: 'http://localhost:3000/en/game/730',
+        'x-default': 'http://localhost:3000/game/730',
+      })
+    }
+    const home = entries.find((e) => new URL(e.url).pathname === '/en')
+    expect(home?.alternates?.languages).toMatchObject({ ru: 'http://localhost:3000/', en: 'http://localhost:3000/en' })
+  })
+
   test('квиз — в карте (он в выдаче), заглушки /daily и /rooms — нет (noindex)', async () => {
     const got = await urls()
     expect(got).toContain('/quiz')

@@ -9,7 +9,8 @@ import { HUB_GENRES, HUB_MIN_SHELF, HUB_TAGS, hubPath } from '@/lib/gamehub'
 import { genreBreadcrumbLd, genreItemListLd, ldScript } from '@/lib/jsonld'
 import { plural } from '@/lib/plural'
 import { appBaseUrl } from '@/lib/server'
-import { OG_SITE } from '@/lib/site'
+import { lp, toLocale } from '@/lib/i18n'
+import { localeAlternates, ogSite } from '@/lib/site'
 import { tagRu } from '@/lib/tagsru'
 import { loadGenre, type GenreGame } from './load'
 
@@ -38,13 +39,14 @@ export function generateStaticParams(): Array<{ tag: string }> {
   return HUB_TAGS.map((tag) => ({ tag: HUB_GENRES[tag].slug }))
 }
 
-type Params = { params: Promise<{ tag: string }> }
+type Params = { params: Promise<{ tag: string; lang?: string }> }
 
 /** Полка короче этого — страница есть, но в поиск её не пускаем: список из трёх игр — не ответ */
 const thin = (games: readonly GenreGame[]) => games.length < HUB_MIN_SHELF
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { tag: slug } = await params
+  const { tag: slug, lang } = await params
+  const locale = toLocale(lang)
   const genre = await loadGenre(slug)
   if (!genre) return {}
   const { title, games } = genre
@@ -55,9 +57,9 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   return {
     title: heading,
     description,
-    alternates: { canonical },
+    alternates: localeAlternates(locale, canonical),
     ...(thin(games) ? { robots: { index: false, follow: true } } : {}),
-    openGraph: { ...OG_SITE, type: 'website', url: canonical, title: heading, description },
+    openGraph: { ...ogSite(locale), type: 'website', url: lp(locale, canonical), title: heading, description },
   }
 }
 

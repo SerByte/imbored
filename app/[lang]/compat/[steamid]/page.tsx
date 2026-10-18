@@ -12,7 +12,8 @@ import { DiscountCorner, PriceTag } from '@/components/PriceTag'
 import { SplitHeading } from '@/components/SplitHeading'
 import { commonTimeLine, verdict } from '@/lib/compat'
 import { tagRu } from '@/lib/tagsru'
-import { OG_SITE } from '@/lib/site'
+import { lp, toLocale } from '@/lib/i18n'
+import { localeAlternates, ogSite } from '@/lib/site'
 import {
   COMMON_SHOWN,
   type CompatGame,
@@ -53,9 +54,10 @@ const STEAMID = /^\d{17}$/
 export async function generateMetadata({
   params,
 }: {
-  params: Promise<{ steamid: string }>
+  params: Promise<{ steamid: string; lang?: string }>
 }): Promise<Metadata> {
-  const { steamid } = await params
+  const { steamid, lang } = await params
+  const locale = toLocale(lang)
   if (!STEAMID.test(steamid)) return {}
 
   // Только голова приглашения: обложек превью не показывает. Снапшот и ник
@@ -77,13 +79,13 @@ export async function generateMetadata({
   return {
     title,
     description,
-    alternates: { canonical: url },
+    alternates: localeAlternates(locale, url),
     // Из индекса убираем, из шеринга — нет: страница личная и строится по
     // чужому снапшоту. На превью по прямой ссылке флаг не влияет. В robots.txt
     // страница открыта намеренно — иначе краулер этого флага не увидит
     // (lib/robots.ts).
     robots: { index: false, follow: true },
-    openGraph: { ...OG_SITE, title, description, type: 'website', url },
+    openGraph: { ...ogSite(locale), title, description, type: 'website', url: lp(locale, url) },
     twitter: { card: 'summary_large_image', title, description },
   }
 }

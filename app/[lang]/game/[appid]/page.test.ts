@@ -380,6 +380,14 @@ describe('замещённая игра', () => {
     expect(meta.alternates?.canonical).toBe('/game/10')
     expect(meta.openGraph?.url).toBe('/game/10')
   })
+
+  test('на английском canonical и og:url — английские, hreflang — обе версии', async () => {
+    await upsertGameMeta(db, game(10, { name: 'Counter-Strike' }), T0)
+    const meta = await generateMetadata({ params: Promise.resolve({ appid: '10', lang: 'en' }) })
+    expect(meta.alternates?.canonical).toBe('/en/game/10')
+    expect(meta.alternates?.languages).toEqual({ ru: '/game/10', en: '/en/game/10', 'x-default': '/game/10' })
+    expect(meta.openGraph).toMatchObject({ url: '/en/game/10', locale: 'en_US', siteName: 'imbored' })
+  })
 })
 
 /**

@@ -3,6 +3,11 @@
  *
  * Модуль без Next и без базы: его читает next.config.ts ещё до сборки (как
  * lib/csp.ts), а app/robots.ts только раскладывает список в ответ.
+ *
+ * Списки ниже — русскими адресами, без языка. На английский (/en/…) их
+ * разносят ROBOTS_DISALLOW и noindexHeaders: правило, заведённое для
+ * /portrait, обязано держать и /en/portrait, иначе английская копия личной
+ * страницы с ником Steam ушла бы в выдачу.
  */
 
 /**
@@ -109,15 +114,14 @@ export const SECRET_PREFIXES = ['/whatsnew/feed'] as const
  * Открытыми остаются разделы с собственным содержанием: лендинг, /game/*,
  * /games, /whatsnew, /quiz и статические страницы.
  */
-export const ROBOTS_DISALLOW = [
-  '/api/',
-  '/portrait$',
-  '/compat$',
-  '/room/new',
-  '/play',
-  '/explore',
-  '/library',
-] as const
+const DISALLOW_RU = ['/portrait$', '/compat$', '/room/new', '/play', '/explore', '/library'] as const
+
+/**
+ * /api/ — один на оба языка; разделы — русским адресом и под /en. Префикс
+ * строкой, а не lp(): правило с $ — не адрес, и lp не узнала бы в
+ * «portrait$» раздел.
+ */
+export const ROBOTS_DISALLOW: readonly string[] = ['/api/', ...DISALLOW_RU, ...DISALLOW_RU.map((rule) => `/en${rule}`)]
 
 /**
  * Заголовки для next.config.ts: noindex на всём под личными и секретными
@@ -126,17 +130,26 @@ export const ROBOTS_DISALLOW = [
  * Источник /<префикс>/:path* в Next покрывает и сам префикс, и всё под ним,
  * но не соседей: /room/:path* не задевает /rooms. Заглушки — точным адресом,
  * без :path*. Это проверяет lib/robots.test.ts на сопоставителе самого Next.
+ *
+ * Каждое правило — на трёх адресах. Без языка и под /en — страницы двух
+ * языков. Под /ru — файловые карточки: og:image русской страницы Next
+ * собирает из пути маршрута (/ru/portrait/<id>/opengraph-image), и редирект
+ * с /ru их пропускает (lib/i18nroutes.ts) — без правила там PNG с ником
+ * ушла бы в поиск по картинкам. Заголовки сверяются с адресом запроса до
+ * rewrites, поэтому внутренний путь здесь и нужен.
  */
+const NOINDEX_AT = ['', '/en', '/ru'] as const
+
 export function noindexHeaders(): Array<{
   source: string
   headers: Array<{ key: string; value: string }>
 }> {
   const noindex = () => [{ key: 'X-Robots-Tag', value: 'noindex' }]
-  return [
+  return NOINDEX_AT.flatMap((at) => [
     ...[...PERSONAL_PREFIXES, ...SECRET_PREFIXES].map((prefix) => ({
-      source: `${prefix}/:path*`,
+      source: `${at}${prefix}/:path*`,
       headers: noindex(),
     })),
-    ...NOINDEX_PAGES.map((source) => ({ source, headers: noindex() })),
-  ]
+    ...NOINDEX_PAGES.map((page) => ({ source: `${at}${page}`, headers: noindex() })),
+  ])
 }

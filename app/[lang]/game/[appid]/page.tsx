@@ -30,7 +30,8 @@ import {
 } from '@/lib/gamepage'
 import { gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
 import { priceRegion, regionCurrency } from '@/lib/steamregion'
-import { OG_SITE } from '@/lib/site'
+import { lp, toLocale } from '@/lib/i18n'
+import { localeAlternates, ogSite } from '@/lib/site'
 import { plural } from '@/lib/plural'
 import { quizHref, roomSeedHref } from '@/lib/presets'
 import { isReplayable } from '@/lib/recommend'
@@ -106,9 +107,10 @@ const loadOnce = cache(loadGamePage)
 export async function generateMetadata({
   params,
 }: {
-  params: Promise<{ appid: string }>
+  params: Promise<{ appid: string; lang?: string }>
 }): Promise<Metadata> {
-  const { appid: raw } = await params
+  const { appid: raw, lang } = await params
+  const locale = toLocale(lang)
   const appid = Number(raw)
   if (!Number.isInteger(appid) || appid === 0) return {}
 
@@ -179,13 +181,13 @@ export async function generateMetadata({
   return {
     title: `${meta.name} — стоит ли играть`,
     description,
-    alternates: { canonical },
+    alternates: localeAlternates(locale, canonical),
     ...(мёртвая ? { robots: { index: false, follow: true } } : {}),
     openGraph: {
-      ...OG_SITE,
+      ...ogSite(locale),
       title: `${meta.name} — стоит ли играть`,
       description,
-      url: canonical,
+      url: lp(locale, canonical),
       type: 'article',
     },
     twitter: {

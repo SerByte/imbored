@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { ResolvingMetadata } from 'next'
 import { describe, expect, test } from 'vitest'
 import { DESTINATIONS } from './destinationtext'
-import { OG_SITE, ownAddress } from './site'
+import { localeAlternates, OG_SITE, ogSite, ownAddress, SITE_DESCRIPTION, SITE_TITLE, siteDescription, siteTitle } from './site'
 
 /** Родительская метадата в том виде, в каком её отдаёт Next: уже разобранная. */
 function parent(images?: Array<{ url: string }>): ResolvingMetadata {
@@ -42,6 +42,34 @@ describe('ownAddress', () => {
     expect(meta.openGraph).not.toHaveProperty('title')
     expect(meta.openGraph).not.toHaveProperty('description')
     expect(meta.description).toBe('Одна игра')
+  })
+
+  test('на английском canonical и og:url — английский адрес, hreflang — обе версии', async () => {
+    const en = { params: Promise.resolve({ lang: 'en' }) }
+    const meta = await ownAddress('/privacy', { title: 'Privacy' })(en, parent(ROOT_CARD))
+    expect(meta.alternates?.canonical).toBe('/en/privacy')
+    expect(meta.alternates?.languages).toEqual({ ru: '/privacy', en: '/en/privacy', 'x-default': '/privacy' })
+    expect(meta.openGraph).toMatchObject({ siteName: 'imbored', locale: 'en_US', url: '/en/privacy' })
+    const home = await ownAddress('/')(en, parent())
+    expect(home.alternates?.canonical).toBe('/en')
+    expect(home.openGraph).toMatchObject({ url: '/en' })
+  })
+
+  test('русская страница — адрес без префикса и те же hreflang', async () => {
+    const meta = await ownAddress('/quiz')({ params: Promise.resolve({ lang: 'ru' }) }, parent())
+    expect(meta.alternates?.canonical).toBe('/quiz')
+    expect(meta.alternates?.languages).toEqual({ ru: '/quiz', en: '/en/quiz', 'x-default': '/quiz' })
+    expect(meta.openGraph).toMatchObject({ locale: 'ru_RU', url: '/quiz' })
+  })
+
+  test('имя, обещание и общая часть openGraph — на языке страницы', () => {
+    expect(siteTitle('ru')).toBe(SITE_TITLE)
+    expect(siteTitle('en')).toBe('imbored — what to play')
+    expect(siteDescription('ru')).toBe(SITE_DESCRIPTION)
+    expect(siteDescription('en')).toMatch(/^Tell us how much time/)
+    expect(ogSite('ru')).toEqual(OG_SITE)
+    expect(ogSite('en')).toEqual({ siteName: 'imbored', locale: 'en_US' })
+    expect(localeAlternates('en', '/game/730').canonical).toBe('/en/game/730')
   })
 
   test('свои alternates страницы не теряются, canonical — всегда свой', async () => {

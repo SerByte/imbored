@@ -2,6 +2,7 @@ import type { MetadataRoute } from 'next'
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import { sitemapGames, sitemapNews } from '@/lib/db'
 import { HUB_TAGS, hubPath } from '@/lib/gamehub'
+import { LOCALES, lp } from '@/lib/i18n'
 import { newsPath, SITEMAP_NEWS_MAX, SITEMAP_NEWS_WINDOW_SEC } from '@/lib/newspage'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 
@@ -25,18 +26,40 @@ import { appBaseUrl, getDb, nowSec } from '@/lib/server'
  *
  * Настоящий предел ставит сам запрос: он отдаёт только живых, с тегами. Здесь
  * остаётся страховка от протокола, а не бюджет.
+ *
+ * Адрес теперь стоит в карте на каждом языке (см. localized ниже), так что
+ * игра — это LOCALES.length адресов, и патчи тоже. Потолок игр — то, что
+ * остаётся от протокола после патчей и статических адресов (запас 100 на
+ * них с лихвой: их три десятка).
  */
-const MAX_GAMES = 50_000
+const PROTOCOL_MAX = 50_000
+const MAX_GAMES = Math.floor((PROTOCOL_MAX - SITEMAP_NEWS_MAX * LOCALES.length - 100) / LOCALES.length)
 
 /** Сутки: чаще каталог всё равно не меняется, а запрос стоит прочитанных строк. */
 export const revalidate = 86_400
+
+type Entry = MetadataRoute.Sitemap[number]
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = appBaseUrl()
   const url = (path: string) => new URL(path, base).toString()
 
+  /*
+   * Каждый адрес — на каждом языке, и у каждого — ссылки на все версии и
+   * x-default на русскую (xhtml:link в файле). Без них Google видел бы в
+   * /en/game/730 дубль /game/730 и выбирал бы один из двух сам, а
+   * англоязычному из выдачи показывал бы русскую. Та же пара, что в
+   * alternates страниц (localeAlternates в lib/site.ts): path — русский
+   * адрес без префикса.
+   */
+  const languages = (path: string) => ({
+    languages: { ru: url(path), en: url(lp('en', path)), 'x-default': url(path) },
+  })
+  const localized = (path: string, rest: Omit<Entry, 'url' | 'alternates'>): Entry[] =>
+    LOCALES.map((locale) => ({ url: url(lp(locale, path)), alternates: languages(path), ...rest }))
+
   const stat: MetadataRoute.Sitemap = [
-    { url: url('/'), changeFrequency: 'weekly', priority: 1 },
+    ...localized('/', { changeFrequency: 'weekly', priority: 1 }),
     /*
      * /daily здесь НЕТ, и это исправление.
      *
@@ -50,26 +73,26 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
      * открыт ровно затем, чтобы увидеть noindex (NOINDEX_PAGES), — в карту
      * ему тем более незачем. То же у /rooms.
      */
-    { url: url('/whatsnew'), changeFrequency: 'daily', priority: 0.8 },
+    ...localized('/whatsnew', { changeFrequency: 'daily', priority: 0.8 }),
     /*
      * /quiz — наоборот: гость видит первый вопрос целиком, и это главная
      * точка входа в продукт, на которую ведёт каждая карточка игры. Он
      * открыт краулеру и идёт в выдачу со своим canonical (lib/robots,
      * app/quiz/layout.tsx). Ниже хаба жанров: квиз один и не меняется.
      */
-    { url: url('/quiz'), changeFrequency: 'monthly', priority: 0.6 },
+    ...localized('/quiz', { changeFrequency: 'monthly', priority: 0.6 }),
     // Хаб жанров: единственная страница, которая ссылается на карточки пачкой
     // (см. app/games/page.tsx). Полки меняются медленно — верх по отзывам
     // стоит неделями, — отсюда weekly, а не daily.
-    { url: url('/games'), changeFrequency: 'weekly', priority: 0.8 },
+    ...localized('/games', { changeFrequency: 'weekly', priority: 0.8 }),
     // Страницы жанров — адреса известны без базы (HUB_GENRES), поэтому
     // переживают и сборку без каталога. Ниже хаба: хаб ссылается на них
     ...HUB_TAGS.flatMap((tag) => {
       const path = hubPath(tag)
-      return path ? [{ url: url(path), changeFrequency: 'weekly' as const, priority: 0.7 }] : []
+      return path ? localized(path, { changeFrequency: 'weekly', priority: 0.7 }) : []
     }),
-    { url: url('/support'), changeFrequency: 'yearly', priority: 0.3 },
-    { url: url('/privacy'), changeFrequency: 'yearly', priority: 0.2 },
+    ...localized('/support', { changeFrequency: 'yearly', priority: 0.3 }),
+    ...localized('/privacy', { changeFrequency: 'yearly', priority: 0.2 }),
   ]
 
   /*
@@ -114,18 +137,20 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   return [
     ...stat,
-    ...games.map((g) => ({
-      url: url(`/game/${g.appid}`),
-      lastModified: new Date(g.updatedAt * 1000),
-      changeFrequency: 'weekly' as const,
-      priority: 0.7,
-    })),
+    ...games.flatMap((g) =>
+      localized(`/game/${g.appid}`, {
+        lastModified: new Date(g.updatedAt * 1000),
+        changeFrequency: 'weekly',
+        priority: 0.7,
+      }),
+    ),
     // Ниже карточек: патч — повод зайти, а не главное содержание сайта
-    ...news.map((n) => ({
-      url: url(newsPath(n.appid, n.gid)),
-      lastModified: new Date(n.changedAt * 1000),
-      changeFrequency: 'monthly' as const,
-      priority: 0.5,
-    })),
+    ...news.flatMap((n) =>
+      localized(newsPath(n.appid, n.gid), {
+        lastModified: new Date(n.changedAt * 1000),
+        changeFrequency: 'monthly',
+        priority: 0.5,
+      }),
+    ),
   ]
 }

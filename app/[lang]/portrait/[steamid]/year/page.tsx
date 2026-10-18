@@ -27,7 +27,8 @@ import { plural } from '@/lib/plural'
 import { buildYearModel, portraitTag, type YearModel } from '@/lib/portraitmodel'
 import { checkRate, clientIp } from '@/lib/ratelimit'
 import { appBaseUrl, currentSteamId, getDb, nowSec } from '@/lib/server'
-import { OG_SITE } from '@/lib/site'
+import { lp, toLocale } from '@/lib/i18n'
+import { localeAlternates, ogSite } from '@/lib/site'
 import { withRef } from '@/lib/track'
 import type { LibraryGame } from '@/lib/types'
 import { pickYearWindow, yearCandidates, yearEyebrow, yearsToRead } from '@/lib/wrapped'
@@ -58,9 +59,10 @@ const personaOf = cache(async (steamid: string) => getPersonaName(await getDb(),
 export async function generateMetadata({
   params,
 }: {
-  params: Promise<{ steamid: string }>
+  params: Promise<{ steamid: string; lang?: string }>
 }): Promise<Metadata> {
-  const { steamid } = await params
+  const { steamid, lang } = await params
+  const locale = toLocale(lang)
   if (!/^\d{17}$/.test(steamid)) return {}
 
   // Ник от снапшота не зависит — читаем вместе; страница возьмёт оба из cache()
@@ -78,10 +80,10 @@ export async function generateMetadata({
   return {
     title,
     description,
-    alternates: { canonical: url },
+    alternates: localeAlternates(locale, url),
     // Как у портрета: в переписку по ссылке — да, в поисковую выдачу — нет
     robots: { index: false, follow: true },
-    openGraph: { ...OG_SITE, title, description, type: 'profile', url },
+    openGraph: { ...ogSite(locale), title, description, type: 'profile', url: lp(locale, url) },
     twitter: { card: 'summary_large_image', title, description },
   }
 }

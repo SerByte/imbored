@@ -12,7 +12,8 @@ import { isMultiplayerMeta } from '@/lib/recommend'
 import { quizHref, roomSeedHref } from '@/lib/presets'
 import { seedable } from '@/lib/roomseed'
 import { pickCopy, quoted } from '@/lib/sharedpick'
-import { OG_SITE } from '@/lib/site'
+import { lp, toLocale } from '@/lib/i18n'
+import { localeAlternates, ogSite } from '@/lib/site'
 import { loadSharedPick, pickHasNear } from './load'
 
 /*
@@ -24,8 +25,9 @@ export const dynamic = 'force-dynamic'
 
 const loadOnce = cache(loadSharedPick)
 
-export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
-  const { id } = await params
+export async function generateMetadata({ params }: { params: Promise<{ id: string; lang?: string }> }): Promise<Metadata> {
+  const { id, lang } = await params
+  const locale = toLocale(lang)
   const got = await loadOnce(id)
   const { title, description } = pickCopy(
     got ? { name: got.meta.name, reason: got.pick.reason, kind: got.pick.kind } : null,
@@ -42,11 +44,11 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
      */
     title: title.includes('imbored') ? { absolute: title } : title,
     description,
-    alternates: { canonical: url },
+    alternates: localeAlternates(locale, url),
     // В переписку — да, в поисковую выдачу — нет: это чья-то ссылка, а не
     // страница сайта. follow — вес ссылке на карточку игры
     robots: { index: false, follow: true },
-    openGraph: { ...OG_SITE, title, description, type: 'website', url },
+    openGraph: { ...ogSite(locale), title, description, type: 'website', url: lp(locale, url) },
     twitter: { card: 'summary_large_image', title, description },
   }
 }

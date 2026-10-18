@@ -17,7 +17,8 @@ import {
 } from '@/lib/newspage'
 import { patchArticleLd, patchBreadcrumbLd, ldScript } from '@/lib/jsonld'
 import { appBaseUrl, getDb } from '@/lib/server'
-import { OG_SITE } from '@/lib/site'
+import { lp, toLocale } from '@/lib/i18n'
+import { localeAlternates, ogSite } from '@/lib/site'
 import { textLang } from '@/lib/textlang'
 import { loadPatch } from './load'
 
@@ -43,10 +44,11 @@ export async function generateStaticParams(): Promise<Array<{ appid: string; gid
   return []
 }
 
-type Params = { params: Promise<{ appid: string; gid: string }> }
+type Params = { params: Promise<{ appid: string; gid: string; lang?: string }> }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { appid, gid } = await params
+  const { appid, gid, lang } = await params
+  const locale = toLocale(lang)
   const page = await loadPatch(appid, gid)
   if (!page) return {}
   const { item, game } = page
@@ -67,14 +69,14 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   return {
     title,
     description,
-    alternates: { canonical },
+    alternates: localeAlternates(locale, canonical),
     ...(newsIndexable(item.tldr, game?.listed ?? false)
       ? {}
       : { robots: { index: false, follow: true } }),
     openGraph: {
-      ...OG_SITE,
+      ...ogSite(locale),
       type: 'article',
-      url: canonical,
+      url: lp(locale, canonical),
       title,
       description,
       publishedTime: new Date(item.publishedAt * 1000).toISOString(),

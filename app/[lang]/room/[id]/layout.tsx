@@ -1,7 +1,8 @@
 import type { Metadata } from 'next'
 import { headers } from 'next/headers'
 import { inviteCopy } from '@/lib/roominvite'
-import { OG_SITE } from '@/lib/site'
+import { lp, toLocale } from '@/lib/i18n'
+import { localeAlternates, ogSite } from '@/lib/site'
 import { loadRoomInviteForPage, ROOM_ID_RE } from './invite'
 import { MotionLazy } from '@/components/motion/MotionLazy'
 
@@ -24,9 +25,10 @@ import { MotionLazy } from '@/components/motion/MotionLazy'
 export async function generateMetadata({
   params,
 }: {
-  params: Promise<{ id: string }>
+  params: Promise<{ id: string; lang?: string }>
 }): Promise<Metadata> {
-  const { id } = await params
+  const { id, lang } = await params
+  const locale = toLocale(lang)
   const code = id.toUpperCase()
   const robots = { index: false, follow: false } as const
 
@@ -47,9 +49,9 @@ export async function generateMetadata({
   return {
     title,
     description,
-    alternates: { canonical: url },
+    alternates: localeAlternates(locale, url),
     robots,
-    openGraph: { ...OG_SITE, title, description, type: 'website', url },
+    openGraph: { ...ogSite(locale), title, description, type: 'website', url: lp(locale, url) },
     twitter: { card: 'summary_large_image', title, description },
   }
 }
