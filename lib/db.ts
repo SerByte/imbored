@@ -586,13 +586,6 @@ CREATE INDEX IF NOT EXISTS idx_games_reviews_at ON games (reviews_at, reviews_to
 CREATE INDEX IF NOT EXISTS idx_games_ru_unknown ON games (reviews_total DESC)
   WHERE ${ALIVE_POOL} AND ru_lang IS NULL;
 
--- Догон «Наиграли» кроном карточек (gamesMissingPlayed): записи семантики,
--- посчитанные по отзывам, по времени разбора. Ждут догона только разобранные
--- до PLAYED_SINCE — это начало диапазона индекса, а не фильтр после прохода
--- по всей семантике каталога.
-CREATE INDEX IF NOT EXISTS idx_semantics_mined_at ON game_semantics (reviews_at)
-  WHERE basis = 'tags+reviews';
-
 -- «Ещё у этой студии» на карточке игры (gamesByDeveloper): игры одного
 -- разработчика по отзывам, второй ключ — appid, он же rowid, которым индекс
 -- заканчивается сам. Порядок целиком из индекса, чтение обрывает LIMIT: без
@@ -4098,47 +4091,72 @@ export async function gamesMissingRuLang(
 }
 
 /**
- * Живые игры, чья семантика посчитана по отзывам, разобранным до `since`, и
- * не знает «Наиграли» (GameSemantics.played), — для догона кроном карточек
- * (runCardCatchUp в lib/pagejob). Верх каталога первым; теги — для
- * deriveSemantics, чтобы не читать строку второй раз.
+ * Обогащённые живые игры, чьей карточке не хватает «Наиграли»
+ * (GameSemantics.played), а отзывы ради неё ещё не разбирались, — для догона
+ * кроном карточек (runCardCatchUp в lib/pagejob). Верх каталога первым; теги
+ * — для deriveSemantics, чтобы не читать строку второй раз.
  *
- * since — PLAYED_SINCE из lib/semantics: с этого момента разбор отзывов
- * считает хваливших. Условие то же, что у разовой ветки reviewDueSql в
- * scripts/semanticsbuild, — и так же разовое: после похода reviews_at встаёт
- * позже отсечки (markReviewsParsed), и игра, у которой хваливших с названным
- * временем меньше MIN_PLAYED_REVIEWS, второй раз сюда не придёт. Запись по
- * одним тегам не берётся: played пишется только вместе с отзывами, сдвинувшими
- * оси, а тонкой игре его взять неоткуда.
+ * Ждут догона три вида записей — те же, что в очереди reviewDueSql у
+ * scripts/semanticsbuild, кроме ветки версии:
+ *   • записи нет вовсе;
+ *   • запись по одним тегам, а за отзывами не ходили (reviews_at NULL);
+ *   • запись по отзывам, разобранным до `since`, — без played: since —
+ *     PLAYED_SINCE из lib/semantics, с него разбор и считает хваливших.
+ * Первые две — не редкость, а верх каталога: так стоят карточки, которые
+ * крон обогатил до того, как в него вошла семантика (с 14 августа по 23
+ * сентября 2026), если по ним не прошёл semantics:build, — без записи или с
+ * приором без отметки. Туда же — карточка, чей поход за отзывами срез не
+ * довёл (отказ сети: приор пишется без reviews_at). Срез к обогащённой вернётся
+ * только через полгода (PAGE_MAX_AGE_SEC), и без этих двух веток «Наиграли»
+ * не доехала бы до самых посещаемых страниц раньше февраля — а DEPLOY.md
+ * обещает её кроном, без ручного шага.
  *
- * Частичный индекс idx_semantics_mined_at: читаются только ждущие догона,
- * сортировка — по ним же, и её объём тает вместе с догоном.
+ * Для каждой игры выборка разовая: после похода reviews_at стоит позже
+ * отсечки (upsertSemantics с reviewsAt, затем markReviewsParsed) — и тогда,
+ * когда хваливших с названным временем меньше MIN_PLAYED_REVIEWS, и при
+ * пустом ответе. Тонкая игра — запись по тегам С reviews_at: Steam ответил,
+ * а отзывов не хватило сдвинуть оси, — сюда не берётся: played пишется
+ * только вместе с такими отзывами, и перезапрос дал бы тот же ответ. Запись
+ * по тегам без reviews_at — не тонкая, а неспрошенная, и её берём.
  *
- * CROSS JOIN — не украшение: он ставит семантику внешним циклом. С обычным
- * JOIN SQLite выбирал обратный порядок — пул по idx_games_pool, уже
- * отсортированный по отзывам, и семантику по ключу к каждой игре. Без
- * сортировки, но и без остановки: когда догонять нечего, LIMIT не набирается,
- * и каждое звено крона читало бы весь пул — шесть тысяч строк games и столько
- * же game_semantics (lib/queryplan.test.ts).
+ * Только обогащённые (page_at): необогащённую ведёт сам срез, с тем же
+ * походом за отзывами, — догон повторял бы его работу на хвосте каталога.
+ * Ветки версии (s.v < SEMANTICS_V) нет: смена формата делает ждущим весь
+ * каталог разом, и перечитать его — дело semantics:build --with-reviews, а
+ * не пяти игр за звено.
+ *
+ * Цена. Отсутствие записи индексом по game_semantics не найти, поэтому
+ * внешний цикл — пул по idx_games_pool, уже в порядке отзывов, и семантика
+ * по ключу к каждой игре. Пока ждущие есть, чтение обрывает LIMIT на пятой
+ * найденной, а ждущие — верх каталога, то есть начало прохода. Когда их нет,
+ * это весь пул: шесть тысяч строк games и столько же game_semantics. Поэтому
+ * пустой ответ догон запоминает и сутки сюда не ходит
+ * (CATCHUP_PLAYED_IDLE_KEY в lib/pagejob). План сторожит lib/queryplan.test.ts.
+ *
+ * hasRecord — была ли запись до догона: приор по тегам, легший туда, где её
+ * не было, меняет отпечаток карточки (cardRowPrint) так же, как запись по
+ * отзывам, и страница идёт в сброс.
  */
 export async function gamesMissingPlayed(
   db: Db,
   since: number,
   limit: number,
-): Promise<Array<{ appid: number; tags: Record<string, number> }>> {
+): Promise<Array<{ appid: number; tags: Record<string, number>; hasRecord: boolean }>> {
   const res = await db.execute({
-    sql: `SELECT g.appid, g.tags_json FROM game_semantics s
-          CROSS JOIN games g ON g.appid = s.appid
-          WHERE s.basis = 'tags+reviews' AND s.reviews_at < ?
-            AND json_extract(s.json, '$.played') IS NULL
-            AND ${ALIVE_POOL_G} AND g.appid > 0
+    sql: `SELECT g.appid, g.tags_json, s.appid IS NOT NULL AS has_record FROM games g
+          ${SEMANTICS_JOIN}
+          WHERE ${ALIVE_POOL_G} AND g.appid > 0 AND g.page_at IS NOT NULL
+            AND (s.appid IS NULL OR s.reviews_at IS NULL
+                 OR (s.basis = 'tags+reviews' AND s.reviews_at < ?
+                     AND json_extract(s.json, '$.played') IS NULL))
           ORDER BY g.reviews_total DESC, g.appid
           LIMIT ?`,
     args: [since, limit],
   })
-  return (res.rows as unknown as Array<{ appid: number; tags_json: unknown }>).map((r) => ({
+  return (res.rows as unknown as Array<{ appid: number; tags_json: unknown; has_record: unknown }>).map((r) => ({
     appid: Number(r.appid),
     tags: parseTagMap(r.tags_json),
+    hasRecord: Number(r.has_record) === 1,
   }))
 }
 

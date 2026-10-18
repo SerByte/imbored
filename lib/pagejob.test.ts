@@ -4,6 +4,7 @@ import {
   claimPageEnrichBatch,
   countPageEnrichDue,
   createDb,
+  getCatalogMeta,
   getGameJson,
   getGamesMeta,
   getGamesMetaLite,
@@ -21,6 +22,8 @@ import {
 import { LlmUnavailableError } from './llm'
 import {
   CATCHUP_PLAYED,
+  CATCHUP_PLAYED_IDLE_KEY,
+  CATCHUP_PLAYED_IDLE_SEC,
   CATCHUP_RU_LANG,
   CATCHUP_RU_SILENT_KEY,
   CATCHUP_RU_SILENT_SEC,
@@ -1498,6 +1501,15 @@ describe('догон обогащённых карточек: русский и 
     await upsertSemantics(db, [{ appid, semantics, computedAt: at, reviewsAt: at }])
   }
 
+  /**
+   * Карточка, которую срез уже обогатил: в его очередь она вернётся только
+   * через полгода, и ей догон и нужен. Необогащённую ведёт сам срез.
+   */
+  async function addCard(db: Db, appid: number, reviewsTotal: number): Promise<void> {
+    await addGame(db, appid, reviewsTotal)
+    await markPageEnriched(db, appid, NOW)
+  }
+
   async function reviewsAtOf(db: Db, appid: number): Promise<number | null> {
     const res = await db.execute({ sql: 'SELECT reviews_at FROM game_semantics WHERE appid = ?', args: [appid] })
     const v = res.rows[0]?.reviews_at
@@ -1677,13 +1689,15 @@ describe('догон обогащённых карточек: русский и 
     expect(again.наиграли).toBe(0)
   })
 
-  test('не догоняются: свежий разбор, запись по тегам, знающая «Наиграли», игра вне пула', async () => {
+  test('не догоняются: свежий разбор, тонкая запись по тегам, знающая «Наиграли», игра вне пула', async () => {
     const db = await freshDb()
-    for (const appid of [20, 30, 40]) await addGame(db, appid, 100)
+    for (const appid of [20, 30, 40]) await addCard(db, appid, 100)
     await upsertGameMeta(db, { ...meta(50), tags: {} }, NOW)
+    await markPageEnriched(db, 50, NOW)
     // разобран после отсечки: хваливших с временем просто меньше порога
     await minedLongAgo(db, 20, PLAYED_SINCE + 60)
-    // одни теги: played без отзывов, сдвинувших оси, не пишется вовсе
+    // тонкая: Steam ответил (отметка стоит), а отзывов не хватило сдвинуть
+    // оси — played без них не пишется, и перезапрос дал бы тот же ответ
     await upsertSemantics(db, [
       {
         appid: 30,
@@ -1710,7 +1724,7 @@ describe('догон обогащённых карточек: русский и 
 
   test('Steam ответил тонко — запись по отзывам цела, а отметка разбора двигается', async () => {
     const db = await freshDb()
-    await addGame(db, 10, 100)
+    await addCard(db, 10, 100)
     await minedLongAgo(db, 10)
     let запросов = 0
     const thin = async () => {
@@ -1734,7 +1748,7 @@ describe('догон обогащённых карточек: русский и 
   test('отказ сети обрывает догон «Наиграли»: остальные ждут следующего звена', async () => {
     const db = await freshDb()
     for (const appid of [10, 20, 30]) {
-      await addGame(db, appid, 1000 - appid)
+      await addCard(db, appid, 1000 - appid)
       await minedLongAgo(db, appid)
     }
     let запросов = 0
@@ -1756,7 +1770,7 @@ describe('догон обогащённых карточек: русский и 
     const db = await freshDb()
     const ids = Array.from({ length: CATCHUP_PLAYED + 2 }, (_, i) => (i + 1) * 10)
     for (const appid of ids) {
-      await addGame(db, appid, appid)
+      await addCard(db, appid, appid)
       await minedLongAgo(db, appid)
     }
     const asked: number[] = []
@@ -1773,7 +1787,7 @@ describe('догон обогащённых карточек: русский и 
 
   test('срок звена вышел — за отзывами не ходит', async () => {
     const db = await freshDb()
-    await addGame(db, 10, 100)
+    await addCard(db, 10, 100)
     await minedLongAgo(db, 10)
 
     const res = await catchUp(db, { deadlineAt: Date.now() - 1 })
@@ -1784,7 +1798,7 @@ describe('догон обогащённых карточек: русский и 
 
   test('отказ языка не мешает «Наиграли»: две ручки Steam, два лимита', async () => {
     const db = await freshDb()
-    await addGame(db, 10, 100)
+    await addCard(db, 10, 100)
     await minedLongAgo(db, 10)
 
     const res = await catchUp(db, {
@@ -1797,5 +1811,277 @@ describe('догон обогащённых карточек: русский и 
     expect(res.русский).toBe(0)
     expect(res.наиграли).toBe(1)
     expect(res.cards).toEqual([10])
+  })
+
+  /**
+   * Семантика вошла в крон карточек 23 сентября 2026, а обогащал он с 14
+   * августа: верх каталога, обогащённый между ними, стоит без записи
+   * семантики — или с приором по тегам без отметки, если по нему прошёл
+   * semantics:build. Ни одна из них не «разобрана до отсечки», и догон по
+   * одной этой ветке их не брал: «Наиграли» ждала бы полугодового обхода
+   * среза, до февраля, — на самых посещаемых карточках.
+   */
+  test('нет записи семантики — карточка, обогащённая до семантики в кроне: отзывы заново и сброс', async () => {
+    const db = await freshDb()
+    await addCard(db, 10, 100)
+    const asked: number[] = []
+
+    const res = await catchUp(db, {
+      fetchReviewsRawFn: async (appid: number) => {
+        asked.push(appid)
+        return played(600)
+      },
+    })
+
+    expect(asked).toEqual([10])
+    expect((await getGamesMetaLite(db, [10])).get(10)?.semantics?.played).toEqual({
+      posMedianMin: 600,
+      posN: MIN_PLAYED_REVIEWS,
+    })
+    expect(await reviewsAtOf(db, 10)).toBe(LATER)
+    expect(res.cards).toEqual([10])
+    expect(await queueState(db, 10)).toEqual({ pageAt: NOW, tries: 0 })
+
+    await catchUp(db, {
+      fetchReviewsRawFn: async (appid: number) => {
+        asked.push(appid)
+        return played(600)
+      },
+    })
+    expect(asked).toEqual([10])
+  })
+
+  test('приор по тегам без отметки — не тонкий, а неспрошенный: догоняется', async () => {
+    const db = await freshDb()
+    await addCard(db, 10, 100)
+    // так его оставляет semantics:build без --with-reviews и срез, которому
+    // отказала сеть: reviews_at не стоит, за отзывами не ходили
+    await upsertSemantics(db, [
+      { appid: 10, semantics: deriveSemantics({ Action: 100 }, null), computedAt: PLAYED_SINCE - DAY },
+    ])
+    expect(await reviewsAtOf(db, 10)).toBeNull()
+
+    const res = await catchUp(db, { fetchReviewsRawFn: async () => played(600) })
+
+    expect((await getGamesMetaLite(db, [10])).get(10)?.semantics?.played?.posMedianMin).toBe(600)
+    expect(res.наиграли).toBe(1)
+    expect(res.cards).toEqual([10])
+  })
+
+  test('нет записи, а Steam ответил тонко — ложится приор с отметкой, карточка в сброс, второй раз не спрашивают', async () => {
+    const db = await freshDb()
+    await addCard(db, 10, 100)
+    let запросов = 0
+    const thin = async () => {
+      запросов++
+      return reviews(MIN_REVIEWS - 1)
+    }
+
+    const res = await catchUp(db, { fetchReviewsRawFn: thin })
+
+    expect((await getGamesMetaLite(db, [10])).get(10)?.semantics?.basis).toBe('tags')
+    expect(await reviewsAtOf(db, 10)).toBe(LATER)
+    // записи не было — теперь есть: отпечаток карточки сменился
+    expect(res.cards).toEqual([10])
+    await catchUp(db, { fetchReviewsRawFn: thin, nowSec: LATER + CATCHUP_PLAYED_IDLE_SEC })
+    expect(запросов).toBe(1)
+  })
+
+  test('необогащённая карточка — дело среза: догон её не берёт', async () => {
+    const db = await freshDb()
+    // без записи и разобранная до отсечки — но срез ещё не приходил, и его
+    // поход за отзывами принесёт «Наиграли» сам
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 90)
+    await minedLongAgo(db, 20)
+
+    const res = await catchUp(db)
+
+    expect(res.наиграли).toBe(0)
+    expect(res.cards).toEqual([])
+  })
+
+  /**
+   * Игру без записи индексом по game_semantics не найти, и пустая выборка —
+   * проход по всему пулу. На каждом звене это сотни тысяч чтений в сутки
+   * ради «догонять некого», поэтому пустой ответ помнится сутки.
+   */
+  test('пустая выборка «Наиграли» помнится сутки: пул не перебирается на каждом звене', async () => {
+    const db = await freshDb()
+    await catchUp(db)
+    expect(await getCatalogMeta(db, CATCHUP_PLAYED_IDLE_KEY)).toBe(String(LATER))
+
+    // ждущая появилась после пустого ответа — например, срезу отказала сеть
+    await addCard(db, 10, 100)
+    const asked: number[] = []
+    const reviewsFn = async (appid: number) => {
+      asked.push(appid)
+      return played(600)
+    }
+
+    await catchUp(db, { fetchReviewsRawFn: reviewsFn, nowSec: LATER + CATCHUP_PLAYED_IDLE_SEC - 1 })
+    expect(asked).toEqual([])
+
+    const res = await catchUp(db, { fetchReviewsRawFn: reviewsFn, nowSec: LATER + CATCHUP_PLAYED_IDLE_SEC })
+    expect(asked).toEqual([10])
+    expect(res.cards).toEqual([10])
+  })
+
+  test('отметка пустой выборки из будущего или мусор — выборку спрашивают', async () => {
+    const db = await freshDb()
+    await addCard(db, 10, 100)
+    const asked: number[] = []
+    const reviewsFn = async (appid: number) => {
+      asked.push(appid)
+      return played(600)
+    }
+
+    // часы базы и функции разошлись: такая отметка заперла бы догон надолго
+    await setCatalogMeta(db, CATCHUP_PLAYED_IDLE_KEY, String(LATER + 30 * DAY))
+    await catchUp(db, { fetchReviewsRawFn: reviewsFn })
+    expect(asked).toEqual([10])
+
+    await addCard(db, 20, 90)
+    await setCatalogMeta(db, CATCHUP_PLAYED_IDLE_KEY, 'вчера')
+    await catchUp(db, { fetchReviewsRawFn: reviewsFn })
+    expect(asked).toEqual([10, 20])
+  })
+
+  /**
+   * Сбой разбора — код на данных одной игры, и на следующем звене он
+   * повторится. Если бы она оставалась без отметки, то стояла бы первой в
+   * выборке на каждом звене, а пять таких заперли бы догон целиком.
+   */
+  test('разбор упал на одной игре — она уходит из головы очереди, остальные и язык — в сброс', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, meta(10, { reviewsTotal: 300, tags: { Puzzle: 100 } }), NOW)
+    await replaceGameTags(db, 10, [{ tag: 'Puzzle', weight: 100 }])
+    await markPageEnriched(db, 10, NOW)
+    await minedLongAgo(db, 10)
+    await addCard(db, 20, 200)
+    await minedLongAgo(db, 20)
+    // у обеих язык известен — язык догоняет третья
+    await db.execute('UPDATE games SET ru_lang = 2 WHERE appid IN (10, 20)')
+    await addGame(db, 30, 100)
+    const asked: number[] = []
+    const opts = {
+      fetchLangsFn: async () => new Map([[30, 1 as const]]),
+      fetchReviewsRawFn: async (appid: number) => {
+        asked.push(appid)
+        return played(600)
+      },
+      semanticsFn: (tags: Record<string, number>, mined: Parameters<typeof deriveSemantics>[1]) => {
+        if ('Puzzle' in tags) throw new Error('lib/semantics: сломан на этих тегах')
+        return deriveSemantics(tags, mined)
+      },
+    }
+
+    const res = await catchUp(db, opts)
+
+    expect(asked).toEqual([10, 20])
+    expect([...res.cards].sort((a, b) => a - b)).toEqual([20, 30])
+    expect(res.наиграли).toBe(2)
+    // запись по отзывам цела, а отметка разбора ушла за отсечку
+    expect((await getGamesMetaLite(db, [10])).get(10)?.semantics?.basis).toBe('tags+reviews')
+    expect(await reviewsAtOf(db, 10)).toBe(LATER)
+
+    await catchUp(db, { ...opts, nowSec: LATER + CATCHUP_PLAYED_IDLE_SEC })
+    expect(asked).toEqual([10, 20])
+  })
+
+  test('разбор упал у игры без записи — ложится приор по тегам с отметкой, и она уходит из очереди', async () => {
+    const db = await freshDb()
+    await addCard(db, 10, 100)
+    let запросов = 0
+    const opts = {
+      fetchReviewsRawFn: async () => {
+        запросов++
+        return played(600)
+      },
+      // ломается только разбор отзывов: приор по тегам считается
+      semanticsFn: (tags: Record<string, number>, mined: Parameters<typeof deriveSemantics>[1]) => {
+        if (mined) throw new Error('lib/reviewmine: сломан на этих отзывах')
+        return deriveSemantics(tags, null)
+      },
+    }
+
+    const res = await catchUp(db, opts)
+
+    expect((await getGamesMetaLite(db, [10])).get(10)?.semantics?.basis).toBe('tags')
+    expect(await reviewsAtOf(db, 10)).toBe(LATER)
+    expect(res.cards).toEqual([10])
+    await catchUp(db, { ...opts, nowSec: LATER + CATCHUP_PLAYED_IDLE_SEC })
+    expect(запросов).toBe(1)
+  })
+
+  /** База, у которой ломаются только запросы, где есть `marker` */
+  function brokenWhere(db: Db, marker: string): Db {
+    const sqlOf = (q: InStatement) => (typeof q === 'string' ? q : q.sql)
+    const fail = () => Promise.reject(new Error('Turso: operation timed out'))
+    return {
+      execute: (q: InStatement) => (sqlOf(q).includes(marker) ? fail() : db.execute(q)),
+      batch: (qs: InStatement[], mode?: 'write' | 'read' | 'deferred') =>
+        qs.some((q) => sqlOf(q).includes(marker)) ? fail() : db.batch(qs, mode),
+    } as unknown as Db
+  }
+
+  /**
+   * Язык записан — игра из его очереди ушла, и следующее звено её не возьмёт.
+   * Упади догон целиком из-за сбоя на «Наиграли», роут не получил бы и этих
+   * карточек, и строка «Русский» ждала бы конца недельного кэша.
+   */
+  test('сбой базы на «Наиграли» — карточки языка всё равно в ответе, догон не бросает', async () => {
+    const db = await freshDb()
+    await addCard(db, 10, 100)
+    await minedLongAgo(db, 10)
+
+    const res = await catchUp(brokenWhere(db, 'INSERT INTO game_semantics'), {
+      fetchLangsFn: async () => new Map([[10, 2 as const]]),
+      fetchReviewsRawFn: async () => played(600),
+    })
+
+    expect(res.русский).toBe(1)
+    expect(res.наиграли).toBe(0)
+    expect(res.cards).toEqual([10])
+    // отметка разбора не двинулась: игра в очереди следующего звена
+    expect(await reviewsAtOf(db, 10)).toBe(PLAYED_SINCE - DAY)
+  })
+
+  test('сбой базы на выборке «Наиграли» — язык всё равно доезжает', async () => {
+    const db = await freshDb()
+    await addCard(db, 10, 100)
+
+    const res = await catchUp(brokenWhere(db, 'has_record'), {
+      fetchLangsFn: async () => new Map([[10, 0 as const]]),
+    })
+
+    expect(res.cards).toEqual([10])
+    expect((await getGamesMeta(db, [10])).get(10)?.ruLang).toBe(0)
+  })
+
+  test('сбой базы в половине языка — «Наиграли» всё равно в ответе', async () => {
+    const db = await freshDb()
+    await addCard(db, 10, 100)
+    await minedLongAgo(db, 10)
+
+    const res = await catchUp(brokenWhere(db, 'ru_lang IS NULL'), {
+      fetchReviewsRawFn: async () => played(600),
+    })
+
+    expect(res.русский).toBe(0)
+    expect(res.cards).toEqual([10])
+  })
+
+  test('промолчавших не записать — языки, что легли, всё равно в сброс', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 90)
+
+    const res = await catchUp(brokenWhere(db, 'INSERT INTO catalog_meta'), {
+      fetchLangsFn: async () => new Map([[10, 3 as const]]),
+    })
+
+    expect(res.cards).toEqual([10])
+    expect((await getGamesMeta(db, [10])).get(10)?.ruLang).toBe(3)
   })
 })

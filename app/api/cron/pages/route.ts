@@ -6,7 +6,7 @@ import { openRun, runChain } from '@/lib/chain'
 import { cronAuthorized, pagesDailyLinks, pagesLinkVerdict } from '@/lib/cron'
 import { countPageEnrichDue, STEAM_LEASE } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
-import { resetSliceCards, revalidateEndedDeals } from '@/lib/gamecache'
+import { resetSliceCards, revalidateEndedDeals, revalidateGamePages } from '@/lib/gamecache'
 import { llmAvailable } from '@/lib/llm'
 import { llmDailyCap } from '@/lib/llmcap'
 import {
@@ -106,26 +106,37 @@ export async function GET(req: Request) {
            * (runCardCatchUp) — до среза, а не после: срез съедает звено
            * целиком, пока в его очереди есть работа, и после него догон не
            * начался бы никогда. Сам догон короткий (CATCHUP_PLAYED_MS), а
-           * когда догонять нечего — ни строки чтения и ни шага в Steam.
+           * когда догонять нечего — две отметки, единицы строк и ни шага в
+           * Steam (пул целиком — раз в сутки, CATCHUP_PLAYED_IDLE_KEY).
            *
-           * Его сбой (база) звено не роняет: срез карточек от него не
-           * зависит, а догон повторит следующее звено — очередь у него в
-           * самих строках, без отметок.
+           * Сбои догон держит в себе и карточки, которые успел поменять,
+           * отдаёт всё равно (см. его докблок). catch здесь — страховка на
+           * непредвиденное: срез карточек от догона не зависит и идёт.
            */
           const догон = await runCardCatchUp(db, { deadlineAt }).catch((err: unknown) => {
             logSwallowed('cron/pages:catchup', err)
             return null
           })
-          const срез = await runPageSlice(db, { deadlineAt })
           // Карточки, которые срез или догон поменяли, — в перегенерацию:
           // страница живёт неделю (lib/gamecache), и без сброса свежие
           // pros/cons, кадры, язык и «Наиграли» ждали бы её конца. Сверка
           // сигналов карточки не сбрасывает: её шаг — неделя, ровно срок
-          // кэша, и он доезжает сам
-          const slice = resetSliceCards({ ...срез, cards: [...срез.cards, ...(догон?.cards ?? [])] }, revalidatePath)
+          // кэша, и он доезжает сам.
+          //
+          // Карточки догона — сразу, до среза, а не вместе с его карточками:
+          // из очереди догона их строки уже ушли, и упади срез — следующее
+          // звено их не вернуло бы. Срезу остаются те, что догон не сбросил
+          const сброшеныДогоном = new Set(догон?.cards ?? [])
+          const сброшеноДогоном = revalidateGamePages(сброшеныДогоном, revalidatePath)
+          const срез = await runPageSlice(db, { deadlineAt })
+          const slice = resetSliceCards(
+            { ...срез, cards: срез.cards.filter((appid) => !сброшеныДогоном.has(appid)) },
+            revalidatePath,
+          )
           const сигналы = await сверка
           return {
             ...slice,
+            сброшено: slice.сброшено + сброшеноДогоном,
             ...(догон ? { русский: догон.русский, наиграли: догон.наиграли } : {}),
             ...(сигналы ? { сигналы } : {}),
           }

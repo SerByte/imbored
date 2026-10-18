@@ -666,14 +666,43 @@ export const CATCHUP_PLAYED = 5
  */
 export const CATCHUP_PLAYED_MS = 15_000
 
+/**
+ * Когда выборка «Наиграли» (gamesMissingPlayed) последний раз пришла пустой
+ * — ключ catalog_meta, unix-секунды. Игру без записи семантики индексом не
+ * найти, и пустая выборка — это проход по всему пулу: шесть тысяч строк games
+ * и столько же game_semantics на каждом звене, до трёхсот тысяч чтений в
+ * сутки ради ответа «догонять некого». С отметкой такой проход — один в
+ * CATCHUP_PLAYED_IDLE_SEC.
+ *
+ * Сутки ожидания никому не в убыток: после догона новые ждущие берутся
+ * только из среза — его поход за отзывами не довёл, и приор лёг без отметки,
+ * — а остальное такой карточке срез пишет и так. Пока ждущие есть, отметка
+ * не ставится: выборку обрывает LIMIT, и стоит она своих строк.
+ */
+export const CATCHUP_PLAYED_IDLE_KEY = 'catchup_played_empty_at'
+
+/** Сколько догон не спрашивает пустую выборку «Наиграли», с, — см. CATCHUP_PLAYED_IDLE_KEY */
+export const CATCHUP_PLAYED_IDLE_SEC = 86_400
+
+/**
+ * Рано ли снова спрашивать выборку «Наиграли». Нет отметки, мусор или
+ * отметка из будущего (часы базы и функции разошлись) — не рано: лишний
+ * проход по пулу дешевле догона, замершего до неизвестного срока.
+ */
+function playedIdle(raw: string | null, now: number): boolean {
+  const at = Number(raw)
+  return Number.isFinite(at) && at > 0 && at <= now && now - at < CATCHUP_PLAYED_IDLE_SEC
+}
+
 export type CatchUpResult = {
   /** Игр, которым Steam назвал ступень русского («нет» — тоже ответ) */
   русский: number
   /** Игр, чьи отзывы перечитаны ради «Наиграли» — легла запись или нет */
   наиграли: number
   /**
-   * Карточки, чья строка поменялась: язык записан или семантика по отзывам
-   * переписана. Роут сбрасывает их в ISR вместе с карточками среза.
+   * Карточки, чья строка поменялась: язык записан, семантика по отзывам
+   * переписана или легла туда, где записи не было вовсе. Роут сбрасывает их в
+   * ISR тем же звеном, до среза.
    */
   cards: number[]
 }
@@ -695,36 +724,47 @@ export type CatchUpResult = {
  * Здесь это делает крон, понемногу на каждом звене, и без ручного шага:
  *   • язык — играм, о которых Steam не спрашивали (gamesMissingRuLang), по
  *     CATCHUP_RU_LANG за звено одним GetItems с одним флагом;
- *   • «Наиграли» — играм, чьи отзывы разобраны до PLAYED_SINCE
- *     (gamesMissingPlayed), по CATCHUP_PLAYED за звено: appreviews, разбор,
- *     семантика — ровно то, что делает срез, но без appdetails и БЕЗ МОДЕЛИ.
- *     pros/cons здесь не трогаются вовсе: пересобирать карточку целиком ради
- *     одной строки значило бы платить вызов модели за каждую.
- * Обе выборки — по частичным индексам, которые тают с догоном: когда
- * догонять нечего, звено читает одну отметку и единицы игр, о которых Steam
- * промолчал, — и в Steam не ходит.
+ *   • «Наиграли» — обогащённым играм, чьи отзывы ради неё не разбирались:
+ *     разобраны до PLAYED_SINCE, не разбирались вовсе или записи семантики
+ *     нет (gamesMissingPlayed), по CATCHUP_PLAYED за звено: appreviews,
+ *     разбор, семантика — ровно то, что делает срез, но без appdetails и БЕЗ
+ *     МОДЕЛИ. pros/cons здесь не трогаются вовсе: пересобирать карточку
+ *     целиком ради одной строки значило бы платить вызов модели за каждую.
+ * Выборка языка — по частичному индексу, который тает с догоном; выборка
+ * «Наиграли» — по пулу, и её пустой ответ помнится сутки
+ * (CATCHUP_PLAYED_IDLE_KEY). Когда догонять нечего, звено читает две отметки
+ * и единицы игр, о которых Steam промолчал, — и в Steam не ходит; пул целиком
+ * — раз в сутки.
  *
- * Поменявшиеся карточки уходят в сброс ISR вместе с карточками среза. Лишних
- * ISR Writes это не добавляет: пометка ничего не рендерит, а запись при
- * заходе случается только с новым выводом — тем самым, который иначе лёг бы
- * недельной перегенерацией, только на неделю позже (lib/gamecache).
+ * Поменявшиеся карточки уходят в сброс ISR тем же звеном — роут сбрасывает
+ * их сразу, до среза (почему — там). Лишних ISR Writes это не добавляет:
+ * пометка ничего не рендерит, а запись при заходе случается только с новым
+ * выводом — тем самым, который иначе лёг бы недельной перегенерацией, только
+ * на неделю позже (lib/gamecache).
  *
  * Ручки разные и лимиты разные: язык — api.steampowered.com (pace
  * 'steam-api'), отзывы — store.steampowered.com ('steam-store'). Поэтому язык
  * идёт параллельно с отзывами, а отказ одного не останавливает другое. Отказ
  * сети на отзывах обрывает догон «Наиграли» до следующего звена: закрылся
  * Steam — остальные походы были бы теми же отказами. Очередь догона — в
- * самих строках; отметка у него одна, список игр, о языках которых Steam
- * промолчал (CATCHUP_RU_SILENT_KEY), — чтобы они не заперли очередь на себе.
+ * самих строках; отметок у него две: список игр, о языках которых Steam
+ * промолчал (CATCHUP_RU_SILENT_KEY), — чтобы они не заперли очередь на себе,
+ * — и время пустой выборки «Наиграли» (CATCHUP_PLAYED_IDLE_KEY).
  *
  * Звено зовёт догон ДО среза карточек: после среза он не начался бы
  * никогда, срез съедает звено целиком, пока в его очереди есть работа (тот
  * же довод, что у сверки сигналов в роуте). Срок звена и CATCHUP_PLAYED_MS
  * держат его коротким.
  *
- * Сбой базы бросается наружу — роут его глотает и ведёт звено дальше, к
- * срезу. Язык при этом дожидается: его запись не должна идти рядом со
- * срезом.
+ * Сбои догон держит в себе — по игре и по половине — и карточки, которые
+ * успел поменять, отдаёт при любом исходе. Иначе сбой одной записи стоил бы
+ * сброса всех: их строки из очереди уже ушли (ru_lang не NULL, reviews_at
+ * позже отсечки), следующее звено их не возьмёт, и страницы ждали бы конца
+ * недельного кэша. Разбор, упавший на данных одной игры, очередь тоже не
+ * держит: игра получает то же, что при пустом ответе, и уходит из её головы
+ * (minedOf ниже). Сбой базы обрывает свою половину — следующая запись
+ * упёрлась бы в то же, — но не другую и не звено: оно идёт к срезу. Язык и
+ * тогда дожидается: его запись не должна идти рядом со срезом.
  */
 export async function runCardCatchUp(
   db: Db,
@@ -756,44 +796,87 @@ export async function runCardCatchUp(
       return []
     }
     const rows = [...got].map(([appid, ruLang]) => ({ appid, ruLang }))
-    // Узкий UPDATE: язык был NULL, значит каждая записанная строка — перемена
+    // Узкий UPDATE: язык был NULL, значит каждая записанная строка — перемена.
+    // Пачка — всё или ничего: упала — языка не легло ни у кого, и сбрасывать
+    // нечего (catch ниже)
     await setGamesMedia(db, rows)
     // Ответ пришёл, а об этих Steam промолчал: на неделю — мимо очереди
     const quiet = ids.filter((id) => !got.has(id))
     if (quiet.length) {
-      const list = [...silent.ids, ...quiet].slice(-CATCHUP_RU_SILENT_MAX)
-      await setCatalogMeta(db, CATCHUP_RU_SILENT_KEY, JSON.stringify({ at: silent.at, ids: list }))
+      try {
+        const list = [...silent.ids, ...quiet].slice(-CATCHUP_RU_SILENT_MAX)
+        await setCatalogMeta(db, CATCHUP_RU_SILENT_KEY, JSON.stringify({ at: silent.at, ids: list }))
+      } catch (err) {
+        // Языки уже записаны, и их карточки — в сброс, а не в потерю вместе
+        // со списком: без него промолчавших спросят на следующем звене ещё
+        // раз, и только
+        logSwallowed('pagejob:catchup-silent', err, { quiet: quiet.length })
+      }
     }
     return rows.map((r) => r.appid)
-  })()
-  // Исключение языка заберёт await ниже; до него оно не «необработанное»
-  языки.catch(() => {})
+  })().catch((err: unknown) => {
+    // База до записи языка или сама запись: игры остались в очереди
+    logSwallowed('pagejob:catchup-lang-db', err)
+    return [] as number[]
+  })
+
+  /**
+   * Семантика из ответа appreviews. Разбор упал — это код на данных этой
+   * игры, а не Steam, и на следующем звене он упал бы так же. Тогда пишется
+   * то, что при пустом ответе, — приор по тегам, а не ничего: у игры без
+   * записи отметке разбора (markReviewsParsed) не во что встать, и она стояла
+   * бы в голове очереди на каждом звене, а пять таких заперли бы догон.
+   * Не считается и приор — сломан сам lib/semantics, его увидит и срез; тогда
+   * null, и остаётся одна отметка.
+   */
+  const minedOf = (appid: number, tags: Record<string, number>, raw: unknown) => {
+    try {
+      const all = parseReviewsRaw(raw)
+      return semanticsOf(tags, all ? mineReviews(all) : null)
+    } catch (err) {
+      logSwallowed('pagejob:catchup-mine', err, { appid })
+    }
+    try {
+      return semanticsOf(tags, null)
+    } catch {
+      return null
+    }
+  }
 
   let наиграли = 0
   const переписаны: number[] = []
   try {
-    const due = await gamesMissingPlayed(db, PLAYED_SINCE, CATCHUP_PLAYED)
-    const часы = sliceClock(Math.min(opts.deadlineAt, Date.now() + CATCHUP_PLAYED_MS))
-    for (const { appid, tags } of due) {
-      if (!часы.next()) break
-      let raw: unknown
-      try {
-        raw = await reviewsOf(appid)
-      } catch (err) {
-        logSwallowed('pagejob:catchup-played', err, { appid })
-        break
+    if (!playedIdle(await getCatalogMeta(db, CATCHUP_PLAYED_IDLE_KEY), now)) {
+      const due = await gamesMissingPlayed(db, PLAYED_SINCE, CATCHUP_PLAYED)
+      if (!due.length) await setCatalogMeta(db, CATCHUP_PLAYED_IDLE_KEY, String(now))
+      const часы = sliceClock(Math.min(opts.deadlineAt, Date.now() + CATCHUP_PLAYED_MS))
+      for (const { appid, tags, hasRecord } of due) {
+        if (!часы.next()) break
+        let raw: unknown
+        try {
+          raw = await reviewsOf(appid)
+        } catch (err) {
+          logSwallowed('pagejob:catchup-played', err, { appid })
+          break
+        }
+        const semantics = minedOf(appid, tags, raw)
+        if (semantics) {
+          // Приор по тегам (тонкий или пустой ответ) запись по отзывам не
+          // затрёт — это решает upsertSemantics. В сброс — сразу после
+          // записи, а не после отметки: запись по отзывам и сама ставит
+          // reviews_at, и упади отметка — игра из очереди уже ушла
+          await upsertSemantics(db, [{ appid, semantics, computedAt: now, reviewsAt: now }])
+          if (semantics.basis === 'tags+reviews' || !hasRecord) переписаны.push(appid)
+        }
+        // Отметка разбора двигается всё равно: см. markReviewsParsed
+        await markReviewsParsed(db, appid, now)
+        наиграли++
       }
-      const all = parseReviewsRaw(raw)
-      const semantics = semanticsOf(tags, all ? mineReviews(all) : null)
-      // Приор по тегам (тонкий или пустой ответ) запись по отзывам не затрёт —
-      // это решает upsertSemantics; отметка разбора двигается всё равно
-      await upsertSemantics(db, [{ appid, semantics, computedAt: now, reviewsAt: now }])
-      await markReviewsParsed(db, appid, now)
-      наиграли++
-      if (semantics.basis === 'tags+reviews') переписаны.push(appid)
     }
-  } finally {
-    await языки.catch(() => {})
+  } catch (err) {
+    // База: следующая запись упёрлась бы в то же. Переписанное до сбоя — в
+    // ответе: эти игры из очереди уже ушли, и сброс их страниц — только здесь
+    logSwallowed('pagejob:catchup-db', err)
   }
 
   const русский = await языки
