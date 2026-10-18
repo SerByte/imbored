@@ -154,6 +154,61 @@ describe('/api/pick: повтор и потолок', () => {
   })
 })
 
+/**
+ * Язык текста — в подписи: английский герой /en/play приносит lang 'en', и
+ * запись выбора хранит его (страница /pick говорит на языке текста). Подпись
+ * одного языка другому не подходит, мусор вместо языка — 400, а не «русский».
+ */
+describe('/api/pick: язык текста', () => {
+  const TEXT_EN = '“Portal 2” has been waiting since you bought it — a puzzle night.'
+
+  function bodyEn(steamid: string, text = TEXT_EN) {
+    const v = { appid: 620, source: 'untouched', kind: 'play', text }
+    return { ...v, lang: 'en', sig: pickShareSig(sessionSecret(), { steamid, ...v, lang: 'en' }) }
+  }
+
+  test('английский текст с подписью языка — ссылка, и запись помнит язык', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const res = await share(bodyEn(steamid))
+    expect(res.status).toBe(200)
+    const { id } = (await res.json()) as { id: string }
+    expect(await getSharedPick(db, id, nowSec() - 60)).toMatchObject({ reason: TEXT_EN, lang: 'en' })
+  })
+
+  test('без поля lang — русский, как до английской версии', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const { id } = (await (await share(body(steamid))).json()) as { id: string }
+    expect((await getSharedPick(db, id, 0))?.lang).toBe('ru')
+  })
+
+  test('язык подменён — 403 badsig: подпись покрывает и его', async () => {
+    const steamid = await signInAs(db, 'openid')
+    // undefined в JSON не уезжает: английский текст приходит без поля lang
+    for (const tampered of [{ ...bodyEn(steamid), lang: undefined }, { ...body(steamid), lang: 'en' }]) {
+      const res = await share(tampered)
+      expect(res.status, JSON.stringify(tampered)).toBe(403)
+    }
+    expect(await countPicks()).toBe(0)
+  })
+
+  test('чужое значение вместо языка — 400 badinput', async () => {
+    const steamid = await signInAs(db, 'openid')
+    for (const lang of ['de', '', 1, null]) {
+      const res = await share({ ...body(steamid), lang })
+      expect(res.status, JSON.stringify(lang)).toBe(400)
+    }
+  })
+
+  test('тот же текст на двух языках — две ссылки: русская строка английской не годится', async () => {
+    const steamid = await signInAs(db, 'openid')
+    const ru = (await (await share(body(steamid, { text: TEXT_EN }))).json()) as { id: string }
+    const en = (await (await share(bodyEn(steamid))).json()) as { id: string }
+    expect(en.id).not.toBe(ru.id)
+    expect((await getSharedPick(db, ru.id, 0))?.lang).toBe('ru')
+    expect((await getSharedPick(db, en.id, 0))?.lang).toBe('en')
+  })
+})
+
 async function countPicks(): Promise<number> {
   const res = await db.execute('SELECT COUNT(*) AS n FROM shared_picks')
   return Number(res.rows[0].n)

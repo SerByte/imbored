@@ -109,7 +109,8 @@ describe('полоса стоит там, где демо в момент цен
     const src = code(read('app/[lang]/play/page.tsx'))
     expect(src).toContain('const demo = useDemoSession()')
     const hero = src.indexOf('media-dark relative min-h-[78vh]')
-    const bar = src.indexOf('{demo && <DemoBar from={`/play?${search}`} overlay />}')
+    // Путь — на языке страницы: двери полосы ведут обратно на ту же /en/play
+    const bar = src.indexOf('{demo && <DemoBar from={lp(locale, `/play?${search}`)} overlay />}')
     const ladder = src.indexOf('variants={LADDER}', hero)
     expect(hero).toBeGreaterThan(-1)
     expect(bar, 'полоса ушла из героя выдачи').toBeGreaterThan(hero)

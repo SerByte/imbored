@@ -101,7 +101,7 @@ describe('строка о скрытом времени', () => {
     const play = code('app/[lang]/play/page.tsx')
     expect(play).toContain('timeHiddenStore.set(deal.playtimeHidden ? true : null)')
     expect(play).toContain('timeHiddenStore.set(p.library.timeHidden ? true : null)')
-    expect(play).toMatch(/timeHiddenStore\.fresh\(\)\s*\?\s*'Ищу в твоей библиотеке…'/)
+    expect(play).toMatch(/timeHiddenStore\.fresh\(\)\s*\?\s*tr\(locale, \{ ru: 'Ищу в твоей библиотеке…'/)
     expect(code('app/[lang]/quiz/page.tsx')).toMatch(/timeHidden \? 'Из своей библиотеки' : 'Ни разу не запускал'/)
     expect(code('components/SignOut.tsx')).toContain('timeHiddenStore.set(null)')
   })

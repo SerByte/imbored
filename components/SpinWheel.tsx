@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
+import { tr } from '@/lib/i18n'
 
 const ROW_H = 56
 const VISIBLE = 3 // сколько строк видно выше и ниже центра
@@ -33,6 +35,7 @@ export function SpinWheel({
   duration?: number
   loops?: number
 }) {
+  const locale = useLocale()
   const n = items.length
   const [pos, setPos] = useState(0)
   const done = useRef(false)
@@ -100,7 +103,9 @@ export function SpinWheel({
         ровно два сообщения.
       */}
       <p role="status" className="sr-only">
-        {landed ? `Выбрана игра: ${items[mod(landOn, n)]}` : 'Выбираем игру…'}
+        {landed
+          ? tr(locale, { ru: `Выбрана игра: ${items[mod(landOn, n)]}`, en: `Picked: ${items[mod(landOn, n)]}` })
+          : tr(locale, { ru: 'Выбираем игру…', en: 'Picking a game…' })}
       </p>
       <div aria-hidden className="absolute inset-0 overflow-hidden">
         {Array.from({ length: VISIBLE * 2 + 1 }, (_, k) => {

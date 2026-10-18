@@ -107,7 +107,7 @@ describe('каждое место панели даёт ей проверку', 
    * навязывается — у неё своя дверь «Подключить заново».
    */
   test.each([
-    ['app/[lang]/play/page.tsx', 'readOnly ? undefined : steamLoginFor(`/play?${search}`)'],
+    ['app/[lang]/play/page.tsx', 'readOnly ? undefined : steamLoginFor(lp(locale, `/play?${search}`))'],
     ['app/[lang]/daily/page.tsx', "readOnly ? undefined : steamLoginFor('/daily')"],
     ['app/[lang]/explore/page.tsx', "readOnly ? undefined : steamLoginFor('/explore')"],
     ['app/[lang]/library/page.tsx', "session && isWriter(session) ? steamLoginFor('/library') : undefined"],

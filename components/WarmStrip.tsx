@@ -2,7 +2,9 @@
 
 import { Icon } from '@/components/Icon'
 import { AnimatePresence, m } from 'framer-motion'
+import { useLocale } from '@/components/LocaleProvider'
 import { Portal } from '@/components/Portal'
+import { fmtNumber, tr } from '@/lib/i18n'
 
 /**
  * Состояние догрева поверх уже показанной выдачи.
@@ -39,6 +41,7 @@ export function WarmStrip({
   onRefresh: () => void
   onDismiss: () => void
 }) {
+  const locale = useLocale()
   /* Плашка висит над выдачей и обязана остаться на экране при прокрутке —
      значит портал, см. Portal.tsx. */
   return (
@@ -47,7 +50,12 @@ export function WarmStrip({
           строки о ней узнал бы только тот, кто её видит. Фоновый догрев не
           объявляется: он ничего не просит. */}
       <p role="status" className="sr-only">
-        {state === 'ready' ? 'Каталог дочитан — выдачу можно обновить' : ''}
+        {state === 'ready'
+          ? tr(locale, {
+              ru: 'Каталог дочитан — выдачу можно обновить',
+              en: 'Done reading your library — you can refresh your picks',
+            })
+          : ''}
       </p>
       <AnimatePresence>
         {state !== 'off' && (
@@ -70,32 +78,36 @@ export function WarmStrip({
                     transition={{ duration: 1.4, repeat: Infinity, ease: 'linear' }}
                   />
                 </span>
+                {/* Плашка стоит над нижней панелью и на 360 px обязана влезть в
+                    строку, как русская: английская подпись не шире её
+                    (docs/i18n.md, «Голос»). Замерено на 360 px: «Still reading
+                    your library · 1,204» — 165 px против 169 у русской */}
                 <span className="text-dim">
-                  Дочитываю библиотеку
+                  {tr(locale, { ru: 'Дочитываю библиотеку', en: 'Still reading your library' })}
                   {remaining > 0 && (
                     <>
                       {' · '}
-                      <span className="tabular-nums">{remaining}</span>
+                      <span className="tabular-nums">{locale === 'en' ? fmtNumber(locale, remaining) : remaining}</span>
                     </>
                   )}
                 </span>
               </>
             ) : (
               <>
-                <span className="text-dim">Каталог дочитан</span>
+                <span className="text-dim">{tr(locale, { ru: 'Каталог дочитан', en: 'Done reading' })}</span>
                 <button
                   type="button"
                   onClick={onRefresh}
                   className="rounded-full bg-ember text-on-ember font-semibold px-3 py-1 hover:brightness-110 transition"
                 >
-                  Обновить выдачу
+                  {tr(locale, { ru: 'Обновить выдачу', en: 'Refresh picks' })}
                 </button>
               </>
             )}
             <button
               type="button"
               onClick={onDismiss}
-              aria-label="Скрыть"
+              aria-label={tr(locale, { ru: 'Скрыть', en: 'Hide' })}
               className="rounded-full px-2 py-1 text-faint hover:text-ink transition"
             >
               <Icon name="close" size={16} />

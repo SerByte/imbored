@@ -4,8 +4,10 @@ import { useReducedMotion } from 'framer-motion'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { HeroArt } from '@/components/HeroArt'
 import { lazyIsland } from '@/components/lazyIsland'
+import { useLocale } from '@/components/LocaleProvider'
 import { webglAvailable } from '@/components/morph/gl'
 import type { GameArtUrls } from '@/lib/art'
+import { tr } from '@/lib/i18n'
 import { HERO_SLIDES, pickCoverShotSize, shotUrl, type ShotSize } from '@/lib/shots'
 
 /*
@@ -119,6 +121,7 @@ function useParallax(on: boolean) {
 }
 
 function HeroMorph({ shots, name }: { shots: string[]; name: string }) {
+  const locale = useLocale()
   const wrapRef = useRef<HTMLDivElement>(null)
   const [env, setEnv] = useState<Env | null>(null)
   const [visible, setVisible] = useState(false)
@@ -274,7 +277,7 @@ function HeroMorph({ shots, name }: { shots: string[]; name: string }) {
           showCaptions={false}
           showControls={false}
           showIndicators={false}
-          label={`Кадры из игры ${name}`}
+          label={tr(locale, { ru: `Кадры из игры ${name}`, en: `Screenshots from ${name}` })}
         />
       )}
     </div>
