@@ -91,3 +91,29 @@ describe('отзывы на плитке хаба', () => {
     expect(genre?.games.find((g) => g.appid === QUIET)?.reviews).toBeNull()
   })
 })
+
+/*
+ * Подборка по факту (HUB_FACETS: «бесплатные», «с другом»…) — тот же сегмент
+ * и та же плитка, что у жанра: отбор её тоже идёт по англоязычной шкале
+ * (topGamesByFacet), а печатаются все языки. Одно правило показа — и одно
+ * правило порядка: плитки встают по своему числу, а не по порядку отбора.
+ */
+describe('отзывы на плитке подборки', () => {
+  test('порядок и числа — те же, что у жанра: все языки', async () => {
+    const [WEST, EAST] = [3_000_001, 3_000_002]
+    await rogue(WEST, { isFree: true, reviewsTotal: 300_000, reviewsPercent: 90 })
+    await rogue(EAST, { isFree: true, reviewsTotal: 200_000, reviewsPercent: 90 })
+    for (const [appid, total] of [
+      [WEST, 400_000],
+      [EAST, 1_000_000],
+    ]) {
+      await db.execute({
+        sql: 'UPDATE games SET reviews_all_total = ?, reviews_all_percent = 91 WHERE appid = ?',
+        args: [total, appid],
+      })
+    }
+    const games = (await loadGenre('free'))?.games ?? []
+    expect(games.map((g) => g.appid)).toEqual([EAST, WEST])
+    expect(games.map((g) => g.reviews?.short ?? null)).toEqual(['91% из 1 млн', '91% из 400 тыс.'])
+  })
+})

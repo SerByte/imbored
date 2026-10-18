@@ -9,6 +9,8 @@ import { SHELF_RAIL_SIZES } from '@/lib/art'
 import { topGamesByTags } from '@/lib/db'
 import {
   assembleHub,
+  facetPath,
+  HUB_FACETS,
   HUB_FETCH,
   HUB_MIN_WEIGHT,
   HUB_TAGS,
@@ -85,6 +87,28 @@ export default async function GamesHubPage() {
               когда поиск открыли (components/SearchLauncher) */}
           <SearchLauncher variant="field" />
         </header>
+
+        {/*
+          Подборки по факту — над полками, а не тридцать первой полкой:
+          «во что поиграть с другом» и «бесплатные» ищут чаще любого жанра, и
+          ответ на них — своя страница (/games/<slug>, lib/gamehub HUB_FACETS),
+          а не ряд капсул, который ещё надо долистать. Ссылки без префетча,
+          как у «Весь жанр»: страницы на ISR и холодную будить незачем.
+        */}
+        <nav aria-labelledby="hub-facets" className="flex flex-col gap-3">
+          <h2 id="hub-facets" className="section-title">
+            Подборки
+          </h2>
+          <ul className="flex flex-wrap gap-2">
+            {HUB_FACETS.map((f) => (
+              <li key={f.slug}>
+                <Link href={facetPath(f)} prefetch={false} className="pill">
+                  {f.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
 
         {shelves.length > 0 ? (
           <div className="flex flex-col gap-10">

@@ -605,3 +605,47 @@ describe('кегль названия в герое', () => {
     expect(cls).toContain('[overflow-wrap:anywhere]')
   })
 })
+
+/*
+ * «Что нового» на карточке — восемь последних патчей, а хранится до
+ * тридцати: остальные — в архиве обновлений игры (/game/<appid>/news,
+ * lib/patcharchive). Ссылка туда — только когда патчей больше, чем мест: при
+ * трёх, да и при ровно восьми архив повторил бы те же строки.
+ */
+describe('ссылка на архив обновлений', () => {
+  const archiveLinks = async () =>
+    islandsOf(flight(await GamePage(params)), 'Link').filter((l) => l.href === `/game/${APPID}/news`)
+
+  test('девятый патч не влез на карточку — «Все обновления», без префетча', async () => {
+    await upsertGameMeta(db, game(APPID, { name: 'Counter-Strike 2' }), T0)
+    await upsertNewsItems(
+      db,
+      Array.from({ length: 9 }, (_, i) => patch(String(i + 1), T0 - (i + 1) * DAY, 9000)),
+      T0,
+    )
+    const links = await archiveLinks()
+    expect(links).toHaveLength(1)
+    expect(links[0]?.prefetch).toBe(false)
+    expect(textOf(links[0]?.children)).toContain('Все обновления «Counter-Strike 2»')
+  })
+
+  /*
+   * Полная лента — ещё не повод: восемь патчей из восьми выглядят так же, как
+   * восемь из тридцати, а архив в первом случае — те же восемь строк.
+   */
+  test('ровно восемь патчей — лента полна, но ссылки нет: архиву нечего добавить', async () => {
+    await upsertGameMeta(db, game(APPID), T0)
+    await upsertNewsItems(
+      db,
+      Array.from({ length: 8 }, (_, i) => patch(String(i + 1), T0 - (i + 1) * DAY, 9000)),
+      T0,
+    )
+    expect(await archiveLinks()).toEqual([])
+  })
+
+  test('патчей меньше, чем мест на карточке, — ссылки нет: все и так здесь', async () => {
+    await upsertGameMeta(db, game(APPID), T0)
+    await upsertNewsItems(db, [patch('1', T0 - DAY, 9000), patch('2', T0 - 2 * DAY, 9000)], T0)
+    expect(await archiveLinks()).toEqual([])
+  })
+})

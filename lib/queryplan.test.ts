@@ -49,6 +49,7 @@ import {
   searchIndexGames,
   sitemapGames,
   sitemapNews,
+  sitemapPatchArchives,
   freshlyDigestedPatches,
   gamesByDeveloper,
   gamesMissingPlayed,
@@ -57,6 +58,7 @@ import {
   stalePriceAppids,
   sweepStale,
   topCatalogAppids,
+  topGamesByFacet,
   topGamesByTag,
   topGamesByTags,
   upsertNewsItems,
@@ -215,6 +217,17 @@ const CASES: Case[] = [
     indexes: ['idx_news_feed'],
     sortFree: true,
   },
+  // Архивы обновлений для карты сайта: крупные патчи игр каталога — тот же
+  // частичный индекс, что у карты патчей, без окна по дате; свежий патч
+  // любого масштаба — поиском по idx_news_app на каждую игру. Группировка по
+  // игре сортирует только эти строки (≤ тридцати на игру, NEWS_KEEP), раз в
+  // сутки на ISR
+  {
+    name: 'архивы обновлений для карты сайта',
+    run: async (db) => sitemapPatchArchives(await withPatches(db), 3, 5000),
+    indexes: ['idx_news_feed', 'idx_news_app'],
+    sortFree: false,
+  },
   // IndexNow после среза пересказов: то же окно и тот же индекс, что у
   // карты сайта, tldr_at — остаточным фильтром. Сортировка по tldr_at —
   // по окну крупных патчей за девяносто дней, намеренно (см. докблок)
@@ -326,6 +339,28 @@ const CASES: Case[] = [
   {
     name: 'индекс поиска по каталогу',
     run: (db) => searchIndexGames(db, 10_000),
+    indexes: ['idx_games_pool'],
+    sortFree: true,
+  },
+  // Подборки хаба (/games/coop, /games/free, /games/short): верх пула по
+  // отзывам — порядок из частичного индекса, условие — подзапрос на строку
+  // (json_each категорий самой строки или поиск по ключу game_semantics), и
+  // LIMIT обрывает проход. Сортировки и скана каталога нет ни у одной
+  {
+    name: 'подборка по категориям Steam',
+    run: (db) => topGamesByFacet(db, { kind: 'categories', ids: [9, 38] }, 80),
+    indexes: ['idx_games_pool'],
+    sortFree: true,
+  },
+  {
+    name: 'подборка бесплатных',
+    run: (db) => topGamesByFacet(db, { kind: 'free' }, 40),
+    indexes: ['idx_games_pool'],
+    sortFree: true,
+  },
+  {
+    name: 'подборка коротких заходов',
+    run: (db) => topGamesByFacet(db, { kind: 'session', belowMinutes: 30 }, 80),
     indexes: ['idx_games_pool'],
     sortFree: true,
   },

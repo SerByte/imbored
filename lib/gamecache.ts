@@ -1,5 +1,6 @@
 import { dealsEndedBetween, getCatalogMeta, setCatalogMeta, type Db, type GamePageRow } from './db'
 import { discountOf, discountTrustedUntil, trustedPrice } from './discount'
+import { patchArchivePath } from './patcharchive'
 
 /**
  * Кэш карточки игры: сколько она живёт, что пререндерится и когда её сбросить.
@@ -131,12 +132,27 @@ export function cardRowPrint(row: GamePageRow, nowSec: number): string {
  * *_last_slice целиком, и у новостей там лежали бы десятки appid на звено —
  * шум в catalog_meta и в выводе /api/cron/health. Отметке остаётся число
  * помеченных адресов; роут складывает его и в «итого» запуска.
+ *
+ * archives — заодно архивы обновлений тех же игр (/game/<appid>/news,
+ * lib/patcharchive). Его передают кроны новостей и пересказов: их cards — это
+ * ровно игры, у которых поменялся список патчей или появился пересказ, то
+ * есть строки архива. revalidatePath сбрасывает только названный адрес, не
+ * вложенные, — без второго вызова архив ждал бы своих суток ISR. Крон
+ * карточек его не передаёт: патчей и пересказов он не пишет. Архивы — только
+ * у игр Steam: у чужих магазинов новостей нет. В «сброшено» — по-прежнему
+ * число игр.
  */
 export function resetSliceCards<T extends { cards: number[] }>(
   slice: T,
   revalidate: (path: string) => void,
+  opts: { archives?: boolean } = {},
 ): Omit<T, 'cards'> & { сброшено: number } {
   const { cards, ...rest } = slice
+  if (opts.archives) {
+    for (const appid of new Set(cards)) {
+      if (Number.isInteger(appid) && appid > 0) revalidate(patchArchivePath(appid))
+    }
+  }
   return { ...rest, сброшено: revalidateGamePages(cards, revalidate) }
 }
 

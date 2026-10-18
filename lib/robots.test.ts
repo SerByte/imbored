@@ -78,7 +78,8 @@ describe('robots.txt', () => {
   /**
    * «Позвать в эту игру» ставит /room/new?game=<appid> обычной ссылкой на
    * карточке каждой сетевой игры — это тысячи разных адресов,
-   * и все со страниц из карты сайта (ещё /pick и /compat). Под Disallow
+   * и все со страниц из карты сайта (ещё /pick, /compat и подборки про
+   * компанию /games/coop, /games/split-screen — HubFacet.party). Под Disallow
    * Google индексирует такой адрес голым, по тексту ссылки, — та же механика,
    * что у /quiz ниже. Открыт он ради noindex заголовком (/room/:path*), а не
    * ради выдачи.
@@ -112,9 +113,12 @@ describe('robots.txt', () => {
       '/',
       '/game/730',
       '/game/730/news/5123894512345',
+      // архив обновлений игры и подборки хаба (lib/patcharchive, HUB_FACETS)
+      '/game/730/news',
       '/games',
       '/games/roguelike',
       '/games/point-and-click',
+      '/games/coop',
       '/whatsnew',
       '/whatsnew/feed.xml',
       '/indexnow-key.txt',
@@ -209,8 +213,10 @@ describe('noindex заголовком', () => {
       '/quiz',
       '/game/730',
       '/game/730/news/5123894512345',
+      '/game/730/news',
       '/games',
       '/games/roguelike',
+      '/games/coop',
       '/whatsnew',
       '/portraits',
       '/compatibility',

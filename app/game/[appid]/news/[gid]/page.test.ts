@@ -102,6 +102,20 @@ describe('страница патча: мост к своей ленте', () =>
     expect(link?.prefetch).toBe(false)
     expect(islandsOf(link?.children, 'LinkPending')).toHaveLength(1)
   })
+
+  /*
+   * Между игрой и патчем — архив обновлений игры (/game/<appid>/news): путь
+   * над заголовком и разметка крошек (patchBreadcrumbLd) говорят одно.
+   * Без префетча: архив на ISR, и рендерится он по первому заходу.
+   */
+  test('путь над заголовком — игра → «Обновления», архив без префетча', async () => {
+    const links = islandsOf(await render(), 'Link')
+    expect(links).toContainEqual(expect.objectContaining({ href: `/game/${APPID}` }))
+    const archive = links.filter((l) => l.href === `/game/${APPID}/news`)
+    expect(archive.length).toBeGreaterThanOrEqual(1)
+    expect(archive.every((l) => l.prefetch === false)).toBe(true)
+    expect(textOf(archive[0]?.children)).toBe('Обновления')
+  })
 })
 
 /**

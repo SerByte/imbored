@@ -30,6 +30,7 @@ import {
   type StudioLine,
 } from '@/lib/gamepage'
 import { gameBreadcrumbLd, gameJsonLd, ldScript, pageNameRu } from '@/lib/jsonld'
+import { patchArchivePath } from '@/lib/patcharchive'
 import { priceRegion, regionCurrency } from '@/lib/steamregion'
 import { OG_SITE } from '@/lib/site'
 import { plural } from '@/lib/plural'
@@ -875,6 +876,22 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           <section>
             <SectionLabel className="mb-4">Что нового</SectionLabel>
             <GameNews items={data.news} name={meta.name} />
+            {/*
+              Архив обновлений (/game/<appid>/news) — все патчи, что держит
+              ретенция, а карточка показывает восемь. Ссылка — только когда
+              патчей у игры больше, чем мест (newsMore, cardPatches в
+              lib/gamepage): при восьми и меньше все они уже здесь, и архив
+              повторил бы эти строки. Полная лента об этом не говорит —
+              восемь из восьми и восемь из тридцати выглядят одинаково. Без
+              префетча: архив на ISR и рендерится по первому заходу, а
+              карточку смотрят тысячи раз.
+            */}
+            {data.newsMore && (
+              <Link href={patchArchivePath(appid)} prefetch={false} className="tap link-more mt-4">
+                Все обновления «{meta.name}»
+                <Icon name="arrow" size={16} />
+              </Link>
+            )}
           </section>
         )}
 
