@@ -1,5 +1,6 @@
 import type { GameArtUrls } from './art'
-import { plural } from './plural'
+import { lp, pl, tr, type Locale } from './i18n'
+import { ROOM_PRESETS } from './presets'
 
 /**
  * Что известно о комнате тому, кто ещё в неё не вошёл, — и что из этого
@@ -28,7 +29,8 @@ export type RoomInvite = {
    */
   matchedArt?: { appid: number; art: GameArtUrls | null; headerImage: string | null } | null
   /**
-   * Настроение комнаты — название пресета (ROOM_PRESETS в lib/presets). null —
+   * Настроение комнаты — название пресета (ROOM_PRESETS в lib/presets),
+   * русское: английское превью переводит его само (presetName). null —
    * комната старше выбора настроения или его ось не совпала ни с одним
    * пресетом: тогда текст прежний, без настроения.
    */
@@ -56,11 +58,54 @@ export type InviteCopy = {
   foot: string
 }
 
-/** Куда звать того, кому ссылка досталась после матча. */
-export const NEW_ROOM_HINT = 'Собери свою комнату — imbored.cc/room/new'
+/**
+ * Куда звать того, кому ссылка досталась после матча. Адрес — на языке
+ * превью: англоязычного друга /room/new встретил бы русским экраном выбора.
+ */
+export function newRoomHint(locale: Locale = 'ru'): string {
+  const where = `imbored.cc${lp(locale, '/room/new')}`
+  return tr(locale, { ru: `Собери свою комнату — ${where}`, en: `Start your own room — ${where}` })
+}
+
+/** Русская подсказка — для тех, кто звал её константой до перевода */
+export const NEW_ROOM_HINT = newRoomHint('ru')
 
 /** Потолок имени игры в карточке: строка стоит кеглем 44 в ширину 900. */
 const CARD_NAME_MAX = 38
+
+/**
+ * Тот же потолок у английского приглашения в игру — на пять знаков короче.
+ * «invites you to “”» шире «зовёт в «»» на 123 px в том же кегле, «You're
+ * invited to “”» шире «Тебя зовут в «»» на 74 px (замер по advance width
+ * assets/manrope-800.woff — тем, чем рисует next/og), а пять знаков названия
+ * — около 120 px. Так самая длинная английская строка карточки не длиннее
+ * самой длинной русской и не уходит лишней строкой вниз. «Matched on “”»
+ * уже «Сошлись на «»», и после матча потолок общий.
+ */
+const CARD_SEED_MAX_EN = CARD_NAME_MAX - 5
+
+/**
+ * Английские названия настроений комнаты — по ключу пресета.
+ *
+ * invite.preset — РУССКОЕ название (loadRoomInvite кладёт label пресета), а
+ * его английская пара живёт здесь, пока у lib/presets нет своей подписи по
+ * языку; появится — названия берутся оттуда, а таблица уходит. Неизвестное
+ * название (пресет добавили, а пару забыли) на английском — как комната без
+ * настроения: прежний текст, а не русское слово посреди английской фразы.
+ */
+const PRESET_EN = new Map<string, string>([
+  ['evening', 'All evening together'],
+  ['quick', 'A few quick rounds'],
+  ['cozy', 'Cozy and long'],
+  ['talk', 'Chill, while we talk'],
+])
+
+/** Название настроения на языке превью; для ru — как пришло, до буквы */
+function presetName(label: string | null, locale: Locale): string | null {
+  if (label === null || locale !== 'en') return label
+  const key = ROOM_PRESETS.find((p) => p.label === label)?.key
+  return (key !== undefined && PRESET_EN.get(key)) || null
+}
 
 /**
  * Первые n символов — кодовыми точками, а не единицами UTF-16.
@@ -108,57 +153,108 @@ function clip(s: string, max: number): string {
  * loadRoomInvite отдал null. Различить эти случаи здесь нечем, поэтому текст
  * нейтральный: что такое пати, без призыва подключаться и свайпать в
  * комнату, которой, возможно, нет.
+ *
+ * АНГЛИЙСКИЙ — целыми фразами на каждое состояние, а не теми же кусками.
+ * Русский клеит «Серёга зовёт» с « в «X»», «: настроение» и « выбрать игру на
+ * вечер», а английский так не склеивается: «Sergey invites you» и «You're
+ * invited» требуют разного продолжения, и безличный случай — своя фраза.
+ * Настроение приходит русским названием и переводится по пресету
+ * (presetName).
  */
-export function inviteCopy(code: string, invite: RoomInvite | null): InviteCopy {
+export function inviteCopy(code: string, invite: RoomInvite | null, locale: Locale = 'ru'): InviteCopy {
   if (!invite) {
     return {
-      title: `Пати ${code}`,
-      description:
-        'Пати на imbored: компания выбирает одну игру на вечер из своих библиотек Steam — голосами, без споров в чате.',
-      eyebrow: 'ПАТИ',
-      headline: 'Компания выбирает игру на вечер',
-      foot: 'Одна игра на всех — из ваших библиотек Steam',
+      title: tr(locale, { ru: `Пати ${code}`, en: `Party ${code}` }),
+      description: tr(locale, {
+        ru: 'Пати на imbored: компания выбирает одну игру на вечер из своих библиотек Steam — голосами, без споров в чате.',
+        en: 'Party on imbored: your group picks one game for tonight from your Steam libraries — by vote, no arguing in chat.',
+      }),
+      eyebrow: tr(locale, { ru: 'ПАТИ', en: 'PARTY' }),
+      headline: tr(locale, { ru: 'Компания выбирает игру на вечер', en: 'Friends pick a game for tonight' }),
+      foot: tr(locale, {
+        ru: 'Одна игра на всех — из ваших библиотек Steam',
+        en: 'One game for all — from your Steam libraries',
+      }),
     }
   }
 
   if (invite.matched) {
     const game = invite.matchedName
+    const hint = newRoomHint(locale)
     return {
-      title: game ? `Пати ${code} сошлась на «${game}»` : `Пати ${code} уже выбрала игру`,
-      description:
-        // Без точки в конце: часть мессенджеров приклеивает её к адресу
-        `Голоса сошлись${game ? ` на «${game}»` : ''} — в этой комнате игра уже выбрана. ${NEW_ROOM_HINT}`,
-      eyebrow: 'ПАТИ · МАТЧ',
-      headline: game ? `Сошлись на «${clip(game, CARD_NAME_MAX)}»` : 'Игра уже выбрана',
-      foot: NEW_ROOM_HINT,
+      title: tr(locale, {
+        ru: game ? `Пати ${code} сошлась на «${game}»` : `Пати ${code} уже выбрала игру`,
+        en: game ? `Party ${code} matched on “${game}”` : `Party ${code} already picked a game`,
+      }),
+      // Без точки в конце: часть мессенджеров приклеивает её к адресу
+      description: tr(locale, {
+        ru: `Голоса сошлись${game ? ` на «${game}»` : ''} — в этой комнате игра уже выбрана. ${hint}`,
+        en: game
+          ? `The votes landed on “${game}” — this room already has its game. ${hint}`
+          : `The votes are in — this room already has its game. ${hint}`,
+      }),
+      eyebrow: tr(locale, { ru: 'ПАТИ · МАТЧ', en: 'PARTY · MATCH' }),
+      headline: game
+        ? tr(locale, {
+            ru: `Сошлись на «${clip(game, CARD_NAME_MAX)}»`,
+            en: `Matched on “${clip(game, CARD_NAME_MAX)}”`,
+          })
+        : tr(locale, { ru: 'Игра уже выбрана', en: 'Game already picked' }),
+      foot: hint,
     }
   }
 
-  const inRoom = (words: [string, string, string]) =>
-    `${invite.members} ${plural(invite.members, ...words)}`
-  const { preset, seedName: seed } = invite
+  const { members } = invite
+  const inRoom = pl(locale, members, {
+    ru: ['человек уже в комнате', 'человека уже в комнате', 'человек уже в комнате'],
+    en: ['person is already in the room', 'people are already in the room'],
+  })
+  const inRoomShort = pl(locale, members, {
+    ru: ['человек в комнате', 'человека в комнате', 'человек в комнате'],
+    en: ['person in the room', 'people in the room'],
+  })
+  const seed = invite.seedName
+  const preset = presetName(invite.preset, locale)
   // «Серёга зовёт» / «Тебя зовут» — в заголовке ник целиком (ширину держит
   // браузер), в карточке — восемнадцать знаков: строка стоит кеглем 44.
   // Знаков, а не единиц UTF-16 (head): срез посреди эмодзи давал на
   // карточке пустой квадрат
-  const calls = callsOf(invite.host)
-  const callsCard = callsOf(invite.host === null ? null : head(invite.host, 18))
+  const host = invite.host
+  const hostCard = host === null ? null : head(host, 18)
+  const calls = callsOf(host)
+  const callsCard = callsOf(hostCard)
 
   return {
     title: seed
-      ? `${calls} в «${seed}» · пати ${code}`
-      : `${calls} в пати ${code}${preset ? ` · ${preset}` : ''}`,
+      ? tr(locale, {
+          ru: `${calls} в «${seed}» · пати ${code}`,
+          en: `${invitesTo(host, `“${seed}”`)} · party ${code}`,
+        })
+      : tr(locale, { ru: `${calls} в пати ${code}`, en: invitesTo(host, `party ${code}`) }) +
+        (preset ? ` · ${preset}` : ''),
     description:
-      (seed ? `${seedOffer(seed)} ` : '') +
-      `${inRoom(['человек уже в комнате', 'человека уже в комнате', 'человек уже в комнате'])}. ` +
-      'Подключи свою библиотеку Steam и свайпай, во что не против сыграть: совпадут голоса всех — будет матч.',
-    eyebrow: seed && preset ? `ПАТИ · ${preset.toUpperCase()}` : 'ПАТИ · ПРИГЛАШЕНИЕ',
+      (seed ? `${seedOffer(seed, locale)} ` : '') +
+      `${members} ${inRoom}. ` +
+      tr(locale, {
+        ru: 'Подключи свою библиотеку Steam и свайпай, во что не против сыграть: совпадут голоса всех — будет матч.',
+        en: "Connect your Steam library and swipe on what you'd play. When everyone's votes line up, it's a match.",
+      }),
+    eyebrow:
+      seed && preset
+        ? `${tr(locale, { ru: 'ПАТИ', en: 'PARTY' })} · ${preset.toUpperCase()}`
+        : tr(locale, { ru: 'ПАТИ · ПРИГЛАШЕНИЕ', en: 'PARTY · INVITE' }),
     headline: seed
-      ? `${callsCard} в «${clip(seed, CARD_NAME_MAX)}»`
+      ? tr(locale, {
+          ru: `${callsCard} в «${clip(seed, CARD_NAME_MAX)}»`,
+          en: invitesTo(hostCard, `“${clip(seed, CARD_SEED_MAX_EN)}”`),
+        })
       : preset
-        ? `${callsCard}: ${preset.toLowerCase()}`
-        : `${callsCard} выбрать игру на вечер`,
-    foot: `${inRoom(['человек в комнате', 'человека в комнате', 'человек в комнате'])} · подключи библиотеку и свайпай`,
+        ? tr(locale, {
+            ru: `${callsCard}: ${preset.toLowerCase()}`,
+            en: `${hostCard ?? "You're invited"}: ${preset.toLowerCase()}`,
+          })
+        : pickTonight(hostCard, locale),
+    foot: `${members} ${inRoomShort} · ${tr(locale, { ru: 'подключи библиотеку и свайпай', en: 'connect your library and swipe' })}`,
   }
 }
 
@@ -168,12 +264,36 @@ function callsOf(host: string | null): string {
 }
 
 /**
+ * «Серёга зовёт в …» по-английски — целой фразой: у безличного «You're
+ * invited» другой порядок слов, и к «зовёт» его не приставить.
+ */
+function invitesTo(host: string | null, what: string): string {
+  return host ? `${host} invites you to ${what}` : `You're invited to ${what}`
+}
+
+/**
+ * «Серёга зовёт выбрать игру на вечер» — крупная строка карточки без игры и
+ * настроения и заголовок экрана приглашения: одна фраза на оба, как
+ * callsOf. Английская — своя на каждый случай: «You're invited» без ника и
+ * «… wants to pick» с ником.
+ */
+function pickTonight(host: string | null, locale: Locale): string {
+  return tr(locale, {
+    ru: `${callsOf(host)} выбрать игру на вечер`,
+    en: host ? `${host} wants to pick a game for tonight` : "You're invited to pick a game for tonight",
+  })
+}
+
+/**
  * Игра, в которую звали, — как предложение, а не решение. Одной строкой на
  * описание превью и экран приглашения: человек, нажавший карточку в чате,
  * обязан прочесть на экране ту же фразу, что в превью.
  */
-function seedOffer(name: string): string {
-  return `Первой картой — «${name}»; не зайдёт — дальше колода из ваших библиотек.`
+function seedOffer(name: string, locale: Locale): string {
+  return tr(locale, {
+    ru: `Первой картой — «${name}»; не зайдёт — дальше колода из ваших библиотек.`,
+    en: `First card: “${name}”. Not into it? Next up is a deck from your libraries.`,
+  })
 }
 
 /** Сколько имён назвать в «Уже здесь»: это строка, а не ростер */
@@ -241,27 +361,39 @@ export type InviteDoor = {
  * Ник режется здесь, на сервере, и в заголовке, и в «Уже здесь» — одним
  * потолком (DOOR_NAME_MAX): так странице не нужно ни байта на перенос.
  * Превью в чате режет по-своему — у карточки свой кегль и своя ширина.
+ *
+ * Английский — те же правила и те же фразы, что у превью (pickTonight,
+ * seedOffer): «Already here: A, B and 2 more». Заголовок с ником длиннее
+ * русского на пару знаков, но в 286 px он переносится на то же число строк
+ * (замер по шрифту): ширину держит ник, а не фраза.
  */
-export function inviteDoor(args: {
-  /** ник хоста — personaName, как у превью; null — хост ушёл или Steam ника не отдал */
-  host: string | null
-  /** метки всех, кто в комнате, хост первым */
-  names: readonly string[]
-  seed: DoorSeed | null
-}): InviteDoor {
+export function inviteDoor(
+  args: {
+    /** ник хоста — personaName, как у превью; null — хост ушёл или Steam ника не отдал */
+    host: string | null
+    /** метки всех, кто в комнате, хост первым */
+    names: readonly string[]
+    seed: DoorSeed | null
+  },
+  locale: Locale = 'ru',
+): InviteDoor {
   const { host, names, seed } = args
   const shown = names.slice(0, DOOR_NAMES).map((n) => clip(n, DOOR_NAME_MAX))
   const rest = names.length - shown.length
+  const and = tr(locale, { ru: 'и', en: 'and' })
   const list =
     rest > 0
-      ? `${shown.join(', ')} и ещё ${rest}`
+      ? tr(locale, {
+          ru: `${shown.join(', ')} и ещё ${rest}`,
+          en: `${shown.join(', ')} and ${rest} more`,
+        })
       : shown.length > 1
-        ? `${shown.slice(0, -1).join(', ')} и ${shown[shown.length - 1]}`
+        ? `${shown.slice(0, -1).join(', ')} ${and} ${shown[shown.length - 1]}`
         : shown[0]
   const onlyHost = host !== null && names.length === 1
   return {
-    title: `${callsOf(host === null ? null : clip(host, DOOR_NAME_MAX))} выбрать игру на вечер`,
-    here: list && !onlyHost ? `Уже здесь: ${list}` : null,
-    seed: seed ? { ...seed, line: seedOffer(seed.name) } : null,
+    title: pickTonight(host === null ? null : clip(host, DOOR_NAME_MAX), locale),
+    here: list && !onlyHost ? `${tr(locale, { ru: 'Уже здесь', en: 'Already here' })}: ${list}` : null,
+    seed: seed ? { ...seed, line: seedOffer(seed.name, locale) } : null,
   }
 }
