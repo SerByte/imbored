@@ -49,6 +49,7 @@ import {
   setGamesMedia,
   setNewsDigest,
   sitemapNews,
+  sitemapPatchArchives,
   freshlyDigestedPatches,
   STEAM_LEASE,
   upsertNewsItems,
@@ -124,6 +125,7 @@ import {
   updateGamePrices,
   topCatalogGames,
   searchIndexGames,
+  topGamesByFacet,
   topGamesByTags,
   upsertGameMeta,
   upsertGamesMeta,
@@ -2399,6 +2401,63 @@ describe('страница патча', () => {
     expect(await getGamePatchHeads(db, 730, 1)).toHaveLength(1)
   })
 
+  /*
+   * Архив обновлений игры попадает в карту сайта, только когда в нём есть
+   * что искать: не меньше трёх пересказанных крупных патчей у игры каталога —
+   * подмножество того, что страница сама пускает в индекс (lib/patcharchive).
+   */
+  test('архивы для карты сайта: от трёх пересказанных крупных патчей у игры каталога', async () => {
+    const db = await freshDb()
+    const DAY = 86_400
+    const items = [
+      // 730: три пересказанных крупных — в карте
+      ...['1', '2', '3'].map((gid, i) => newsItem({ gid, publishedAt: NOW - (i + 1) * DAY, bodyHash: `h${gid}` })),
+      // 570: два пересказанных и один без пересказа — не в карте
+      ...['4', '5', '6'].map((gid) => newsItem({ appid: 570, gid, bodyHash: `h${gid}` })),
+      // 440: три пересказанных, но игра не в каталоге (rank 0) — не в карте
+      ...['7', '8', '9'].map((gid) => newsItem({ appid: 440, gid, rank: 0, bodyHash: `h${gid}` })),
+    ]
+    await upsertNewsItems(db, items, NOW)
+    for (const it of items) {
+      if (it.gid === '6') continue
+      await setNewsDigest(db, it.appid, it.gid, { tldr: 'коротко', scale: 'major' }, NOW)
+    }
+    expect((await sitemapPatchArchives(db, 3, 100)).map((a) => a.appid)).toEqual([730])
+    expect((await sitemapPatchArchives(db, 2, 100)).map((a) => a.appid)).toEqual([570, 730])
+  })
+
+  /*
+   * lastmod архива — когда список последний раз менялся: новый патч (любой,
+   * хотфикс тоже — он стоит в архиве строкой) или пересказ. НЕ updated_at:
+   * его двигает и одна перезапись веса после сверки отзывов (F79 аудита), а
+   * архив вес не показывает.
+   */
+  test('lastmod архива — свежий патч или пересказ, а не перезаписанный вес', async () => {
+    const db = await freshDb()
+    const DAY = 86_400
+    const major = ['1', '2', '3'].map((gid, i) =>
+      newsItem({ gid, publishedAt: NOW - (10 + i) * DAY, bodyHash: `h${gid}` }),
+    )
+    await upsertNewsItems(db, major, NOW - 9 * DAY)
+    for (const it of major) await setNewsDigest(db, 730, it.gid, { tldr: 'коротко', scale: 'major' }, NOW - 9 * DAY)
+    const lastmod = async () => (await sitemapPatchArchives(db, 3, 10))[0]?.changedAt
+    expect(await lastmod()).toBe(NOW - 9 * DAY)
+
+    // неделю спустя сдвинулись отзывы — строки переписаны ради rank
+    await upsertNewsItems(db, major.map((it) => ({ ...it, rank: 9000 })), NOW - 2 * DAY)
+    expect(await lastmod()).toBe(NOW - 9 * DAY)
+
+    // пост посвежее модель назвала «не патч» (scale 'none', дорожная карта) —
+    // в архиве его нет, и список от него не поменялся
+    await upsertNewsItems(db, [newsItem({ gid: 'rm', publishedAt: NOW - 3 * DAY, bodyHash: 'hrm' })], NOW - 3 * DAY)
+    await setNewsDigest(db, 730, 'rm', { tldr: 'Планы на сезон.', scale: 'none' }, NOW - 3 * DAY)
+    expect(await lastmod()).toBe(NOW - 9 * DAY)
+
+    // вышел хотфикс без пересказа — в архиве новая строка
+    await upsertNewsItems(db, [newsItem({ gid: 'hf', publishedAt: NOW - DAY, scale: 'hotfix', bodyHash: 'hhf' })], NOW)
+    expect(await lastmod()).toBe(NOW - DAY)
+  })
+
   test('карта сайта: крупные, с пересказом, у игр каталога и не старше окна', async () => {
     const db = await freshDb()
     const DAY = 86_400
@@ -3678,6 +3737,66 @@ describe('кандидаты полок хаба', () => {
     } as unknown as typeof db
     expect(await topGamesByTags(spy, [], { minWeight: 500, perTag: 12 })).toEqual([])
     expect(calls).toBe(0)
+  })
+})
+
+/*
+ * Подборки хаба (HUB_FACETS в lib/gamehub): верх живого пула по отзывам, у
+ * которого выполнен факт — категория Steam, бесплатность или уверенная
+ * короткая сессия.
+ */
+describe('подборки хаба: отбор в базе', () => {
+  async function put(db: Db, appid: number, reviews: number, over: Partial<GameMeta> = {}, alive = 1) {
+    await upsertGameMeta(db, { ...META, appid, name: `Игра ${appid}`, reviewsTotal: reviews, ...over }, NOW)
+    await db.execute({
+      sql: 'UPDATE games SET alive = ?, tag_count = 3, superseded_by = NULL WHERE appid = ?',
+      args: [alive, appid],
+    })
+  }
+  const ids = (rows: Array<{ appid: number }>) => rows.map((r) => r.appid)
+
+  test('категории — любая из названных, по отзывам; мёртвые и чужой магазин мимо', async () => {
+    const db = await freshDb()
+    await put(db, 1, 900, { categories: [2, 38] })
+    await put(db, 2, 5000, { categories: [1, 9] })
+    await put(db, 3, 9000, { categories: [2, 1] }) // без кооператива
+    await put(db, 4, 7000, { categories: [9] }, 0) // мёртвая
+    await put(db, -5, 8000, { categories: [9] }) // чужой магазин
+    expect(ids(await topGamesByFacet(db, { kind: 'categories', ids: [9, 38] }, 10))).toEqual([2, 1])
+    expect(ids(await topGamesByFacet(db, { kind: 'categories', ids: [9, 38] }, 1))).toEqual([2])
+  })
+
+  test('бесплатные — по флагу Steam', async () => {
+    const db = await freshDb()
+    await put(db, 1, 900, { isFree: true })
+    await put(db, 2, 5000, { isFree: false })
+    expect(ids(await topGamesByFacet(db, { kind: 'free' }, 10))).toEqual([1])
+  })
+
+  /*
+   * Семантика — только своей версии формата и уверенная: parseSemantics
+   * читает чужую версию как «семантики нет», и такая строка заняла бы место
+   * в LIMIT, а карточка игры потом не назвала бы ей сессию вовсе.
+   */
+  test('короткая сессия — только уверенная и своей версии формата', async () => {
+    const db = await freshDb()
+    const sem = (minutes: number, confidence = 0.7): GameSemantics => ({
+      ...deriveSemantics({ Puzzle: 100 }, null),
+      session: { bucket: minutes < 30 ? 'short' : 'medium', minutes, canStopAnytime: false },
+      confidence,
+      n: 60,
+      basis: 'tags+reviews',
+    })
+    for (const [appid, reviews] of [[1, 900], [2, 5000], [3, 7000], [4, 8000]]) await put(db, appid, reviews)
+    await upsertSemantics(db, [
+      { appid: 1, semantics: sem(20), computedAt: NOW },
+      { appid: 2, semantics: sem(90), computedAt: NOW }, // заход длинный
+      { appid: 3, semantics: sem(15, 0.3), computedAt: NOW }, // неуверенно
+      { appid: 4, semantics: sem(10), computedAt: NOW },
+    ])
+    // запись старого формата: те же поля, другая версия
+    await db.execute({ sql: 'UPDATE game_semantics SET v = v - 1 WHERE appid = 4' })
+    expect(ids(await topGamesByFacet(db, { kind: 'session', belowMinutes: 30 }, 10))).toEqual([1])
   })
 })
 

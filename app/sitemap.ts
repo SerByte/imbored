@@ -1,8 +1,9 @@
 import type { MetadataRoute } from 'next'
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
-import { sitemapGames, sitemapNews } from '@/lib/db'
-import { HUB_TAGS, hubPath } from '@/lib/gamehub'
+import { sitemapGames, sitemapNews, sitemapPatchArchives } from '@/lib/db'
+import { facetPath, HUB_FACETS, HUB_TAGS, hubPath } from '@/lib/gamehub'
 import { newsPath, SITEMAP_NEWS_MAX, SITEMAP_NEWS_WINDOW_SEC } from '@/lib/newspage'
+import { PATCH_ARCHIVE_MIN, patchArchivePath } from '@/lib/patcharchive'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 
 /**
@@ -68,6 +69,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       const path = hubPath(tag)
       return path ? [{ url: url(path), changeFrequency: 'weekly' as const, priority: 0.7 }] : []
     }),
+    // Подборки по факту («с другом», «бесплатные»…) — тот же сегмент и тот
+    // же ранг, что у жанров: адреса тоже известны без базы (HUB_FACETS)
+    ...HUB_FACETS.map((f) => ({ url: url(facetPath(f)), changeFrequency: 'weekly' as const, priority: 0.7 })),
     { url: url('/support'), changeFrequency: 'yearly', priority: 0.3 },
     { url: url('/privacy'), changeFrequency: 'yearly', priority: 0.2 },
   ]
@@ -112,6 +116,20 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     console.error('sitemap: патчи недоступны на сборке, отдаём без них —', String(err))
   }
 
+  /*
+   * Архивы обновлений игр (/game/<appid>/news) — своим try, как патчи: у них
+   * своя выборка, и её сбой на сборке не должен уносить остальное. Только
+   * архивы, в которых есть своё — пересказы (PATCH_ARCHIVE_MIN, lib/patcharchive);
+   * остальные открыты по ссылке с карточки, но звать туда краулер незачем.
+   */
+  let archives: Awaited<ReturnType<typeof sitemapPatchArchives>> = []
+  try {
+    archives = await sitemapPatchArchives(await getDb(), PATCH_ARCHIVE_MIN, SITEMAP_NEWS_MAX)
+  } catch (err) {
+    if (process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) throw err
+    console.error('sitemap: архивы обновлений недоступны на сборке, отдаём без них —', String(err))
+  }
+
   return [
     ...stat,
     ...games.map((g) => ({
@@ -119,6 +137,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: new Date(g.updatedAt * 1000),
       changeFrequency: 'weekly' as const,
       priority: 0.7,
+    })),
+    // Между карточкой и патчем: ответ на «обновления X» — один адрес на игру,
+    // а не десятки одинаковых заголовков Steam. lastmod — свежий патч или
+    // пересказ (sitemapPatchArchives), а не перезаписанный вес
+    ...archives.map((a) => ({
+      url: url(patchArchivePath(a.appid)),
+      lastModified: new Date(a.changedAt * 1000),
+      changeFrequency: 'weekly' as const,
+      priority: 0.6,
     })),
     // Ниже карточек: патч — повод зайти, а не главное содержание сайта
     ...news.map((n) => ({

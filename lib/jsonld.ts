@@ -1,5 +1,6 @@
 import { discountOf, trustedPrice } from './discount'
 import { newsHeading, newsPath } from './newspage'
+import { patchArchivePath } from './patcharchive'
 import { OG_SITE, SITE_DESCRIPTION } from './site'
 import { STORE_LABEL } from './stores'
 import { tagRu } from './tagsru'
@@ -422,8 +423,10 @@ export function patchArticleLd({
 }
 
 /**
- * Крошки патча: главная → игра → патч — ровно та ссылка назад, что стоит над
- * заголовком. Игры нет в каталоге — нет и ссылки на неё: два уровня.
+ * Крошки патча: главная → игра → обновления → патч — ровно тот путь, что
+ * стоит над заголовком. «Обновления» — архив обновлений игры
+ * (/game/<appid>/news, lib/patcharchive): патч — одна его строка. Игры нет в
+ * каталоге — нет ни её карточки, ни архива: два уровня.
  */
 export function patchBreadcrumbLd({
   item,
@@ -436,13 +439,45 @@ export function patchBreadcrumbLd({
 }): BreadcrumbLd {
   const steps = [
     { name: 'imbored', item: `${baseUrl}/` },
-    ...(game ? [{ name: game.name, item: `${baseUrl}/game/${item.appid}` }] : []),
+    ...(game
+      ? [
+          { name: game.name, item: `${baseUrl}/game/${item.appid}` },
+          { name: ARCHIVE_CRUMB, item: `${baseUrl}${patchArchivePath(item.appid)}` },
+        ]
+      : []),
     { name: newsHeading(item.title, game?.name), item: `${baseUrl}${newsPath(item.appid, item.gid)}` },
   ]
   return {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: steps.map((step, i) => ({ '@type': 'ListItem' as const, position: i + 1, ...step })),
+  }
+}
+
+/** Имя архива в крошках — тот же текст, что в видимом пути над заголовком */
+export const ARCHIVE_CRUMB = 'Обновления'
+
+/**
+ * Крошки архива обновлений игры: главная → игра → обновления — путь, который
+ * архив показывает строкой над заголовком.
+ */
+export function archiveBreadcrumbLd({
+  appid,
+  gameName,
+  baseUrl,
+}: {
+  appid: number
+  gameName: string
+  baseUrl: string
+}): BreadcrumbLd {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { name: 'imbored', item: `${baseUrl}/` },
+      { name: gameName, item: `${baseUrl}/game/${appid}` },
+      { name: ARCHIVE_CRUMB, item: `${baseUrl}${patchArchivePath(appid)}` },
+    ].map((step, i) => ({ '@type': 'ListItem' as const, position: i + 1, ...step })),
   }
 }
 

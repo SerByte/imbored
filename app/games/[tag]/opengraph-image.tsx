@@ -11,7 +11,9 @@ export const contentType = 'image/png'
 
 /**
  * Карточка жанра для чатов и выдачи: стена постеров его верхних игр — тот же
- * жест, что у портрета и сравнения (lib/ogcard), — и название жанра.
+ * жест, что у портрета и сравнения (lib/ogcard), — и название жанра. У
+ * подборки (HUB_FACETS: «с другом», «бесплатные»…) — то же самое с её
+ * заголовком: «во что поиграть с другом» пересылают чаще любого жанра.
  *
  * Сутки кэша, как у страницы: список меняется не чаще. Пустой
  * generateStaticParams регистрирует сегмент — без него revalidate не значит
@@ -67,8 +69,10 @@ export default async function Image({ params }: { params: Promise<{ tag: string 
             flexDirection: 'column',
           }}
         >
+          {/* Подборка (/games/coop…) — не жанр: и шапка, и подпись говорят,
+              по чему отобрано, а не «жанр главный» */}
           <div style={{ fontSize: 20, letterSpacing: 6, color: OG_EMBER, marginBottom: 18 }}>
-            IMBORED.CC · ИГРЫ ПО ЖАНРАМ
+            {genre?.kind === 'facet' ? 'IMBORED.CC · ПОДБОРКИ' : 'IMBORED.CC · ИГРЫ ПО ЖАНРАМ'}
           </div>
           {/* Запас снизу — под хвосты кириллицы (см. карточку портрета) */}
           <div style={{ fontSize: 76, lineHeight: 1.12, marginBottom: 22 }}>
@@ -76,7 +80,9 @@ export default async function Image({ params }: { params: Promise<{ tag: string 
           </div>
           <div style={{ fontSize: 26, color: OG_DIM }}>
             {n > 0
-              ? `${n} ${plural(n, 'игра', 'игры', 'игр')}, для которых жанр главный, — по отзывам игроков`
+              ? genre?.kind === 'facet'
+                ? `${n} ${plural(n, 'игра', 'игры', 'игр')} — по отзывам игроков Steam`
+                : `${n} ${plural(n, 'игра', 'игры', 'игр')}, для которых жанр главный, — по отзывам игроков`
               : 'Тридцать жанров — по отзывам игроков Steam'}
           </div>
         </div>

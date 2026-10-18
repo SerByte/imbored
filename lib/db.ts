@@ -27,7 +27,7 @@ import {
   eveningFrom,
   type Evening,
 } from './outcome'
-import { SEMANTICS_V } from './semantics'
+import { SEMANTICS_MIN_CONFIDENCE, SEMANTICS_V } from './semantics'
 import { SHARED_PICK_TTL_SEC, type PickKind } from './sharedpick'
 import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
 import { WISHLIST_KEPT } from './steam'
@@ -4515,6 +4515,75 @@ export async function topGamesByTags(
 }
 
 /**
+ * Отбор подборки хаба (HUB_FACETS в lib/gamehub) — условие на строку каталога.
+ *
+ *   • categories — есть хоть одна из категорий Steam (кооператив, общий экран);
+ *   • free — Steam отдаёт игру бесплатно (is_free);
+ *   • session — один заход короче belowMinutes по уверенной семантике: та же
+ *     уверенность (SEMANTICS_MIN_CONFIDENCE), с которой карточка игры вообще
+ *     называет длину сессии (sessionTrait в lib/gametraits). По одним тегам
+ *     «короткая» — приор жанра, а подборка утверждает это о каждой игре. И
+ *     только своей версии формата (SEMANTICS_V): чужую parseSemantics
+ *     читает как «семантики нет», и такая строка заняла бы место в LIMIT,
+ *     а карточка потом не назвала бы её сессию вовсе.
+ */
+export type FacetQuery =
+  | { kind: 'categories'; ids: readonly number[] }
+  | { kind: 'free' }
+  | { kind: 'session'; belowMinutes: number }
+
+/**
+ * Игры подборки — верх живого каталога по числу отзывов, у которых условие
+ * выполнено. Форма та же, что у полки хаба (SimilarGame): страница подборки
+ * дочитывает отзывы и «за что любят» так же, как страница жанра.
+ *
+ * Идёт по idx_games_pool (reviews_total DESC) по порядку и останавливается
+ * на limit-й подходящей: условие — подзапрос на строку (категории — json_each
+ * её же categories_json, семантика — поиск по ключу game_semantics), поэтому
+ * ни сортировки, ни прохода по таблице мимо индекса. Чем реже факт, тем
+ * дальше уходит проход: общий экран — у одной игры из десяти, а уверенная
+ * короткая сессия, пока отзывы разобраны у немногих, может не набрать limit и
+ * за весь пул — тогда это пул целиком (тысячи строк, как у topGamesByTags).
+ * Поэтому зовёт только страница на ISR с суточным revalidate. Сторож плана —
+ * lib/queryplan.test.ts.
+ *
+ * Список категорий — параметром, а не текстом запроса: числа приходят из
+ * lib/gamehub, но SQL от этого не должен зависеть.
+ */
+export async function topGamesByFacet(db: Db, q: FacetQuery, limit: number): Promise<SimilarGame[]> {
+  const cond =
+    q.kind === 'categories'
+      ? {
+          sql: 'EXISTS (SELECT 1 FROM json_each(games.categories_json) WHERE value IN (SELECT value FROM json_each(?)))',
+          args: [JSON.stringify(q.ids)],
+        }
+      : q.kind === 'free'
+        ? { sql: 'is_free = 1', args: [] }
+        : {
+            sql: `EXISTS (SELECT 1 FROM game_semantics AS s WHERE s.appid = games.appid
+                    AND s.v = ?
+                    AND json_extract(s.json, '$.confidence') >= ?
+                    AND json_extract(s.json, '$.session.minutes') < ?)`,
+            args: [SEMANTICS_V, SEMANTICS_MIN_CONFIDENCE, q.belowMinutes],
+          }
+  const res = await db.execute({
+    sql: `SELECT appid, name, header_image, art_json FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0 AND ${cond.sql}
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [...cond.args, limit],
+  })
+  return (
+    res.rows as unknown as Array<{ appid: number; name: string; header_image: string | null; art_json: string | null }>
+  ).map((r) => ({
+    appid: Number(r.appid),
+    name: r.name,
+    headerImage: r.header_image ?? null,
+    art: r.art_json ? (JSON.parse(r.art_json) as GameArtUrls) : null,
+  }))
+}
+
+/**
  * «За что любят» пачкой — для страницы жанра: по сорок игр разом, а не
  * getGamePageRow на каждую.
  *
@@ -7189,6 +7258,68 @@ export async function getGamePatchHeads(db: Db, appid: number, limit = 8): Promi
     title: r.title,
     publishedAt: Number(r.published_at),
     scale: r.scale === 'major' || r.scale === 'hotfix' ? r.scale : null,
+  }))
+}
+
+/**
+ * Архивы обновлений игр для карты сайта: игры с не меньше чем minTold
+ * пересказанными крупными патчами у игры каталога.
+ *
+ * Предикат повторяет idx_news_feed дословно (крупные патчи игр каталога), как
+ * у sitemapNews, — по нему и идёт проход, только без окна по дате: архив
+ * держит всё, что не срезала ретенция (NEWS_KEEP в lib/newsjob, тридцать
+ * постов на игру). Группировка по игре сортирует эти строки — сотни игр по
+ * десятку патчей раз в сутки на ISR карты сайта, а не таблицу.
+ *
+ * Плюс перед f.appid в GROUP BY и ORDER BY — не опечатка, а запрет брать
+ * порядок из индекса. Без него SQLite, экономя сортировку, шёл по
+ * idx_news_app (appid, …) целиком — то есть читал ВСЕ посты всех игр, с
+ * распродажами и анонсами, ради порядка по appid (план проверен на базе).
+ * Унарный плюс выключает этот столбец для индекса, и проход идёт по
+ * частичному idx_news_feed — только по крупным патчам игр каталога. Сторож
+ * плана — lib/queryplan.test.ts.
+ *
+ * Подмножество того, что архив сам пускает в индекс (archiveIndexable в
+ * lib/patcharchive считает и пересказанные хотфиксы): в карту — только
+ * наверняка индексируемое. «Патч» здесь — записанный kind, как у sitemapNews
+ * и sitemapGames: тел карта сайта не читает, и сверить строку с нынешним
+ * правилом классификатора, как сам архив (isStoredPatch в lib/news), не
+ * может. Дорожная карта, записанная патчем старым правилом, считается здесь
+ * до переопроса игры — худшее, что выйдет, это архив в карте с noindex на
+ * самой странице, а не строка неправды. Вердикт модели «не патч» (scale
+ * 'none') отсекает уже scale = 'major'.
+ *
+ * changed_at — когда список последний раз менялся по существу: самый свежий
+ * патч игры любого масштаба (хотфикс в архиве — тоже строка; поиск по
+ * idx_news_app до первого патча, как у sitemapGames, и без вердикта «не
+ * патч» тем же условием) или последний пересказ. Не updated_at каждой
+ * строки: ради него пришлось бы дочитывать все патчи игры, а не
+ * останавливаться на первом, а сверх этих двух он поймал бы только правку
+ * одного заголовка у старого поста — правка тела и так сбрасывает пересказ,
+ * и новый сдвинет tldr_at.
+ */
+export async function sitemapPatchArchives(
+  db: Db,
+  minTold: number,
+  limit: number,
+): Promise<Array<{ appid: number; changedAt: number }>> {
+  const res = await db.execute({
+    sql: `SELECT f.appid AS appid,
+                 MAX(MAX(f.tldr_at), COALESCE((SELECT MAX(n.published_at) FROM news_items AS n
+                                               WHERE n.appid = f.appid AND n.kind = 'patch'
+                                                 AND n.scale IS NOT 'none'), 0)) AS changed_at
+          FROM news_items AS f
+          WHERE f.kind = 'patch' AND f.scale = 'major' AND f.rank > 0
+            AND f.tldr IS NOT NULL
+          GROUP BY +f.appid
+          HAVING COUNT(*) >= ?
+          ORDER BY +f.appid
+          LIMIT ?`,
+    args: [minTold, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; changed_at: number }>).map((r) => ({
+    appid: Number(r.appid),
+    changedAt: Number(r.changed_at),
   }))
 }
 

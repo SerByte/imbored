@@ -109,6 +109,27 @@ describe('resetSliceCards', () => {
     expect(out).toEqual({ polled: 3, hasMore: false, сброшено: 2 })
     expect(out).not.toHaveProperty('cards')
   })
+
+  /*
+   * Новости и пересказы меняют не только карточку, но и архив обновлений
+   * игры (/game/<appid>/news): новый патч — новая строка, пересказ — ссылка
+   * и строка «коротко». revalidatePath сбрасывает ровно названный адрес, и
+   * архив под карточкой иначе ждал бы своих суток ISR. Крон карточек архив
+   * не трогает — ни патчей, ни пересказов он не пишет.
+   */
+  test('с archives — и архив обновлений тех же игр; без него — только карточки', () => {
+    const paths: string[] = []
+    const out = resetSliceCards({ digested: 2, cards: [730, 730, 570] }, (p) => paths.push(p), { archives: true })
+    expect(paths.sort()).toEqual(['/game/570', '/game/570/news', '/game/730', '/game/730/news'])
+    // в итоге — по-прежнему число игр, а не адресов
+    expect(out).toEqual({ digested: 2, сброшено: 2 })
+  })
+
+  test('архива у чужого магазина нет — его адрес не сбрасывается', () => {
+    const paths: string[] = []
+    resetSliceCards({ cards: [-7] }, (p) => paths.push(p), { archives: true })
+    expect(paths).toEqual(['/game/-7'])
+  })
 })
 
 /**

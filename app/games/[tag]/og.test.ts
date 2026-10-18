@@ -48,3 +48,33 @@ describe('карточка жанра и осечка базы', () => {
     await expect(render('no-such-genre')).resolves.toBeDefined()
   })
 })
+
+describe('карточка подборки', () => {
+  /** Весь текст дерева карточки подряд — шапка, заголовок, подпись */
+  const text = (node: unknown): string => {
+    if (typeof node === 'string' || typeof node === 'number') return String(node)
+    if (Array.isArray(node)) return node.map(text).join(' ')
+    if (node && typeof node === 'object' && 'props' in node) {
+      return text((node as { props: { children?: unknown } }).props.children)
+    }
+    return ''
+  }
+
+  /*
+   * «Во что поиграть с другом» пересылают чаще любого жанра, и карточка
+   * обязана назвать подборку, а не «жанр главный»: у кооператива жанра нет,
+   * есть отметка Steam (lib/gamehub, HUB_FACETS).
+   */
+  test('называет подборку и не говорит «жанр главный»', async () => {
+    const card = (await render('coop')) as unknown as { element: unknown }
+    const all = text(card.element)
+    expect(all).toContain('ПОДБОРКИ')
+    expect(all).toContain('Кооперативные игры')
+    expect(all).not.toContain('жанр главный')
+  })
+
+  test('ошибка базы и у подборки уходит наружу — ISR оставит прошлую карточку', async () => {
+    queriesFail()
+    await expect(render('coop')).rejects.toThrow(/timed out/)
+  })
+})

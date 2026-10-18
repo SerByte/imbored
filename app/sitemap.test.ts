@@ -1,6 +1,13 @@
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { replaceGameTags, upsertGameMeta, type Db } from '@/lib/db'
+import {
+  replaceGameTags,
+  setNewsDigest,
+  upsertGameMeta,
+  upsertNewsItems,
+  type Db,
+  type StoredNews,
+} from '@/lib/db'
 import { freshDb } from '@/lib/testing/route'
 import sitemap from './sitemap'
 
@@ -66,7 +73,38 @@ describe('карта сайта и осечка базы', () => {
     errors.mockRestore()
     expect(got).toContain('/')
     expect(got).toContain('/games')
+    // подборки, как и жанры, известны без базы — переживают и сборку без неё
+    expect(got).toContain('/games/coop')
+    expect(got).toContain('/games/split-screen')
     expect(got).not.toContain('/game/730')
+  })
+
+  /*
+   * Архив обновлений игры — в карте, только когда в нём есть своё: не меньше
+   * трёх пересказанных крупных патчей (lib/patcharchive). lastmod — свежий
+   * патч или пересказ, а не updated_at строки (sitemapPatchArchives).
+   */
+  test('архив обновлений — от трёх пересказов, с датой последней перемены', async () => {
+    const news = (gid: string, at: number): StoredNews => ({
+      appid: 730,
+      gid,
+      title: 'Обновление',
+      url: '',
+      publishedAt: at,
+      kind: 'patch',
+      scale: 'major',
+      blocks: [],
+      bodyHash: `h${gid}`,
+      rank: 9000,
+    })
+    await upsertNewsItems(db, [news('1', T0 - 300), news('2', T0 - 200)], T0)
+    for (const gid of ['1', '2']) await setNewsDigest(db, 730, gid, { tldr: 'коротко', scale: 'major' }, T0)
+    expect(await urls()).not.toContain('/game/730/news')
+
+    await upsertNewsItems(db, [news('3', T0 - 100)], T0)
+    await setNewsDigest(db, 730, '3', { tldr: 'коротко', scale: 'major' }, T0 + 60)
+    const entry = (await sitemap()).find((e) => new URL(e.url).pathname === '/game/730/news')
+    expect(entry?.lastModified).toEqual(new Date((T0 + 60) * 1000))
   })
 
   test('на сборке getDb() бросает сам (нет TURSO_DATABASE_URL) — и это не роняет build', async () => {

@@ -71,8 +71,9 @@ export async function GET(req: Request) {
         const slice = await runDigestSlice(db, { deadlineAt, limit: DIGEST_LIMIT })
         // Пересказ стоит и на карточке игры — строкой под заголовком патча,
         // а заголовок с ним становится ссылкой. Карточка живёт в ISR неделю
-        // (lib/gamecache), поэтому её адрес сбрасываем здесь же, по звену
-        return resetSliceCards(slice, revalidatePath)
+        // (lib/gamecache), поэтому её адрес сбрасываем здесь же, по звену. В
+        // архиве обновлений игры пересказ — главное в строке: его тоже
+        return resetSliceCards(slice, revalidatePath, { archives: true })
       },
       // Упавшее звено запуск останавливает — это про деньги, см. digestLinkVerdict
       verdict: ({ result, failed }) => digestLinkVerdict({ failed, result }),

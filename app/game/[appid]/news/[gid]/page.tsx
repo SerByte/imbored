@@ -15,7 +15,8 @@ import {
   newsPageTitle,
   newsPath,
 } from '@/lib/newspage'
-import { patchArticleLd, patchBreadcrumbLd, ldScript } from '@/lib/jsonld'
+import { ARCHIVE_CRUMB, patchArticleLd, patchBreadcrumbLd, ldScript } from '@/lib/jsonld'
+import { patchArchivePath } from '@/lib/patcharchive'
 import { appBaseUrl, getDb } from '@/lib/server'
 import { OG_SITE } from '@/lib/site'
 import { textLang } from '@/lib/textlang'
@@ -136,12 +137,27 @@ export default async function PatchPage({ params }: Params) {
       <article className="relative mx-auto flex w-full max-w-3xl flex-col gap-8 px-safe pt-28 pb-16">
         <header className="flex flex-col gap-4 anim-rise">
           {/* Игры в каталоге может не быть (пост пришёл по чьей-то
-              библиотеке) — тогда и её карточки нет, и ссылаться некуда */}
+              библиотеке) — тогда нет ни её карточки, ни архива, и ссылаться
+              некуда. Путь — тот же, что в разметке крошек (patchBreadcrumbLd):
+              игра → её архив обновлений → этот патч. Был одной ссылкой
+              «← игра»; архив (/game/<appid>/news) встал между ними, и
+              подняться к остальным патчам теперь можно одним шагом. Архив —
+              без префетча: он на ISR и рендерится по первому заходу */}
           {game && (
-            <Link href={gameHref} transitionTypes={['nav-back']} className="tap tap-tight link-more self-start">
-              <Icon name="back" size={16} />
-              {game.name}
-            </Link>
+            <nav aria-label="Путь к патчу" className="flex flex-wrap items-center gap-1.5">
+              <Link href={gameHref} transitionTypes={['nav-back']} className="tap tap-tight link-more">
+                {game.name}
+              </Link>
+              <Icon name="arrow" size={14} className="text-faint" />
+              <Link
+                href={patchArchivePath(item.appid)}
+                transitionTypes={['nav-back']}
+                prefetch={false}
+                className="tap tap-tight link-more"
+              >
+                {ARCHIVE_CRUMB}
+              </Link>
+            </nav>
           )}
           <Eyebrow as="p">Что изменилось</Eyebrow>
           {/* Заголовок и тело — текст издателя, обычно английский, а
@@ -263,6 +279,14 @@ export default async function PatchPage({ params }: Params) {
                 )
               })}
             </ul>
+            {/* Шесть соседних — перелинковка, а все хранящиеся патчи игры
+                списком — в её архиве обновлений */}
+            {game && (
+              <Link href={patchArchivePath(item.appid)} prefetch={false} className="tap link-more mt-3">
+                Все обновления «{game.name}»
+                <Icon name="arrow" size={16} />
+              </Link>
+            )}
           </section>
         )}
       </article>

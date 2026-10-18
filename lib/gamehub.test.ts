@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest'
 import {
   assembleHub,
+  facetPath,
+  HUB_FACETS,
   HUB_FETCH,
   HUB_GENRES,
   HUB_MIN_SHELF,
@@ -8,9 +10,12 @@ import {
   HUB_MIN_WEIGHT,
   HUB_SHELF,
   HUB_TAGS,
+  hubFacetOf,
   hubPath,
   hubTagOf,
+  playsAgainst,
   primaryGenre,
+  SHORT_SESSION_MIN,
   storedTagWeights,
   TAGS_PER_GAME,
   type HubRow,
@@ -200,5 +205,126 @@ describe('полки хаба', () => {
     )
     expect(hub.map((s) => s.tag)).toEqual(['Полная'])
     expect(hub[0].games).toHaveLength(HUB_SHELF)
+  })
+})
+
+describe('подборки по факту: /games/coop, /games/split-screen, /games/free, /games/short', () => {
+  /*
+   * Подборка живёт под тем же /games/<slug>, что и жанр, и тем же сегментом
+   * (app/games/[tag]): совпади адрес подборки с адресом жанра — одна из двух
+   * страниц пропала бы молча, а карта сайта назвала бы адрес дважды.
+   */
+  test('адреса — латиницей через дефис, без повторов и не совпадают с жанрами', () => {
+    const slugs = HUB_FACETS.map((f) => f.slug)
+    expect(new Set(slugs).size).toBe(slugs.length)
+    const genres = new Set(Object.values(HUB_GENRES).map((g) => g.slug))
+    for (const slug of slugs) {
+      expect(slug).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/)
+      expect(genres.has(slug), slug).toBe(false)
+      expect(hubTagOf(slug), slug).toBeNull()
+    }
+  })
+
+  test('адрес обратно даёт ту же подборку; чужой — null', () => {
+    for (const f of HUB_FACETS) {
+      expect(hubFacetOf(f.slug)).toBe(f)
+      expect(facetPath(f)).toBe(`/games/${f.slug}`)
+    }
+    expect(hubFacetOf('roguelike')).toBeNull()
+    expect(hubFacetOf('constructor')).toBeNull()
+    expect(hubFacetOf('Coop')).toBeNull()
+  })
+
+  test('четыре подборки: с другом, на одном экране, бесплатные, на двадцать минут', () => {
+    expect(HUB_FACETS.map((f) => f.slug)).toEqual(['coop', 'split-screen', 'free', 'short'])
+  })
+
+  test('тексты по-русски и с большой буквы; основание списка названо', () => {
+    for (const f of HUB_FACETS) {
+      expect(f.title, f.slug).toMatch(/^[А-ЯЁ]/)
+      expect(f.heading.startsWith(f.title), f.slug).toBe(true)
+      expect(f.label, f.slug).toMatch(/^[А-ЯЁ]/)
+      // основание — продолжение фразы «40 игр — …», со строчной и с точкой в конце
+      expect(f.basis, f.slug).toMatch(/^[а-яё].{40,}\.$/)
+    }
+  })
+
+  test('«с другом» — кооператив Steam, без соперничества; «на одном экране» — и кооп, и дуэли', () => {
+    const coop = hubFacetOf('coop')!
+    expect(coop.query).toEqual({ kind: 'categories', ids: [9, 38] })
+    expect(coop.drop).toBe('versus')
+    expect(coop.party).toBe(true)
+    const split = hubFacetOf('split-screen')!
+    expect(split.query).toEqual({ kind: 'categories', ids: [24, 37, 39] })
+    // диван с двумя геймпадами — это и Cuphead вдвоём, и TEKKEN друг против друга
+    expect(split.drop).toBeUndefined()
+    expect(split.party).toBe(true)
+  })
+
+  test('«на 20 минут» — заход короче получаса и не матч; бесплатные — по отметке Steam', () => {
+    const short = hubFacetOf('short')!
+    expect(short.query).toEqual({ kind: 'session', belowMinutes: SHORT_SESSION_MIN })
+    expect(short.drop).toBe('match')
+    expect(short.party).toBe(false)
+    expect(hubFacetOf('free')!.query).toEqual({ kind: 'free' })
+  })
+})
+
+describe('играют ли друг против друга (playsAgainst)', () => {
+  /*
+   * Голоса тегов — как они лежат в tags_json у живых игр каталога, верхушки
+   * «Кооператива» по отзывам (выписаны 13 октября). Правило сравнивает
+   * суммы: и соперничество, и кооператив у игры размазаны по нескольким тегам.
+   */
+  const DOTA = {
+    'Free to Play': 3010, MOBA: 1019, Multiplayer: 778, Strategy: 723, eSports: 598, 'Team-Based': 554,
+    Competitive: 422, Action: 401, 'Online Co-Op': 378, PvP: 308, Difficult: 275, 'Co-op': 220,
+  }
+  const SIEGE = {
+    FPS: 733, PvP: 678, Multiplayer: 673, Shooter: 672, Tactical: 671, eSports: 668, Competitive: 663,
+    'Online Co-Op': 660, Action: 658, 'Hero Shooter': 655, 'Team-Based': 418, 'Co-op': 363,
+  }
+  const IT_TAKES_TWO = {
+    'Co-op': 1486, Multiplayer: 1078, 'Split Screen': 892, 'Local Co-Op': 864, 'Online Co-Op': 733,
+    Puzzle: 681, Adventure: 564, 'Story Rich': 468, 'Co-op Campaign': 407,
+  }
+  const DIVINITY_2 = {
+    'Tactical RPG': 670, RPG: 670, 'Turn-Based Strategy': 657, 'Story Rich': 641, Fantasy: 630,
+    'Character Customization': 624, CRPG: 623, Exploration: 615, 'Party-Based RPG': 611, 'Strategy RPG': 590,
+    PvP: 563, 'Female Protagonist': 554, 'Co-op Campaign': 367, 'Local Co-Op': 336, 'Choices Matter': 324,
+  }
+  const TEKKEN_7 = {
+    Fighting: 1976, Action: 1040, Multiplayer: 994, Competitive: 782, Arcade: 730, 'Local Multiplayer': 621,
+    Controller: 510, '3D Fighter': 429, Singleplayer: 374, eSports: 350,
+  }
+
+  test('Dota 2 и Rainbow Six: за соперничество голосов больше — не «с другом»', () => {
+    expect(playsAgainst(DOTA)).toBe(true)
+    expect(playsAgainst(SIEGE)).toBe(true)
+  })
+
+  test('It Takes Two, HELLDIVERS 2 и Sea of Thieves — кооператив главнее', () => {
+    expect(playsAgainst(IT_TAKES_TWO)).toBe(false)
+    expect(playsAgainst({ 'Online Co-Op': 1000, PvE: 896, 'Co-op': 689, 'Third-Person Shooter': 600 })).toBe(false)
+    // PvP есть, но кооператив перевешивает: корабль на двоих против моря
+    expect(playsAgainst({ Adventure: 1000, 'Co-op': 727, 'Online Co-Op': 686, PvP: 616, Pirates: 600 })).toBe(false)
+  })
+
+  /*
+   * Ради этого случая правило — суммой по всем тегам. Самым весомым из
+   * двенадцати верхних (окно game_tags) Divinity уходила: её PvP-арена стоит
+   * одиннадцатой, а оба кооперативных тега — тринадцатым и четырнадцатым.
+   */
+  test('Divinity: Original Sin 2 — кооператив за окном двенадцати тегов всё равно считается', () => {
+    expect(playsAgainst(DIVINITY_2)).toBe(false)
+  })
+
+  test('файтинг — друг против друга', () => {
+    expect(playsAgainst(TEKKEN_7)).toBe(true)
+  })
+
+  test('нет ни соперничества, ни кооператива в тегах — решают категории, не мешаем', () => {
+    expect(playsAgainst({ Survival: 1000, Crafting: 800, 'Open World': 700 })).toBe(false)
+    expect(playsAgainst({})).toBe(false)
   })
 })

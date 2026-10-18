@@ -27,6 +27,7 @@ import { looksLikeJunkName } from './junk'
 import { judgeLiveness, type DeadReason } from './liveness'
 import { NEIGHBORS_K } from './neighbors'
 import { isStoredPatch } from './news'
+import { CARD_PATCHES } from './patcharchive'
 import { plural } from './plural'
 import { isEndless } from './recommend'
 import type { ProsCons } from './reviews'
@@ -630,8 +631,9 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   const [news, shelf, studioGames] = await Promise.all([
     // Патч — по нынешнему правилу классификатора, тому же, что у страницы
     // патча (isStoredPatch, loadPatch): строка, которую та отдаёт 404, не
-    // должна стоять здесь патчем со ссылкой туда
-    getGameNews(db, appid, 8).then((rows) => rows.filter(isStoredPatch).map(cardNews)),
+    // должна стоять здесь патчем со ссылкой туда. Восемь последних;
+    // остальное — в архиве обновлений (lib/patcharchive)
+    getGameNews(db, appid, CARD_PATCHES).then((rows) => rows.filter(isStoredPatch).map(cardNews)),
     similarOf(),
     meta.developer?.trim()
       ? gamesByDeveloper(db, meta.developer, STUDIO_MAX_GAMES + 1)

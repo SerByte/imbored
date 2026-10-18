@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
+  archiveBreadcrumbLd,
   gameBreadcrumbLd,
   gameJsonLd,
   genreBreadcrumbLd,
@@ -9,6 +10,7 @@ import {
   patchBreadcrumbLd,
   websiteJsonLd,
 } from './jsonld'
+import { newsHeading } from './newspage'
 import { SITE_DESCRIPTION } from './site'
 import { regionCurrency } from './steamregion'
 import { tagRu } from './tagsru'
@@ -439,13 +441,32 @@ describe('страница патча', () => {
     expect(out).not.toHaveProperty('about')
   })
 
-  test('крошки: главная → игра → патч; без игры — два уровня', () => {
+  /*
+   * Было три уровня: главная → игра → патч. Между игрой и патчем встал
+   * архив обновлений игры (/game/<appid>/news) — его страница показывает
+   * этот путь строкой над заголовком, и разметка повторяет ровно её. Без игры
+   * в каталоге архива нет (ему нечего назвать), и крошки остаются двумя.
+   */
+  test('крошки: главная → игра → обновления → патч; без игры — два уровня', () => {
     const withGame = patchBreadcrumbLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE })
-    expect(withGame.itemListElement.map((i) => i.item)).toEqual([
-      'https://imbored.cc/',
-      'https://imbored.cc/game/730',
-      'https://imbored.cc/game/730/news/5123894512345',
+    expect(withGame.itemListElement.map((i) => [i.position, i.name, i.item])).toEqual([
+      [1, 'imbored', 'https://imbored.cc/'],
+      [2, 'Counter-Strike 2', 'https://imbored.cc/game/730'],
+      [3, 'Обновления', 'https://imbored.cc/game/730/news'],
+      [4, newsHeading(item.title, 'Counter-Strike 2'), 'https://imbored.cc/game/730/news/5123894512345'],
     ])
     expect(patchBreadcrumbLd({ item, game: null, baseUrl: BASE }).itemListElement).toHaveLength(2)
+  })
+})
+
+describe('архив обновлений игры', () => {
+  test('крошки: главная → игра → обновления, как в строке над заголовком', () => {
+    const out = archiveBreadcrumbLd({ appid: 730, gameName: 'Counter-Strike 2', baseUrl: BASE })
+    expect(out['@type']).toBe('BreadcrumbList')
+    expect(out.itemListElement.map((i) => [i.position, i.name, i.item])).toEqual([
+      [1, 'imbored', 'https://imbored.cc/'],
+      [2, 'Counter-Strike 2', 'https://imbored.cc/game/730'],
+      [3, 'Обновления', 'https://imbored.cc/game/730/news'],
+    ])
   })
 })
