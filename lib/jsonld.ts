@@ -1,9 +1,10 @@
 import { discountOf, trustedPrice } from './discount'
-import { DEFAULT_LOCALE, htmlLang, lp, type Locale } from './i18n'
+import { DEFAULT_LOCALE, htmlLang, lp, tr, type Locale } from './i18n'
 import { newsHeading, newsPath } from './newspage'
 import { OG_SITE, siteDescription } from './site'
 import { STORE_LABEL } from './stores'
-import { tagRu } from './tagsru'
+import { tagLabel } from './tagsru'
+import { isRussianText } from './textlang'
 import type { GameMeta } from './types'
 
 /**
@@ -51,7 +52,7 @@ export type GameLd = {
   genre?: string[]
   playMode?: string[]
   datePublished?: string
-  /** 'ru' — только когда Steam отметил русский; см. gameJsonLd */
+  /** 'ru' — только когда Steam отметил русский и только на русской странице; см. gameJsonLd */
   inLanguage?: 'ru'
   author?: Org
   publisher?: Org
@@ -86,6 +87,27 @@ const TAGS_AS_GENRE = 8
  */
 function at(baseUrl: string, locale: Locale, path: string): string {
   return `${baseUrl}${lp(locale, path)}`
+}
+
+/** «Игры по жанрам» — та же подпись, что в видимой строке пути (глоссарий docs/i18n.md) */
+function genresCrumb(locale: Locale): string {
+  return tr(locale, { ru: 'Игры по жанрам', en: 'Games by genre' })
+}
+
+/**
+ * Описание игры для разметки на языке страницы. Русская страница — как было:
+ * short_description как лежит. Английская — только нерусское: на /en
+ * страница русского описания не показывает, а разметка не говорит больше
+ * страницы.
+ *
+ * Временная замена descriptionFor (lib/gamedesc) — та же, что в
+ * gameDescription (lib/gamepage): когда чтение карточки отдаст английское
+ * описание отдельным полем, обе ветки возьмут его оттуда.
+ */
+function ldDescription(meta: Pick<GameMeta, 'shortDescription'>, locale: Locale): string | undefined {
+  const text = meta.shortDescription
+  if (!text) return undefined
+  return locale === 'en' && isRussianText(text) ? undefined : text
 }
 
 export type GameLdInput = {
@@ -132,7 +154,8 @@ export function gameJsonLd({
     gamePlatform: 'PC',
   }
 
-  if (meta.shortDescription) ld.description = meta.shortDescription
+  const description = ldDescription(meta, locale)
+  if (description) ld.description = description
   const image = meta.art?.header2x ?? meta.art?.header ?? meta.headerImage
   if (image) ld.image = image
   // Жанры Steam, а если их нет — те же теги, что нарисованы чипсами в герое.
@@ -146,15 +169,19 @@ export function gameJsonLd({
   // страница пререндерится и кэшируется на неделю, а порядок ключей после
   // очередной пересборки каталога не гарантирован.
   //
-  // Теги — русскими подписями (tagRu), как на чипсах: разметка обязана
-  // совпадать с видимым, а жанры Steam у игры и так русские (appdetails с
-  // l=russian). Порядок — по английским ключам, до перевода, как у страницы.
-  const genre = meta.genres.length
-    ? meta.genres
-    : Object.entries(meta.tags ?? {})
-        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-        .slice(0, TAGS_AS_GENRE)
-        .map(([t]) => tagRu(t))
+  // Теги — подписями на языке страницы (tagLabel), как на чипсах: разметка
+  // обязана совпадать с видимым. Порядок — по английским ключам, до перевода,
+  // как у страницы.
+  //
+  // Жанры Steam у игры русские (appdetails с l=russian) — русской странице
+  // они годятся, а английской нет: там genre — всегда теги, их ключи и есть
+  // английские подписи чипсов.
+  const fromTags = () =>
+    Object.entries(meta.tags ?? {})
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, TAGS_AS_GENRE)
+      .map(([t]) => tagLabel(t, locale))
+  const genre = meta.genres.length && locale !== 'en' ? meta.genres : fromTags()
   if (genre.length) ld.genre = genre
 
   const modes = PLAY_MODES.filter(([ids]) => ids.some((id) => meta.categories.includes(id))).map(
@@ -176,8 +203,11 @@ export function gameJsonLd({
    * При «нет» поля нет: других языков игры мы не храним, а «русского нет» не
    * повод назвать какой-то другой — inLanguage со списком наугад был бы ровно
    * той разметкой, которая говорит больше страницы.
+   *
+   * На /en поля нет тоже: строки «Русский» там нет (languageTrait на en —
+   * null), а английского языка игры мы не знаем.
    */
-  if (meta.ruLang !== undefined && meta.ruLang > 0) ld.inLanguage = 'ru'
+  if (locale !== 'en' && meta.ruLang !== undefined && meta.ruLang > 0) ld.inLanguage = 'ru'
   if (meta.developer) ld.author = { '@type': 'Organization', name: meta.developer }
   if (meta.publisher) ld.publisher = { '@type': 'Organization', name: meta.publisher }
 
@@ -291,12 +321,12 @@ export function gameBreadcrumbLd({
   meta: GameMeta
   baseUrl: string
   locale?: Locale
-  /** Видимый путь над названием: заголовок страницы жанра и её адрес */
+  /** Видимый путь над названием: заголовок страницы жанра (hubTitle на языке страницы) и её адрес */
   genre?: { title: string; path: string } | null
 }): BreadcrumbLd {
   const trail = genre
     ? [
-        { name: 'Игры по жанрам', item: at(baseUrl, locale, '/games') },
+        { name: genresCrumb(locale), item: at(baseUrl, locale, '/games') },
         { name: genre.title, item: at(baseUrl, locale, genre.path) },
       ]
     : []
@@ -316,7 +346,8 @@ export function gameBreadcrumbLd({
  *
  * Три уровня здесь честные: страница показывает этот путь сама, строкой над
  * заголовком, а главная — логотип в шапке. Имя жанра — заголовок страницы
- * («Рогалики»), тот же, что стоит в видимой строке.
+ * («Рогалики», на /en — «Roguelikes»: hubTitle), тот же, что стоит в видимой
+ * строке.
  */
 export function genreBreadcrumbLd({
   title,
@@ -334,7 +365,7 @@ export function genreBreadcrumbLd({
     '@type': 'BreadcrumbList',
     itemListElement: [
       { '@type': 'ListItem', position: 1, name: 'imbored', item: at(baseUrl, locale, '/') },
-      { '@type': 'ListItem', position: 2, name: 'Игры по жанрам', item: at(baseUrl, locale, '/games') },
+      { '@type': 'ListItem', position: 2, name: genresCrumb(locale), item: at(baseUrl, locale, '/games') },
       { '@type': 'ListItem', position: 3, name: title, item: at(baseUrl, locale, path) },
     ],
   }
@@ -398,7 +429,8 @@ export type NewsArticleLd = {
   url: string
   mainEntityOfPage: string
   datePublished: string
-  inLanguage: 'ru'
+  /** Язык текста статьи — язык страницы: пересказ ей передают на её языке */
+  inLanguage: string
   description?: string
   image?: string[]
   about?: { '@type': 'VideoGame'; name: string; url: string }
@@ -415,6 +447,10 @@ export type NewsArticleLd = {
  * только если он стоит на странице, isBasedOn — «Оригинал в Steam». Автор и
  * издатель — imbored: страница — наш пересказ поста, а не сам пост, и у
  * текста издателя ниже подписи нет.
+ *
+ * item.tldr — пересказ на языке страницы: на /en это английский пересказ
+ * (tldr_en), и без него описания в разметке нет — как нет и «In short» на
+ * странице.
  */
 export function patchArticleLd({
   item,
@@ -436,9 +472,11 @@ export function patchArticleLd({
     url,
     mainEntityOfPage: url,
     datePublished: new Date(item.publishedAt * 1000).toISOString(),
-    // Язык ТЕКСТА статьи, а не адреса: заголовок и пересказ хранятся по-русски.
-    // Английский пересказ сменит его вместе с самим текстом (docs/i18n.md, п. 8)
-    inLanguage: 'ru',
+    // Язык ТЕКСТА статьи. Пересказ приходит на языке страницы (на /en — только
+    // английский, русского там нет вовсе: docs/i18n.md, п. 8), поэтому язык
+    // статьи — язык страницы. Заголовок поста издатель пишет на своём языке, и
+    // язык нашего текста он не решает
+    inLanguage: htmlLang(locale),
     ...(item.tldr?.trim() ? { description: item.tldr.trim() } : {}),
     ...(item.imageUrl ? { image: [item.imageUrl] } : {}),
     ...(game ? { about: { '@type': 'VideoGame', name: game.name, url: at(baseUrl, locale, `/game/${item.appid}`) } } : {}),
