@@ -13,7 +13,7 @@ import {
 } from '@/lib/db'
 import { resetSwallowed } from '@/lib/errlog'
 import { nowSec } from '@/lib/server'
-import { breakDbOn, freshDb, params, post, signIn, signInAs, signOut } from '@/lib/testing/route'
+import { breakDbOn, freshDb, params, post, signIn, signInAs, signOut, STEAMID_OF } from '@/lib/testing/route'
 import { POST as join } from './join/route'
 import { POST as leave } from './leave/route'
 import { GET } from './route'
@@ -42,6 +42,15 @@ const peek = (room = ROOM, ip = '203.0.113.7') =>
     new Request(`http://localhost/api/room/${room}`, { headers: { 'x-forwarded-for': ip } }),
     params({ id: room }),
   )
+
+/** Тот же опрос с английской страницы — язык в адресе, как ставит withLang */
+const peekEn = (room = ROOM, ip = '203.0.113.7') =>
+  GET(
+    new Request(`http://localhost/api/room/${room}?lang=en`, { headers: { 'x-forwarded-for': ip } }),
+    params({ id: room }),
+  )
+
+const CYRILLIC = /[А-Яа-яЁё]/
 
 /** Комната хоста-через-Steam, в которой сидит ещё и друг */
 async function hosted(): Promise<string> {
@@ -403,5 +412,54 @@ describe('/api/room/[id]: экран приглашения', () => {
     await vi.waitFor(() => expect(issued.some((s) => s.includes('FROM games g'))).toBe(true))
     release()
     expect(((await (await res).json()) as Door).invite?.seed?.name).toBe('Valheim')
+  })
+
+  /*
+   * Английская страница опрашивает с ?lang=en: экран приглашения — теми же
+   * фразами, что английское превью (inviteDoor), а ник живого человека —
+   * как записан, его не переводят.
+   */
+  test('по-английски — те же факты английскими фразами, ник как есть', async () => {
+    await seeded()
+    signOut()
+    const got = ((await (await peekEn()).json()) as Door).invite
+    expect(got).toMatchObject({
+      title: "Серёга wants to pick tonight's game",
+      here: 'Already here: Серёга and Аня',
+      seed: {
+        name: 'Valheim',
+        line: 'First card: “Valheim”. Not into it? Next up is a deck from your libraries.',
+      },
+    })
+  })
+
+  test('по-английски хост без ника — безлично, а ростер — «Player …»', async () => {
+    await hosted()
+    signOut()
+    const res = (await (await peekEn()).json()) as Door & View
+    expect(res.invite?.title).toBe("You're invited to pick tonight's game")
+    expect(res.invite?.here).toMatch(/^Already here: Player \w{1,4} and Player \w{1,4}$/)
+    expect(res.members.map((m) => m.name).join(' ')).not.toMatch(CYRILLIC)
+  })
+
+  /*
+   * Демо-хост записан русской подписью («Демо-игрок»), и без признака
+   * hostDemo английский экран назвал бы его по-русски — посреди английской
+   * фразы. Признак ставит роут по steamid; наружу steamid не уходит.
+   */
+  test('демо-хост на английском экране — «Demo player», тем же словом, что в «Already here»', async () => {
+    const now = nowSec()
+    const demo = STEAMID_OF.demo
+    await createRoom(db, { id: ROOM, steamid: demo }, now)
+    await joinRoom(db, ROOM, demo, 'Демо-игрок', now)
+    await joinRoom(db, ROOM, FRIEND, 'Аня', now)
+    signOut()
+    const en = ((await (await peekEn()).json()) as Door).invite
+    expect(en?.title).toBe("Demo player wants to pick tonight's game")
+    expect(en?.here).toBe('Already here: Demo player and Аня')
+    // русский экран — прежний до байта: ник как записан
+    const ru = ((await (await peek(ROOM, '203.0.113.8')).json()) as Door).invite
+    expect(ru?.title).toBe('Демо-игрок зовёт выбрать игру на вечер')
+    expect(ru?.here).toBe('Уже здесь: Демо-игрок и Аня')
   })
 })
