@@ -417,7 +417,7 @@ describe('/library на /en', () => {
     expect(all.filter((s) => /[а-яё]/i.test(s) && !names.has(s))).toEqual([])
 
     const text = all.join(' ')
-    expect(text).toContain('Your library, as we see it')
+    expect(text).toContain('How we see your library')
     expect(text).toContain('Picks land')
     expect(text).toContain('“Liked it” vs')
     // Вечера: дата и минуты собраны сервером на языке страницы

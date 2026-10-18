@@ -482,10 +482,11 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
           {isDemoId(steamid) && <DemoBar from={lp(locale, '/library')} className="mb-6" />}
           <Eyebrow className="mb-3">{tr(locale, { ru: 'Библиотека', en: 'Library' })}</Eyebrow>
           <h1 className="font-display text-display-md max-w-md">
-            {tr(locale, { ru: 'Твоя библиотека глазами сервиса', en: 'Your library, as we see it' })}
+            {tr(locale, { ru: 'Твоя библиотека глазами сервиса', en: 'How we see your library' })}
           </h1>
           {/* Подписи чисел по-английски не шире русских («never launched» уже
-              «ни разу не запускал»): на телефоне три числа держат свои ряды */}
+              «ни разу не запускал»): замер на 360 px — английские три числа
+              встают в один ряд, русские в два. Шире подпись быть не должна */}
           <dl className="mt-7 flex flex-wrap gap-x-10 gap-y-4">
             <div className="flex flex-col-reverse">
               <dt className="lib-stat-label">
@@ -695,7 +696,7 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
                       'игры уже твои — попробовать можно прямо сейчас',
                       'игр уже твои — попробовать можно прямо сейчас',
                     ],
-                    en: ['game is already yours — try it now', 'games are already yours — try one now'],
+                    en: ['game already yours — try it now', 'games already yours — try one now'],
                   })}
                 </div>
                 {/* Оговорка — только когда она правда: «не меньше … — цена
