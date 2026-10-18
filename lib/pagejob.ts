@@ -370,7 +370,10 @@ export async function runPageSlice(
         merged.discountEndsAt = existing.discountEndsAt
       }
 
-      await upsertGameMeta(db, merged, now)
+      // Название здесь — ответ магазина на l=russian, и только этот писатель
+      // может снять второе, русское, когда Steam его игре больше не отдаёт:
+      // латинское от него значит «русского нет» (ruStoreNameRuSql в lib/db)
+      await upsertGameMeta(db, merged, now, { ruStore: true })
       tags = merged.tags
       if (merged.screenshots?.length) withShots++
     }

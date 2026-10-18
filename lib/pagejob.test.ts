@@ -795,6 +795,24 @@ describe('русское название из appdetails', () => {
       { appid: 292030, name: 'The Witcher 3: Wild Hunt', nameRu: 'Ведьмак 3: Дикая Охота' },
     ])
   })
+
+  test('Steam убрал игре русское название — карточка снимает его и из поиска', async () => {
+    // Крон карточек — единственный, кто спрашивает магазин по-русски: английское
+    // от него значит «русского нет». Прогрев так сказать не может, и без этого
+    // «ведьмак 3» находил бы игру по названию, которого у неё больше нет
+    const db = await freshDb()
+    await upsertGameMeta(db, meta(292030, { name: 'The Witcher 3: Wild Hunt', reviewsTotal: 900 }), NOW)
+    await upsertGameMeta(db, meta(292030, { name: 'Ведьмак 3: Дикая Охота', reviewsTotal: 900 }), NOW)
+    await replaceGameTags(db, 292030, [{ tag: 'Action', weight: 100 }])
+
+    const res = await runPageSlice(
+      db,
+      stubs({ fetchDetails: async (appid: number) => meta(appid, { name: 'The Witcher 3: Wild Hunt' }) }),
+    )
+
+    expect(res.enriched).toBe(1)
+    expect(await searchIndexGames(db, 10)).toEqual([{ appid: 292030, name: 'The Witcher 3: Wild Hunt' }])
+  })
 })
 
 describe('срез не начинает карточку, которая не уложится до срока', () => {

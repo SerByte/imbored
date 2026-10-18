@@ -43,6 +43,8 @@ export type GameLd = {
   '@context': 'https://schema.org'
   '@type': 'VideoGame'
   name: string
+  /** русское название магазина — то же, что вторым рядом под заголовком */
+  alternateName?: string
   url: string
   gamePlatform: 'PC'
   description?: string
@@ -76,6 +78,12 @@ const TAGS_AS_GENRE = 8
 
 export type GameLdInput = {
   meta: GameMeta
+  /**
+   * Русское название магазина (GamePageData.nameRu). Страница рисует его
+   * вторым рядом под заголовком, разметка называет alternateName — и только
+   * тогда, когда оно на странице есть (pageNameRu).
+   */
+  nameRu?: string | null
   /** абсолютный адрес сайта — schema.org требует полных ссылок */
   baseUrl: string
   /**
@@ -100,8 +108,21 @@ const PLAY_MODES: Array<[number[], string]> = [
   [[9, 38], 'CoOp'],
 ]
 
+/**
+ * Второе название, которое карточка показывает под заголовком, — или null.
+ *
+ * Одно правило на страницу и разметку: alternateName без строки на странице
+ * — ровно та разметка, что говорит больше видимого. Совпадающее с name не
+ * показываем — повтор заголовка ничего не называет.
+ */
+export function pageNameRu(meta: Pick<GameMeta, 'name'>, nameRu: string | null | undefined): string | null {
+  const alt = nameRu?.trim()
+  return alt && alt !== meta.name ? alt : null
+}
+
 export function gameJsonLd({
   meta,
+  nameRu,
   baseUrl,
   currency,
   now,
@@ -114,6 +135,17 @@ export function gameJsonLd({
     // Каталог — только PC-игры: и Steam, и кураторский пул других магазинов.
     gamePlatform: 'PC',
   }
+  /*
+   * Русское название — вторым именем, а не вместо: название карточки —
+   * английское, как в магазине (STORE_LANGUAGE в lib/catalog), а русское
+   * у ~70 игр верха каталога («Ведьмак 3: Дикая Охота», «Призрак Цусимы»)
+   * — то, как их ищут в русской выдаче. До правила двух названий (nameSql в
+   * lib/db) крон карточек клал его прямо в name, и <title> с H1 этих страниц
+   * были русскими; теперь они английские, а русское остаётся на странице
+   * вторым рядом — и здесь.
+   */
+  const alt = pageNameRu(meta, nameRu)
+  if (alt) ld.alternateName = alt
 
   if (meta.shortDescription) ld.description = meta.shortDescription
   const image = meta.art?.header2x ?? meta.art?.header ?? meta.headerImage

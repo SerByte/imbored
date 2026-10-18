@@ -28,7 +28,7 @@ import {
   reviewFacts,
   type StudioLine,
 } from '@/lib/gamepage'
-import { gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
+import { gameBreadcrumbLd, gameJsonLd, ldScript, pageNameRu } from '@/lib/jsonld'
 import { priceRegion, regionCurrency } from '@/lib/steamregion'
 import { OG_SITE } from '@/lib/site'
 import { plural } from '@/lib/plural'
@@ -272,6 +272,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   if (!data) notFound()
 
   const { meta, reviewsSummary, prosCons } = data
+  // Второе, русское название под заголовком — по тому же правилу, что
+  // alternateName в разметке: видимое и размеченное не расходятся
+  const nameRu = pageNameRu(meta, data.nameRu)
   const now = nowSec()
   // Срок — датой: отсчёт «осталось 2 дня» менял бы страницу каждые сутки и
   // врал бы из недельного кэша (см. докблок revalidate)
@@ -331,6 +334,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           __html: ldScript([
             gameJsonLd({
               meta,
+              // то же второе название, что рядом под заголовком (pageNameRu)
+              nameRu: data.nameRu,
               // Оценки (facts) здесь нет намеренно: доля отзывов — Steam, а
               // чужие оценки размечать нельзя. Почему — докблок lib/jsonld
               baseUrl: appBaseUrl(),
@@ -451,6 +456,20 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               </nav>
             )}
             <h1 className="font-display text-display-lg">{meta.name}</h1>
+            {/*
+              Русское название магазина — вторым рядом, если оно у игры своё.
+              Заголовок — английское, как в Steam (nameSql в lib/db), а по
+              русскому игру ищут здесь: «Ведьмак 3: Дикая Охота» под «The
+              Witcher 3: Wild Hunt». Без этой строки ~70 страниц верха
+              каталога потеряли бы русское название вовсе — до правила двух
+              названий оно стояло прямо в заголовке. Та же строка — в
+              alternateName разметки, и по тому же правилу (pageNameRu).
+            */}
+            {nameRu && (
+              <p className="-mt-2 text-dim text-lg [overflow-wrap:anywhere]">
+                {nameRu}
+              </p>
+            )}
             {/*
               Студия и год. Оба поля заполнены у ВСЕХ игр каталога (1000 из
               1000, проверено запросом), а страница не показывала ни одного из
