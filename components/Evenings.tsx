@@ -1,6 +1,7 @@
 'use client'
 
 import Link from '@/components/Link'
+import { useLocale } from '@/components/LocaleProvider'
 import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useRef, useState, useTransition, type ReactNode } from 'react'
 import { GameCardBody } from '@/components/GameCard'
@@ -12,6 +13,7 @@ import { StatusLine } from '@/components/StatusLine'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import type { GameArtUrls } from '@/lib/art'
 import { eveningKey as keyOf, keepOnShelf } from '@/lib/eveningshelf'
+import { lp, tr, type Locale } from '@/lib/i18n'
 import { latestWins } from '@/lib/latestwins'
 import type { OutcomeVerdict } from '@/lib/outcome'
 import { forgetPlanned } from '@/lib/planforget'
@@ -25,9 +27,9 @@ export type EveningItem = {
   name: string
   headerImage: string | null
   art: GameArtUrls | null
-  /** «12 сентября» — дата совета */
+  /** «12 сентября» — дата совета, на языке страницы (собирает сервер) */
   date: string
-  /** «2 ч 10 мин», «5 ч за 6 нед.» (поздняя сверка), «не запускал», «ещё не сверяли» */
+  /** «2 ч 10 мин», «5 ч за 6 нед.» (поздняя сверка), «не запускал», «ещё не сверяли» — на языке страницы */
   played: string
   /** Сыграно заметно — только тогда есть смысл спрашивать «как тебе» */
   playedEnough: boolean
@@ -58,9 +60,10 @@ const MarkFinished = lazyIsland(() => import('@/components/MarkFinished').then((
 /** Чем кончился один POST ответа: denied — сессия только для чтения (needsteam) */
 type Sent = 'ok' | 'denied' | 'failed'
 
-const VERDICTS: Array<{ key: Exclude<OutcomeVerdict, 'dismissed'>; label: string }> = [
-  { key: 'hooked', label: 'Зацепило' },
-  { key: 'meh', label: 'Так себе' },
+/** Пилюли ответа — слова глоссария (Hooked me / Meh): не шире русских, их две в ряд на карточке 264 px */
+const VERDICTS: Array<{ key: Exclude<OutcomeVerdict, 'dismissed'>; label: Record<Locale, string> }> = [
+  { key: 'hooked', label: { ru: 'Зацепило', en: 'Hooked me' } },
+  { key: 'meh', label: { ru: 'Так себе', en: 'Meh' } },
 ]
 
 /**
@@ -143,6 +146,7 @@ export function Evenings({
   const keep = (item: EveningItem) => setKept((m) => new Map(m).set(keyOf(item), item))
   const shelf = keepOnShelf(items, kept)
   const router = useLocaleRouter()
+  const locale = useLocale()
   const [, startTransition] = useTransition()
   const readOnly = !writer || denied
   const missed = failed === null ? undefined : shelf.find((i) => keyOf(i) === failed)
@@ -208,9 +212,9 @@ export function Evenings({
 
   return (
     <section id="evenings" aria-labelledby="evenings-title" className="mb-12">
-      <Eyebrow className="mb-2">За три месяца</Eyebrow>
+      <Eyebrow className="mb-2">{tr(locale, { ru: 'За три месяца', en: 'Last three months' })}</Eyebrow>
       <h2 id="evenings-title" className="font-display text-display-sm">
-        Твои вечера
+        {tr(locale, { ru: 'Твои вечера', en: 'Your evenings' })}
       </h2>
       <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">{lead}</p>
       {/*
@@ -228,7 +232,14 @@ export function Evenings({
         обрезается лентой вместе с ней.
       */}
       <StatusLine
-        text={missed ? `Не вышло — ответ про «${missed.name}» не сохранился. Попробуй ещё раз.` : null}
+        text={
+          missed
+            ? tr(locale, {
+                ru: `Не вышло — ответ про «${missed.name}» не сохранился. Попробуй ещё раз.`,
+                en: `Didn't work — your answer about “${missed.name}” wasn't saved. Try again.`,
+              })
+            : null
+        }
         className="sr-only"
       />
       <ol className="shelf-rail">
@@ -253,7 +264,11 @@ export function Evenings({
                 />
               </GameLink>
               {item.playedEnough && !readOnly && (
-                <div role="group" aria-label={`Как тебе «${item.name}»?`} className="flex flex-wrap gap-2">
+                <div
+                  role="group"
+                  aria-label={tr(locale, { ru: `Как тебе «${item.name}»?`, en: `How's “${item.name}”?` })}
+                  className="flex flex-wrap gap-2"
+                >
                   {VERDICTS.map((v) => (
                     <button
                       key={v.key}
@@ -262,7 +277,7 @@ export function Evenings({
                       onClick={() => void answer(item, v.key)}
                       className="pill"
                     >
-                      {v.label}
+                      {v.label[locale]}
                     </button>
                   ))}
                 </div>
@@ -270,7 +285,7 @@ export function Evenings({
               {/* Для глаза: скринридеру отказ сказала строка над полкой */}
               {failed === key && (
                 <p aria-hidden className="text-[11px] text-danger">
-                  Не вышло — попробуй ещё раз
+                  {tr(locale, { ru: 'Не вышло — попробуй ещё раз', en: "Didn't work — try again" })}
                 </p>
               )}
               {/*
@@ -285,7 +300,7 @@ export function Evenings({
                   {item.playedEnough &&
                     item.finishable &&
                     (item.finished && !marked.has(key) ? (
-                      <span className="text-dim">Пройдено</span>
+                      <span className="text-dim">{tr(locale, { ru: 'Пройдено', en: 'Finished' })}</span>
                     ) : (
                       !readOnly && (
                         <MarkFinished
@@ -304,7 +319,15 @@ export function Evenings({
                     ))}
                   {verdict === 'hooked' && (
                     <Link href={quizHref(null, item.appid)} className="tap link-more">
-                      Ещё в этом духе<span className="sr-only">: похожие на «{item.name}»</span>
+                      {locale === 'en' ? (
+                        <>
+                          More like this<span className="sr-only">: similar to “{item.name}”</span>
+                        </>
+                      ) : (
+                        <>
+                          Ещё в этом духе<span className="sr-only">: похожие на «{item.name}»</span>
+                        </>
+                      )}
                     </Link>
                   )}
                 </div>
@@ -312,8 +335,12 @@ export function Evenings({
               {item.owned && item.appid > 0 ? (
                 <SteamLaunch
                   appid={item.appid}
-                  label={item.playedEnough ? 'Вернуться к ней' : 'Запустить'}
-                  mobileLabel="Открыть в Steam"
+                  label={
+                    item.playedEnough
+                      ? tr(locale, { ru: 'Вернуться к ней', en: 'Go back to it' })
+                      : tr(locale, { ru: 'Запустить', en: 'Launch' })
+                  }
+                  mobileLabel={tr(locale, { ru: 'Открыть в Steam', en: 'Open in Steam' })}
                   onLaunch={plans.includes(item.appid) ? () => closePlan(item.appid) : undefined}
                   className="link-more tap self-start"
                 />
@@ -324,14 +351,14 @@ export function Evenings({
                   rel="noreferrer"
                   className="link-more tap self-start"
                 >
-                  В магазин
+                  {tr(locale, { ru: 'В магазин', en: 'Store page' })}
                 </a>
               )}
             </li>
           )
         })}
       </ol>
-      {readOnly && items.some((i) => i.playedEnough) && <NeedSteam from="/library" className="mt-4" />}
+      {readOnly && items.some((i) => i.playedEnough) && <NeedSteam from={lp(locale, '/library')} className="mt-4" />}
     </section>
   )
 }
