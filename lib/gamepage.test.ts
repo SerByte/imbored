@@ -1085,7 +1085,7 @@ describe('английская карточка', () => {
     expect(deadVerdict(dead({ deadReason: 'asset-flip', categories: [2] }), 'en')).toBe(
       "It has almost no reviews — there's nothing to judge it by yet.",
     )
-    expect(deadVerdict(dead({}), 'en')).toBe("We've taken it out of our picks: by our data, it's not the best choice today.")
+    expect(deadVerdict(dead({}), 'en')).toBe("We've taken it out of our picks: our data says it's not the best choice right now.")
     // правило то же: свежие числа спорят с курацией — молчим на обоих языках
     expect(deadVerdict(dead({ deadReason: 'dead-multiplayer', ccu: 2_400 }), 'en')).toBeNull()
     expect(deadVerdict(meta(1), 'en')).toBeNull()

@@ -427,7 +427,7 @@ const DEAD_VERDICT: Record<Locale, Record<DeadReason, string>> = {
 /** Причина неизвестна, а курация всё равно сняла игру с подбора */
 const DEAD_VERDICT_UNKNOWN: Record<Locale, string> = {
   ru: 'Из подбора она снята: по нашим данным, сегодня это не лучший выбор.',
-  en: "We've taken it out of our picks: by our data, it's not the best choice today.",
+  en: "We've taken it out of our picks: our data says it's not the best choice right now.",
 }
 
 /**
