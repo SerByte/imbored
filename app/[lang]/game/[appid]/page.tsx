@@ -496,9 +496,16 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   было бы тем же неправдивым утверждением, ради которого
                   PlayersNow и спрашивает возраст замера. Замер свежее шести
                   часов на неделю вперёд не бывает, так что здесь всегда
-                  «играли» и без пульса — и вывод от часов не зависит.
+                  «играли» и без пульса.
+
+                  Поэтому часы — бесконечность, а не now + revalidate: вывод тот
+                  же, но PlayersNow клиентский (язык — из useLocale), и его
+                  пропсы лежат в RSC-части страницы. now + revalidate был бы
+                  там новым числом на каждой перегенерации — и новой записью
+                  ISR без единой видимой перемены. Бесконечность от часов не
+                  зависит, и «сейчас» с ней не наступает никогда.
                 */}
-                <PlayersNow ccu={meta.ccu ?? null} ccuAt={meta.ccuAt} nowSec={now + revalidate} />
+                <PlayersNow ccu={meta.ccu ?? null} ccuAt={meta.ccuAt} nowSec={Number.POSITIVE_INFINITY} />
               </p>
             )}
             {/*

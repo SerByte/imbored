@@ -77,7 +77,7 @@ describe('кнопка запуска', () => {
     // строка — своей ветвью после кнопки, а не правкой ветви кнопки (её форму держит тест выше)
     expect(tail).toMatch(/\{shownDenial && \(\s*<div\b/)
     expect(tail).toMatch(
-      /<NeedSteam from=\{`\/game\/\$\{appid\}`\} why=\{shownDenial === 'launch' \? 'launch' : 'save'\} \/>/,
+      /<NeedSteam from=\{lp\(locale, `\/game\/\$\{appid\}`\)\} why=\{shownDenial === 'launch' \? 'launch' : 'save'\} \/>/,
     )
     // строка — только этой игре и только пока сессия правда не пишет
     expect(src).toMatch(/const shownDenial = denied\?\.appid === appid && writer !== true \? denied\.how : null/)

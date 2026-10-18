@@ -7,7 +7,10 @@ import { TilePending } from '@/components/TilePending'
 import { GameNews } from '@/components/GameNews'
 import { GameShots } from '@/components/GameShots'
 import { OwnedLaunch } from '@/components/OwnedLaunch'
+import { PlayersNow } from '@/components/PlayersNow'
+import { DiscountEnds, PriceTag, PriceWhere } from '@/components/PriceTag'
 import { ProgressRing } from '@/components/ProgressRing'
+import { RefundNote } from '@/components/RefundNote'
 import { ShownUntil } from '@/components/ShownUntil'
 import { TrailerPreview } from '@/components/TrailerPreview'
 import {
@@ -20,6 +23,7 @@ import {
   type StoredNews,
 } from '@/lib/db'
 import { GAME_PAGE_REVALIDATE_SEC, PRERENDER_TOP } from '@/lib/gamecache'
+import type { Locale } from '@/lib/i18n'
 import { roomSeedHref } from '@/lib/presets'
 import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
@@ -27,6 +31,18 @@ import type { GameMeta } from '@/lib/types'
 import GamePage, { generateMetadata, generateStaticParams, revalidate } from './page'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
+
+/**
+ * Язык клиентских островков, которые тест раскрывает вызовом (visible ниже).
+ * useLocale вне рендера React не работает — у хука нет диспетчера, — поэтому
+ * здесь он отвечает языком теста, как ответил бы LocaleProvider корневого
+ * layout. Страница свой язык берёт из params и этого не видит.
+ */
+const lang = vi.hoisted(() => ({ locale: 'ru' as Locale }))
+vi.mock('@/components/LocaleProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/LocaleProvider')>()),
+  useLocale: () => lang.locale,
+}))
 
 /**
  * Бюджет ISR карточки игры (lib/gamecache): пререндер только в проде и
@@ -54,6 +70,7 @@ beforeEach(async () => {
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllEnvs()
+  lang.locale = 'ru'
 })
 
 const at = (sec: number) => vi.setSystemTime(sec * 1000)
@@ -165,9 +182,25 @@ const ISLANDS = new Map<unknown, string>([
   [TrailerPreview, 'TrailerPreview'],
   // знак ожидания в плитках «Похожих» (components/GameLink)
   [TilePending, 'TilePending'],
+  // Ценник, онлайн и строка возврата — клиентские ради языка (useLocale):
+  // в кэш уходят их пропсы, и от часов они зависеть не должны
+  [PriceTag, 'PriceTag'],
+  [PriceWhere, 'PriceWhere'],
+  [DiscountEnds, 'DiscountEnds'],
+  [PlayersNow, 'PlayersNow'],
+  [RefundNote, 'RefundNote'],
 ])
 
 const flight = (node: unknown) => flightOf(node, ISLANDS)
+
+/**
+ * Островки, которые сервер дорисовывает в HTML той же страницы текстом, —
+ * ценник, онлайн, возврат. Для кэша важны их пропсы (flight, snapshot), для
+ * глаза — их текст: visible раскрывает их вызовом, как сервер в HTML, на
+ * языке теста (lang выше).
+ */
+const PRINTED = new Set<unknown>([PriceTag, PriceWhere, DiscountEnds, PlayersNow, RefundNote])
+const visible = (node: unknown) => flightOf(node, new Map([...ISLANDS].filter(([c]) => !PRINTED.has(c))))
 
 /** Всё, что уходит в кэш: разметка с пропсами островков и метаданные */
 async function snapshot(): Promise<string> {
@@ -213,6 +246,8 @@ describe('кэш карточки игры', () => {
   })
 
   test('вывод не зависит от часов: через три дня — та же страница', async () => {
+    // Ценник и онлайн — клиентские островки, и их пропсы входят в снимок: часы
+    // онлайна (nowSec) от момента рендера зависеть не должны
     await seed()
     const first = await snapshot()
 
@@ -238,19 +273,19 @@ describe('кэш карточки игры', () => {
   test('сторож не слепой: кончилась акция — страница другая', async () => {
     await seed()
     const first = await snapshot()
-    expect(textOf(flight(await GamePage(params)))).toContain('−50%')
+    expect(textOf(visible(await GamePage(params)))).toContain('−50%')
     at(T0 + 5 * DAY + 1)
     expect(await snapshot()).not.toBe(first)
-    expect(textOf(flight(await GamePage(params)))).not.toContain('−50%')
+    expect(textOf(visible(await GamePage(params)))).not.toContain('−50%')
   })
 
   test('срок акции — датой, и цена со скидкой гаснет у читателя по нему же', async () => {
     await seed()
-    const page = flight(await GamePage(params))
+    const page = visible(await GamePage(params))
     // 1_760_000_000 — 9 октября 2025 UTC, акция кончается через пять суток
     expect(textOf(page)).toContain('до 14 октября')
     at(T0 + 4 * DAY)
-    expect(textOf(flight(await GamePage(params)))).not.toMatch(/осталось|последний день/)
+    expect(textOf(visible(await GamePage(params)))).not.toMatch(/осталось|последний день/)
     // Строка цены — внутри ShownUntil со сроком конца акции
     const text = JSON.stringify(page)
     expect(text).toContain(`"island":"ShownUntil","key":null,"props":{"untilSec":${T0 + 5 * DAY}`)
@@ -299,7 +334,7 @@ describe('кэш карточки игры', () => {
 
   test('онлайн — прошедшим временем: «сейчас» из недельного кэша не бывает правдой', async () => {
     await seed()
-    const text = textOf(flight(await GamePage(params)))
+    const text = textOf(visible(await GamePage(params)))
     expect(text).toContain('играли')
     expect(text).not.toContain('сейчас играют')
   })
@@ -328,7 +363,7 @@ describe('микроразметка говорит не больше стран
     // «0», is_free пуст. Герой молчит о цене — значит, и выдача не должна
     // услышать «бесплатно, в наличии»
     await upsertGameMeta(db, game(APPID, { name: 'Ori', priceFinal: 0 }), T0)
-    const page = flight(await GamePage(params))
+    const page = visible(await GamePage(params))
     expect(textOf(page)).not.toContain('бесплатно')
     const [video] = jsonLdOf(page)
     expect(video['@type']).toBe('VideoGame')

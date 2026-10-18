@@ -1,10 +1,12 @@
 'use client'
 
 import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { FinishedNote, MarkFinished } from '@/components/MarkFinished'
 import { NeedSteam } from '@/components/NeedSteam'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { focusAdrift } from '@/lib/focushandoff'
+import { lp, tr } from '@/lib/i18n'
 import { forgetPlanned } from '@/lib/planforget'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
@@ -87,6 +89,10 @@ const takeLost = (el: HTMLElement | null) => {
  * чаще всего приходят из её ⓘ «Подробнее», и после «Назад» отложенный герой
  * иначе листался бы «Не то — дальше» молча — без ответа про игру, которую
  * только что запустили.
+ *
+ * Адрес страницы для входа — на её языке (lp): steamLoginFor берёт язык из
+ * пути, и вход с /en/game/730 возвращает на английскую версию сайта, а не на
+ * русскую.
  */
 export function OwnedLaunch({
   appid,
@@ -101,6 +107,7 @@ export function OwnedLaunch({
   follow: boolean
   className?: string
 }) {
+  const locale = useLocale()
   const writer = useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server)
   const hasSession = writer !== null
   // appid рядом с ответом: при переходе на соседнюю карточку старое «да» не
@@ -131,7 +138,7 @@ export function OwnedLaunch({
     <>
       <SteamLaunch
         appid={appid}
-        label="Запустить"
+        label={tr(locale, { ru: 'Запустить', en: 'Launch' })}
         mobileLabel={null}
         icon
         className={className}
@@ -186,7 +193,7 @@ export function OwnedLaunch({
           tabIndex={shownDenial === 'mark' ? -1 : undefined}
           className="basis-full outline-none"
         >
-          <NeedSteam from={`/game/${appid}`} why={shownDenial === 'launch' ? 'launch' : 'save'} />
+          <NeedSteam from={lp(locale, `/game/${appid}`)} why={shownDenial === 'launch' ? 'launch' : 'save'} />
         </div>
       )}
     </>
