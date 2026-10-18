@@ -304,8 +304,9 @@ describe('пересказ патча: английский слот', () => {
       { tldr: 'Починили вылет.', scale: 'major', tldrEn: 'Fixed the crash.', titleEn: 'Update 1.2' },
       NOW,
     )
-    // тот же текст, другой заголовок: пересказы живут, перевод заголовка — нет
-    await upsertNewsItems(db, [patch(730, '1', { title: 'Обновление 1.2.1' })], NOW + 60)
+    // тот же текст, другой английский заголовок: пересказы живут, перевод
+    // заголовка уходит — /en покажет сам новый заголовок
+    await upsertNewsItems(db, [patch(730, '1', { title: 'Update 1.2.1' })], NOW + 60)
     let [item] = await getGameNews(db, 730)
     expect(item).toMatchObject({ tldr: 'Починили вылет.', tldrEn: 'Fixed the crash.' })
     expect(item).not.toHaveProperty('titleEn')
@@ -317,6 +318,38 @@ describe('пересказ патча: английский слот', () => {
     expect(item).not.toHaveProperty('tldrEn')
     const r = await db.execute('SELECT tldr_en_at, tldr_en_tries FROM news_items WHERE appid = 730')
     expect(r.rows[0]).toMatchObject({ tldr_en_at: null, tldr_en_tries: 0 })
+  })
+
+  test('новый русский заголовок при том же теле — запись снова в очереди догона, русское на месте', async () => {
+    // Раньше перевод заголовка уходил навсегда: tldr_en оставался, а очередь
+    // догона видит только пустой tldr_en — и пост до конца жизни звался на
+    // /en запасным «{Игра} update»
+    const db = await seeded()
+    await setNewsDigest(
+      db,
+      730,
+      '1',
+      { tldr: 'Починили вылет.', scale: 'major', tldrEn: 'Fixed the crash.', titleEn: 'Update 1.2' },
+      NOW,
+    )
+    await setNewsDigest(db, 570, '2', { tldr: 'Новый режим.', scale: 'major', tldrEn: 'New mode.', titleEn: 'Update' }, NOW)
+    expect(await getUnsummarizedEn(db)).toEqual([])
+
+    await upsertNewsItems(db, [patch(730, '1', { title: 'Обновление 2' })], NOW + 60)
+    const r = await db.execute('SELECT tldr, scale, tldr_en, tldr_en_at, tldr_en_tries, title_en FROM news_items WHERE appid = 730')
+    expect(r.rows[0]).toMatchObject({
+      tldr: 'Починили вылет.',
+      scale: 'major',
+      tldr_en: null,
+      tldr_en_at: null,
+      tldr_en_tries: 0,
+      title_en: null,
+    })
+    expect((await getUnsummarizedEn(db)).map((n) => n.gid)).toEqual(['1'])
+
+    // тот же заголовок и то же тело — слоты не трогаются
+    await upsertNewsItems(db, [patch(570, '2')], NOW + 60)
+    expect((await getGameNews(db, 570))[0]).toMatchObject({ tldrEn: 'New mode.', titleEn: 'Update' })
   })
 
   test('карта сайта, IndexNow и факт о патче на /en — только с английским пересказом', async () => {
@@ -346,6 +379,26 @@ describe('пересказ патча: английский слот', () => {
     const [en] = await getRssFeedForApps(db, [730], 30, undefined, undefined, 'en')
     expect(ru?.blocks).toEqual([])
     expect(en?.blocks).toHaveLength(1)
+  })
+
+  test('русский пост без английского пересказа уходит в ридер /en без тела', async () => {
+    // Договор п. 7: русского тела на /en нет — ридер даст ссылку на оригинал.
+    // Раньше 'untold-en' отдавал тело любому посту без tldr_en, считая
+    // оригинал английским, и русский абзац уезжал описанием записи
+    const db = await freshDb()
+    const ruBody = [{ kind: 'p' as const, runs: [{ text: 'Исправили вылет при загрузке и добавили новый режим.' }] }]
+    await upsertNewsItems(db, [patch(730, '1', { blocks: ruBody })], NOW)
+    await setNewsDigest(db, 730, '1', { tldr: 'Починили вылет.', scale: 'major' }, NOW)
+    const [en] = await getRssFeedForApps(db, [730], 30, undefined, undefined, 'en')
+    expect(en).toMatchObject({ title: 'Обновление 1.2', blocks: [] })
+    expect(en).not.toHaveProperty('tldrEn')
+    // пересказ без английского — русской ленте тело не нужно, как и раньше
+    expect((await getRssFeedForApps(db, [730]))[0]?.blocks).toEqual([])
+    // а без пересказа вовсе русская лента получает своё русское тело
+    const db2 = await freshDb()
+    await upsertNewsItems(db2, [patch(730, '1', { blocks: ruBody })], NOW)
+    expect((await getRssFeedForApps(db2, [730]))[0]?.blocks).toEqual(ruBody)
+    expect((await getRssFeedForApps(db2, [730], 30, undefined, undefined, 'en'))[0]?.blocks).toEqual([])
   })
 })
 

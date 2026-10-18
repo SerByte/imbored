@@ -34,7 +34,7 @@ import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
 import { WISHLIST_KEPT } from './steam'
 import { isMultiplayerCategories, MULTIPLAYER_CATEGORY_SQL } from './steamcats'
 import { LEGACY_PRICE_CC, priceRegion } from './steamregion'
-import type { NewsBlock } from './steamhtml'
+import { blocksToText, type NewsBlock } from './steamhtml'
 import { readTrailer, type Trailer } from './trailer'
 import type { CandidateSource, GameMeta, GameSemantics, LibraryGame, Mood, RuLang } from './types'
 
@@ -7317,6 +7317,14 @@ function onePerGame<T extends { appid: number }>(rows: T[], limit: number): T[] 
 }
 
 /**
+ * Живут ли английские слоты поста при перезаписи (upsertNewsItems): тело то
+ * же, а заголовок тот же или стал не русским. Русский новый заголовок
+ * просит нового перевода, и запись уходит в очередь догона — см. там.
+ */
+const EN_KEPT = `news_items.body_hash IS excluded.body_hash
+                 AND (news_items.title IS excluded.title OR excluded.title NOT GLOB ${CYRILLIC_GLOB})`
+
+/**
  * Записывает посты, не переписывая то, что не изменилось: Turso тарифицирует и
  * записи тоже, а лента перечитывается целиком на каждом опросе.
  *
@@ -7370,13 +7378,17 @@ export async function upsertNewsItems(
             -- неправда на любом языке. Заголовок по-английски — перевод
             -- заголовка, поэтому он уходит ещё и вместе со сменой самого
             -- заголовка: устаревший перевод на /en хуже запасного
-            -- «{Игра} update»
-            tldr_en = CASE WHEN news_items.body_hash IS excluded.body_hash
-                           THEN news_items.tldr_en ELSE NULL END,
-            tldr_en_at = CASE WHEN news_items.body_hash IS excluded.body_hash
-                              THEN news_items.tldr_en_at ELSE NULL END,
-            tldr_en_tries = CASE WHEN news_items.body_hash IS excluded.body_hash
-                                 THEN news_items.tldr_en_tries ELSE 0 END,
+            -- «{Игра} update».
+            -- Новый РУССКИЙ заголовок при том же теле возвращает запись в
+            -- очередь догона целиком (EN_KEPT): заголовок переводит тот же
+            -- вызов 'en', что и пересказ, а очередь (getUnsummarizedEn) видит
+            -- только пустой tldr_en. Иначе перевод заголовка уходил навсегда
+            -- — ни одна очередь его больше не писала, и пост до конца жизни
+            -- звался на /en «{Игра} update». Новый английский заголовок
+            -- перевода не требует: /en покажет его самого.
+            tldr_en = CASE WHEN ${EN_KEPT} THEN news_items.tldr_en ELSE NULL END,
+            tldr_en_at = CASE WHEN ${EN_KEPT} THEN news_items.tldr_en_at ELSE NULL END,
+            tldr_en_tries = CASE WHEN ${EN_KEPT} THEN news_items.tldr_en_tries ELSE 0 END,
             title_en = CASE WHEN news_items.body_hash IS excluded.body_hash
                              AND news_items.title IS excluded.title
                             THEN news_items.title_en ELSE NULL END,
@@ -7881,7 +7893,8 @@ const NEWS_COLS_UNTOLD = NEWS_COLS.replace(
 /**
  * То же для английской ленты: описание записи там — английский пересказ, и
  * тело нужно патчу без него, даже если русский пересказ есть. Английский
- * оригинал (у патчноутов почти всегда так) ридер покажет как есть.
+ * оригинал (у патчноутов почти всегда так) ридер покажет как есть, а русский
+ * — нет: его тело getRssFeedForApps стирает уже после чтения (russianBody).
  */
 const NEWS_COLS_UNTOLD_EN = NEWS_COLS.replace(
   'blocks_json',
@@ -7911,7 +7924,32 @@ export async function getRssFeedForApps(
   locale: Locale = 'ru',
 ): Promise<StoredNews[]> {
   const head = await getFeedHeadForApps(db, appids, limit, before, since)
-  return withBodies(db, head, locale === 'en' ? 'untold-en' : 'untold')
+  const items = await withBodies(db, head, locale === 'en' ? 'untold-en' : 'untold')
+  if (locale !== 'en') return items
+  /*
+   * Русский пост без английского пересказа на /en — без тела. Описание
+   * записи ридер берёт из тела, когда пересказа нет (newsDescription в
+   * lib/newspage), и до прохода догона у русского поста издателя это был бы
+   * русский абзац в английской ленте — а русского на /en нет (docs/i18n.md,
+   * договор п. 7: ссылка на оригинал вместо тела). Заголовок здесь не
+   * трогается: titleEn, а без него запасной «{Игра} update» строит сам ридер.
+   * Фильтром после чтения, а не в SQL: кириллицу в теле SQL без счёта букв
+   * не взвесит, а тел в ленте не больше limit.
+   */
+  return items.map((n) => (!n.tldrEn && n.blocks.length && russianBody(n.blocks) ? { ...n, blocks: [] } : n))
+}
+
+/**
+ * Русское ли тело поста — правилом detectLang из lib/news (кириллицы больше
+ * 15 % букв): «есть ли тут что по-русски», а не «чем читать». Своей копией,
+ * а не импортом: lib/news тянет lib/catalog, а тот — эту базу.
+ */
+function russianBody(blocks: NewsBlock[]): boolean {
+  const text = blocksToText(blocks)
+  const letters = text.match(/\p{L}/gu)?.length ?? 0
+  if (!letters) return false
+  const cyr = text.match(/[Ѐ-ӿ]/g)?.length ?? 0
+  return cyr / letters > 0.15
 }
 
 /**
