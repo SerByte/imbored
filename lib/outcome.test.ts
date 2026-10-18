@@ -179,3 +179,51 @@ describe('Твои вечера', () => {
     expect(askableNow(eveningFrom(late()), checked + 86_400 + 1)).toBe(false)
   })
 })
+
+describe('по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('playedLine: сокращения «h» и «min», тысячи через запятую', () => {
+    expect(playedLine(0, 'en')).toBe('0 min')
+    expect(playedLine(40, 'en')).toBe('40 min')
+    expect(playedLine(60, 'en')).toBe('1 h')
+    expect(playedLine(200, 'en')).toBe('3 h 20 min')
+    expect(playedLine(9 * 60 + 59, 'en')).toBe('9 h 59 min')
+    expect(playedLine(12 * 60 + 40, 'en')).toBe('13 h')
+    expect(playedLine(2434 * 60 + 42, 'en')).toBe('2,435 h')
+  })
+
+  test('outcomeQuestion: четыре целые фразы, название в “лапках”', () => {
+    expect(outcomeQuestion({ name: 'Hades', minutes: 90, bought: false }, 'en')).toBe(
+      '“Hades”: 1 h 30 min since we suggested it. How is it?',
+    )
+    expect(outcomeQuestion({ name: 'Hades', minutes: 45, bought: true }, 'en')).toBe(
+      '“Hades”: you got it and played 45 min. How is it?',
+    )
+    expect(outcomeQuestion({ name: 'Hades', minutes: 300, bought: false, late: true }, 'en')).toBe(
+      'While you were away: 5 h in “Hades” since we suggested it. How is it?',
+    )
+    expect(outcomeQuestion({ name: 'Hades', minutes: 45, bought: true, late: true }, 'en')).toBe(
+      'While you were away, you got “Hades” and played 45 min. How is it?',
+    )
+    for (const bought of [false, true]) {
+      for (const late of [undefined, true] as const) {
+        const q = outcomeQuestion({ name: 'Hades', minutes: 75, bought, late }, 'en')
+        expect(q).not.toMatch(CYRILLIC)
+        expect(q).not.toContain('«')
+      }
+    }
+  })
+
+  test('eveningPlayed: срок поздней сверки — «wk»', () => {
+    const base = { launched: true, late: false, shownAt: 1_760_000_000, checkedAt: 1_760_100_000 }
+    expect(eveningPlayed({ ...base, minutes: 90 }, 'en')).toBe('1 h 30 min')
+    expect(eveningPlayed({ ...base, minutes: null }, 'en')).toBe('not checked yet')
+    expect(eveningPlayed({ ...base, minutes: 0 }, 'en')).toBe('opened and closed')
+    expect(eveningPlayed({ ...base, minutes: 0, launched: false }, 'en')).toBe('never launched')
+    const late = { ...base, late: true, checkedAt: base.shownAt + OUTCOME_WINDOW_SEC + 7 * 86_400 }
+    expect(eveningPlayed({ ...late, minutes: 90 }, 'en')).toBe('1 h 30 min in 3 wk')
+    // явный ru — та же подпись, что без языка
+    expect(eveningPlayed({ ...late, minutes: 90 }, 'ru')).toBe('1 ч 30 мин за 3 нед.')
+  })
+})

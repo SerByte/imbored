@@ -22,6 +22,8 @@
  * Модуль клиентский: здесь сроки, ответы и подписи, база — в lib/db.ts.
  */
 
+import { fmtNumber, tr, type Locale } from './i18n'
+
 /** Сколько после совета снапшоты ещё дописывают минуты: две недели */
 export const OUTCOME_WINDOW_SEC = 14 * 86_400
 
@@ -99,31 +101,54 @@ export function parseOutcomeAsk(raw: unknown): OutcomeAsk | null {
  * склоняются, и строке рядом с названием игры не нужно «часа» и «минут».
  * От десяти часов — только часы, с разрядами: «2434 ч 42 мин» минуты не
  * уточняют, а читаются дольше самого числа.
+ *
+ * По-английски те же сокращения из глоссария: «3 h 20 min», «2,435 h».
  */
-export function playedLine(minutes: number): string {
+export function playedLine(minutes: number, locale: Locale = 'ru'): string {
   const m = Math.max(0, Math.round(minutes))
   const h = Math.floor(m / 60)
   const rest = m % 60
-  if (!h) return `${rest} мин`
-  if (h >= 10) return `${Math.round(m / 60).toLocaleString('ru-RU')} ч`
-  return rest ? `${h} ч ${rest} мин` : `${h} ч`
+  const H = tr(locale, { ru: 'ч', en: 'h' })
+  const MIN = tr(locale, { ru: 'мин', en: 'min' })
+  if (!h) return `${rest} ${MIN}`
+  if (h >= 10) return `${fmtNumber(locale, Math.round(m / 60))} ${H}`
+  return rest ? `${h} ${H} ${rest} ${MIN}` : `${h} ${H}`
 }
 
 /**
  * Вопрос целиком — одна строка на /play и /daily. После поздней сверки он
  * говорит, откуда столько: «с тех пор, как мы её предложили» про месяц
  * назад звучало бы так, будто прошла пара дней.
+ *
+ * Английский — четыре целые фразы, а не склейка русских кусков: порядок
+ * слов и «you» там свои. Название — в “лапках”, как принято в английском
+ * наборе.
  */
-export function outcomeQuestion(ask: Pick<OutcomeAsk, 'name' | 'minutes' | 'bought' | 'late'>): string {
-  const played = playedLine(ask.minutes)
+export function outcomeQuestion(
+  ask: Pick<OutcomeAsk, 'name' | 'minutes' | 'bought' | 'late'>,
+  locale: Locale = 'ru',
+): string {
+  const played = playedLine(ask.minutes, locale)
   if (ask.late) {
     return ask.bought
-      ? `Пока тебя не было: взял «${ask.name}» и наиграл ${played}. Как тебе?`
-      : `Пока тебя не было: «${ask.name}» — ${played} после нашего совета. Как тебе?`
+      ? tr(locale, {
+          ru: `Пока тебя не было: взял «${ask.name}» и наиграл ${played}. Как тебе?`,
+          en: `While you were away, you got “${ask.name}” and played ${played}. How is it?`,
+        })
+      : tr(locale, {
+          ru: `Пока тебя не было: «${ask.name}» — ${played} после нашего совета. Как тебе?`,
+          en: `While you were away: ${played} in “${ask.name}” since we suggested it. How is it?`,
+        })
   }
   return ask.bought
-    ? `«${ask.name}»: взял и наиграл ${played}. Как тебе?`
-    : `«${ask.name}»: ${played} с тех пор, как мы её предложили. Как тебе?`
+    ? tr(locale, {
+        ru: `«${ask.name}»: взял и наиграл ${played}. Как тебе?`,
+        en: `“${ask.name}”: you got it and played ${played}. How is it?`,
+      })
+    : tr(locale, {
+        ru: `«${ask.name}»: ${played} с тех пор, как мы её предложили. Как тебе?`,
+        en: `“${ask.name}”: ${played} since we suggested it. How is it?`,
+      })
 }
 
 /** Сыграл ли — или открыл и закрыл (OUTCOME_PLAYED_MIN) */
@@ -195,15 +220,24 @@ export function eveningFrom(row: {
  * «5 ч за 6 нед.» честнее голых «5 ч» рядом с советами, которые мерили
  * двумя неделями. У нуля срок не нужен: «не запускал» за месяц — всё ещё
  * «не запускал».
+ *
+ * По-английски «5 h in 6 wk»: «нед.» в глоссарии — «wk», и оно, как и
+ * русское сокращение, не склоняется.
  */
 export function eveningPlayed(
   e: Pick<Evening, 'minutes' | 'launched' | 'late' | 'shownAt' | 'checkedAt'>,
+  locale: Locale = 'ru',
 ): string {
-  if (e.minutes === null) return 'ещё не сверяли'
-  if (e.minutes === 0) return e.launched ? 'открыл и закрыл' : 'не запускал'
-  const played = playedLine(e.minutes)
+  if (e.minutes === null) return tr(locale, { ru: 'ещё не сверяли', en: 'not checked yet' })
+  if (e.minutes === 0) {
+    return e.launched
+      ? tr(locale, { ru: 'открыл и закрыл', en: 'opened and closed' })
+      : tr(locale, { ru: 'не запускал', en: 'never launched' })
+  }
+  const played = playedLine(e.minutes, locale)
   if (!e.late || e.checkedAt === null) return played
-  return `${played} за ${Math.round((e.checkedAt - e.shownAt) / (7 * 86_400))} нед.`
+  const weeks = Math.round((e.checkedAt - e.shownAt) / (7 * 86_400))
+  return tr(locale, { ru: `${played} за ${weeks} нед.`, en: `${played} in ${weeks} wk` })
 }
 
 /**
