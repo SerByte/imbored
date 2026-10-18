@@ -139,10 +139,12 @@ describe('playedShort', () => {
     const portrait = fs.readFileSync(path.join(ROOT, 'app/[lang]/portrait/[steamid]/page.tsx'), 'utf8')
     const compat = fs.readFileSync(path.join(ROOT, 'app/[lang]/compat/[steamid]/page.tsx'), 'utf8')
     const library = fs.readFileSync(path.join(ROOT, 'app/[lang]/library/page.tsx'), 'utf8')
-    expect(portrait).toContain('{playedShort(g.minutes)}')
+    // Вторым аргументом страница передаёт свой язык (playedShort(minutes, locale)) —
+    // сторож про то, ЧЕМ подписаны часы, а не про то, на каком языке
+    expect(portrait).toMatch(/\{playedShort\(g\.minutes(?:,\s*\w+)?\)\}/)
     expect(portrait).not.toMatch(/g\.hours\.toLocaleString\('ru-RU'\)\} ч/)
-    expect(compat).toMatch(/playedShort\(m\)/)
-    expect(library).toContain('{playedShort(g.playtimeForever)}')
+    expect(compat).toMatch(/playedShort\(m(?:,\s*\w+)?\)/)
+    expect(library).toMatch(/\{playedShort\(g\.playtimeForever(?:,\s*\w+)?\)\}/)
     expect(library).not.toMatch(/`\$\{hours\} ч`/)
     expect(library).not.toMatch(/\} мин`/)
   })

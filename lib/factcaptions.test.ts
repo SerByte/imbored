@@ -87,7 +87,8 @@ describe('сколько сыграно — playedFact', () => {
     for (const rel of ['app/[lang]/portrait/[steamid]/page.tsx', 'app/[lang]/portrait/[steamid]/share-card.tsx']) {
       const src = fs.readFileSync(path.join(ROOT, rel), 'utf8')
       expect(src, `${rel}: часы снова готовыми — «0 часов» у библиотеки на 20 минут`).toMatch(
-        /playedFact\((wrapped|data)\.totalMinutes\)/,
+        // вторым аргументом может стоять язык страницы: playedFact(minutes, locale)
+        /playedFact\((wrapped|data)\.totalMinutes(?:,\s*\w+)?\)/,
       )
       expect(src, rel).not.toContain('totalHours')
     }
