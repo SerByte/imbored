@@ -909,11 +909,15 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                     art={trimArt(g.art)}
                     sizes="(min-width: 768px) 33vw, 50vw"
                     /* Чем похожи — у готовых соседей: заголовок блока у них без
-                       тега, и без этой строки «похожие» было бы голословным */
+                       тега, и без этой строки «похожие» было бы голословным.
+                       Строка режется по ширине плитки, и английская не шире
+                       русской: «shared:», а не «in common:» — замер на десяти
+                       парах частых тегов, «in common:» выходил шире «общее:»
+                       на двух из них, «shared:» уже на всех */
                     meta={
                       g.shared && g.shared.length > 0 ? (
                         <span className="truncate">
-                          {tr(locale, { ru: 'общее: ', en: 'in common: ' })}
+                          {tr(locale, { ru: 'общее: ', en: 'shared: ' })}
                           {g.shared
                             .slice(0, 2)
                             .map((t) => tagLabel(t, locale))
