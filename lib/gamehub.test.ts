@@ -20,8 +20,10 @@ import {
   TAGS_PER_GAME,
   type HubRow,
 } from './gamehub'
+import { sessionTrait, VERSUS_TAGS } from './gametraits'
 import { GENERIC_TAGS } from './hook'
 import { hasTagRu } from './tagsru'
+import type { GameSemantics } from './types'
 
 /** Строки выборки одного тега: игры в том порядке, в каком их отдаёт база */
 function rowsOf(tag: string, appids: number[], total = appids.length): HubRow[] {
@@ -266,6 +268,9 @@ describe('подборки по факту: /games/coop, /games/split-screen, /g
     expect(short.query).toEqual({ kind: 'session', belowMinutes: SHORT_SESSION_MIN })
     expect(short.drop).toBe('match')
     expect(short.party).toBe(false)
+    // минуты — теги, уточнённые отзывами, а не «по отзывам»: так и сказано
+    expect(short.basis).toContain('по тегам и разобранным отзывам')
+    expect(short.basis).not.toMatch(/сессия по отзывам/)
     expect(hubFacetOf('free')!.query).toEqual({ kind: 'free' })
   })
 })
@@ -321,6 +326,58 @@ describe('играют ли друг против друга (playsAgainst)', ()
 
   test('файтинг — друг против друга', () => {
     expect(playsAgainst(TEKKEN_7)).toBe(true)
+  })
+
+  /*
+   * Словарь соперничества — один с «Матчем» карточки (VERSUS_TAGS в
+   * lib/gametraits). Своя копия здесь уже расходилась: в ней не было «Online
+   * PvP» и тегов файтинга, и тег, дописанный для карточки, подборку не трогал.
+   */
+  test('каждый тег соперничества карточки весит и здесь', () => {
+    expect(VERSUS_TAGS.size).toBeGreaterThan(0)
+    for (const tag of VERSUS_TAGS) {
+      expect(playsAgainst({ [tag]: 2, 'Co-op': 1 }), tag).toBe(true)
+      expect(playsAgainst({ [tag]: 1, 'Co-op': 2 }), tag).toBe(false)
+    }
+  })
+
+  /*
+   * Ради чего общий словарь сдвинул подборку: на выгрузке прода от 24.09.2026
+   * из восьмидесяти верхних «кооперативных» — одна игра, Brawlhalla. По
+   * старой копии (Fighting и eSports) кооператив у неё перевешивал.
+   */
+  test('Brawlhalla — платформенный файтинг: «2D Fighter» тоже соперничество', () => {
+    expect(
+      playsAgainst({
+        'Free to Play': 962, Multiplayer: 700, Fighting: 668, '2D Fighter': 513, '2D Platformer': 489,
+        Casual: 468, 'Local Multiplayer': 462, Platformer: 458, 'Co-op': 457, Controller: 457, Action: 447,
+        'Local Co-Op': 446, 'Online Co-Op': 444, Fantasy: 438, '4 Player Local': 436, 'Family Friendly': 431,
+        eSports: 431, Cartoony: 430, Singleplayer: 429, Indie: 423,
+      }),
+    ).toBe(true)
+  })
+
+  /*
+   * Вопросы разные, и разногласие подборки с карточкой бывает только в одну
+   * сторону: «с другом» оставляет командную игру против людей, а карточка
+   * зовёт её заход «Матчем» — и то и другое правда. Кампания на двоих матчем
+   * не бывает нигде.
+   */
+  test('кампания на двоих — «с другом» и «Сессия»; командная против людей — «с другом» и «Матч»', () => {
+    const semantics: GameSemantics = {
+      v: 1,
+      axes: { challenge: 50, complexity: 50, pace: 50 },
+      session: { bucket: 'medium', minutes: 40, canStopAnytime: false },
+      timeToFun: { bucket: null, hours: null },
+      confidence: 0.7,
+      n: 60,
+      basis: 'tags+reviews',
+    }
+    expect(playsAgainst(IT_TAKES_TWO)).toBe(false)
+    expect(sessionTrait({ semantics, categories: [1, 9, 38, 39, 24], tags: IT_TAKES_TWO })?.label).toBe('Сессия')
+    const squad = { Horror: 1000, 'Online Co-Op': 900, Survival: 800, PvP: 600 }
+    expect(playsAgainst(squad)).toBe(false)
+    expect(sessionTrait({ semantics, categories: [1, 49, 36, 9, 38], tags: squad })?.label).toBe('Матч')
   })
 
   test('нет ни соперничества, ни кооператива в тегах — решают категории, не мешаем', () => {

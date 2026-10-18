@@ -49,6 +49,12 @@ export type GamePageData = {
   /** без тел патчей — их отдаёт app/api/news по раскрытию; см. cardNews */
   news: CardNews[]
   /**
+   * Есть ли патчи сверх тех, что стоят в news, — тогда под лентой ссылка на
+   * архив обновлений (/game/<appid>/news). Не «news полна»: ровно восемь
+   * патчей у игры — тоже полная лента, и архив повторил бы её строка в строку.
+   */
+  newsMore: boolean
+  /**
    * «Похожие»: готовые соседи по всему вектору тегов (nearGames), а пока их
    * не залили — соседи по тегу полки (topTagOf, pickSimilar); пусто, если
    * тегов нет
@@ -126,14 +132,22 @@ export function cardNews(item: StoredNews): CardNews {
  * в lib/newsjob). На выгрузке прода от 24.09.2026 отсев задевал восемь свежих
  * патчей у 76 игр из 485, недобор без дочитывания был бы у 19, с ним — ни у
  * одной.
+ *
+ * Первое чтение — на одну строку больше мест: девятая отвечает, есть ли что
+ * показать в архиве сверх ленты (more). По одной длине ленты этого не узнать —
+ * восемь патчей у игры всего и восемь из тридцати выглядят одинаково, а ссылка
+ * в первом случае вела бы на те же восемь строк. Цена — одна строка с телом
+ * на перегенерацию карточки. Если и после дочитывания патчей не больше
+ * восьми, а за двадцатью четырьмя строками ещё что-то лежит, ссылки не будет —
+ * архив тогда открыт со страниц патчей («Другие патчи»).
  */
-async function cardPatches(db: Db, appid: number): Promise<CardNews[]> {
-  const head = await getGameNews(db, appid, CARD_PATCHES)
+async function cardPatches(db: Db, appid: number): Promise<{ items: CardNews[]; more: boolean }> {
+  const head = await getGameNews(db, appid, CARD_PATCHES + 1)
   let kept = head.filter(isStoredPatch)
-  if (kept.length < head.length && head.length === CARD_PATCHES) {
+  if (kept.length < head.length && head.length === CARD_PATCHES + 1) {
     kept = (await getGameNews(db, appid, CARD_PATCHES * 3)).filter(isStoredPatch)
   }
-  return kept.slice(0, CARD_PATCHES).map(cardNews)
+  return { items: kept.slice(0, CARD_PATCHES).map(cardNews), more: kept.length > CARD_PATCHES }
 }
 
 export type ReviewFacts = {
@@ -649,6 +663,7 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
       reviewsSummary: null,
       prosCons: null,
       news: [],
+      newsMore: false,
       ...(await similarOf()),
       studio: null,
     }
@@ -659,7 +674,7 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   // Игры студии — параллельно с полкой, а отсев — после неё: строка не
   // повторяет того, что уже стоит в «Похожих». Лимит на одну больше порога —
   // так studioLine узнаёт корпоративный каталог, не читая его целиком
-  const [news, shelf, studioGames] = await Promise.all([
+  const [patches, shelf, studioGames] = await Promise.all([
     cardPatches(db, appid),
     similarOf(),
     meta.developer?.trim()
@@ -688,5 +703,5 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
    */
   const prosCons = stored?.source === 'claude' ? stored : null
 
-  return { meta, reviewsSummary, prosCons, news, ...shelf, studio }
+  return { meta, reviewsSummary, prosCons, news: patches.items, newsMore: patches.more, ...shelf, studio }
 }

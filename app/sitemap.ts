@@ -1,10 +1,11 @@
 import type { MetadataRoute } from 'next'
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import { sitemapGames, sitemapNews, sitemapPatchArchives } from '@/lib/db'
-import { facetPath, HUB_FACETS, HUB_TAGS, hubPath } from '@/lib/gamehub'
+import { facetPath, HUB_FACETS, HUB_TAGS, hubPath, type HubFacet } from '@/lib/gamehub'
 import { newsPath, SITEMAP_NEWS_MAX, SITEMAP_NEWS_WINDOW_SEC } from '@/lib/newspage'
 import { PATCH_ARCHIVE_MIN, patchArchivePath } from '@/lib/patcharchive'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
+import { loadGenre, thinList } from './games/[tag]/load'
 
 /**
  * Карта сайта. Раньше её не было вовсе, и единственное содержание проекта —
@@ -69,9 +70,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       const path = hubPath(tag)
       return path ? [{ url: url(path), changeFrequency: 'weekly' as const, priority: 0.7 }] : []
     }),
-    // Подборки по факту («с другом», «бесплатные»…) — тот же сегмент и тот
-    // же ранг, что у жанров: адреса тоже известны без базы (HUB_FACETS)
-    ...HUB_FACETS.map((f) => ({ url: url(facetPath(f)), changeFrequency: 'weekly' as const, priority: 0.7 })),
     { url: url('/support'), changeFrequency: 'yearly', priority: 0.3 },
     { url: url('/privacy'), changeFrequency: 'yearly', priority: 0.2 },
   ]
@@ -130,8 +128,37 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     console.error('sitemap: архивы обновлений недоступны на сборке, отдаём без них —', String(err))
   }
 
+  /*
+   * Подборки по факту («с другом», «на 20 минут»…) — не все и не всегда, в
+   * отличие от жанров. Жанры подобраны руками так, чтобы полка была полной, а
+   * подборка — отбор каталога, и у «на 20 минут» он узкий: только уверенная
+   * семантика своей версии, и после выборки ещё уходят матчи. Короче полки
+   * хаба страница закрыта от индекса (thinList), и отдай карта её адрес —
+   * Search Console записал бы «Submitted URL marked noindex». Поэтому в карте
+   * — ровно те подборки, что страница сама пускает в поиск: тот же loadGenre,
+   * то же правило, без своей копии отбора.
+   *
+   * Своим try, как патчи и архивы. На сборке без базы loadGenre сам отдаёт
+   * пустой список — подборок в карте тогда нет до первой перегенерации, как и
+   * карточек игр. Так и надо: страница подборки на такой сборке тоже собрана
+   * пустой, то есть закрытой от индекса.
+   */
+  let facets: HubFacet[] = []
+  try {
+    const pages = await Promise.all(HUB_FACETS.map((f) => loadGenre(f.slug)))
+    facets = HUB_FACETS.filter((_, i) => {
+      const page = pages[i]
+      return page != null && !thinList(page.games)
+    })
+  } catch (err) {
+    if (process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) throw err
+    console.error('sitemap: подборки недоступны на сборке, отдаём без них —', String(err))
+  }
+
   return [
     ...stat,
+    // Тот же сегмент и тот же ранг, что у жанров
+    ...facets.map((f) => ({ url: url(facetPath(f)), changeFrequency: 'weekly' as const, priority: 0.7 })),
     ...games.map((g) => ({
       url: url(`/game/${g.appid}`),
       lastModified: new Date(g.updatedAt * 1000),

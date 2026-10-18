@@ -135,6 +135,8 @@ const HEADINGS: Array<{ file: string; expr: string; count: number }> = [
   { file: 'app/game/[appid]/news/[gid]/page.tsx', expr: 'heading', count: 1 },
   // «Другие патчи» внизу страницы патча
   { file: 'app/game/[appid]/news/[gid]/page.tsx', expr: 'title', count: 1 },
+  // архив обновлений игры: ссылкой на страницу патча и текстом рядом со ссылкой в Steam
+  { file: 'app/game/[appid]/news/page.tsx', expr: 'heading', count: 2 },
 ]
 
 describe('заголовок патча несёт свой lang', () => {

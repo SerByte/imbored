@@ -4,6 +4,7 @@ import type { GameArtUrls } from '@/lib/art'
 import { getGamesMetaLite, getLovedFor, topGamesByFacet, topGamesByTags, type Db, type SimilarGame } from '@/lib/db'
 import {
   HUB_GENRES,
+  HUB_MIN_SHELF,
   HUB_MIN_WEIGHT,
   HUB_PAGE,
   hubFacetOf,
@@ -48,6 +49,19 @@ export type Genre = { slug: string; title: string; games: GenreGame[] } & (
   | { kind: 'genre'; tag: string }
   | { kind: 'facet'; facet: HubFacet }
 )
+
+/**
+ * Тонкая страница: список короче полки хаба (HUB_MIN_SHELF). Страница есть,
+ * но в поиск её не пускаем — список из трёх игр не ответ.
+ *
+ * Одно правило на noindex страницы (generateMetadata) и на карту сайта
+ * (app/sitemap.ts): адрес, который страница закрывает от индекса, карта
+ * краулеру предлагать не должна — Search Console записывает это ошибкой
+ * самой карты («Submitted URL marked noindex»), а не страницы.
+ */
+export function thinList(games: readonly GenreGame[]): boolean {
+  return games.length < HUB_MIN_SHELF
+}
 
 /** Строки выборки — в игры страницы: отзывы, сессия, «за что любят» */
 async function enrich(

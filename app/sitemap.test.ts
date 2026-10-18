@@ -8,6 +8,7 @@ import {
   type Db,
   type StoredNews,
 } from '@/lib/db'
+import { HUB_MIN_SHELF } from '@/lib/gamehub'
 import { freshDb } from '@/lib/testing/route'
 import sitemap from './sitemap'
 
@@ -73,10 +74,46 @@ describe('карта сайта и осечка базы', () => {
     errors.mockRestore()
     expect(got).toContain('/')
     expect(got).toContain('/games')
-    // подборки, как и жанры, известны без базы — переживают и сборку без неё
-    expect(got).toContain('/games/coop')
-    expect(got).toContain('/games/split-screen')
+    // жанры известны без базы — переживают и сборку без неё
+    expect(got).toContain('/games/open-world')
+    // подборки — нет: их страницы на такой сборке собраны пустыми и закрыты от индекса
+    expect(got).not.toContain('/games/coop')
     expect(got).not.toContain('/game/730')
+  })
+
+  /*
+   * Подборка — отбор каталога, а не список руками, как жанры, и бывает
+   * тонкой: «на 20 минут» ждёт уверенной семантики. Короче полки хаба
+   * страница закрыта от индекса (thinList), и адрес в карте был бы «Submitted
+   * URL marked noindex». В карте — ровно то, что страница пускает в поиск.
+   */
+  test('подборка — в карте, только когда её страница идёт в поиск', async () => {
+    const coop = async (appid: number) => {
+      await upsertGameMeta(
+        db,
+        {
+          appid,
+          name: `Игра ${appid}`,
+          tags: { 'Online Co-Op': 1000 },
+          genres: [],
+          categories: [1, 9, 38],
+          reviewsTotal: 1000 + appid,
+        },
+        T0,
+      )
+      await replaceGameTags(db, appid, [{ tag: 'Online Co-Op', weight: 1000 }])
+    }
+    for (let i = 1; i < HUB_MIN_SHELF; i++) await coop(1000 + i)
+    let got = await urls()
+    expect(got).not.toContain('/games/coop')
+    // без уверенной семантики «на 20 минут» нечем ответить — и в карте её нет
+    expect(got).not.toContain('/games/short')
+
+    await coop(1000 + HUB_MIN_SHELF)
+    got = await urls()
+    expect(got).toContain('/games/coop')
+    expect(got.filter((u) => u === '/games/coop')).toHaveLength(1)
+    expect(got).not.toContain('/games/short')
   })
 
   /*

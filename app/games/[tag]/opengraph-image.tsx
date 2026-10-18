@@ -5,7 +5,9 @@ import { CANVAS_WIDE, WALL_WIDE } from '@/lib/ogwall'
 import { plural } from '@/lib/plural'
 import { loadGenre } from './load'
 
-export const alt = 'Жанр — imbored'
+// Одна на сегмент — и для жанра, и для подборки (/games/coop…): «Жанр» у
+// карточки «Кооперативных игр» говорил бы скринридеру неправду
+export const alt = 'Подборка игр — imbored'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -78,12 +80,18 @@ export default async function Image({ params }: { params: Promise<{ tag: string 
           <div style={{ fontSize: 76, lineHeight: 1.12, marginBottom: 22 }}>
             {genre ? genre.title : 'Игры по жанрам'}
           </div>
+          {/* Пустой список — сборка без базы или подборка, которой ещё нечем
+              ответить («на 20 минут» ждёт уверенной семантики). Подборке —
+              своя строка: «Тридцать жанров» под «Играми на 20 минут» звали бы
+              её жанром и обещали бы то, чего на странице нет */}
           <div style={{ fontSize: 26, color: OG_DIM }}>
-            {n > 0
-              ? genre?.kind === 'facet'
+            {genre?.kind === 'facet'
+              ? n > 0
                 ? `${n} ${plural(n, 'игра', 'игры', 'игр')} — по отзывам игроков Steam`
-                : `${n} ${plural(n, 'игра', 'игры', 'игр')}, для которых жанр главный, — по отзывам игроков`
-              : 'Тридцать жанров — по отзывам игроков Steam'}
+                : 'Подборка собирается — по отзывам игроков Steam'
+              : n > 0
+                ? `${n} ${plural(n, 'игра', 'игры', 'игр')}, для которых жанр главный, — по отзывам игроков`
+                : 'Тридцать жанров — по отзывам игроков Steam'}
           </div>
         </div>
       </div>

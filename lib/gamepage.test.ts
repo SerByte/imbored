@@ -132,6 +132,35 @@ describe('loadGamePage', () => {
     )
     const page = await loadGamePage(11)
     expect(page?.news.map((n) => n.gid)).toEqual(patches.slice(0, 8).map((p) => p.gid))
+    // девятый настоящий патч не влез — под лентой ссылка на архив
+    expect(page?.newsMore).toBe(true)
+  })
+
+  /*
+   * «Есть ли ещё» — по патчам, а не по строкам: девятая строка, которую
+   * правило отсеивает, архиву ничего не добавит, и ссылка на него повторила
+   * бы ленту карточки.
+   */
+  test('восемь патчей и дорожная карта — лента полна, но архиву добавить нечего', async () => {
+    const db = await withDb()
+    await addGame(db, 12)
+    const post = (gid: string, title: string, publishedAt: number) => ({
+      appid: 12,
+      gid,
+      title,
+      url: `https://store.steampowered.com/news/app/12/view/${gid}`,
+      publishedAt,
+      kind: 'patch' as const,
+      scale: 'major' as const,
+      blocks: [{ kind: 'p' as const, runs: [{ text: 'Исправлен вылет при загрузке.' }] }],
+      bodyHash: `h${gid}`,
+      rank: 5000,
+    })
+    const patches = Array.from({ length: 8 }, (_, i) => post(`p${i}`, `Патч 3.${i}`, NOW - 1000 - i * 100))
+    await upsertNewsItems(db, [post('roadmap', 'Marathon: дорожная карта обновлений на 2026 год', NOW - 10), ...patches], NOW)
+    const page = await loadGamePage(12)
+    expect(page?.news.map((n) => n.gid)).toEqual(patches.map((p) => p.gid))
+    expect(page?.newsMore).toBe(false)
   })
 
   /**

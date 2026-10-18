@@ -51,8 +51,18 @@ function sessionWords(minutes: number): string {
  */
 const VERSUS_CATEGORIES: ReadonlySet<number> = new Set([36, 37, 47, 49])
 
-/** Теги, которые выдают игру против людей там, где Steam PvP-категорию не поставил */
-const VERSUS_TAGS: ReadonlySet<string> = new Set([
+/**
+ * Теги, которые выдают игру против людей там, где Steam PvP-категорию не
+ * поставил, — ключами tags_json.
+ *
+ * Словарь один на два правила: этот же читает playsAgainst в lib/gamehub
+ * («с другом» на /games/coop). Правила у них разные — здесь «есть ли такой
+ * тег среди главных», там «чьих голосов больше, соперничества или
+ * кооператива», — а вот что считать соперничеством, должно совпадать: иначе
+ * тег, дописанный сюда, менял бы «Матч» на карточке и не трогал бы подборку,
+ * где стоит та же карточка.
+ */
+export const VERSUS_TAGS: ReadonlySet<string> = new Set([
   'PvP',
   'Online PvP',
   'Competitive',

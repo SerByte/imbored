@@ -29,7 +29,7 @@ import {
   type StudioLine,
 } from '@/lib/gamepage'
 import { gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
-import { CARD_PATCHES, patchArchivePath } from '@/lib/patcharchive'
+import { patchArchivePath } from '@/lib/patcharchive'
 import { priceRegion, regionCurrency } from '@/lib/steamregion'
 import { OG_SITE } from '@/lib/site'
 import { plural } from '@/lib/plural'
@@ -792,14 +792,14 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             {/*
               Архив обновлений (/game/<appid>/news) — все патчи, что держит
               ретенция, а карточка показывает восемь. Ссылка — только когда
-              карточка ими и заполнена: меньше — значит, все патчи уже здесь,
-              и архив повторил бы эти строки. (Строка, которую сверка с
-              нынешним правилом, isStoredPatch, сняла до переопроса игры,
-              убавляет карточку на эти сутки-другие — архив тогда открыт со
-              страниц патчей.) Без префетча: архив на ISR и рендерится по
-              первому заходу, а карточку смотрят тысячи раз.
+              патчей у игры больше, чем мест (newsMore, cardPatches в
+              lib/gamepage): при восьми и меньше все они уже здесь, и архив
+              повторил бы эти строки. Полная лента об этом не говорит —
+              восемь из восьми и восемь из тридцати выглядят одинаково. Без
+              префетча: архив на ISR и рендерится по первому заходу, а
+              карточку смотрят тысячи раз.
             */}
-            {data.news.length >= CARD_PATCHES && (
+            {data.newsMore && (
               <Link href={patchArchivePath(appid)} prefetch={false} className="tap link-more mt-4">
                 Все обновления «{meta.name}»
                 <Icon name="arrow" size={16} />

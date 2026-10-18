@@ -9,7 +9,6 @@ import {
   facetPath,
   HUB_FACETS,
   HUB_GENRES,
-  HUB_MIN_SHELF,
   HUB_TAGS,
   hubPath,
   type HubFacet,
@@ -21,7 +20,7 @@ import { presetHref, roomSeedHref, VIBE_PRESETS } from '@/lib/presets'
 import { appBaseUrl } from '@/lib/server'
 import { OG_SITE } from '@/lib/site'
 import { tagRu } from '@/lib/tagsru'
-import { loadGenre, type Genre, type GenreGame } from './load'
+import { loadGenre, thinList, type Genre, type GenreGame } from './load'
 
 /**
  * Страница жанра: /games/<slug>.
@@ -54,9 +53,6 @@ export function generateStaticParams(): Array<{ tag: string }> {
 
 type Params = { params: Promise<{ tag: string }> }
 
-/** Полка короче этого — страница есть, но в поиск её не пускаем: список из трёх игр — не ответ */
-const thin = (games: readonly GenreGame[]) => games.length < HUB_MIN_SHELF
-
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { tag: slug } = await params
   const genre = await loadGenre(slug)
@@ -76,7 +72,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
     title: heading,
     description,
     alternates: { canonical },
-    ...(thin(games) ? { robots: { index: false, follow: true } } : {}),
+    ...(thinList(games) ? { robots: { index: false, follow: true } } : {}),
     openGraph: { ...OG_SITE, type: 'website', url: canonical, title: heading, description },
   }
 }
@@ -99,7 +95,7 @@ export default async function GenrePage({ params }: Params) {
         dangerouslySetInnerHTML={{
           __html: ldScript([
             genreBreadcrumbLd({ title, path, baseUrl }),
-            ...(thin(games) ? [] : [genreItemListLd({ title, games, baseUrl })]),
+            ...(thinList(games) ? [] : [genreItemListLd({ title, games, baseUrl })]),
           ]),
         }}
       />

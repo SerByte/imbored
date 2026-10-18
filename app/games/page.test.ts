@@ -8,6 +8,7 @@ import { HUB_FACETS, storedTagWeights } from '@/lib/gamehub'
 import type { GameMeta, GameSemantics } from '@/lib/types'
 import { flight as flightOf, islandsOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
+import { loadGenre } from './[tag]/load'
 import GenrePage, { generateMetadata, generateStaticParams } from './[tag]/page'
 import GamesHubPage from './page'
 
@@ -142,6 +143,18 @@ describe('подборки /games/<slug>', () => {
     await replaceGameTags(db, appid, storedTagWeights(meta.tags))
   }
 
+  /** Семантика, которой карточка верит (confidence выше порога), — посреди не бросишь */
+  const sem = (minutes: number, over: Partial<GameSemantics> = {}): GameSemantics => ({
+    v: 1,
+    axes: { challenge: 50, complexity: 50, pace: 50 },
+    session: { bucket: minutes < 30 ? 'short' : 'medium', minutes, canStopAnytime: false },
+    timeToFun: { bucket: null, hours: null },
+    confidence: 0.7,
+    n: 60,
+    basis: 'tags+reviews',
+    ...over,
+  })
+
   const facetParams = (tag: string) => ({ params: Promise.resolve({ tag }) })
   /** Игры страницы по порядку — ссылки карточек (GameLink — это Link на /game/<appid>) */
   const shown = async (tag: string) =>
@@ -171,6 +184,36 @@ describe('подборки /games/<slug>', () => {
     expect(await shown('coop')).toEqual([553850, 1426210])
   })
 
+  /*
+   * Подборка и карточка судят соперничество одним словарём тегов (VERSUS_TAGS
+   * в lib/gametraits), но разными вопросами: «с другом» — чьих голосов больше,
+   * «Матч» — есть ли противник-человек вообще. Кампании на двоих «Матч» не
+   * достаётся ни там, ни там: прежнее правило карточки звало матчем всякий
+   * кооп без одиночного режима, и It Takes Two на /games/coop стояла бы с
+   * «Матч: ~40 мин». А командная игра против людей честно бывает и тем, и тем.
+   */
+  test('«с другом»: у кампании на двоих — «Сессия», «Матч» — только у игры против людей', async () => {
+    await seed(1426210, {
+      categories: [1, 9, 38, 39, 24],
+      tags: { 'Co-op': 1486, 'Split Screen': 892, 'Local Co-Op': 864, 'Online Co-Op': 733, Puzzle: 681 },
+      reviewsTotal: 300_000,
+    })
+    // выживание командой против охотника: кооператив весит больше PvP — на странице, но это матч
+    await seed(381210, {
+      categories: [1, 49, 36, 9, 38],
+      tags: { Horror: 1000, 'Online Co-Op': 900, Survival: 800, PvP: 600 },
+      reviewsTotal: 200_000,
+    })
+    await upsertSemantics(db, [
+      { appid: 1426210, semantics: sem(40), computedAt: T0 },
+      { appid: 381210, semantics: sem(25), computedAt: T0 },
+    ])
+    const sessions = new Map((await loadGenre('coop'))!.games.map((g) => [g.appid, g.session]))
+    expect([...sessions.keys()]).toEqual([1426210, 381210])
+    expect(sessions.get(1426210)).toEqual({ label: 'Сессия', value: '~40 мин' })
+    expect(sessions.get(381210)).toEqual({ label: 'Матч', value: '~25 мин' })
+  })
+
   test('«с другом» зовёт в комнату с игрой и в /compat, а не в квиз', async () => {
     await seed(553850, { categories: [1, 9, 38], tags: { 'Online Co-Op': 1000 }, ccu: 50_000 })
     const page = flight(await GenrePage(facetParams('coop')))
@@ -198,16 +241,6 @@ describe('подборки /games/<slug>', () => {
   })
 
   test('«на 20 минут» — только уверенная короткая сессия, и не матч', async () => {
-    const sem = (minutes: number, over: Partial<GameSemantics> = {}): GameSemantics => ({
-      v: 1,
-      axes: { challenge: 50, complexity: 50, pace: 50 },
-      session: { bucket: minutes < 30 ? 'short' : 'medium', minutes, canStopAnytime: false },
-      timeToFun: { bucket: null, hours: null },
-      confidence: 0.7,
-      n: 60,
-      basis: 'tags+reviews',
-      ...over,
-    })
     // одиночная короткая — «Сессия: ~20 мин»
     await seed(1942280, { categories: [2], tags: { Roguelite: 1000 } })
     // сетевая без одиночного режима, бросить посреди нельзя — карточка скажет «Матч»
@@ -216,13 +249,16 @@ describe('подборки /games/<slug>', () => {
     await seed(10, { categories: [2], tags: { Casual: 1000 } })
     // уверенная, но заход длинный
     await seed(20, { categories: [2], tags: { CRPG: 1000 } })
+    // кооп без одиночного режима, но без противника-человека — не матч, а заход на двоих
+    await seed(30, { categories: [1, 9, 38, 39, 24], tags: { 'Co-op': 1000, Puzzle: 800 }, reviewsTotal: 20_000 })
     await upsertSemantics(db, [
       { appid: 1942280, semantics: sem(20), computedAt: T0 },
       { appid: 730, semantics: sem(25), computedAt: T0 },
       { appid: 10, semantics: sem(15, { confidence: 0.3, basis: 'tags' }), computedAt: T0 },
       { appid: 20, semantics: sem(90), computedAt: T0 },
+      { appid: 30, semantics: sem(20), computedAt: T0 },
     ])
-    expect(await shown('short')).toEqual([1942280])
+    expect(await shown('short')).toEqual([30, 1942280])
     // выход — пресет «30 минут до сна», то же короткое настроение из своей библиотеки
     const hrefs = islandsOf(flight(await GenrePage(facetParams('short'))), 'Link').map((l) => String(l.href))
     expect(hrefs.some((h) => h.startsWith('/play?time=short'))).toBe(true)
