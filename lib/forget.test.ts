@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { FORGET_TABLES, type ForgetReport } from './db'
-import { FORGET_LABELS, forgetCardPaths, forgetSummary } from './forget'
+import { FORGET_LABELS, FORGET_LABELS_EN, forgetCardPaths, forgetSummary } from './forget'
 
 /**
  * Что человек видит перед «Удалить всё обо мне» и что сбрасывается после.
@@ -109,6 +109,76 @@ describe('отметка удаления — одними словами вез
     expect(text).toMatch(/пускают|впускать/)
     // на сколько: сама, через год и месяц
     expect(text).toMatch(/через год и месяц/i)
+  })
+})
+
+/**
+ * Тот же вопрос «Удалить всё?» по-английски: те же строки, в том же порядке
+ * и с теми же числами — меняются только слова.
+ */
+describe('forgetSummary по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+  /** Строка про отметку удаления по-английски */
+  const MARK_LINE_EN =
+    'Only a marker will remain: your SteamID and the time of deletion. It keeps old sign-ins on other devices from getting back in, and it erases itself after a year and a month.'
+
+  test('у английских подписей те же ключи и то же «не показывать», что у русских', () => {
+    expect(Object.keys(FORGET_LABELS_EN).sort()).toEqual(Object.keys(FORGET_LABELS).sort())
+    for (const [table, label] of Object.entries(FORGET_LABELS)) {
+      expect(FORGET_LABELS_EN[table] === null, table).toBe(label === null)
+    }
+  })
+
+  test('что хранится — те же строки и числа; число с разрядами', () => {
+    const { items } = forgetSummary(
+      report(0, { users: 1, library_snapshots: 3, feedback: 1240, wishlists: 1, sessions: 2, room_votes: 12, room_members: 4 }),
+      'en',
+    )
+    expect(items).toEqual([
+      'Steam profile: name, avatar and portrait',
+      'Library snapshots — 3',
+      'Wishlist',
+      "Ratings, hidden games, swipes and tonight's plans — 1,240",
+      'Room memberships and votes',
+      'Sign-in records — 2',
+    ])
+    // по-русски число — как было, без разрядов
+    expect(forgetSummary(report(0, { feedback: 1240 })).items).toEqual([
+      'Оценки, скрытые игры, свайпы и планы на вечер — 1240',
+    ])
+  })
+
+  test('последствия — те же случаи и тот же порядок, что по-русски', () => {
+    expect(forgetSummary(report(0), 'en').effects).toEqual(["You'll be signed out on all devices.", MARK_LINE_EN])
+    const all = forgetSummary(report(1), 'en').effects
+    expect(all).toEqual([
+      'Links to your portrait and year in review will stop working.',
+      'Pick links you sent will stop working.',
+      "We can't take back previews of these links that messaging apps have already saved.",
+      'Rooms you host will close for everyone in them.',
+      'Comparisons will disappear for the people you compared with, too.',
+      'Your RSS link will stop working.',
+      "You'll be signed out on all devices.",
+      MARK_LINE_EN,
+    ])
+    expect(all).toHaveLength(forgetSummary(report(1)).effects.length)
+  })
+
+  test('ни буквы кириллицы ни в одной строке', () => {
+    const { items, effects } = forgetSummary(report(5), 'en')
+    expect(items.length).toBeGreaterThan(0)
+    for (const line of [...items, ...effects]) expect(line, line).not.toMatch(CYRILLIC)
+  })
+
+  /*
+   * Те же три факта об отметке, что у русской строки выше. Главная
+   * (HeroNotice) и /privacy, раздел 06, по-английски встают в этот же
+   * список, когда их переведут, — с теми же тремя проверками.
+   */
+  test.each([['confirmation', MARK_LINE_EN]])('%s: what stays, why and for how long', (_, text) => {
+    expect(text).toContain('SteamID and the time of deletion')
+    expect(text).toMatch(/getting back in|let .* back in/)
+    expect(text).toMatch(/after a year and a month/i)
   })
 })
 
