@@ -148,14 +148,23 @@ function Section({
 export const dynamicParams = false
 
 export default async function PrivacyPage({ params }: PageProps<'/[lang]/privacy'>) {
-  const copy = COPY[toLocale((await params).lang)]
+  const locale = toLocale((await params).lang)
+  const copy = COPY[locale]
   return (
     <div className="relative flex-1 overflow-hidden">
       <Ambient />
       <div className="relative mx-auto flex w-full max-w-2xl flex-col gap-10 px-5 pt-28 pb-16">
         <header className="flex flex-col gap-3 anim-reveal">
           <Eyebrow tone="faint">{copy.eyebrow}</Eyebrow>
-          <h1 className="font-display text-display-md">{copy.h1}</h1>
+          {/*
+            «What we know about you» (слова — из глоссария) на 360 px на строку
+            не влезает, и «you» повисает на второй один. balance ломает его по
+            смыслу: «What we know / about you». Русский заголовок стоит в одну
+            строку, и его класс — прежний, байт в байт.
+          */}
+          <h1 className={locale === 'en' ? 'font-display text-display-md text-balance' : 'font-display text-display-md'}>
+            {copy.h1}
+          </h1>
           <p className="leading-relaxed">{copy.lead}</p>
           <MetaLine tone="faint">
             {copy.updatedLead}
