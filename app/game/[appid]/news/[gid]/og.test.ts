@@ -7,6 +7,8 @@ vi.mock('next/headers', () => import('@/lib/testing/headers'))
 /** satori и resvg не нужны — карточка только запоминает дерево */
 vi.mock('next/og', () => ({
   ImageResponse: class {
+    /** Тот же заголовок, что ставит настоящий next/og: его снимает isrImage */
+    headers = new Headers({ 'content-type': 'image/png', 'cache-control': 'public, max-age=0, must-revalidate' })
     constructor(
       public element: unknown,
       public init: unknown,

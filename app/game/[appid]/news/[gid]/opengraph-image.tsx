@@ -1,9 +1,9 @@
-import { ImageResponse } from 'next/og'
 import { clip } from '@/lib/clip'
 import { dateLabel } from '@/lib/freshness'
 import { newsHeading } from '@/lib/newspage'
 import { ogFonts, ogGlow, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { ArtBackdrop, ogArt } from '@/lib/ogcard'
+import { isrImage } from '@/lib/ogresponse'
 import { CANVAS_WIDE } from '@/lib/ogwall'
 import { loadPatch } from './load'
 
@@ -53,7 +53,7 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
     ? `${item.scale === 'hotfix' ? 'Хотфикс' : 'Патч'} · ${dateLabel(item.publishedAt, { year: true })}`
     : 'Пересказы патчей по-русски'
 
-  return new ImageResponse(
+  return isrImage(
     (
       <div
         style={{

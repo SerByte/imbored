@@ -1,5 +1,5 @@
-import { ImageResponse } from 'next/og'
 import { OG_BG, OG_INK } from '@/lib/og'
+import { isrImage } from '@/lib/ogresponse'
 import { CardImage, fonts, loadCardData } from './share-card'
 
 export const alt = 'Портрет игрока — imbored'
@@ -39,7 +39,7 @@ export default async function Image({ params }: { params: Promise<{ steamid: str
   const data = await loadCardData(steamid)
 
   if (!data) {
-    return new ImageResponse(
+    return isrImage(
       (
         <div
           style={{
@@ -61,5 +61,5 @@ export default async function Image({ params }: { params: Promise<{ steamid: str
     )
   }
 
-  return new ImageResponse(<CardImage data={data} wide />, { ...size, fonts: await fonts })
+  return isrImage(<CardImage data={data} wide />, { ...size, fonts: await fonts })
 }

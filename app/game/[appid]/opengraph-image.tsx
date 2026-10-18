@@ -1,8 +1,8 @@
-import { ImageResponse } from 'next/og'
 import { getGamePageRow } from '@/lib/db'
 import { reviewFacts, type GamePageData } from '@/lib/gamepage'
 import { ogFonts, ogGlow, ogNum, ogScrim, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { ogArt } from '@/lib/ogcard'
+import { isrImage } from '@/lib/ogresponse'
 import { getDb } from '@/lib/server'
 import { plural } from '@/lib/plural'
 import { tagRu } from '@/lib/tagsru'
@@ -52,10 +52,14 @@ export const contentType = 'image/png'
  * кадр; мелкий исходник там пробовал — header.jpg вместо header_2x давал 853
  * КБ, экономию в 16% ценой заметной мягкости на ширине 1200. Не размен.
  *
- * Платится это один раз: тянут карточку краулеры превью, а отдаёт её кэш — на
- * деплое второй заход отвечал X-Vercel-Cache HIT. Telegram, Twitter, Discord и
- * VK такой вес берут. Если жалобы придут (WhatsApp к размеру превью
- * придирчив) — уменьшать надо холст, а не качество исходника.
+ * Платится это один раз в неделю: тянут карточку краулеры превью, а отдаёт её
+ * кэш. Но только потому, что ответ собирает isrImage, а не голый
+ * ImageResponse. Здесь было написано «второй заход отвечал HIT» — так отвечала
+ * пререндеренная корневая карточка, а эта, по замеру на проде, на каждом
+ * заходе после первого отвечала STALE и рисовалась заново: `max-age=0` от
+ * next/og обнулял срок записи ISR (подробно — lib/ogresponse.ts). Telegram,
+ * Twitter, Discord и VK такой вес берут. Если жалобы придут (WhatsApp к
+ * размеру превью придирчив) — уменьшать надо холст, а не качество исходника.
  *
  * Неделя жизни, как у самой страницы (GAME_PAGE_REVALIDATE_SEC в
  * lib/gamecache): картинка читает те же данные из базы, и расходиться им
@@ -94,7 +98,7 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
   const row = Number.isInteger(appid) && appid !== 0 ? await getGamePageRow(await getDb(), appid) : null
 
   if (!row) {
-    return new ImageResponse(
+    return isrImage(
       (
         <div
           style={{
@@ -141,7 +145,7 @@ export default async function Image({ params }: { params: Promise<{ appid: strin
     tags.length ? tags.join(' · ') : null,
   ].filter(Boolean) as string[]
 
-  return new ImageResponse(
+  return isrImage(
     (
       <div
         style={{

@@ -152,6 +152,15 @@ export type SharedPickView = { name: string; reason: string; kind: PickKind }
  * Тексты страницы и карточки в чате — одни на обе, как inviteCopy у пати:
  * заголовок вкладки и превью обязаны говорить одно. null — выбора нет
  * (истёк, удалён, опечатка): карточка остаётся приглашением.
+ *
+ * Описание (оно же og:description и twitter:description) — причина В
+ * КАВЫЧКАХ, как цитата на самой странице и на карточке в чате. Причина
+ * обращена к тому, кто делился («У тебя в «Terraria» уже 130 ч… вернись и
+ * проверь»), и голой строкой под заголовком «imbored выбрал мне на вечер»
+ * превью читалось как сказанное получателю: будто это он наиграл сто
+ * тридцать часов в игру, которой у него, может, и нет. Кавычки делают её
+ * тем, что она есть, — словами imbored отправителю. Место под них берётся
+ * из того же потолка сниппета, а не сверх него.
  */
 export function pickCopy(p: SharedPickView | null): {
   title: string
@@ -170,7 +179,8 @@ export function pickCopy(p: SharedPickView | null): {
   }
   return {
     title: p.kind === 'daily' ? `${quoted(p.name)} — моя игра дня` : `${quoted(p.name)} — imbored выбрал мне на вечер`,
-    description: clip(p.reason, DESCRIPTION_MAX) ?? p.reason.slice(0, DESCRIPTION_MAX),
+    // −2 — на сами «»: с ними описание не длиннее DESCRIPTION_MAX
+    description: quoted(clip(p.reason, DESCRIPTION_MAX - 2) ?? p.reason.slice(0, DESCRIPTION_MAX - 2)),
     eyebrow: p.kind === 'daily' ? 'МОЯ ИГРА ДНЯ' : 'IMBORED ВЫБРАЛ МНЕ НА ВЕЧЕР',
     foot,
   }

@@ -51,6 +51,8 @@ import {
   sitemapNews,
   freshlyDigestedPatches,
   gamesByDeveloper,
+  gamesMissingPlayed,
+  gamesMissingRuLang,
   getStaleAppids,
   stalePriceAppids,
   sweepStale,
@@ -62,6 +64,7 @@ import {
 } from './db'
 import { PRICE_TRUST_SEC } from './discount'
 import { fetchDiscoveryPool } from './pool'
+import { PLAYED_SINCE } from './semantics'
 import { loadTriviaCatalog } from './trivia'
 import { MINE_FRESH_SEC } from './whatsnewfeed'
 
@@ -343,6 +346,25 @@ const CASES: Case[] = [
     run: (db) => reviewPulseQueue(db, { top: 400, panned: 50, before: NOW, limit: 6 }),
     indexes: ['idx_games_panned', 'idx_games_pool'],
     sortFree: false,
+  },
+  // Догон русского кроном карточек — на каждом звене. Индекс держит только
+  // неспрошенных: пачку читает LIMIT, а пустой догон — одних промолчавших,
+  // которых пропускает skip (он фильтр поверх индекса, а не повод для скана)
+  {
+    name: 'догон русского языка',
+    run: (db) => gamesMissingRuLang(db, 100, [730, 570]),
+    indexes: ['idx_games_ru_unknown'],
+    sortFree: true,
+  },
+  // Догон «Наиграли»: пул по порядку частичного индекса и одна строка
+  // семантики по ключу к каждой игре — запись, которой нет, индексом по
+  // game_semantics не найти. Без сортировки: чтение обрывает LIMIT, а
+  // пустой проход догон делает раз в сутки (CATCHUP_PLAYED_IDLE_KEY)
+  {
+    name: 'догон «Наиграли»',
+    run: (db) => gamesMissingPlayed(db, PLAYED_SINCE, 5),
+    indexes: ['idx_games_pool'],
+    sortFree: true,
   },
   // «Ещё у этой студии» на карточке: диапазон developer=? частичного индекса,
   // порядок — отзывы и appid (rowid, которым индекс кончается сам), и чтение

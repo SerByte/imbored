@@ -1,5 +1,5 @@
-import { ImageResponse } from 'next/og'
 import { OG_BG, OG_INK } from '@/lib/og'
+import { isrImage } from '@/lib/ogresponse'
 import { YearCardImage, fonts, loadYearCardData } from './share-card'
 
 export const alt = 'Итоги года — imbored'
@@ -22,7 +22,7 @@ export default async function Image({ params }: { params: Promise<{ steamid: str
   const data = await loadYearCardData(steamid)
 
   if (!data) {
-    return new ImageResponse(
+    return isrImage(
       (
         <div
           style={{
@@ -44,5 +44,5 @@ export default async function Image({ params }: { params: Promise<{ steamid: str
     )
   }
 
-  return new ImageResponse(<YearCardImage data={data} wide />, { ...size, fonts: await fonts })
+  return isrImage(<YearCardImage data={data} wide />, { ...size, fonts: await fonts })
 }

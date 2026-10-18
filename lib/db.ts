@@ -458,9 +458,9 @@ const alivePool = (p: '' | 'g.') =>
  * {appid}» из /api/prepare их нет).
  *
  * Одна строка на весь проект. Ею построены частичные индексы каталога ниже
- * (idx_games_pool, idx_games_ccu, idx_games_reviews_at, idx_games_developer),
- * а SQLite берёт частичный индекс, только если WHERE запроса повторяет его
- * предикат почти дословно. Копий было девять — в lib/db, lib/pool, lib/trivia
+ * (idx_games_pool, idx_games_ccu, idx_games_reviews_at, idx_games_developer,
+ * idx_games_ru_unknown), а SQLite берёт частичный индекс, только если WHERE
+ * запроса повторяет его предикат почти дословно. Копий было девять — в lib/db, lib/pool, lib/trivia
  * и скриптах, — и отъезд любой из них не ломал ни одного ответа, а молча
  * превращал запрос в полный скан games. Планы сторожит lib/queryplan.test.ts, копии —
  * lib/noscan.test.ts.
@@ -601,6 +601,12 @@ CREATE INDEX IF NOT EXISTS idx_games_reviews_at ON games (reviews_at, reviews_to
 -- Здесь, а не в SCHEMA: dead_reason у старых баз приезжает ALTER'ом.
 CREATE INDEX IF NOT EXISTS idx_games_panned ON games (reviews_total DESC)
   WHERE ${PANNED_DEAD};
+-- Догон русского языка кроном карточек (gamesMissingRuLang): живые игры, о
+-- языке которых Steam ещё не спрашивали, верх каталога первым. В индексе
+-- только они, и он тает по мере догона: пачка стоит своих строк, а когда
+-- догонять нечего — ни одной, а не прохода по пулу на каждом звене крона.
+CREATE INDEX IF NOT EXISTS idx_games_ru_unknown ON games (reviews_total DESC)
+  WHERE ${ALIVE_POOL} AND ru_lang IS NULL;
 
 -- «Ещё у этой студии» на карточке игры (gamesByDeveloper): игры одного
 -- разработчика по отзывам, второй ключ — appid, он же rowid, которым индекс
@@ -4347,10 +4353,10 @@ export async function setGamesMedia(
  * же, как описание без русского перевода у catalog:descriptions: трейлер у
  * игры может появиться позже, а лишний вопрос стоит одного места в пачке.
  *
- * Язык — тем же запросом GetItems (STORE_MEDIA_DATA_REQUEST в lib/catalog), и
- * без него в выборке крон карточек довёз бы русский до уже обогащённых игр
- * только через полгода (PAGE_MAX_AGE_SEC): у них page_at стоит, и в очередь
- * они не вернутся. Языки нужны прежде всего им — это верх каталога.
+ * Язык — тем же запросом GetItems (STORE_MEDIA_DATA_REQUEST в lib/catalog):
+ * раз доливка всё равно спрашивает, пусть заодно и язык. Уже обогащённым
+ * играм его довозит и крон — своей выборкой gamesMissingRuLang ниже, без
+ * трейлеров и кадров (почему не этой — там же).
  */
 export async function gamesMissingMedia(db: Db, limit: number): Promise<number[]> {
   const res = await db.execute({
@@ -4364,6 +4370,135 @@ export async function gamesMissingMedia(db: Db, limit: number): Promise<number[]
     args: [limit],
   })
   return res.rows.map((r) => Number(r.appid))
+}
+
+/**
+ * Живые игры, о русском языке которых Steam ещё не спрашивали (ru_lang NULL),
+ * — для догона кроном карточек (runCardCatchUp в lib/pagejob). Верх каталога
+ * первым: его страницы видят чаще всего, и именно у него язык не появлялся
+ * сам — крон возвращается к обогащённой карточке раз в полгода.
+ *
+ * Не gamesMissingMedia: та берёт и игры без трейлера, а у верха каталога
+ * таких хватает, и в Steam трейлер у них не появится — пачка в двести
+ * забивалась бы ими на каждом звене, до языка очередь не доходила бы. Здесь
+ * условие одно, и игра уходит из выборки с первым же ответом Steam, ноль
+ * («русского нет») тоже ответ.
+ *
+ * В выборке остаётся только игра, о языках которой Steam промолчал (снята с
+ * витрины, пустой список языков): NULL у неё так и стоит. Такие копятся в
+ * голове очереди — ответившие из неё уходят, а промолчавшие верх каталога
+ * остаются, — и без skip пачка спрашивала бы их на каждом звене, а наберись
+ * их сотня — только их, и до остальных очередь не дошла бы никогда. Поэтому
+ * догон передаёт тех, о ком Steam промолчал за последнюю неделю
+ * (CATCHUP_RU_SILENT_KEY в lib/pagejob), и пачка берёт следующих. Список
+ * одним параметром, как APPIDS_IN выше.
+ *
+ * Частичный индекс idx_games_ru_unknown: читается пачка и пропущенные, а
+ * когда догонять нечего — одни пропущенные, единицы. План сторожит
+ * lib/queryplan.test.ts.
+ */
+export async function gamesMissingRuLang(
+  db: Db,
+  limit: number,
+  skip: readonly number[] = [],
+): Promise<number[]> {
+  const res = await db.execute({
+    sql: `SELECT appid FROM games
+          WHERE ${ALIVE_POOL} AND ru_lang IS NULL AND appid > 0
+            AND appid NOT IN (SELECT value FROM json_each(?))
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [JSON.stringify(skip), limit],
+  })
+  return res.rows.map((r) => Number(r.appid))
+}
+
+/**
+ * Обогащённые живые игры, чьей карточке не хватает «Наиграли»
+ * (GameSemantics.played), а отзывы ради неё ещё не разбирались, — для догона
+ * кроном карточек (runCardCatchUp в lib/pagejob). Верх каталога первым; теги
+ * — для deriveSemantics, чтобы не читать строку второй раз.
+ *
+ * Ждут догона три вида записей — те же, что в очереди reviewDueSql у
+ * scripts/semanticsbuild, кроме ветки версии:
+ *   • записи нет вовсе;
+ *   • запись по одним тегам, а за отзывами не ходили (reviews_at NULL);
+ *   • запись по отзывам, разобранным до `since`, — без played: since —
+ *     PLAYED_SINCE из lib/semantics, с него разбор и считает хваливших.
+ * Первые две — не редкость, а верх каталога: так стоят карточки, которые
+ * крон обогатил до того, как в него вошла семантика (с 14 августа по 23
+ * сентября 2026), если по ним не прошёл semantics:build, — без записи или с
+ * приором без отметки. Туда же — карточка, чей поход за отзывами срез не
+ * довёл (отказ сети: приор пишется без reviews_at). Срез к обогащённой вернётся
+ * только через полгода (PAGE_MAX_AGE_SEC), и без этих двух веток «Наиграли»
+ * не доехала бы до самых посещаемых страниц раньше февраля — а DEPLOY.md
+ * обещает её кроном, без ручного шага.
+ *
+ * Для каждой игры выборка разовая: после похода reviews_at стоит позже
+ * отсечки (upsertSemantics с reviewsAt, затем markReviewsParsed) — и тогда,
+ * когда хваливших с названным временем меньше MIN_PLAYED_REVIEWS, и при
+ * пустом ответе. Тонкая игра — запись по тегам С reviews_at: Steam ответил,
+ * а отзывов не хватило сдвинуть оси, — сюда не берётся: played пишется
+ * только вместе с такими отзывами, и перезапрос дал бы тот же ответ. Запись
+ * по тегам без reviews_at — не тонкая, а неспрошенная, и её берём.
+ *
+ * Только обогащённые (page_at): необогащённую ведёт сам срез, с тем же
+ * походом за отзывами, — догон повторял бы его работу на хвосте каталога.
+ * Ветки версии (s.v < SEMANTICS_V) нет: смена формата делает ждущим весь
+ * каталог разом, и перечитать его — дело semantics:build --with-reviews, а
+ * не пяти игр за звено.
+ *
+ * Цена. Отсутствие записи индексом по game_semantics не найти, поэтому
+ * внешний цикл — пул по idx_games_pool, уже в порядке отзывов, и семантика
+ * по ключу к каждой игре. Пока ждущие есть, чтение обрывает LIMIT на пятой
+ * найденной, а ждущие — верх каталога, то есть начало прохода. Когда их нет,
+ * это весь пул: шесть тысяч строк games и столько же game_semantics. Поэтому
+ * пустой ответ догон запоминает и сутки сюда не ходит
+ * (CATCHUP_PLAYED_IDLE_KEY в lib/pagejob). План сторожит lib/queryplan.test.ts.
+ *
+ * hasRecord — была ли запись до догона: приор по тегам, легший туда, где её
+ * не было, меняет отпечаток карточки (cardRowPrint) так же, как запись по
+ * отзывам, и страница идёт в сброс.
+ */
+export async function gamesMissingPlayed(
+  db: Db,
+  since: number,
+  limit: number,
+): Promise<Array<{ appid: number; tags: Record<string, number>; hasRecord: boolean }>> {
+  const res = await db.execute({
+    sql: `SELECT g.appid, g.tags_json, s.appid IS NOT NULL AS has_record FROM games g
+          ${SEMANTICS_JOIN}
+          WHERE ${ALIVE_POOL_G} AND g.appid > 0 AND g.page_at IS NOT NULL
+            AND (s.appid IS NULL OR s.reviews_at IS NULL
+                 OR (s.basis = 'tags+reviews' AND s.reviews_at < ?
+                     AND json_extract(s.json, '$.played') IS NULL))
+          ORDER BY g.reviews_total DESC, g.appid
+          LIMIT ?`,
+    args: [since, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; tags_json: unknown; has_record: unknown }>).map((r) => ({
+    appid: Number(r.appid),
+    tags: parseTagMap(r.tags_json),
+    hasRecord: Number(r.has_record) === 1,
+  }))
+}
+
+/**
+ * Отметка «отзывы разобраны в at» — и тогда, когда запись семантики не легла.
+ *
+ * Так бывает у догона «Наиграли»: запись по отзывам вернулась в очередь, а
+ * Steam в этот раз отдал меньше отзывов, чем нужно сдвинуть оси, — или пустой
+ * ответ. Приор по тегам upsertSemantics поверх неё не пишет, и правильно, но
+ * вместе с записью не двигалась бы и reviews_at: игра стояла бы в голове
+ * очереди каждый запуск. reviews_at и значит «когда отзывы последний раз
+ * разбирались» (схема game_semantics), а не «из каких отзывов запись».
+ * Назад отметка не едет.
+ */
+export async function markReviewsParsed(db: Db, appid: number, at: number): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE game_semantics SET reviews_at = ? WHERE appid = ? AND (reviews_at IS NULL OR reviews_at < ?)',
+    args: [at, appid, at],
+  })
 }
 
 /** Строка для upsertSemantics */

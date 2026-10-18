@@ -1,6 +1,6 @@
-import { ImageResponse } from 'next/og'
 import { ogFonts, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { PosterWall, postersOf, WallShade, WALL_POSTERS } from '@/lib/ogcard'
+import { isrImage } from '@/lib/ogresponse'
 import { CANVAS_WIDE, WALL_WIDE } from '@/lib/ogwall'
 import { plural } from '@/lib/plural'
 import { loadGenre } from './load'
@@ -41,7 +41,7 @@ export default async function Image({ params }: { params: Promise<{ tag: string 
   const posters = await postersOf(games.slice(0, WALL_POSTERS), (id) => byId.get(id))
   const n = games.length
 
-  return new ImageResponse(
+  return isrImage(
     (
       <div
         style={{
