@@ -259,11 +259,16 @@ const LEAN_RU: Record<Lean, string> = {
  * Те же факты для английского промпта. Каждое — целая фраза про игрока
  * («they have less than an hour»): строка состояния по-английски перечисляет
  * их через точку с запятой, а не обрывками через запятую, как русская.
+ *
+ * «Весь вечер свободен» — не «the evening is free»: слово «free» модель
+ * охотно повторяет в причине («with the whole evening free…»), а shareText
+ * (lib/sharedpick.ts) читает «free» как разговор о деньгах и вырезает такое
+ * предложение из ссылки «Отправить другу» — бывало, что и всю причину.
  */
 const MOOD_EN: Record<string, string> = {
   short: 'they have less than an hour',
   medium: 'they have a couple of hours',
-  long: 'the whole evening is free',
+  long: 'they have the whole evening',
   chill: 'they want to relax, nothing stressful',
   engaged: 'they want to think hard and break a sweat',
   solo: "they're playing alone",
@@ -399,6 +404,11 @@ function priceNote(
   // Валюта — региона этой цены: модель повторит «1 999 ₽» под рублёвым
   // ценником, а не «$19.99», которых человек в своём магазине не увидит
   const текст = formatPrice(price, meta.priceCc ?? LEGACY_PRICE_CC)
+  // TODO(W1.5, вместе с formatPrice(…, { locale })): английский факт должен
+  // называть регион цены — « price on Russian Steam 1,999 ₽,» по глоссарию,
+  // прилагательным из STEAM_REGIONS[cc].en (его добавляет lib/steamregion.ts
+  // ветки W1-fmt). Читатель /en чаще всего живёт не в регионе цен, и модель
+  // без региона пересказывает сумму как цену «в Steam» вообще.
   if (locale === 'en') return deal ? ` price ${текст}, ${deal.percent}% off,` : ` price ${текст},`
   return deal ? ` цена ${текст} со скидкой −${deal.percent}%,` : ` цена ${текст},`
 }
@@ -639,9 +649,13 @@ export async function claudePicks(args: {
         ),
       ]
     : [...library].sort((a, b) => b.playtimeForever - a.playtimeForever)
+  // Названия, которые модель видит в промпте, — чтобы вынуть их из проверки
+  // языка ответа (см. withoutNames ниже): имя игры не переводится
+  const promptNames: string[] = []
   // названия и теги — недоверенные данные (издатель/голосующие), режем длину
   const topPlayed = shown.slice(0, 15).map((g) => {
     const playing = g.playtime2Weeks > 0 ? copy.playing : ''
+    promptNames.push(fenceData(g.name, 100))
     return hidden
       ? `${fenceData(g.name, 100)}${playing}`
       : `${fenceData(g.name, 100)} — ${copy.hours(Math.round(g.playtimeForever / 60))}${playing}`
@@ -650,6 +664,7 @@ export async function claudePicks(args: {
   let anchored = false
   let patched = false
   const candidateLines = candidates.slice(0, 25).map((c) => {
+    promptNames.push(fenceData(c.name, 100))
     const meta = metaOf(c.appid)
     const tags = Object.entries(meta?.tags ?? {})
       .sort((a, b) => b[1] - a[1])
@@ -658,7 +673,10 @@ export async function claudePicks(args: {
       .join(', ')
     const src = copy.source[c.source]
     const anchor = anchorOf?.(c.appid) ?? null
-    if (anchor) anchored = true
+    if (anchor) {
+      anchored = true
+      promptNames.push(fenceData(anchor.name, 100))
+    }
     const near = anchor ? copy.near(fenceData(anchor.name, 100), anchor.hours) : ''
     // Пересказ патча написан моделью по тексту издателя — те же недоверенные
     // данные, что заголовок патча, поэтому только через fenceData и в кавычках
@@ -701,7 +719,16 @@ export async function claudePicks(args: {
       maxTokens: 2500,
       clientOpts: INTERACTIVE_CLIENT,
     })
-    const picks = validatePicks(raw, candidates)
+    const valid = validatePicks(raw, candidates)
+    // Русская причина на /en — то, чего там быть не должно (docs/i18n.md,
+    // «Тексты модели»): английский промпт не гарантирует английского ответа.
+    // Такая карточка выпадает, как пустая причина в validatePicks, и её место
+    // добирает английская эвристика (topUpPicks). Названия игр из проверки
+    // вынимаются: «Смута» в английской причине — имя, а не русский текст
+    const picks =
+      locale === 'en'
+        ? valid.filter((p) => !CYRILLIC.test(withoutNames(p.reason, [...promptNames, p.name])))
+        : valid
     return picks.length ? picks : null
   } catch (e) {
     // Наверх не бросаем: вызывающий (app/api/recommend) не ловит, и отказ
@@ -709,6 +736,25 @@ export async function claudePicks(args: {
     console.warn('claudePicks:', e instanceof Error ? e.message.slice(0, 200) : e)
     return null
   }
+}
+
+/**
+ * Текст без названий игр — для проверки языка ответа модели.
+ *
+ * Вынимаются только известные названия (кандидаты, игры библиотеки, якоря —
+ * всё, что модель видела в промпте), а не любой текст в кавычках: русская
+ * фраза, взятая моделью в кавычки, — всё равно русский текст на /en.
+ * Название, которое модель сократила («Смута» из «Смута: Пролог»), остаётся
+ * кириллицей, и причина выпадает — её место займёт английский шаблон, а не
+ * русские буквы.
+ */
+function withoutNames(text: string, names: readonly string[]): string {
+  let out = text
+  for (const name of names) {
+    const n = name.trim()
+    if (n) out = out.replace(literal(n), ' ')
+  }
+  return out
 }
 
 const PROS_CONS_SCHEMA = {
@@ -743,13 +789,25 @@ const PROS_CONS_SCHEMA = {
 export type ProsConsPair = { pros: string[]; cons: string[] }
 
 /**
- * Ответ claudeProsCons: русские плюсы и минусы и те же по-английски.
+ * Ровно то, что отдаёт claudeProsCons, — договор с W1-data (lib/pagejob.ts):
+ * русские плюсы и минусы и те же по-английски.
  *
  * en — null, когда английский не прошёл проверку (cleanProsCons) или потерял
  * целый список, который есть у русского: тогда блок на /en не показывается, а
- * русский от этого не теряется. Сама дверь кладёт поле всегда; необязательно
- * оно только в типе — заглушки prosConsFn в lib/pagejob.test.ts возвращают
- * прежнюю форму, а тип двери повторяют через typeof.
+ * русский от этого не теряется. Поле есть всегда — это держит тест двери.
+ */
+export type ProsConsBoth = ProsConsPair & { en: ProsConsPair | null }
+
+/**
+ * Объявленный тип ответа — тот же договор, но en в нём пока необязателен.
+ *
+ * Не из осторожности, а ради сборки этой ветки отдельно: на её базе
+ * lib/pagejob.ts (W1-data) типизирует заглушку двери через typeof
+ * claudeProsCons, а заглушки lib/pagejob.test.ts возвращают прежнюю форму
+ * { pros, cons }. Обязательное en сделало бы их красным tsc в чужих файлах.
+ * Ветка W1-data уже заменила typeof своим ProsConsFn, который принимает обе
+ * формы, — после её слияния (W1.5) тип двери сужается до ProsConsBoth одной
+ * правкой здесь.
  */
 export type ProsCons = ProsConsPair & { en?: ProsConsPair | null }
 
@@ -805,7 +863,8 @@ pros_en и cons_en — те же пункты по-английски, для а
     const parsed = raw as { pros?: unknown; cons?: unknown; pros_en?: unknown; cons_en?: unknown }
     const ru = { pros: cleanProsCons(parsed.pros), cons: cleanProsCons(parsed.cons) }
     const en = { pros: cleanProsCons(parsed.pros_en, 'en'), cons: cleanProsCons(parsed.cons_en, 'en') }
-    return { ...ru, en: prosConsEn(ru, en) }
+    // satisfies — чтобы tsc держал форму договора, пока объявленный тип шире
+    return { ...ru, en: prosConsEn(ru, en) } satisfies ProsConsBoth
   } catch (e) {
     // Отказ сервиса обязан долететь до runPageSlice: там он гасит модель на весь
     // срез. Раньше его глотал этот самый catch — и предохранитель в pagejob,
@@ -1171,28 +1230,49 @@ function digestTitle(v: unknown, gameName: string): string | null {
 }
 
 /**
- * Пересказ claudeNewsDigest.
+ * Ровно то, что отдаёт claudeNewsDigest, — договор с W1-data (lib/newsjob.ts).
  *
  * Режим 'both' (по умолчанию): tldr — русский пересказ, как был; tldrEn — тот
  * же по-английски или null, если английский не прошёл проверку (русский от
  * этого не теряется, а попытка английского засчитывается отдельно).
+ *
  * Режим 'en' — дозаполнение записи, у которой русский пересказ уже лежит в
  * базе: модель пишет только английский, tldrEn — всегда строка (иначе null
- * целиком), а tldr — пустая строка, и в базу из этого режима он не пишется.
+ * целиком). Ключа tldr в ответе нет вовсе — не пустая строка: ответ этого
+ * режима, отданный по ошибке русской записи (setNewsDigest), затёр бы ею
+ * лежащий в базе русский пересказ.
  *
  * titleEn — английский заголовок, только когда заголовок оригинала не
  * английский (в нём есть кириллица); у английского оригинала — null: его
  * заголовок и так годится для /en.
- *
- * tldrEn и titleEn необязательны только в типе: дверь кладёт их всегда (null —
- * нет), а заглушки digestFn в lib/newsjob.test.ts возвращают прежнюю форму и
- * повторяют тип двери через typeof.
  */
-export type NewsDigest = {
-  tldr: string
-  tldrEn?: string | null
-  titleEn?: string | null
-  scale: NewsScale
+export type NewsDigestBoth = { tldr: string; tldrEn: string | null; titleEn: string | null; scale: NewsScale }
+export type NewsDigestEnglish = { tldrEn: string; titleEn: string | null; scale: NewsScale }
+
+/*
+ * Объявленные типы ответа — те же формы, но английские поля в них пока
+ * необязательны. Причина та же, что у ProsCons: на базе этой ветки
+ * lib/newsjob.ts (W1-data) типизирует заглушку двери через typeof
+ * claudeNewsDigest, и заглушки lib/newsjob.test.ts в прежней форме { tldr,
+ * scale } обязаны оставаться ей присваиваемыми. Ветка W1-data зовёт дверь уже
+ * через свой DigestFn; после её слияния (W1.5) объявленные типы сужаются до
+ * NewsDigestBoth и NewsDigestEnglish одной правкой здесь.
+ *
+ * Ключа tldr у английского режима нет и в объявленном типе — это главное, и
+ * это работает уже сейчас: ответ режима 'en' не передать туда, где ждут
+ * русский пересказ (tsc).
+ */
+export type NewsDigest = { tldr: string; tldrEn?: string | null; titleEn?: string | null; scale: NewsScale }
+export type NewsDigestEn = { tldrEn?: string; titleEn?: string | null; scale: NewsScale }
+
+/** Аргументы claudeNewsDigest — общие для обоих режимов */
+export type NewsDigestArgs = {
+  gameName: string
+  title: string
+  body: string
+  lang: 'ru' | 'en'
+  /** Остаток бюджета среза; без него — обычные 30с с повтором, см. cronClientOptions */
+  budgetMs?: number
 }
 
 /**
@@ -1207,17 +1287,18 @@ export type NewsDigest = {
  * Вызывается ТОЛЬКО из крона, никогда на рендере: /game/[appid] публичен и
  * обходится краулером по всему пространству appid, а общая лента на один заход
  * гостя выстрелила бы три десятка параллельных вызовов.
+ *
+ * Тип ответа зависит от режима — через параметр M, а не перегрузками: сторож
+ * дверей (lib/llmgate.test.ts) считает объявления `export function claude*`, и
+ * три подписи одной двери он прочёл бы как три двери.
  */
-export async function claudeNewsDigest(args: {
-  gameName: string
-  title: string
-  body: string
-  lang: 'ru' | 'en'
-  /** Остаток бюджета среза; без него — обычные 30с с повтором, см. cronClientOptions */
-  budgetMs?: number
-  /** 'both' — русский и английский (по умолчанию); 'en' — только английский, русский уже в базе */
-  mode?: 'both' | 'en'
-}): Promise<NewsDigest | null> {
+export async function claudeNewsDigest<M extends 'both' | 'en' = 'both'>(
+  args: NewsDigestArgs & {
+    /** 'both' — русский и английский (по умолчанию); 'en' — только английский, русский уже в базе */
+    mode?: M
+  },
+): Promise<(M extends 'en' ? NewsDigestEn : NewsDigest) | null> {
+  type Out = M extends 'en' ? NewsDigestEn : NewsDigest
   if (!llmAvailable()) return null
   const { gameName, title, body, lang, budgetMs } = args
   const mode = args.mode ?? 'both'
@@ -1275,11 +1356,13 @@ ${needsTitle ? 'title_en — заголовок записи по-английс
       const tldrEn = digestText(o?.tldr_en, gameName, 'en')
       const scale = o?.scale
       if (!tldrEn || (scale !== 'major' && scale !== 'hotfix')) return null
-      return { tldr: '', tldrEn, titleEn, scale }
+      // Через unknown: M здесь уже сужен проверкой режима, но tsc условный
+      // тип от M не раскрывает. Форму держит satisfies
+      return { tldrEn, titleEn, scale } satisfies NewsDigestEnglish as unknown as Out
     }
     const ru = validateDigest(raw, gameName)
     if (!ru) return null
-    return { ...ru, tldrEn: digestText(o?.tldr_en, gameName, 'en'), titleEn }
+    return { ...ru, tldrEn: digestText(o?.tldr_en, gameName, 'en'), titleEn } satisfies NewsDigestBoth as unknown as Out
   } catch (e) {
     rethrowIfSystemic(e)
     return null
@@ -1315,7 +1398,8 @@ const PORTRAIT_SCHEMA_EN = {
  *
  * locale — язык текста: на нём весь промпт, и подписи архетипов (archetypes)
  * вызывающий передаёт на том же языке — «37% strategist», а не «37% стратег»
- * посреди английского промпта.
+ * посреди английского промпта. На 'en' null и тогда, когда модель ответила
+ * по-русски.
  */
 export async function claudePortraitText(args: {
   name: string
@@ -1348,9 +1432,17 @@ export async function claudePortraitText(args: {
       clientOpts: INTERACTIVE_CLIENT,
     })
     const parsed = raw as { text?: unknown } | null
-    return typeof parsed?.text === 'string' && parsed.text.trim()
-      ? parsed.text.trim().slice(0, 600)
-      : null
+    const text = typeof parsed?.text === 'string' ? parsed.text.trim() : ''
+    if (!text) return null
+    // Русский портрет на /en — нет: вызывающий кладёт текст в кэш английского
+    // слота (portrait_json.en), и там он жил бы до следующего пересчёта. null
+    // — тот же шаблон, что и без модели. Имя игрока и самой наигранной игры —
+    // данные, а не язык ответа: «Вася» в английском тексте — имя
+    if (locale === 'en') {
+      const top = facts.topGame?.name ?? ''
+      if (CYRILLIC.test(withoutNames(text, [name, fenceData(name, 60), top, fenceData(top, 100)]))) return null
+    }
+    return text.slice(0, 600)
   } catch (e) {
     // Как и в claudePicks: страница портрета не ловит, а рядом лежит шаблон.
     console.warn('claudePortraitText:', e instanceof Error ? e.message.slice(0, 200) : e)
@@ -1946,6 +2038,13 @@ function priceSentence(
   // formatPrice (lib/steamregion.ts) получает отдельной правкой, и тогда
   // здесь у каждого вызова добавится { locale }. Кириллицы в сумме нет, так
   // что английская фраза и до того остаётся английской.
+  //
+  // TODO(W1.5, в той же правке): английский хвост называет регион цены —
+  // « It's 1,999 ₽ on Russian Steam.» по глоссарию («price on Russian Steam»),
+  // прилагательным STEAM_REGIONS[cc].en из lib/steamregion.ts ветки W1-fmt.
+  // Читатель /en чаще всего живёт не в регионе цен, и голое «on Steam» звучит
+  // как цена для него. Русскому хвосту регион не нужен: «В Steam — 1 999 ₽»
+  // читают в том самом регионе, а ценник рядом подписан priceWhere.
   const cc = meta.priceCc ?? LEGACY_PRICE_CC
   if (!deal) {
     return tr(locale, {
