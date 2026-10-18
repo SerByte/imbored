@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { buildGroupDeck, PINNED_REASON } from './group'
+import { buildGroupDeck, PINNED_REASON, pinnedReason } from './group'
 import { buildTagProfile, normalizedTags } from './recommend'
 import { cosine, tagWeightFrom } from './tagweight'
 import type { GameMeta, GameSemantics, LibraryGame, Mood } from './types'
@@ -400,6 +400,26 @@ describe('buildGroupDeck', () => {
       expect(small).toHaveLength(2)
       expect(small[0].appid).toBe(4)
       expect(big.slice(0, 2)).toEqual(small)
+    })
+
+    /*
+     * Подпись — на языке того, кто смотрит, а колода — одна на комнату:
+     * русский и английский участник голосуют за те же карты в том же порядке.
+     */
+    test('по-английски подписана словом кнопки «Pass», а колода та же', () => {
+      expect(pinnedReason('en')).toBe('The one you were invited to. Pass, and the usual deck is next')
+      expect(pinnedReason('en')).not.toMatch(/[А-Яа-яЁё]/)
+      expect(pinnedReason()).toBe(PINNED_REASON)
+      expect(PINNED_REASON).toBe('В неё и звали. Не хочется — дальше обычная колода')
+
+      const ru = buildGroupDeck(pinnedArgs)
+      const en = buildGroupDeck({ ...pinnedArgs, locale: 'en' })
+      expect(en[0]).toMatchObject({ appid: 4, reason: pinnedReason('en') })
+      // toEqual не видит поле со значением undefined: сверяются карты без подписи
+      const unsigned = (deck: typeof ru) => deck.map((c) => ({ ...c, reason: undefined }))
+      expect(unsigned(en)).toEqual(unsigned(ru))
+      expect(en.slice(1).every((c) => c.reason === undefined)).toBe(true)
+      expect(buildGroupDeck({ ...pinnedArgs, locale: 'ru' })).toEqual(ru)
     })
   })
 })
