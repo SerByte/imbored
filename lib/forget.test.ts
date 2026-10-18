@@ -1,8 +1,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { createElement, Fragment } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
+import { COPY } from '../app/[lang]/privacy/page.copy'
 import { FORGET_TABLES, type ForgetReport } from './db'
 import { FORGET_LABELS, FORGET_LABELS_EN, forgetCardPaths, forgetSummary } from './forget'
+import type { Locale } from './i18n'
 
 /**
  * Что человек видит перед «Удалить всё обо мне» и что сбрасывается после.
@@ -19,6 +23,15 @@ const ME = '76561198000000001'
 /** Счёт, где у каждой таблицы списка по n строк */
 const report = (n: number, over: Record<string, number> = {}): ForgetReport =>
   FORGET_TABLES.map((table) => ({ table, rows: over[table] ?? n }))
+
+/** Раздел /privacy видимым текстом — из текста страницы (page.copy.tsx), на нужном языке */
+function policySection(locale: Locale, n: string): string {
+  const body = COPY[locale].sections.find((s) => s.n === n)?.body
+  return renderToStaticMarkup(createElement(Fragment, null, body))
+    .replace(/<[^>]+>/g, '')
+    .replace(/&#x27;/g, "'")
+    .replace(/\s+/g, ' ')
+}
 
 /** Строка подтверждения про отметку удаления */
 const MARK_LINE =
@@ -99,7 +112,7 @@ describe('отметка удаления — одними словами вез
   const places: Array<[string, string]> = [
     ['подтверждение', MARK_LINE],
     ['главная', source('components/landing/HeroNotice.tsx')],
-    ['/privacy', source('app/[lang]/privacy/page.tsx')],
+    ['/privacy', policySection('ru', '06')],
   ]
 
   test.each(places)('%s: что остаётся, зачем и на сколько', (_, text) => {
@@ -171,11 +184,16 @@ describe('forgetSummary по-английски', () => {
   })
 
   /*
-   * Те же три факта об отметке, что у русской строки выше. Главная
-   * (HeroNotice) и /privacy, раздел 06, по-английски встают в этот же
-   * список, когда их переведут, — с теми же тремя проверками.
+   * Те же три факта об отметке, что у русской строки выше, — во всех трёх
+   * местах: вопрос «Удалить всё?», строка «всё удалено» на главной
+   * (HeroNotice) и /privacy, раздел 06.
    */
-  test.each([['confirmation', MARK_LINE_EN]])('%s: what stays, why and for how long', (_, text) => {
+  const source = (rel: string) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').replace(/\s+/g, ' ')
+  test.each([
+    ['confirmation', MARK_LINE_EN],
+    ['home', source('components/landing/HeroNotice.tsx')],
+    ['/privacy', policySection('en', '06')],
+  ])('%s: what stays, why and for how long', (_, text) => {
     expect(text).toContain('SteamID and the time of deletion')
     expect(text).toMatch(/getting back in|let .* back in/)
     expect(text).toMatch(/after a year and a month/i)

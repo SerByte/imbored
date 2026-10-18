@@ -3,9 +3,11 @@
 import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { lazyIsland } from '@/components/lazyIsland'
+import { useLocale } from '@/components/LocaleProvider'
 import { StatusLine } from '@/components/StatusLine'
 import { steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
+import { lp, tr } from '@/lib/i18n'
 import { forgetPlay } from '@/lib/playforget'
 import { timeHiddenStore } from '@/lib/playtime'
 import { forgetSessionHint } from '@/lib/sessionhint'
@@ -60,9 +62,15 @@ const ForgetMe = lazyIsland(() => import('@/components/ForgetMe').then((m) => m.
  * уводит, и refresh не зовётся: отрисованная заново /library развернула бы
  * вышедшего на лендинг вместе со строкой. Прежние кадры роутерного кэша
  * показали бы ему его же библиотеку — на его же устройстве.
+ *
+ * Вход через Steam отсюда — на языке страницы: steamLoginFor(lp(…)) везёт
+ * lang=en через Steam, и вернувшийся попадает на ту /library, где нажимал.
+ * Уход на главную — голым адресом: префикс языка ставит сам
+ * useLocaleRouter.
  */
 export function SignOut({ verified, feedLink = false }: { verified: boolean; feedLink?: boolean }) {
   const router = useLocaleRouter()
+  const locale = useLocale()
   const [busy, setBusy] = useState<'one' | 'all' | null>(null)
   const [confirmAll, setConfirmAll] = useState(false)
   /** «Везде» сделано не до конца: это устройство вышло, и кнопки выхода ему больше ни к чему */
@@ -128,7 +136,7 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
       // Кука гасится ответом сервера; если запрос не дошёл или ответил не
       // роут, уходить с экрана нечестно — вернём кнопки и дадим нажать снова.
       setBusy(null)
-      setMiss('Не получилось выйти — нажми ещё раз.')
+      setMiss(tr(locale, { ru: 'Не получилось выйти — нажми ещё раз.', en: "Couldn't sign you out — try again." }))
       return
     }
     // Забыть, что здесь кто-то был. Без этой строки выход уводит на главную,
@@ -146,20 +154,34 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
       // «везде» не сделано: сказать это и дать повторить (докблок выше)
       setPartial(true)
       setBusy(null)
+      // next=/library: вход вернёт сюда, к кнопке «везде»
+      const retry = (
+        <a
+          ref={retryRef}
+          href={steamLoginFor(lp(locale, '/library'))}
+          className="tap tap-tight text-ember-text underline decoration-1 underline-offset-2"
+        >
+          {tr(locale, { ru: 'Войди через Steam', en: 'Sign in with Steam' })}
+        </a>
+      )
       setMiss(
-        <>
-          Здесь ты вышел, а на остальных устройствах выйти не получилось
-          {feedLink ? ' — и ссылка на RSS ещё работает' : ''}.{' '}
-          {/* next=/library: вход вернёт сюда, к кнопке «везде» */}
-          <a
-            ref={retryRef}
-            href={steamLoginFor('/library')}
-            className="tap tap-tight text-ember-text underline decoration-1 underline-offset-2"
-          >
-            Войди через Steam
-          </a>{' '}
-          и нажми «Выйти на всех устройствах» ещё раз.
-        </>,
+        tr(locale, {
+          ru: (
+            <>
+              Здесь ты вышел, а на остальных устройствах выйти не получилось
+              {feedLink ? ' — и ссылка на RSS ещё работает' : ''}.{' '}
+              {retry}{' '}
+              и нажми «Выйти на всех устройствах» ещё раз.
+            </>
+          ),
+          en: (
+            <>
+              {"You're signed out here, but not on your other devices"}
+              {feedLink ? ' — and your RSS link still works' : ''}.{' '}
+              {retry} and press “Sign out everywhere” again.
+            </>
+          ),
+        }),
       )
       // Фокус переезжает на вход эффектом выше — после того, как строка встанет
       return
@@ -187,14 +209,19 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
             aria-disabled={busy !== null}
             className="tap tap-tight text-dim hover:text-ink transition-colors aria-disabled:opacity-40 cursor-pointer"
           >
-            {busy === 'one' ? 'Выхожу…' : 'Выйти'}
+            {busy === 'one'
+              ? tr(locale, { ru: 'Выхожу…', en: 'Signing out…' })
+              : tr(locale, { ru: 'Выйти', en: 'Sign out' })}
           </button>
           {confirmAll && verified ? (
             <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-dim">
               <span id={askId}>
                 {feedLink
-                  ? 'Выйти на всех устройствах? Ссылка на RSS тоже перестанет работать.'
-                  : 'Выйти на всех устройствах?'}
+                  ? tr(locale, {
+                      ru: 'Выйти на всех устройствах? Ссылка на RSS тоже перестанет работать.',
+                      en: 'Sign out everywhere? Your RSS link will stop working too.',
+                    })
+                  : tr(locale, { ru: 'Выйти на всех устройствах?', en: 'Sign out everywhere?' })}
               </span>
               <button
                 ref={yesRef}
@@ -204,7 +231,9 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
                 aria-disabled={busy !== null}
                 className="tap tap-tight text-danger hover:brightness-110 transition aria-disabled:opacity-40 cursor-pointer"
               >
-                {busy === 'all' ? 'Выхожу…' : 'Да, везде'}
+                {busy === 'all'
+                  ? tr(locale, { ru: 'Выхожу…', en: 'Signing out…' })
+                  : tr(locale, { ru: 'Да, везде', en: 'Yes, everywhere' })}
               </button>
               <button
                 type="button"
@@ -216,7 +245,7 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
                 aria-disabled={busy !== null}
                 className="tap tap-tight hover:text-ink transition-colors cursor-pointer"
               >
-                Отмена
+                {tr(locale, { ru: 'Отмена', en: 'Cancel' })}
               </button>
             </span>
           ) : verified ? (
@@ -231,17 +260,37 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
               aria-disabled={busy !== null}
               className="tap tap-tight text-faint hover:text-ink transition-colors aria-disabled:opacity-40 cursor-pointer"
             >
-              Выйти на всех устройствах
+              {tr(locale, { ru: 'Выйти на всех устройствах', en: 'Sign out everywhere' })}
             </button>
           ) : (
             <span className="text-faint">
-              Выход на всех устройствах и удаление данных — после{' '}
               {/* next=/library: после входа человек возвращается туда, где
-                  нажимал, и кнопка «везде» уже на месте */}
-              {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- ручка входа, а не страница: правило принимает /api за страницу из-за ловушки app/[lang]/[...missing] */}
-              <a href="/api/auth/steam?next=%2Flibrary" className="tap tap-tight text-ember-text underline decoration-1 underline-offset-2">
-                входа через Steam
-              </a>
+                  нажимал, и кнопка «везде» уже на месте. Адрес — тем же
+                  steamLoginFor, что у строки partial: на /en он везёт lang=en */}
+              {tr(locale, {
+                ru: (
+                  <>
+                    Выход на всех устройствах и удаление данных — после{' '}
+                    <a
+                      href={steamLoginFor(lp(locale, '/library'))}
+                      className="tap tap-tight text-ember-text underline decoration-1 underline-offset-2"
+                    >
+                      входа через Steam
+                    </a>
+                  </>
+                ),
+                en: (
+                  <>
+                    To sign out everywhere or delete your data,{' '}
+                    <a
+                      href={steamLoginFor(lp(locale, '/library'))}
+                      className="tap tap-tight text-ember-text underline decoration-1 underline-offset-2"
+                    >
+                      sign in with Steam
+                    </a>
+                  </>
+                ),
+              })}
             </span>
           )}
           {/* Тем же правом, что «везде»: стереть всё по ссылке на чужой профиль

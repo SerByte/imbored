@@ -100,7 +100,6 @@ describe('превью в мессенджерах', () => {
       'app/[lang]/page.tsx': '/',
       'app/[lang]/whatsnew/page.tsx': '/whatsnew',
       'app/[lang]/games/page.tsx': '/games',
-      'app/[lang]/privacy/page.tsx': '/privacy',
       'app/[lang]/support/page.tsx': '/support',
       'app/[lang]/daily/layout.tsx': '/daily',
       // квиз открыт краулеру и идёт в выдачу: canonical сворачивает в него
@@ -114,6 +113,9 @@ describe('превью в мессенджерах', () => {
         new RegExp(`(?:export const generateMetadata = |export async function generateMetadata\\b[^]*?return )ownAddress\\('${url}'`),
       )
     }
+    // /privacy: title и description у каждого языка свои, поэтому generateMetadata —
+    // функция, но адрес и картинку даёт тот же ownAddress
+    expect(read('app/[lang]/privacy/page.tsx')).toMatch(/return ownAddress\('\/privacy', \{[^}]*\}\)\(props, parent\)/)
   })
 
   test('у каждого своего openGraph есть свой url и canonical', () => {

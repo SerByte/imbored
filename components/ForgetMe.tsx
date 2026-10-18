@@ -2,6 +2,7 @@
 
 import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { StatusLine } from '@/components/StatusLine'
 import { steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
@@ -13,6 +14,7 @@ import {
   type ForgetMiss,
 } from '@/lib/forgetreply'
 import { markForgot } from '@/lib/forgotnotice'
+import { lp, tr, withLang, type Locale } from '@/lib/i18n'
 import { forgetPlay } from '@/lib/playforget'
 import { timeHiddenStore } from '@/lib/playtime'
 import { forgetSessionHint } from '@/lib/sessionhint'
@@ -23,25 +25,32 @@ type Asked = { items: string[]; effects: string[] }
 /**
  * Отказ — словами; повтор уместен только там, где он что-то изменит. Слова —
  * в lib/forgetreply (forgetMissLine), под тестом; здесь только needsteam:
- * ему нужна ссылка на вход
+ * ему нужна ссылка на вход. Вход — на языке страницы: steamLoginFor(lp(…))
+ * везёт lang=en через Steam
  */
-function missText(miss: ForgetMiss | 'unknown', step: 'ask' | 'erase', lost: boolean): ReactNode {
+function missText(miss: ForgetMiss | 'unknown', step: 'ask' | 'erase', lost: boolean, locale: Locale): ReactNode {
   if (miss === 'needsteam') {
-    return (
-      <>
-        Удалить данные можно после{' '}
-        {/* next=/library: вход вернёт сюда, к этой же кнопке */}
-        <a
-          href={steamLoginFor('/library')}
-          className="tap tap-tight text-ember-text underline decoration-1 underline-offset-2"
-        >
-          входа через Steam
-        </a>
-        .
-      </>
+    // next=/library: вход вернёт сюда, к этой же кнопке
+    const login = (
+      <a
+        href={steamLoginFor(lp(locale, '/library'))}
+        className="tap tap-tight text-ember-text underline decoration-1 underline-offset-2"
+      >
+        {tr(locale, { ru: 'входа через Steam', en: 'sign in with Steam' })}
+      </a>
     )
+    return tr(locale, {
+      ru: (
+        <>
+          Удалить данные можно после{' '}
+          {login}
+          .
+        </>
+      ),
+      en: <>To delete your data, {login}.</>,
+    })
   }
-  return forgetMissLine(miss, step, lost)
+  return forgetMissLine(miss, step, lost, locale)
 }
 
 /**
@@ -90,9 +99,14 @@ function missText(miss: ForgetMiss | 'unknown', step: 'ask' | 'erase', lost: boo
  *
  * Кнопки на время запроса — aria-disabled, а не disabled
  * (lib/disabledfocus.test.ts); повтор гасят обработчики — по busy.
+ *
+ * Список «что хранится» сервер пишет на языке страницы: вопрос идёт с
+ * ?lang= (withLang), роут отдаёт forgetSummary на нём. Уход на главную —
+ * голым адресом: префикс языка ставит сам useLocaleRouter.
  */
 export function ForgetMe() {
   const router = useLocaleRouter()
+  const locale = useLocale()
   const [busy, setBusy] = useState<'ask' | 'erase' | null>(null)
   const [asked, setAsked] = useState<Asked | null>(null)
   const [miss, setMiss] = useState<ReactNode>(null)
@@ -122,13 +136,13 @@ export function ForgetMe() {
     setBusy('ask')
     let reply: Awaited<ReturnType<typeof forgetPreviewReply>>
     try {
-      reply = await forgetPreviewReply(await fetch('/api/forget', { cache: 'no-store' }))
+      reply = await forgetPreviewReply(await fetch(withLang('/api/forget', locale), { cache: 'no-store' }))
     } catch {
       reply = { kind: 'failed' }
     }
     setBusy(null)
     if (reply.kind !== 'ok') {
-      setMiss(missText(reply.kind, 'ask', lost.current))
+      setMiss(missText(reply.kind, 'ask', lost.current, locale))
       return
     }
     handoff.current = 'cancel'
@@ -162,7 +176,7 @@ export function ForgetMe() {
       if (reply === 'unknown') lost.current = true
       else if (reply !== 'gone') lost.current = false
       setBusy(null)
-      setMiss(missText(reply, 'erase', lost.current))
+      setMiss(missText(reply, 'erase', lost.current, locale))
       return
     }
     // Здесь, как после выхода: следов прежнего входа на устройстве быть не
@@ -189,16 +203,21 @@ export function ForgetMe() {
           aria-disabled={busy !== null}
           className="tap tap-tight text-faint hover:text-danger transition-colors aria-disabled:opacity-40 cursor-pointer"
         >
-          {busy === 'ask' ? 'Смотрю, что хранится…' : 'Удалить всё обо мне'}
+          {busy === 'ask'
+            ? tr(locale, { ru: 'Смотрю, что хранится…', en: 'Checking what we store…' })
+            : tr(locale, { ru: 'Удалить всё обо мне', en: 'Delete everything about me' })}
         </button>
       ) : (
         <div className="basis-full mt-2 flex flex-col gap-4 rounded-[var(--radius-card)] border border-edge p-4 leading-relaxed text-dim">
           <div id={askId} className="flex flex-col gap-3">
             <p className="font-medium text-ink">
-              Удалить всё, что imbored о тебе хранит? Вернуть это будет нельзя.
+              {tr(locale, {
+                ru: 'Удалить всё, что imbored о тебе хранит? Вернуть это будет нельзя.',
+                en: "Delete everything imbored stores about you? This can't be undone.",
+              })}
             </p>
             <div className="flex flex-col gap-1.5">
-              <p>Сейчас хранится:</p>
+              <p>{tr(locale, { ru: 'Сейчас хранится:', en: 'What we store right now:' })}</p>
               <ul className="flex flex-col gap-1">
                 {asked.items.map((item) => (
                   <li key={item} className="flex items-start gap-2.5">
@@ -209,7 +228,7 @@ export function ForgetMe() {
               </ul>
             </div>
             <div className="flex flex-col gap-1.5">
-              <p>Вместе с этим:</p>
+              <p>{tr(locale, { ru: 'Вместе с этим:', en: 'Along with that:' })}</p>
               <ul className="flex flex-col gap-1">
                 {asked.effects.map((effect) => (
                   <li key={effect} className="flex items-start gap-2.5">
@@ -227,7 +246,9 @@ export function ForgetMe() {
               aria-disabled={busy !== null}
               className="tap tap-tight font-medium text-danger hover:brightness-110 transition aria-disabled:opacity-40 cursor-pointer"
             >
-              {busy === 'erase' ? 'Удаляю…' : 'Да, удалить всё'}
+              {busy === 'erase'
+                ? tr(locale, { ru: 'Удаляю…', en: 'Deleting…' })
+                : tr(locale, { ru: 'Да, удалить всё', en: 'Yes, delete everything' })}
             </button>
             <button
               ref={cancelRef}
@@ -243,7 +264,7 @@ export function ForgetMe() {
               aria-disabled={busy !== null}
               className="tap tap-tight hover:text-ink transition-colors aria-disabled:opacity-40 cursor-pointer"
             >
-              Отмена
+              {tr(locale, { ru: 'Отмена', en: 'Cancel' })}
             </button>
           </div>
         </div>

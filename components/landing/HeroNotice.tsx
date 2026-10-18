@@ -2,10 +2,12 @@
 
 import { useSearchParams } from 'next/navigation'
 import { useEffect, useRef, useSyncExternalStore } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { destinationUrl } from '@/lib/destination'
 import { destinationPromise } from '@/lib/destinationtext'
 import { focusAdrift } from '@/lib/focushandoff'
 import { forgotServer, subscribeForgot, takeForgot } from '@/lib/forgotnotice'
+import { tr } from '@/lib/i18n'
 import { getServerSessionHint, getSessionHint, subscribeSessionHint } from '@/lib/sessionhint'
 
 /**
@@ -37,6 +39,7 @@ import { getServerSessionHint, getSessionHint, subscribeSessionHint } from '@/li
  */
 export function HeroNotice() {
   const search = useSearchParams()
+  const locale = useLocale()
 
   const join = search.get('join')
   const joinTarget = join && /^[A-Z0-9]{6}$/.test(join.toUpperCase()) ? join.toUpperCase() : null
@@ -68,16 +71,30 @@ export function HeroNotice() {
 
   // Об отметке удаления (forget_marks в lib/db) — честно и теми же словами,
   // что в вопросе «Удалить всё?» (forgetSummary в lib/forget) и в /privacy:
-  // без неё «всё удалено» спорило бы с SteamID, который остаётся
+  // без неё «всё удалено» спорило бы с SteamID, который остаётся. По-английски
+  // — те же три факта (lib/forget.test.ts): что осталось, зачем и на сколько
   const promise = forgot
-    ? 'Готово — всё, что imbored о тебе хранил, удалено, а входы на всех устройствах погашены. ' +
-      'Осталась только отметка — SteamID и время удаления: по ней старые входы больше не пускают. ' +
-      'Через год и месяц она сотрётся сама.'
+    ? tr(locale, {
+        ru:
+          'Готово — всё, что imbored о тебе хранил, удалено, а входы на всех устройствах погашены. ' +
+          'Осталась только отметка — SteamID и время удаления: по ней старые входы больше не пускают. ' +
+          'Через год и месяц она сотрётся сама.',
+        en:
+          "Done — everything imbored stored about you is deleted, and you're signed out on all devices. " +
+          'Only a marker remains: your SteamID and the time of deletion. It keeps old sign-ins from getting back in, ' +
+          'and it erases itself after a year and a month.',
+      })
     : joinTarget
-      ? `Тебя зовут в пати ${joinTarget} — подключи библиотеку, чтобы войти.`
+      ? tr(locale, {
+          ru: `Тебя зовут в пати ${joinTarget} — подключи библиотеку, чтобы войти.`,
+          en: `You're invited to Party ${joinTarget} — connect your library to join.`,
+        })
       : compatTarget
-        ? 'Подключи библиотеку — и увидишь ваш процент совместимости.'
-        : destinationPromise(destinationUrl(search.get('next')))
+        ? tr(locale, {
+            ru: 'Подключи библиотеку — и увидишь ваш процент совместимости.',
+            en: 'Connect your library to see how well your tastes match.',
+          })
+        : destinationPromise(destinationUrl(search.get('next')), locale)
 
   if (!promise) return null
 

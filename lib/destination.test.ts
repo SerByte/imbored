@@ -485,7 +485,8 @@ describe('квиз гостя: сразу на лендинг, и лендинг
 
   test('лендинг берёт обещание у destinationPromise, а не у списка напрямую', () => {
     const notice = code('components', 'landing', 'HeroNotice.tsx')
-    expect(notice).toMatch(/destinationPromise\(destinationUrl\(search\.get\('next'\)\)\)/)
+    // и на языке страницы: второй аргумент — locale из useLocale
+    expect(notice).toMatch(/destinationPromise\(destinationUrl\(search\.get\('next'\)\), locale\)/)
     expect(notice).not.toMatch(/\bDESTINATIONS\b/)
   })
 })
