@@ -44,6 +44,12 @@ export type RssChannel = {
   items: readonly RssItem[]
   /** Секунды: время сборки ленты */
   builtAt: number
+  /**
+   * Язык ленты — <language> канала: htmlLang(locale) той версии сайта, чью
+   * ленту отдаём. Без него — 'ru', как было: ридер по нему выбирает словарь
+   * переносов и голос, и английская лента с «ru» читалась бы русским.
+   */
+  language?: string
 }
 
 /** Пять символов, которые XML не пропускает в тексте и атрибутах, и управляющие */
@@ -91,7 +97,7 @@ export function rssFeed(ch: RssChannel): string {
     <title>${escapeXml(ch.title)}</title>
     <link>${escapeXml(ch.link)}</link>
 ${self}    <description>${escapeXml(ch.description)}</description>
-    <language>ru</language>
+    <language>${escapeXml(ch.language ?? 'ru')}</language>
     <lastBuildDate>${rfc822(ch.builtAt)}</lastBuildDate>
 ${items}
   </channel>

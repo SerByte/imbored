@@ -188,3 +188,67 @@ describe('patchShareUrl', () => {
     )
   })
 })
+
+/** Ни одной русской буквы: английский заголовок не должен протекать русским словом */
+const CYRILLIC = /[А-Яа-яЁё]/
+
+describe('страница патча по-английски', () => {
+  const AUG3 = Date.UTC(2026, 7, 3, 18) / 1000
+
+  test('<title>: те же правила и «— what changed»', () => {
+    expect(newsPageTitle('Counter-Strike 2 — Update', 'Counter-Strike 2', undefined, 'en')).toBe(
+      'Counter-Strike 2: Update — what changed',
+    )
+    expect(newsPageTitle('Patch 2.31', 'Cyberpunk 2077', AUG3, 'en')).toBe('Cyberpunk 2077: Patch 2.31 — what changed')
+    expect(newsPageTitle('Patch 2.31', undefined, undefined, 'en')).toBe('Patch 2.31 — what changed')
+  })
+
+  test('дата — когда заголовок патчи не различает: в скобках, коротким месяцем', () => {
+    // название в начале срезается и встаёт впереди через двоеточие, как по-русски
+    expect(newsPageTitle('Counter-Strike 2 Update', 'Counter-Strike 2', AUG3, 'en')).toBe(
+      'Counter-Strike 2: Update (Aug 3, 2026) — what changed',
+    )
+    // название в конце — одно, без повтора впереди
+    expect(newsPageTitle('Update for Counter-Strike 2', 'Counter-Strike 2', AUG3, 'en')).toBe(
+      'Update for Counter-Strike 2 (Aug 3, 2026) — what changed',
+    )
+    expect(newsPageTitle('Portal 2 - Update', 'Portal 2', AUG3, 'en')).toBe('Portal 2: Update (Aug 3, 2026) — what changed')
+    expect(newsPageTitle('Improved control options', 'Control', AUG3, 'en')).toBe(
+      'Control: Improved control options (Aug 3, 2026) — what changed',
+    )
+    // дата — в UTC, как у русской: в 23:30 по UTC это всё ещё 3 августа
+    expect(newsPageTitle('Update', 'Portal 2', Date.UTC(2026, 7, 3, 23, 30) / 1000, 'en')).toBe(
+      'Portal 2: Update (Aug 3, 2026) — what changed',
+    )
+    expect(newsPageTitle('Counter-Strike 2 Update', 'Counter-Strike 2', AUG3, 'en')).not.toMatch(CYRILLIC)
+  })
+
+  test('без языка — русский заголовок, как был', () => {
+    expect(newsPageTitle('Portal 2 - Update', 'Portal 2', AUG3)).toBe(newsPageTitle('Portal 2 - Update', 'Portal 2', AUG3, 'ru'))
+    expect(newsPageTitle('Portal 2 - Update', 'Portal 2', AUG3)).toMatch(/— что изменилось$/)
+  })
+
+  test('описание: пересказ языка страницы, иначе нерусское начало поста, иначе заголовок', () => {
+    const EN_BODY: NewsBlock[] = [{ kind: 'p', runs: [{ text: 'Fixed a crash on Anubis.' }] }]
+    expect(newsDescription({ title: 'Patch', tldr: 'Smoke now blocks the blast.', blocks: BODY }, 'CS2', 'en')).toBe(
+      'Smoke now blocks the blast.',
+    )
+    expect(newsDescription({ title: 'Patch', blocks: EN_BODY }, 'CS2', 'en')).toBe('Fixed a crash on Anubis.')
+    // русское тело на английской странице — не сниппет: встаёт заголовок
+    expect(newsDescription({ title: 'Patch 2.31', blocks: BODY }, 'Cyberpunk 2077', 'en')).toBe(
+      'Cyberpunk 2077: Patch 2.31 — what changed.',
+    )
+    expect(newsDescription({ title: 'Patch 2.31', blocks: [] }, 'Cyberpunk 2077', 'en')).not.toMatch(CYRILLIC)
+    // по-русски русское тело — как было
+    expect(newsDescription({ title: 'Патч', blocks: BODY }, 'CS2')).toMatch(/^Геймплей/)
+  })
+
+  test('«Поделиться» с /en ведёт на английскую страницу', () => {
+    expect(patchShareUrl('https://imbored.cc', 730, '5123894512345', 'en')).toBe(
+      'https://imbored.cc/en/game/730/news/5123894512345?ref=patch',
+    )
+    expect(patchShareUrl('https://imbored.cc', 730, '5123894512345', 'ru')).toBe(
+      'https://imbored.cc/game/730/news/5123894512345?ref=patch',
+    )
+  })
+})

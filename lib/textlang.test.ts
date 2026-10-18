@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import { NewsBody } from '../components/NewsBody'
 import type { NewsBlock } from './steamhtml'
-import { isRussianText, textLang } from './textlang'
+import { isRussianText, textLang, textLangOn } from './textlang'
 
 describe('isRussianText', () => {
   test('русское описание с латинскими названиями — русское', () => {
@@ -76,6 +76,42 @@ describe('textLang', () => {
       if (isRussianText(text)) expect(textLang(text), text).toBeUndefined()
       else if (/[A-Za-z]/.test(text)) expect(textLang(text), text).toBe('en')
     }
+  })
+})
+
+/**
+ * На английской странице чужим становится русский: патчноут, который издатель
+ * выпустил по-русски, на /en читался бы английским голосом. Правило то же,
+ * что у textLang, только в обратную сторону.
+ */
+describe('textLangOn', () => {
+  test('на русской странице — ровно textLang', () => {
+    for (const [text, game] of [
+      ['Patch 0.5.1 Has Been Released', undefined],
+      ['Патч 2.31', undefined],
+      ['Обновление Counter-Strike 2', 'Counter-Strike 2'],
+      ['1.0.3', undefined],
+      [null, undefined],
+    ] as const) {
+      expect(textLangOn('ru', text, game), String(text)).toBe(textLang(text, game))
+    }
+  })
+
+  test('на английской — ru для русского текста, остальное наследует en', () => {
+    expect(textLangOn('en', 'Патч 2.31')).toBe('ru')
+    expect(textLangOn('en', 'Станьте вором в VR! Ощутите азарт воровства.')).toBe('ru')
+    expect(textLangOn('en', 'Patch 0.5.1 Has Been Released')).toBeUndefined()
+    expect(textLangOn('en', '1.0.3')).toBeUndefined()
+    expect(textLangOn('en', '版本更新 1.2')).toBeUndefined()
+    expect(textLangOn('en', '')).toBeUndefined()
+    expect(textLangOn('en', undefined)).toBeUndefined()
+  })
+
+  test('название игры в подсчёт не входит и на английской', () => {
+    // 13 латинских букв названия перевешивали бы 10 русских — а заголовок русский
+    expect(textLangOn('en', 'Обновление Counter-Strike 2', 'Counter-Strike 2')).toBe('ru')
+    expect(textLangOn('en', 'Counter-Strike 2 Update', 'Counter-Strike 2')).toBeUndefined()
+    expect(textLangOn('en', 'Мор', 'Мор')).toBe('ru')
   })
 })
 
