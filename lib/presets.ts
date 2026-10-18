@@ -1,3 +1,4 @@
+import { tr, type Locale } from './i18n'
 import type { Lean } from './mood'
 import type { Focus } from './recommend'
 import type { Mood } from './types'
@@ -5,7 +6,13 @@ import type { Mood } from './types'
 /** Вайб-пресеты: состояние одним тапом вместо трёх вопросов (клиент-безопасный модуль) */
 export type VibePreset = {
   key: string
+  /**
+   * Русская подпись — как была: её читают и сторожа, и всё, что пресет
+   * называет по-русски. Подпись на языке страницы — presetLabel.
+   */
   label: string
+  /** Английская подпись — рядом с русской, а не отдельным словарём: так они не разъедутся */
+  en: { label: string }
   emoji: string
   mood: Mood
   /**
@@ -19,6 +26,7 @@ export const VIBE_PRESETS: VibePreset[] = [
   {
     key: 'after-work',
     label: 'После работы, нет сил',
+    en: { label: 'After work, no energy' },
     emoji: '🛋️',
     mood: { time: 'medium', vibe: 'chill', social: 'solo' },
     // «Нет сил» в самом названии — и до сих пор это было только «расслабиться»:
@@ -28,24 +36,28 @@ export const VIBE_PRESETS: VibePreset[] = [
   {
     key: 'sleep',
     label: '30 минут до сна',
+    en: { label: '30 minutes before bed' },
     emoji: '🌙',
     mood: { time: 'short', vibe: 'chill', social: 'solo' },
   },
   {
     key: 'friday',
     label: 'Пятница с друзьями',
+    en: { label: 'Friday with friends' },
     emoji: '🎉',
     mood: { time: 'long', vibe: 'engaged', social: 'friends' },
   },
   {
     key: 'weekend',
     label: 'Залипнуть на выходные',
+    en: { label: 'Lose the weekend' },
     emoji: '🕳️',
     mood: { time: 'long', vibe: 'engaged', social: 'solo' },
   },
   {
     key: 'quick',
     label: 'Быстрая катка',
+    en: { label: 'Quick round' },
     emoji: '⚡',
     mood: { time: 'short', vibe: 'engaged', social: 'solo' },
   },
@@ -67,10 +79,18 @@ export const VIBE_PRESETS: VibePreset[] = [
  */
 export type RoomPreset = {
   key: string
+  /**
+   * Русское название — как было: оно же уходит в приглашение
+   * (app/room/[id]/invite.ts) и на доску пати (/api/rooms/public), и по нему
+   * пресет находится обратно (roomPresetByLabel). На языке страницы —
+   * presetLabel и presetHint.
+   */
   label: string
   emoji: string
   /** чем вечер отличается — одной строкой под названием */
   hint: string
+  /** Английские название и подсказка — рядом с русскими (глоссарий: катка — round, не match) */
+  en: { label: string; hint: string }
   mood: Mood
 }
 
@@ -80,6 +100,7 @@ export const ROOM_PRESETS: readonly RoomPreset[] = [
     label: 'Весь вечер вместе',
     emoji: '🎉',
     hint: 'Во что можно уйти с головой на пару часов',
+    en: { label: 'All evening together', hint: 'Something to get lost in for a couple of hours' },
     mood: { time: 'long', vibe: 'engaged', social: 'friends' },
   },
   {
@@ -87,6 +108,7 @@ export const ROOM_PRESETS: readonly RoomPreset[] = [
     label: 'Пара быстрых каток',
     emoji: '⚡',
     hint: 'Короткие матчи: зашли, сыграли, разошлись',
+    en: { label: 'A few quick rounds', hint: 'Short rounds: hop in, play, head out' },
     mood: { time: 'short', vibe: 'engaged', social: 'friends' },
   },
   {
@@ -94,6 +116,7 @@ export const ROOM_PRESETS: readonly RoomPreset[] = [
     label: 'Уютно и надолго',
     emoji: '🏡',
     hint: 'Строить, выживать, фармить — без спешки',
+    en: { label: 'Cozy and long', hint: 'Build, survive, farm — no rush' },
     mood: { time: 'long', vibe: 'chill', social: 'friends' },
   },
   {
@@ -101,9 +124,33 @@ export const ROOM_PRESETS: readonly RoomPreset[] = [
     label: 'Спокойно, под разговор',
     emoji: '🛋️',
     hint: 'Лёгкое, чтобы болтать и не напрягаться',
+    en: { label: 'Chill, while we talk', hint: 'Something light to play while you chat' },
     mood: { time: 'medium', vibe: 'chill', social: 'friends' },
   },
 ]
+
+/**
+ * Название пресета на языке страницы — и вайб-пресета, и пресета комнаты.
+ * Русское — то же поле label, что было.
+ */
+export function presetLabel(p: Pick<VibePreset | RoomPreset, 'label' | 'en'>, locale: Locale = 'ru'): string {
+  return tr(locale, { ru: p.label, en: p.en.label })
+}
+
+/** Подсказка пресета комнаты на языке страницы */
+export function presetHint(p: Pick<RoomPreset, 'hint' | 'en'>, locale: Locale = 'ru'): string {
+  return tr(locale, { ru: p.hint, en: p.en.hint })
+}
+
+/**
+ * Пресет комнаты по русскому названию — обратный путь для тех, кто получил
+ * только название: приглашение (lib/roominvite) и доска пати
+ * (/api/rooms/public) отдают label как есть, а показать его надо на языке
+ * страницы. Чужое — null: строка из чужих рук пресетом не становится.
+ */
+export function roomPresetByLabel(label: string | null | undefined): RoomPreset | null {
+  return ROOM_PRESETS.find((p) => p.label === label) ?? null
+}
 
 /** Пресет комнаты по ключу из адреса; чужое и пустое — null */
 export function roomPresetByKey(raw: string | null | undefined): RoomPreset | null {

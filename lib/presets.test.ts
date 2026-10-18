@@ -3,13 +3,16 @@ import { LEANS, NEUTRAL_MOOD, parseLean, parseMood } from './mood'
 import {
   parseSeedParam,
   playHref,
+  presetHint,
   presetHref,
+  presetLabel,
   quizHref,
   nearestRoomPreset,
   ROOM_PRESETS,
   roomArrival,
   roomBridgeHref,
   roomPresetByKey,
+  roomPresetByLabel,
   roomPresetOf,
   roomSeedHref,
   roomSeedOf,
@@ -322,6 +325,59 @@ describe('игра, в которую зовут', () => {
   test('мусор — null: ноль, минус, дробь, хвосты, экспонента, слишком длинное', () => {
     for (const raw of [null, undefined, '', '0', '-570', '570.5', '570abc', ' 570', '0570', '1e5', '0x10', '2147483648', '99999999999']) {
       expect(roomSeedOf(raw), String(raw)).toBeNull()
+    }
+  })
+})
+
+/*
+ * Подписи пресетов на английской странице. Русские label и hint остаются
+ * как были — по ним приглашение и доска пати называют комнату, и по ним же
+ * пресет находится обратно (roomPresetByLabel).
+ */
+describe('подписи пресетов по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('вайб-пресеты — по глоссарию, без повторов', () => {
+    expect(VIBE_PRESETS.map((p) => presetLabel(p, 'en'))).toEqual([
+      'After work, no energy',
+      '30 minutes before bed',
+      'Friday with friends',
+      'Lose the weekend',
+      'Quick round',
+    ])
+  })
+
+  test('пресеты комнаты — по глоссарию: катка — round, никогда не match', () => {
+    expect(ROOM_PRESETS.map((p) => presetLabel(p, 'en'))).toEqual([
+      'All evening together',
+      'A few quick rounds',
+      'Cozy and long',
+      'Chill, while we talk',
+    ])
+    for (const p of ROOM_PRESETS) {
+      expect(presetHint(p, 'en'), p.key).not.toMatch(/match/i)
+      expect(presetHint(p, 'en').length, p.key).toBeGreaterThan(10)
+    }
+  })
+
+  test('ни одна английская подпись не повторяется и не несёт кириллицы', () => {
+    const all = [...VIBE_PRESETS.map((p) => presetLabel(p, 'en')), ...ROOM_PRESETS.map((p) => presetLabel(p, 'en'))]
+    expect(new Set(all).size).toBe(all.length)
+    for (const text of [...all, ...ROOM_PRESETS.map((p) => presetHint(p, 'en'))]) expect(text).not.toMatch(CYRILLIC)
+  })
+
+  test('по умолчанию — русские label и hint, как были', () => {
+    for (const p of VIBE_PRESETS) expect(presetLabel(p)).toBe(p.label)
+    for (const p of ROOM_PRESETS) {
+      expect(presetLabel(p)).toBe(p.label)
+      expect(presetHint(p)).toBe(p.hint)
+    }
+  })
+
+  test('пресет комнаты находится по русскому названию — и только по нему', () => {
+    for (const p of ROOM_PRESETS) expect(roomPresetByLabel(p.label), p.key).toBe(p)
+    for (const raw of [null, undefined, '', 'All evening together', 'toString', VIBE_PRESETS[0].label]) {
+      expect(roomPresetByLabel(raw), String(raw)).toBeNull()
     }
   })
 })

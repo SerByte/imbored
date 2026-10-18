@@ -1,3 +1,4 @@
+import type { Locale } from './i18n'
 import type { Mood } from './types'
 
 /**
@@ -74,6 +75,56 @@ export const STEPS: readonly [StepFor<'time'>, StepFor<'vibe'>, StepFor<'social'
 ] as const
 
 /**
+ * Те же шаги по-английски — тот же кортеж той же формы: оси, значения и
+ * порядок общие, у языка — только слова. Ударное слово своё: «How much time
+ * do you have?» несёт ось в «time» (индекс 2), «What's the vibe?» — в «vibe?»
+ * (2), «Solo or with someone?» — в «Solo» (0).
+ *
+ * Подписи — из глоссария: Unwind / Lock in (как чипсы движка на лендинге),
+ * Solo / With friends; «катка» — round, не match.
+ */
+const STEPS_EN: typeof STEPS = [
+  {
+    key: 'time',
+    axis: 'Time',
+    question: 'How much time do you have?',
+    stress: 2,
+    options: [
+      { value: 'short', label: 'Under an hour', hint: 'a quick round, then bed' },
+      { value: 'medium', label: 'A couple of hours', hint: 'a proper session' },
+      { value: 'long', label: 'All evening', hint: 'time to get lost in it' },
+    ],
+  },
+  {
+    key: 'vibe',
+    axis: 'Vibe',
+    question: "What's the vibe?",
+    stress: 2,
+    options: [
+      { value: 'chill', label: 'Unwind', hint: 'no stress, no sweaty palms' },
+      { value: 'engaged', label: 'Lock in', hint: 'think, sweat, win' },
+    ],
+  },
+  {
+    key: 'social',
+    axis: 'Company',
+    question: 'Solo or with someone?',
+    stress: 0,
+    options: [
+      { value: 'solo', label: 'Solo', hint: 'just me and the game' },
+      { value: 'friends', label: 'With friends', hint: 'needs multiplayer or co-op' },
+    ],
+  },
+]
+
+/** Шаги квиза на каждом языке; STEPS — русские, как были */
+export const STEPS_BY_LOCALE = { ru: STEPS, en: STEPS_EN } as const satisfies Record<Locale, typeof STEPS>
+
+export function stepsFor(locale: Locale = 'ru'): typeof STEPS {
+  return STEPS_BY_LOCALE[locale]
+}
+
+/**
  * Все семь ответов одним списком. Нужен сторожу в lib/quiz.test.ts: у каждого
  * ответа обязана быть подпись, иначе answerLabel молча вернёт пустоту.
  */
@@ -81,9 +132,12 @@ export const ANSWER_VALUES: readonly AnswerValue[] = STEPS.flatMap((s) =>
   s.options.map((o) => o.value as AnswerValue),
 )
 
-const LABELS = new Map<string, string>(
-  STEPS.flatMap((s) => s.options.map((o) => [o.value as string, o.label] as const)),
-)
+/** Карта «значение → подпись» одного языка — одна на язык, собранная заранее */
+function labelsOf(steps: typeof STEPS): Map<string, string> {
+  return new Map<string, string>(steps.flatMap((s) => s.options.map((o) => [o.value as string, o.label] as const)))
+}
+
+const LABELS = { ru: labelsOf(STEPS), en: labelsOf(STEPS_EN) } satisfies Record<Locale, Map<string, string>>
 
 /**
  * Подпись ответа или null, если значение неизвестно.
@@ -92,8 +146,8 @@ const LABELS = new Map<string, string>(
  * разбирается там приведением типа без проверки (`search.get('time') as …`).
  * На `?time=banana` подпись должна отсутствовать, а не показывать «banana».
  */
-export function answerLabel(value: string): string | null {
-  return LABELS.get(value) ?? null
+export function answerLabel(value: string, locale: Locale = 'ru'): string | null {
+  return LABELS[locale].get(value) ?? null
 }
 
 /**
@@ -103,9 +157,9 @@ export function answerLabel(value: string): string | null {
  * Неизвестные значения выпадают, а не подставляются как есть; если не осталось
  * ничего — пустая строка, и подпись просто не рендерится.
  */
-export function moodCaption(mood: Mood): string {
+export function moodCaption(mood: Mood, locale: Locale = 'ru'): string {
   return [mood.time, mood.vibe, mood.social]
-    .map(answerLabel)
+    .map((v) => answerLabel(v, locale))
     .filter((l): l is string => l !== null)
     .join(' · ')
 }

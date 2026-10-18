@@ -1,3 +1,4 @@
+import type { Locale } from './i18n'
 import { freshLastMood, lastMoodStore, nowSecond, type LastMood } from './lastmood'
 import { moodCaption } from './quiz'
 
@@ -18,9 +19,9 @@ import { moodCaption } from './quiz'
  * неиспользуемое по модулю на всё приложение, а не по маршруту, — экспорт,
  * нужный одной главной, оставлял квиз всем. Сторож — lib/sharedchunk.test.ts.
  */
-export function lastMoodCaption(last: LastMood | null, nowSec: number): string {
+export function lastMoodCaption(last: LastMood | null, nowSec: number, locale: Locale = 'ru'): string {
   const fresh = freshLastMood(last, nowSec)
-  return fresh ? moodCaption(fresh.mood) : ''
+  return fresh ? moodCaption(fresh.mood, locale) : ''
 }
 
 /*
@@ -31,3 +32,17 @@ export function lastMoodCaption(last: LastMood | null, nowSec: number): string {
  */
 export const lastMoodCaptionNow = (): string => lastMoodCaption(lastMoodStore.get(), nowSecond())
 export const lastMoodCaptionServer = (): string => ''
+
+/**
+ * Снимок на языке страницы — одной и той же функцией на язык, а не новой на
+ * каждый рендер: useSyncExternalStore с новой getSnapshot переподписывается
+ * на каждом кадре. Русский — тот же lastMoodCaptionNow.
+ */
+const NOW_FOR = {
+  ru: lastMoodCaptionNow,
+  en: (): string => lastMoodCaption(lastMoodStore.get(), nowSecond(), 'en'),
+} satisfies Record<Locale, () => string>
+
+export function lastMoodCaptionNowFor(locale: Locale = 'ru'): () => string {
+  return NOW_FOR[locale]
+}
