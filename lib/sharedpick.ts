@@ -1,5 +1,6 @@
 import { clip, DESCRIPTION_MAX } from './clip'
-import { PATCH_SINCE_LEAD } from './comeback'
+import { PATCH_SINCE_LEADS } from './comeback'
+import { lp, type Locale } from './i18n'
 import { withRef } from './track'
 import { CANDIDATE_SOURCES, type CandidateSource } from './types'
 
@@ -44,6 +45,18 @@ const PRICE_TALK =
   /[$€£]\s?\d|\d[\d\s\u00a0.,]*\s?(?:[$€£₸₴₽]|руб)|[−–-]\s?\d{1,2}\s?%|скидк|распродаж|бесплатн|дешевле|(?:^|[^а-яё])цен(?:а|у|е|ы|ой)(?:[^а-яё]|$)/i
 
 /**
+ * То же в английской причине. Суммы ловит PRICE_TALK выше — знак валюты он
+ * узнаёт с обеих сторон числа. Здесь — слова: скидка по-английски пишется
+ * без минуса («30% off»), а «free», «sale», «price», «costs», «cheaper» —
+ * то, чем модель называет деньги. «free» шире денег («free roam»), и такое
+ * предложение тоже выпадет: лишний вырезанный кусок дешевле застывшей цены
+ * под чужим именем. Проценты отзывов («92% of reviews») не ловятся — после
+ * них нет «off».
+ */
+const PRICE_TALK_EN =
+  /\b\d{1,2}\s?%\s?off\b|\b(?:free|sale|discount(?:ed|s)?|cheap(?:er|est)?|pric(?:e|es|ed|ey)|costs?|bargain)\b/i
+
+/**
  * Факт «с последнего захода вышло обновление» — где бы в предложении он ни
  * стоял и в каком бы регистре ни был.
  *
@@ -56,6 +69,21 @@ const PRICE_TALK =
  * «его» и «с» модель меняет, а смысл выдаёт именно эта связка.
  */
 const PATCH_SINCE_TALK = /последнего\s+(?:захода|запуска)\s+вы(?:шл|ш[её]л)/i
+
+/**
+ * Тот же факт в английской причине. Английский промпт даёт модели строку
+ * «since they last played, a major update came out», и пересказывает она его
+ * как угодно: «since you last played», «since your last session», «a lot
+ * changed since you played». Связка здесь — «since» + местоимение + «last»
+ * или глагол захода: она одна выдаёт дату чужого последнего запуска, даже без
+ * слова «update», поэтому условия «вышло» у неё нет. «Since launch» и «your
+ * last session ended…» без «since» — не факт и остаются.
+ */
+const PATCH_SINCE_TALK_EN =
+  /\bsince\s+(?:you|they|your|their)\s+(?:last\b|(?:last\s+)?(?:played|launched|opened|left|quit)\b)/i
+
+/** Вводные факта на обоих языках: причина в ссылке бывает на любом */
+const PATCH_SINCE_LEAD_LIST: readonly string[] = Object.values(PATCH_SINCE_LEADS)
 
 /**
  * Текст причины для ссылки — без денег и без «с твоего последнего захода».
@@ -77,6 +105,12 @@ const PATCH_SINCE_TALK = /последнего\s+(?:захода|запуска)
  * в несколько предложений, и хвост его, идущий следом за фразой с фактом,
  * уходит вместе с ней. Без patch уходит только само предложение с фактом.
  *
+ * Языка у функции нет: правила обоих языков применяются к любой причине
+ * разом (PATCH_SINCE_LEADS, PRICE_TALK_EN, PATCH_SINCE_TALK_EN). Так роутам
+ * не нужно ничего знать о языке причины, а английский текст на публичной
+ * /pick не уносит ни цены, ни чужого последнего запуска — это вопрос
+ * приватности, а не перевода.
+ *
  * Пустая строка — делиться нечем: всё объяснение было про цену.
  */
 export function shareText(reason: string, priceTail: string, patch?: string | null): string {
@@ -86,7 +120,11 @@ export function shareText(reason: string, priceTail: string, patch?: string | nu
   return base
     .split(/(?<=[.!?…])\s+/)
     .filter((sentence) => {
-      if (sentence.startsWith(PATCH_SINCE_LEAD) || PATCH_SINCE_TALK.test(sentence)) {
+      if (
+        PATCH_SINCE_LEAD_LIST.some((lead) => sentence.startsWith(lead)) ||
+        PATCH_SINCE_TALK.test(sentence) ||
+        PATCH_SINCE_TALK_EN.test(sentence)
+      ) {
         inFact = true
         return false
       }
@@ -97,7 +135,7 @@ export function shareText(reason: string, priceTail: string, patch?: string | nu
         if (core && told.includes(core)) return false
         inFact = false
       }
-      return !PRICE_TALK.test(sentence)
+      return !PRICE_TALK.test(sentence) && !PRICE_TALK_EN.test(sentence)
     })
     .join(' ')
     .trim()
@@ -136,14 +174,22 @@ export function cleanReason(text: string): string {
  * В кавычки-«ёлочки». Причина сама начинается с названия в «ёлочках», и
  * обёрнутая как есть давала «««How to Fish» в…». Внутренние кавычки —
  * „лапки“, как принято в русском наборе.
+ *
+ * По-английски — “…”, а внутренние — одинарные ‘…’: английская причина
+ * начинается с названия в “…” (шаблоны lib/llm.ts), и обёрнутая как есть дала
+ * бы ““Hades” isn't…”.
  */
-export function quoted(text: string): string {
+export function quoted(text: string, locale: Locale = 'ru'): string {
+  if (locale === 'en') return `“${text.replace(/“/g, '‘').replace(/”/g, '’')}”`
   return `«${text.replace(/«/g, '„').replace(/»/g, '“')}»`
 }
 
-/** Адрес выбора с меткой воронки — как roomShareUrl у пати */
-export function pickShareUrl(origin: string, id: string): string {
-  return withRef(`${origin}/pick/${id}`, 'pick')
+/**
+ * Адрес выбора с меткой воронки — как roomShareUrl у пати. На 'en' — /en/pick/…:
+ * получатель английской ссылки открывает английскую страницу, а не русскую.
+ */
+export function pickShareUrl(origin: string, id: string, locale: Locale = 'ru'): string {
+  return withRef(`${origin}${lp(locale, `/pick/${id}`)}`, 'pick')
 }
 
 export type SharedPickView = { name: string; reason: string; kind: PickKind }
@@ -153,25 +199,65 @@ export type SharedPickView = { name: string; reason: string; kind: PickKind }
  * заголовок вкладки и превью обязаны говорить одно. null — выбора нет
  * (истёк, удалён, опечатка): карточка остаётся приглашением.
  */
-export function pickCopy(p: SharedPickView | null): {
+export function pickCopy(
+  p: SharedPickView | null,
+  locale: Locale = 'ru',
+): {
   title: string
   description: string
   eyebrow: string
   foot: string
 } {
-  const foot = 'А тебе? Подберёт одну игру за минуту — imbored.cc'
+  const copy = PICK_COPY[locale]
   if (!p) {
-    return {
-      title: 'Выбор на вечер — imbored',
-      description: 'imbored выбирает одну игру на вечер из твоей библиотеки Steam — и объясняет почему.',
-      eyebrow: 'IMBORED · ВЫБОР НА ВЕЧЕР',
-      foot,
-    }
+    return { title: copy.title, description: copy.description, eyebrow: copy.eyebrow, foot: copy.foot }
   }
+  const name = quoted(p.name, locale)
   return {
-    title: p.kind === 'daily' ? `${quoted(p.name)} — моя игра дня` : `${quoted(p.name)} — imbored выбрал мне на вечер`,
+    title: p.kind === 'daily' ? copy.dailyTitle(name) : copy.playTitle(name),
     description: clip(p.reason, DESCRIPTION_MAX) ?? p.reason.slice(0, DESCRIPTION_MAX),
-    eyebrow: p.kind === 'daily' ? 'МОЯ ИГРА ДНЯ' : 'IMBORED ВЫБРАЛ МНЕ НА ВЕЧЕР',
-    foot,
+    eyebrow: p.kind === 'daily' ? copy.dailyEyebrow : copy.playEyebrow,
+    foot: copy.foot,
   }
 }
+
+/**
+ * Тексты pickCopy по языкам — по глоссарию: «Выбор на вечер» — Tonight's pick,
+ * «Моя игра дня» — My game of the day, «imbored выбрал мне на вечер» —
+ * imbored picked my game for tonight. Описание выбора — сама причина: она уже
+ * на языке ссылки, переводить её здесь нечего.
+ */
+const PICK_COPY = {
+  ru: {
+    foot: 'А тебе? Подберёт одну игру за минуту — imbored.cc',
+    title: 'Выбор на вечер — imbored',
+    description: 'imbored выбирает одну игру на вечер из твоей библиотеки Steam — и объясняет почему.',
+    eyebrow: 'IMBORED · ВЫБОР НА ВЕЧЕР',
+    dailyTitle: (name: string) => `${name} — моя игра дня`,
+    playTitle: (name: string) => `${name} — imbored выбрал мне на вечер`,
+    dailyEyebrow: 'МОЯ ИГРА ДНЯ',
+    playEyebrow: 'IMBORED ВЫБРАЛ МНЕ НА ВЕЧЕР',
+  },
+  en: {
+    foot: 'Your turn? One game, picked in a minute — imbored.cc',
+    title: "Tonight's pick — imbored",
+    description: 'imbored picks one game for tonight from your Steam library — and tells you why.',
+    eyebrow: "IMBORED · TONIGHT'S PICK",
+    dailyTitle: (name: string) => `${name} — my game of the day`,
+    playTitle: (name: string) => `${name} — imbored picked my game for tonight`,
+    dailyEyebrow: 'MY GAME OF THE DAY',
+    playEyebrow: 'IMBORED PICKED MY GAME FOR TONIGHT',
+  },
+} satisfies Record<
+  Locale,
+  {
+    foot: string
+    title: string
+    description: string
+    eyebrow: string
+    dailyTitle: (name: string) => string
+    playTitle: (name: string) => string
+    dailyEyebrow: string
+    playEyebrow: string
+  }
+>
