@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { archetypeLabelOf } from './archetypes'
 import type { NewsScale } from './db'
 import { PATCH_SINCE_LEAD, PATCH_SINCE_LEADS, patchHasDeadline } from './comeback'
 import { discountEndsLabel, discountOf, trustedPrice } from './discount'
@@ -8,7 +9,7 @@ import { pl, tr, type Locale } from './i18n'
 import type { Lean } from './mood'
 import { playtimeHidden } from './playtime'
 import { rankByTaste, sharedTasteTags, type Focus, type OwnAnchor } from './recommend'
-import { formatPrice, LEGACY_PRICE_CC } from './steamregion'
+import { formatPrice, LEGACY_PRICE_CC, priceWhere, STEAM_REGIONS, steamRegion } from './steamregion'
 import { tagLabel } from './tagsru'
 import type { TagWeight } from './tagweight'
 import { CANDIDATE_SOURCES } from './types'
@@ -402,14 +403,19 @@ function priceNote(
   if (price === null) return ''
   const deal = discountOf(meta, nowSec)
   // Валюта — региона этой цены: модель повторит «1 999 ₽» под рублёвым
-  // ценником, а не «$19.99», которых человек в своём магазине не увидит
-  const текст = formatPrice(price, meta.priceCc ?? LEGACY_PRICE_CC)
-  // TODO(W1.5, вместе с formatPrice(…, { locale })): английский факт должен
-  // называть регион цены — « price on Russian Steam 1,999 ₽,» по глоссарию,
-  // прилагательным из STEAM_REGIONS[cc].en (его добавляет lib/steamregion.ts
-  // ветки W1-fmt). Читатель /en чаще всего живёт не в регионе цен, и модель
-  // без региона пересказывает сумму как цену «в Steam» вообще.
-  if (locale === 'en') return deal ? ` price ${текст}, ${deal.percent}% off,` : ` price ${текст},`
+  // ценником, а не «$19.99», которых человек в своём магазине не увидит.
+  // Запись числа — языка промпта: «₽1,999» в английском, «1 999 ₽» в русском
+  const cc = meta.priceCc ?? LEGACY_PRICE_CC
+  const текст = formatPrice(price, cc, { locale })
+  // Английский факт называет регион цены — «price on Russian Steam ₽1,999»
+  // (priceWhere, глоссарий): регион один на развёртывание, а читатель /en
+  // чаще всего живёт не в нём, и модель без региона пересказывала бы сумму
+  // как цену «в Steam» вообще — то есть для него. Русскому факту регион не
+  // нужен: «цена 1 999 ₽» читают в том самом регионе
+  if (locale === 'en') {
+    const where = priceWhere(cc, 'en')
+    return deal ? ` ${where} ${текст}, ${deal.percent}% off,` : ` ${where} ${текст},`
+  }
   return deal ? ` цена ${текст} со скидкой −${deal.percent}%,` : ` цена ${текст},`
 }
 
@@ -789,7 +795,7 @@ const PROS_CONS_SCHEMA = {
 export type ProsConsPair = { pros: string[]; cons: string[] }
 
 /**
- * Ровно то, что отдаёт claudeProsCons, — договор с W1-data (lib/pagejob.ts):
+ * Ровно то, что отдаёт claudeProsCons, — договор с lib/pagejob.ts:
  * русские плюсы и минусы и те же по-английски.
  *
  * en — null, когда английский не прошёл проверку (cleanProsCons) или потерял
@@ -799,17 +805,12 @@ export type ProsConsPair = { pros: string[]; cons: string[] }
 export type ProsConsBoth = ProsConsPair & { en: ProsConsPair | null }
 
 /**
- * Объявленный тип ответа — тот же договор, но en в нём пока необязателен.
- *
- * Не из осторожности, а ради сборки этой ветки отдельно: на её базе
- * lib/pagejob.ts (W1-data) типизирует заглушку двери через typeof
- * claudeProsCons, а заглушки lib/pagejob.test.ts возвращают прежнюю форму
- * { pros, cons }. Обязательное en сделало бы их красным tsc в чужих файлах.
- * Ветка W1-data уже заменила typeof своим ProsConsFn, который принимает обе
- * формы, — после её слияния (W1.5) тип двери сужается до ProsConsBoth одной
- * правкой здесь.
+ * Объявленный тип ответа claudeProsCons — ровно договор: en есть всегда, пара
+ * или null. Читатель (lib/pagejob.ts, ProsConsFn) принимает и прежнюю форму
+ * без en — ради своих заглушек, — но сама дверь её больше не отдаёт, и tsc
+ * держит это здесь.
  */
-export type ProsCons = ProsConsPair & { en?: ProsConsPair | null }
+export type ProsCons = ProsConsBoth
 
 /**
  * Английская пара годна, только если в ней есть всё, что есть в русской: на
@@ -863,8 +864,7 @@ pros_en и cons_en — те же пункты по-английски, для а
     const parsed = raw as { pros?: unknown; cons?: unknown; pros_en?: unknown; cons_en?: unknown }
     const ru = { pros: cleanProsCons(parsed.pros), cons: cleanProsCons(parsed.cons) }
     const en = { pros: cleanProsCons(parsed.pros_en, 'en'), cons: cleanProsCons(parsed.cons_en, 'en') }
-    // satisfies — чтобы tsc держал форму договора, пока объявленный тип шире
-    return { ...ru, en: prosConsEn(ru, en) } satisfies ProsConsBoth
+    return { ...ru, en: prosConsEn(ru, en) }
   } catch (e) {
     // Отказ сервиса обязан долететь до runPageSlice: там он гасит модель на весь
     // срез. Раньше его глотал этот самый catch — и предохранитель в pagejob,
@@ -1230,7 +1230,7 @@ function digestTitle(v: unknown, gameName: string): string | null {
 }
 
 /**
- * Ровно то, что отдаёт claudeNewsDigest, — договор с W1-data (lib/newsjob.ts).
+ * Ровно то, что отдаёт claudeNewsDigest, — договор с lib/newsjob.ts.
  *
  * Режим 'both' (по умолчанию): tldr — русский пересказ, как был; tldrEn — тот
  * же по-английски или null, если английский не прошёл проверку (русский от
@@ -1250,20 +1250,15 @@ export type NewsDigestBoth = { tldr: string; tldrEn: string | null; titleEn: str
 export type NewsDigestEnglish = { tldrEn: string; titleEn: string | null; scale: NewsScale }
 
 /*
- * Объявленные типы ответа — те же формы, но английские поля в них пока
- * необязательны. Причина та же, что у ProsCons: на базе этой ветки
- * lib/newsjob.ts (W1-data) типизирует заглушку двери через typeof
- * claudeNewsDigest, и заглушки lib/newsjob.test.ts в прежней форме { tldr,
- * scale } обязаны оставаться ей присваиваемыми. Ветка W1-data зовёт дверь уже
- * через свой DigestFn; после её слияния (W1.5) объявленные типы сужаются до
- * NewsDigestBoth и NewsDigestEnglish одной правкой здесь.
- *
- * Ключа tldr у английского режима нет и в объявленном типе — это главное, и
- * это работает уже сейчас: ответ режима 'en' не передать туда, где ждут
- * русский пересказ (tsc).
+ * Объявленные типы ответа claudeNewsDigest — ровно договор: в режиме 'both'
+ * английские поля есть всегда (строка или null), в режиме 'en' tldrEn —
+ * всегда строка, а ключа tldr нет вовсе: ответ режима 'en' не передать туда,
+ * где ждут русский пересказ (setNewsDigest), — это держит tsc. Читатель
+ * (lib/newsjob.ts, DigestFn) принимает и прежнюю форму без английских полей —
+ * ради своих заглушек, — но сама дверь её больше не отдаёт.
  */
-export type NewsDigest = { tldr: string; tldrEn?: string | null; titleEn?: string | null; scale: NewsScale }
-export type NewsDigestEn = { tldrEn?: string; titleEn?: string | null; scale: NewsScale }
+export type NewsDigest = NewsDigestBoth
+export type NewsDigestEn = NewsDigestEnglish
 
 /** Аргументы claudeNewsDigest — общие для обоих режимов */
 export type NewsDigestArgs = {
@@ -1396,14 +1391,16 @@ const PORTRAIT_SCHEMA_EN = {
 /**
  * Живой текст портрета игрока. null — нет ключа/ошибка (фолбэк на шаблон).
  *
- * locale — язык текста: на нём весь промпт, и подписи архетипов (archetypes)
- * вызывающий передаёт на том же языке — «37% strategist», а не «37% стратег»
- * посреди английского промпта. На 'en' null и тогда, когда модель ответила
- * по-русски.
+ * locale — язык текста: на нём весь промпт, и подписи архетипов в нём —
+ * «37% strategist», а не «37% стратег». Подпись берёт archetypeLabelOf
+ * (lib/archetypes) по ключу архетипа: label у Archetype всегда русский
+ * (lib/portrait), а ключ без языка. Архетип без ключа — из старого кэша —
+ * получает его по русской подписи; русский промпт ставит label как есть, до
+ * буквы. На 'en' null и тогда, когда модель ответила по-русски.
  */
 export async function claudePortraitText(args: {
   name: string
-  archetypes: Array<{ label: string; percent: number }>
+  archetypes: Array<{ key?: string; label: string; percent: number }>
   facts: {
     gamesCount: number
     totalHours: number
@@ -1421,7 +1418,7 @@ export async function claudePortraitText(args: {
   if (!llmAvailable()) return null
   const { name, archetypes, facts } = args
   const locale = args.locale ?? 'ru'
-  const arch = archetypes.map((a) => `${a.percent}% ${a.label}`).join(', ')
+  const arch = archetypes.map((a) => `${a.percent}% ${archetypeLabelOf(a, locale)}`).join(', ')
   const prompt = locale === 'en' ? portraitPromptEn(name, arch, facts) : portraitPromptRu(name, arch, facts)
   try {
     const raw = await claudeStructured({
@@ -2034,47 +2031,36 @@ function priceSentence(
   // «Нет в библиотеке» здесь больше не повторяется: это уже сказано шаблоном
   // источника new, и вместе получалось «у тебя нет … Её нет в библиотеке».
   //
-  // Сумма пока пишется одним русским форматом и на /en («14,99 $»): язык
-  // formatPrice (lib/steamregion.ts) получает отдельной правкой, и тогда
-  // здесь у каждого вызова добавится { locale }. Кириллицы в сумме нет, так
-  // что английская фраза и до того остаётся английской.
+  // Сумма — записью языка причины (formatPrice с locale): «₽1,999» и «$14.99»
+  // в английской, «1 999 ₽» в русской; русская запись посреди английской
+  // фразы читалась бы опечаткой.
   //
-  // TODO(W1.5, в той же правке): английский хвост называет регион цены —
-  // « It's 1,999 ₽ on Russian Steam.» по глоссарию («price on Russian Steam»),
-  // прилагательным STEAM_REGIONS[cc].en из lib/steamregion.ts ветки W1-fmt.
-  // Читатель /en чаще всего живёт не в регионе цен, и голое «on Steam» звучит
-  // как цена для него. Русскому хвосту регион не нужен: «В Steam — 1 999 ₽»
-  // читают в том самом регионе, а ценник рядом подписан priceWhere.
+  // Английский хвост называет регион цены — «It's ₽1,999 on Russian Steam»
+  // (STEAM_REGIONS[cc].en, то же прилагательное, что у priceWhere под
+  // ценником): регион один на развёртывание, читатель /en чаще всего живёт
+  // не в нём, и голое «on Steam» звучало бы как цена для него. Русскому
+  // хвосту регион не нужен: «В Steam — 1 999 ₽» читают в том самом регионе,
+  // а ценник рядом подписан priceWhere.
   const cc = meta.priceCc ?? LEGACY_PRICE_CC
+  const money = (minor: number) => formatPrice(minor, cc, { locale })
+  const steam = `${STEAM_REGIONS[steamRegion(cc)].en} Steam`
   if (!deal) {
     return tr(locale, {
-      ru: ` В Steam — ${formatPrice(price, cc)}.`,
-      en: ` It's ${formatPrice(price, cc)} on Steam.`,
+      ru: ` В Steam — ${money(price)}.`,
+      en: ` It's ${money(price)} on ${steam}.`,
     })
   }
-  // Срок — только когда он не давит: см. HeuristicOptions.hideUrgency
+  // Срок — только когда он не давит: см. HeuristicOptions.hideUrgency. На
+  // языке причины: «осталось 2 дня» / «2 days left», «до 24 ноября» / «until
+  // Nov 24»
   const ends =
-    deal.endsAt && !hideUrgency ? (endsLabel(deal.endsAt, nowSec, locale) ?? '') : ''
-  const final = formatPrice(deal.finalCents, cc)
-  const initial = formatPrice(deal.initialCents, cc)
+    deal.endsAt && !hideUrgency ? (discountEndsLabel(deal.endsAt, nowSec, { locale }) ?? '') : ''
+  const final = money(deal.finalCents)
+  const initial = money(deal.initialCents)
   return tr(locale, {
     ru: ` Сейчас −${deal.percent}%: ${final} вместо ${initial}${ends ? ` — ${ends}` : ''}.`,
-    en: ` ${deal.percent}% off now: ${final} instead of ${initial}${ends ? ` — ${ends}` : ''}.`,
+    en: ` ${deal.percent}% off now on ${steam}: ${final} instead of ${initial}${ends ? ` — ${ends}` : ''}.`,
   })
-}
-
-/**
- * Срок распродажи на языке причины.
- *
- * discountEndsLabel (lib/discount.ts) пока говорит только по-русски («до 24
- * ноября», «остался 1 день»), а русский срок посреди английской причины —
- * ровно то, чего на /en быть не должно. Поэтому, пока у неё нет языка,
- * английская причина срок не называет, как при hideUrgency: цена и процент
- * остаются, обратный отсчёт молчит. Когда язык появится, здесь останется одна
- * строка: discountEndsLabel(endsAt, nowSec, { locale }) для обоих языков.
- */
-function endsLabel(endsAt: number, nowSec: number, locale: Locale): string | null {
-  return locale === 'en' ? null : discountEndsLabel(endsAt, nowSec)
 }
 
 /**

@@ -350,6 +350,26 @@ describe('shareText: английская причина', () => {
     expect(shareText(base + enTail, ' В Steam — 1\u00a0999\u00a0₽.')).toBe(base)
   })
 
+  /*
+   * Хвосты ровно той формы, что пишет reasonPrice на /en: регион назван
+   * («on Russian Steam»), сумма — английской записью, срок — английский.
+   * Отрезаются и точным совпадением, и правилами о деньгах, если роут
+   * передал не тот хвост.
+   */
+  test('английские хвосты reasonPrice с регионом — уходят целиком', () => {
+    const base = '“Hades” isn\'t in your library, but its tag (Roguelike) matches what you play the most.'
+    for (const enTail of [
+      " It's ₽1,999 on Russian Steam.",
+      " It's $14.99 on US Steam.",
+      ' 50% off now on Russian Steam: ₽999 instead of ₽1,999 — 2 days left.',
+      ' 50% off now on US Steam: $7.49 instead of $14.99 — until Nov 24.',
+    ]) {
+      expect(shareText(base + enTail, enTail), enTail).toBe(base)
+      // роут отрезал по русскому хвосту — предложение с суммой уходит всё равно
+      expect(shareText(base + enTail, ' В Steam — 999 ₽.'), enTail).toBe(base)
+    }
+  })
+
   test('«free» не о деньгах и слова о деньгах в названиях игр — не трогаем', () => {
     for (const keep of [
       "With the whole evening free, “Disco Elysium” is the deep story you've been saving.",

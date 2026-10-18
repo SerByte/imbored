@@ -97,14 +97,13 @@ export type DigestOutcome = {
 export type DigestFn = (args: DigestArgs) => Promise<DigestOutcome | null>
 
 /**
- * Дверь к модели по договору DigestFn. Приведение через unknown — потому что
- * сигнатура claudeNewsDigest с режимом живёт в lib/llm, а этот срез обязан
- * собираться и до, и после неё: договор (режим и поля ответа) зафиксирован
- * между модулями, и формы ответа ниже проверяются в рантайме, а не
- * принимаются на веру.
+ * Дверь к модели по договору DigestFn — без приведения типов: claudeNewsDigest
+ * объявляет ровно формы договора (NewsDigestBoth и NewsDigestEnglish в
+ * lib/llm), и tsc проверяет, что каждая из них — DigestOutcome. Формы ответа
+ * ниже всё равно проверяются в рантайме: заглушки тестов отдают и прежнюю
+ * форму без английских полей.
  */
-const defaultDigest: DigestFn = (args) =>
-  (claudeNewsDigest as unknown as DigestFn)(args)
+const defaultDigest: DigestFn = (args) => claudeNewsDigest(args)
 
 /**
  * Имя игры для промпта, когда строки игры в базе нет. Не «Игра 730»:
