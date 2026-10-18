@@ -127,12 +127,19 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { steamid, lang } = await params
   const locale = toLocale(lang)
-  if (!/^\d{17}$/.test(steamid)) return {}
+  // Свой адрес, а не корневой '/': см. ownAddress в lib/site.ts
+  const url = `/portrait/${steamid}`
+  // Битый адрес: файловая картинка всё равно встаёт в метаданные, а с ней и
+  // её русский alt — поэтому на /en и здесь своя запись с английским. Без
+  // og:url, как у корня: адреса у такой страницы нет. Русская — как была
+  if (!/^\d{17}$/.test(steamid)) {
+    return locale === 'en'
+      ? { openGraph: { type: 'website', ...ogSite(locale), ...ogImageOn(locale, url, 'Player portrait — imbored') } }
+      : {}
+  }
 
   // Ник от снапшота не зависит — читаем вместе; страница возьмёт оба из cache()
   const [snapshot, persona] = await Promise.all([snapshotOf(steamid), personaOf(steamid)])
-  // Свой адрес, а не корневой '/': см. ownAddress в lib/site.ts
-  const url = `/portrait/${steamid}`
   if (!snapshot) {
     return {
       title: tr(locale, { ru: 'Портрет игрока', en: 'Player portrait' }),
@@ -155,7 +162,10 @@ export async function generateMetadata({
   const name = playerName(steamid, persona, locale)
   const hours = Math.round(snapshot.games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
   const games = snapshot.games.length
-  const title = tr(locale, { ru: `Портрет игрока ${name}`, en: `${name}'s player portrait` })
+  // По-английски ник — после тире, как у итогов года: «{name}'s player
+  // portrait» у самых частых имён («Demo player», «Player 0007») ставило
+  // «player» дважды подряд
+  const title = tr(locale, { ru: `Портрет игрока ${name}`, en: `Player portrait — ${name}` })
   // Превью ссылки в чате — то же правило, что и сама страница: при скрытом
   // времени «0 часов» было бы сказано про галочку Steam (lib/playtime.ts)
   const time = playtimeHidden(snapshot.games)
@@ -945,7 +955,9 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
               what="portrait"
               url={withRef(`${appBaseUrl()}${lp(locale, `/portrait/${steamid}`)}`, 'portrait')}
               label={tr(locale, { ru: 'Ссылка на твой портрет игрока', en: 'Link to your player portrait' })}
-              title={tr(locale, { ru: `Портрет игрока ${name} — imbored`, en: `${name}'s player portrait — imbored` })}
+              // «{name}'s portrait», как у ссылки с итогов года: «player» уже
+              // есть в демо-нике и в «Player 1234», а второе тире к « — imbored» лишнее
+              title={tr(locale, { ru: `Портрет игрока ${name} — imbored`, en: `${name}'s portrait — imbored` })}
               text={tr(locale, {
                 ru: 'Мой портрет игрока по библиотеке Steam — проверь, совпадаем ли мы',
                 en: 'My player portrait from my Steam library — see if our tastes match',

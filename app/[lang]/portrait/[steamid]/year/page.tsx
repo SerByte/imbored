@@ -63,11 +63,16 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { steamid, lang } = await params
   const locale = toLocale(lang)
-  if (!/^\d{17}$/.test(steamid)) return {}
+  const url = `/portrait/${steamid}/year`
+  // Битый адрес — как у портрета: на /en своя картинка ради английского alt
+  if (!/^\d{17}$/.test(steamid)) {
+    return locale === 'en'
+      ? { openGraph: { type: 'website', ...ogSite(locale), ...ogImageOn(locale, url, 'Year in review — imbored') } }
+      : {}
+  }
 
   // Ник от снапшота не зависит — читаем вместе; страница возьмёт оба из cache()
   const [snapshot, persona] = await Promise.all([snapshotOf(steamid), personaOf(steamid)])
-  const url = `/portrait/${steamid}/year`
   if (!snapshot) {
     return {
       title: tr(locale, { ru: 'Итоги года', en: 'Year in review' }),
