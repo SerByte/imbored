@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { getMajorFeed, upsertNewsItems, type Db, type StoredNews } from './db'
+import { getMajorFeed, setNewsDigest, upsertNewsItems, type Db, type StoredNews } from './db'
 import { freshDb } from './testing/route'
 import { NEWS_MAJOR_TAG, cachedMajorFeed } from './whatsnewcache'
 
@@ -101,5 +101,30 @@ describe('cachedMajorFeed: связанная копия ведёт в ту же
     expect(keys(viaCache)).toEqual(keys(await getMajorFeed(db, 2, { minRank: 20_000 })))
     expect(viaCache).toHaveLength(2)
     expect(keys(viaCache)).not.toContain('440:4400')
+  })
+})
+
+/**
+ * Одна запись кэша на оба языка: строки несут английские слоты, а язык
+ * выбирает страница. Иначе /en/whatsnew держал бы свою запись под тем же
+ * тегом и расходился бы с плашкой «N новых».
+ */
+describe('cachedMajorFeed: английские слоты в той же записи', () => {
+  test('строки ленты несут tldrEn и titleEn, если они есть', async () => {
+    await upsertNewsItems(db, [patch(730, 0, 90_000), patch(570, 1, 50_000)], NOW)
+    await setNewsDigest(
+      db,
+      730,
+      '7300',
+      { tldr: 'Новый режим.', scale: 'major', tldrEn: 'A new mode.', titleEn: 'Update 730' },
+      NOW,
+    )
+    const rows = await cachedMajorFeed(30, 0)
+    expect(rows.find((r) => r.appid === 730)).toMatchObject({
+      tldr: 'Новый режим.',
+      tldrEn: 'A new mode.',
+      titleEn: 'Update 730',
+    })
+    expect(rows.find((r) => r.appid === 570)).not.toHaveProperty('tldrEn')
   })
 })

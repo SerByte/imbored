@@ -7,8 +7,10 @@ import { discountView, trustedPrice } from './discount'
 import { entryCost, showsEntry } from './entry'
 import { logSwallowed } from './errlog'
 import { partsView } from './feedbackctx'
+import { descriptionFor, storeUrlFor } from './gamedesc'
 import { isRussianText } from './gamepage'
 import { ruLangLine, sessionTrait } from './gametraits'
+import type { Locale } from './i18n'
 import type { Pick as LlmPick } from './llm'
 import {
   buildAnchorFinder,
@@ -64,8 +66,15 @@ export type PickContext = {
   /**
    * Пересказ крупного патча, вышедшего после последнего запуска заброшенной
    * игры (lib/comeback.ts); null — факта нет, и причина говорит по-старому.
+   * На языке locale: на /en — английский пересказ, а без него факта нет.
    */
   patchOf: (appid: number) => string | null
+  /**
+   * Язык карточек: на нём «О чём игра», страница магазина у игр не из Steam
+   * и всё, что карточка говорит словами. Русский по умолчанию — так
+   * контекст собирают все прежние вызывающие.
+   */
+  locale: Locale
 }
 
 /**
@@ -80,6 +89,7 @@ export function pickContext(
   set: CandidateSet,
   metaNow: (appid: number) => GameMeta | undefined = set.metaOf,
   patches: ReadonlyMap<number, string> = new Map(),
+  locale: Locale = 'ru',
 ): PickContext {
   const { games, libMetas, tagWeight, banned } = set
   const findAnchor = buildAnchorFinder(games, (id) => libMetas.get(id), tagWeight, banned)
@@ -101,6 +111,7 @@ export function pickContext(
     },
     hideUrgency: hideUrgencyFor(games, (id) => libMetas.get(id)),
     patchOf: (appid) => patches.get(appid) ?? null,
+    locale,
   }
 }
 
@@ -117,16 +128,21 @@ export function pickContext(
  * проверь»). Проброшенный обрыв Turso ронял бы 500-й всю выдачу /play и
  * «Игру дня» ради одной фразы, которую и так можно не сказать. Сбой не
  * молчит — строка в логе (logSwallowed), как у соседних фолбэков.
+ *
+ * locale — язык пересказа: на /en факт — английский пересказ, а патч без
+ * него фактом не считается (latestMajorPatchSince): русская фраза посреди
+ * английской причины хуже, чем причина без факта.
  */
 export async function comebackPatches(
   db: Db,
   set: CandidateSet,
   cands: ReadonlyArray<{ appid: number; source: CandidateSource }>,
+  locale: Locale = 'ru',
 ): Promise<Map<number, string>> {
   const pairs = comebackPatchPairs(cands, set.games, set.playtimeHidden)
   if (!pairs.length) return new Map()
   try {
-    return await latestMajorPatchSince(db, pairs)
+    return await latestMajorPatchSince(db, pairs, locale)
   } catch (err) {
     logSwallowed('cards:comeback-patches', err, { pairs: pairs.length })
     return new Map()
@@ -149,13 +165,16 @@ export async function comebackPatches(
  * заброшенные в их колоде бывают, но причину про патч они не пишут — запрос
  * там был бы чтением ради выброса на каждом свайпе. Включает его только
  * /api/recommend, и только writer-сессии.
+ *
+ * opts.locale — язык карточек (PickContext.locale) и пересказов патчей.
  */
 export async function buildPickContext(
   db: Db,
   set: CandidateSet,
   pricedIds: number[],
-  opts: { patches?: boolean } = {},
+  opts: { patches?: boolean; locale?: Locale } = {},
 ): Promise<PickContext> {
+  const locale = opts.locale ?? 'ru'
   // Патчи — у тех же, кто может попасть на экран, и тем же заходом, что цены:
   // друг от друга они не зависят. Источник берётся из пула героя (он и
   // решает, заброшенная ли)
@@ -165,21 +184,25 @@ export async function buildPickContext(
   }
   const [refreshed, patches] = await Promise.all([
     refreshDealsWithin(db, pricedIds, set.now),
-    opts.patches ? comebackPatches(db, set, onScreen()) : new Map<number, string>(),
+    opts.patches ? comebackPatches(db, set, onScreen(), locale) : new Map<number, string>(),
   ])
   const priced = refreshed ? await getGamesMetaLite(db, pricedIds) : new Map<number, GameMeta>()
-  return pickContext(set, (appid) => priced.get(appid) ?? set.metaOf(appid), patches)
+  return pickContext(set, (appid) => priced.get(appid) ?? set.metaOf(appid), patches, locale)
 }
 
-/** Картинка, магазин и цена — общее у всех карточек, от героя до плитки полки */
-function shopView(meta: GameMeta | undefined, now: number) {
+/**
+ * Картинка, магазин и цена — общее у всех карточек, от героя до плитки полки.
+ * locale — только ради страницы магазина у игр не из Steam: на /en она своя
+ * (storeUrlFor в lib/gamedesc), у игр Steam ссылки в мете нет вовсе.
+ */
+function shopView(meta: GameMeta | undefined, now: number, locale: Locale) {
   return {
     // Ссылку не угадываем шаблоном — путь Steam контент-адресуемый. Клиент
     // соберёт нужный размер сам через GameArt.
     headerImage: meta?.headerImage ?? null,
     art: meta?.art ?? null,
     store: meta?.store ?? null,
-    storeUrl: meta?.storeUrl ?? null,
+    storeUrl: storeUrlFor(meta, locale),
     priceFinal: meta ? trustedPrice(meta, now) : null,
     // Регион цены едет рядом с ней: валюту знает только он (lib/steamregion),
     // а клиентскому ценнику до STEAM_STORE_CC не дотянуться
@@ -210,16 +233,25 @@ function buyView(meta: GameMeta | undefined, source: CandidateSource, now: numbe
  */
 /**
  * «О чём игра» — одной строкой описания магазина, только у новой для человека
- * игры из каталога (source 'new') и только по-русски.
+ * игры из каталога (source 'new') и только на языке карточки.
  *
  * Своя игра в объяснении не нуждается: человек её купил. А про некупленную из
  * каталога он видел название, теги и причину — и ни слова о том, что это
  * вообще такое. Раньше shortDescription ехал в каждой карточке и нигде не
  * читался; английский хвост из магазина (у большинства карточек до прохода
  * крона страниц) посреди русского героя читался бы сбоем — см. isRussianText.
+ *
+ * На /en — английское описание (descriptionFor в lib/gamedesc): английский
+ * слот, своё описание, если оно английское, или null. Русского абзаца
+ * посреди английского героя нет по тому же доводу, что и наоборот.
  */
-export function aboutLine(source: CandidateSource, meta: GameMeta | undefined): string | null {
+export function aboutLine(
+  source: CandidateSource,
+  meta: GameMeta | undefined,
+  locale: Locale = 'ru',
+): string | null {
   if (source !== 'new') return null
+  if (locale === 'en') return descriptionFor(meta, 'en')?.trim() || null
   const text = meta?.shortDescription?.trim()
   return text && isRussianText(text) ? text : null
 }
@@ -231,11 +263,11 @@ export function cardView(p: LlmPick, ctx: PickContext, edge: PickEdge | null = n
     name: p.name,
     source: p.source,
     reason: p.reason,
-    ...shopView(meta, ctx.now),
+    ...shopView(meta, ctx.now, ctx.locale),
     ccu: meta?.ccu ?? null,
     // без отметки подпись не имеет права говорить «сейчас» — см. PlayersNow
     ccuAt: meta?.ccuAt ?? null,
-    about: aboutLine(p.source, meta),
+    about: aboutLine(p.source, meta, ctx.locale),
     tags: topTags(meta),
     hoursPlayed: ctx.hoursOf(p.appid),
     // «Сессия ~20 мин» / «Матч ~15 мин» — из семантики, только уверенной
@@ -248,8 +280,9 @@ export function cardView(p: LlmPick, ctx: PickContext, edge: PickEdge | null = n
     // у своей и у покупки: сюжетная игра без русского — другой вечер, а на
     // полке покупок это довод «за» или «против». Готовой фразой, а не
     // ступенью: клиенту /play таблица подписей в бандле ни к чему. null —
-    // не знаем, и строки нет
-    russian: ruLangLine(meta?.ruLang),
+    // не знаем, и строки нет. На /en строки нет вовсе: «есть ли русский» —
+    // вопрос русскоязычного вечера, английскому он ничего не говорит
+    russian: ctx.locale === 'en' ? null : ruLangLine(meta?.ruLang),
     // «92% из 48 тыс.» на плитке полки покупок: те же числа, по которым
     // confidenceMultiplier решил, насколько новинке верить
     reviewsPercent: meta?.reviewsPercent ?? null,
@@ -305,20 +338,22 @@ export type ScoreView = ReturnType<typeof scoreView>
  * Русский — та же фраза, что на плитке полки покупок /play (cardView): там и
  * здесь одно решение «присмотреться к покупке», и «без русского» перед ним
  * весит не меньше цены. Отзывов на этой плитке нет, а русский есть — он
- * короче и решает раньше. null — не знаем, и строки нет.
+ * короче и решает раньше. null — не знаем, и строки нет; на /en — всегда
+ * null, как и у cardView.
  */
 export function storeCardView(
   c: { appid: number; name: string },
   meta: GameMeta | undefined,
   now: number,
   hideUrgency: boolean,
+  locale: Locale = 'ru',
 ) {
   return {
     appid: c.appid,
     name: c.name,
-    ...shopView(meta, now),
+    ...shopView(meta, now, locale),
     discount: buyView(meta, 'new', now, hideUrgency).discount,
-    russian: ruLangLine(meta?.ruLang),
+    russian: locale === 'en' ? null : ruLangLine(meta?.ruLang),
   }
 }
 
@@ -327,6 +362,10 @@ export type StoreCard = ReturnType<typeof storeCardView>
 /**
  * Герой «Игры дня». Причина, совпавшие теги и часы — из записи дня (отбор
  * был утром), цена и скидка — свежие, на каждом заходе.
+ *
+ * locale — язык карточки: «О чём игра», магазин у игр не из Steam и строка о
+ * русском (на /en её нет). Причину вызывающий передаёт уже на этом языке
+ * (dailyReasonBase в lib/daily).
  */
 export function dailyCardView(
   pick: { appid: number; name: string; source: CandidateSource },
@@ -339,25 +378,26 @@ export function dailyCardView(
     hideUrgency: boolean
     via?: OwnAnchor | null
   },
+  locale: Locale = 'ru',
 ) {
   return {
     appid: pick.appid,
     name: pick.name,
     source: pick.source,
     reason: day.reason,
-    ...shopView(meta, now),
+    ...shopView(meta, now, locale),
     // Кадры целиком: сколько из них показать, решает сам герой — это упирается
     // в бюджет видеопамяти слайдера, а не в состав ответа
     screenshots: meta?.screenshots ?? [],
-    // «О чём игра» — только у игры из каталога и только по-русски (aboutLine)
-    about: aboutLine(pick.source, meta),
+    // «О чём игра» — только у игры из каталога и только на языке карточки (aboutLine)
+    about: aboutLine(pick.source, meta, locale),
     // Микротрейлер — живой фон героя после паузы (components/HeroTrailer).
     // Лежит в той же записи, что кадры: лишнего чтения нет
     trailer: meta?.trailer ?? null,
     ccu: meta?.ccu ?? null,
     ccuAt: meta?.ccuAt ?? null,
     // Та же фраза о русском, что у героя /play (cardView); null — не знаем
-    russian: ruLangLine(meta?.ruLang),
+    russian: locale === 'en' ? null : ruLangLine(meta?.ruLang),
     tags: topTags(meta),
     // Чипсы совпавших тегов помечаются на экране, и метка обязана считаться
     // там же, где лежит профиль вкуса, — то есть в отборе; здесь она из
@@ -382,7 +422,7 @@ export type DailyPickCard = ReturnType<typeof dailyCardView>
  */
 export function exploreCardView(p: LlmPick, ctx: PickContext) {
   const meta = ctx.metaNow(p.appid)
-  const shop = shopView(meta, ctx.now)
+  const shop = shopView(meta, ctx.now, ctx.locale)
   return {
     appid: p.appid,
     name: p.name,
@@ -414,8 +454,12 @@ export function exploreCardView(p: LlmPick, ctx: PickContext) {
 
 export type ExploreCard = ReturnType<typeof exploreCardView>
 
-/** «Отправить другу» у героя: текст и подпись сервера (lib/pickshare shareView) */
-export type ShareView = { share: { text: string; sig: string } }
+/**
+ * «Отправить другу» у героя: текст и подпись сервера (lib/pickshare
+ * shareView). lang — только у английского героя: подпись покрывает язык, и
+ * клиент возвращает его в /api/pick.
+ */
+export type ShareView = { share: { text: string; sig: string; lang?: 'en' } }
 
 /**
  * Плитка полки «Приглянулось»: картинка, дорога к карточке игры и цена.
@@ -425,9 +469,15 @@ export type ShareView = { share: { text: string; sig: string } }
  * что у колоды (exploreCardView): «бесплатно» сильнее цены, скидка — только у
  * не купленного (buyView), срок распродажи молчит при большом бэклоге.
  * Своя игра — без цены вовсе: её не покупают.
+ *
+ * opts.locale — язык плитки (подпись срока скидки и всё, что плитка скажет
+ * словами); по умолчанию русский.
  */
-export function shelfCardView(meta: GameMeta, opts: { now: number; owned: boolean; hideUrgency: boolean }) {
-  const shop = shopView(meta, opts.now)
+export function shelfCardView(
+  meta: GameMeta,
+  opts: { now: number; owned: boolean; hideUrgency: boolean; locale?: Locale },
+) {
+  const shop = shopView(meta, opts.now, opts.locale ?? 'ru')
   const buying = !opts.owned
   return {
     appid: meta.appid,

@@ -86,9 +86,14 @@ async function loadMajorFeed(limit: number, minRank: number): Promise<StoredNews
  * сам менялся вместе с текстом колбэка на каждой сборке, теперь он стабилен
  * между деплоями, и запись старой формы прожила бы до своего TTL.
  * Стрелку сюда не возвращать — это сторожит lib/whatsnewcache.test.ts.
+ *
+ * v2 — строки ленты несут английские слоты (tldrEn, titleEn), и одна запись
+ * кэша служит обоим языкам: /whatsnew и /en/whatsnew читают её же, а язык
+ * выбирает страница. Запись v1 таких полей не знает, и /en до конца её TTL
+ * молчал бы о пересказах, которые в базе уже есть.
  */
 export const cachedMajorFeed = unstable_cache(
   loadMajorFeed.bind(null),
-  ['whatsnew:major:v1'],
+  ['whatsnew:major:v2'],
   { tags: [NEWS_MAJOR_TAG], revalidate: MAJOR_TTL_SEC },
 )
