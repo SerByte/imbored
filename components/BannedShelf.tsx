@@ -269,7 +269,9 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
                 /*
                   У каждой кнопки своё имя. Видимый текст один на всю полку, и
                   скринридер зачитывал список из пяти одинаковых «Вернуть в
-                  подбор», не говоря, какая к какой игре.
+                  подбор», не говоря, какая к какой игре. Английское имя
+                  начинается с видимых слов (WCAG 2.5.3, как у «Уже прошёл»):
+                  голосом кнопку зовут тем, что на ней написано.
                 */
                 <button
                   type="button"
@@ -280,8 +282,8 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
                   onClick={() => unban(g.appid)}
                   aria-label={
                     shelf === 'done'
-                      ? tr(locale, { ru: `Снова предлагать «${g.name}»`, en: `Suggest “${g.name}” again` })
-                      : tr(locale, { ru: `Вернуть «${g.name}» в подбор`, en: `Put “${g.name}” back into picks` })
+                      ? tr(locale, { ru: `Снова предлагать «${g.name}»`, en: `Suggest again: “${g.name}”` })
+                      : tr(locale, { ru: `Вернуть «${g.name}» в подбор`, en: `Back into picks: “${g.name}”` })
                   }
                   className="pill mt-3 self-start"
                 >
@@ -331,7 +333,12 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
             <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
               {tr(locale, {
                 ru: 'Их правда нет ни в подборе, ни в игре дня, ни в пати. Передумаешь — верни обратно.',
-                en: "They're really gone from your picks, the game of the day and parties. Change your mind? Bring them back.",
+                // Число — как у заголовка над абзацем: под «1 game …» строка
+                // про «they» читается ошибкой. Русскому «их» число не мешает
+                en:
+                  hidden.length === 1
+                    ? "It's really gone from your picks, the game of the day and parties. Change your mind? Bring it back."
+                    : "They're really gone from your picks, the game of the day and parties. Change your mind? Bring them back.",
               })}
             </p>
             {tiles(hidden, 'hidden')}
@@ -358,7 +365,11 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
             <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
               {tr(locale, {
                 ru: 'Их не предлагаем не потому, что не понравились: они пройдены. Захочешь перепройти — верни.',
-                en: "We don't suggest them because you finished them, not because you didn't like them. Want to replay one? Bring it back.",
+                // Число — как у заголовка, по той же причине, что у скрытых
+                en:
+                  done.length === 1
+                    ? "We don't suggest it because you finished it, not because you didn't like it. Want to replay it? Bring it back."
+                    : "We don't suggest them because you finished them, not because you didn't like them. Want to replay one? Bring it back.",
               })}
             </p>
             {tiles(done, 'done')}
