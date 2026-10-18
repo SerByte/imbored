@@ -1,4 +1,4 @@
-import { archetypeLabel } from './archetypes'
+import { archetypeLabelOf } from './archetypes'
 import { fmtNumber, pl, tr, type Locale } from './i18n'
 import { plural } from './plural'
 
@@ -216,9 +216,13 @@ export function eraLead(voice: PortraitVoice, locale: Locale = 'ru'): string {
  * склейка с переведёнными кусками: падежи («в 22 играх», «5 игр почти не
  * тронуто») по-английски не склеиваются, и порядок слов там свой.
  *
- * Подпись архетипа по-английски — по его ключу (archetypeLabel): label у
- * архетипа из buildPortrait русский. Без ключа — label как есть: так
- * зовут тесты и старые записи кэша, где ключа ещё нет.
+ * Подпись архетипа по-английски — по его ключу (archetypeLabelOf): label у
+ * архетипа из buildPortrait русский. Ключ необязателен, потому что русские
+ * тесты зовут функцию с одной подписью, — но без ключа английский текст не
+ * берёт русский label, а узнаёт ключ по нему («стратег» → strategist,
+ * «фанат X» → X fan). Записи кэша модели, собранные до ключей, страница
+ * читать не должна вовсе: ключ кэша модели на странице поднимается вместе с
+ * появлением ключей, а узнавание по подписи — страховка, а не путь.
  */
 export function portraitFallbackText(
   name: string,
@@ -229,11 +233,10 @@ export function portraitFallbackText(
 ): string {
   const you = voice === 'you'
   const en = locale === 'en'
-  const labelOf = (a: { key?: string; label: string }) => (en && a.key ? archetypeLabel(a.key, locale) : a.label)
   const parts: string[] = []
   if (archetypes.length >= 2) {
     const [a, b] = archetypes
-    const [la, lb] = [labelOf(a), labelOf(b)]
+    const [la, lb] = [archetypeLabelOf(a, locale), archetypeLabelOf(b, locale)]
     parts.push(
       you
         ? tr(locale, {

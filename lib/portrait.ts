@@ -64,7 +64,7 @@ const STOP_TAGS = new Set([
 
 // Словарь подписей и синонимов — в lib/archetypes: его берут и запасной
 // текст портрета, и промпт модели, а этот модуль тянет движок подбора
-export { archetypeKey, archetypeLabel, isKnownArchetype } from './archetypes'
+export { archetypeKey, archetypeKeyFromLabel, archetypeLabel, archetypeLabelOf, isKnownArchetype } from './archetypes'
 
 export function buildPortrait(
   library: LibraryGame[],

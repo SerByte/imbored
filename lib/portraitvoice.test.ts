@@ -272,6 +272,31 @@ describe('голос портрета по-английски', () => {
     expect(text).toMatch(/^Anya is 60% Fantasy fan and 40% sharpshooter\./)
   })
 
+  test('архетип без ключа — ключ по русской подписи, русская подпись в английский текст не попадает', () => {
+    const keyless = [
+      { label: 'стрелок', percent: 60 },
+      { label: 'стратег', percent: 40 },
+    ]
+    expect(portraitFallbackText('Anya', keyless, FACTS, 'you', 'en')).toMatch(
+      /^Anya, you're 60% sharpshooter and 40% strategist\. You've logged /,
+    )
+    expect(
+      portraitFallbackText('Anya', [{ label: 'фанат Fantasy', percent: 55 }, keyless[1]], FACTS, 'them', 'en'),
+    ).toMatch(/^Anya is 55% Fantasy fan and 40% strategist\. They've logged /)
+    // подпись, по которой ключ не узнать, — нейтральное слово, а не кириллица
+    const odd = portraitFallbackText('Anya', [{ label: 'кто-то', percent: 70 }, keyless[1]], FACTS, 'you', 'en')
+    expect(odd).toMatch(/^Anya, you're 70% player and 40% strategist\./)
+    for (const voice of ['you', 'them'] as const) {
+      for (const facts of [FACTS, { ...FACTS, playtimeHidden: true }]) {
+        const text = portraitFallbackText('Anya', keyless, facts, voice, 'en')
+        expect(text, text).not.toMatch(CYRILLIC)
+        expect(text).not.toContain('undefined')
+      }
+    }
+    // по-русски без ключа — как было
+    expect(portraitFallbackText('Аня', keyless, FACTS, 'you')).toMatch(/^Аня, ты на 60% стрелок и на 40% стратег\./)
+  })
+
   test('по-русски с ключами — как было: русская подпись из label', () => {
     expect(portraitFallbackText('Аня', ARCH_EN, FACTS, 'you')).toMatch(/^Аня, ты на 46% строитель фабрик и на 30% стратег\./)
     expect(portraitFallbackText('Аня', ARCH_EN, FACTS, 'them', 'ru')).toBe(portraitFallbackText('Аня', ARCH_EN, FACTS, 'them'))

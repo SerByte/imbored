@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'vitest'
-import { archetypeKey, archetypeLabel, buildPortrait, isKnownArchetype } from './portrait'
+import {
+  archetypeKey,
+  archetypeKeyFromLabel,
+  archetypeLabel,
+  archetypeLabelOf,
+  buildPortrait,
+  isKnownArchetype,
+} from './portrait'
 import { buildWrapped } from './wrapped'
 import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 import type { GameMeta, LibraryGame } from './types'
@@ -258,5 +265,70 @@ describe('архетипы: ключ и подписи на двух языка�
     expect(p.archetypes.map((a) => a.known)).toEqual([true, true, false])
     // label — русская подпись того же ключа
     for (const a of p.archetypes) expect(a.label).toBe(archetypeLabel(a.key, 'ru'))
+  })
+
+  test('ключ узнаётся по подписи на обоих языках — у каждого ключа подписи свои', () => {
+    for (const tag of TAGS) {
+      const key = archetypeKey(tag)
+      for (const locale of ['ru', 'en'] as const) {
+        expect(archetypeKeyFromLabel(archetypeLabel(key, locale)), `${tag} ${locale}`).toBe(key)
+      }
+      // прежняя русская подпись — та, что лежит в записях кэша до ключей
+      expect(archetypeKeyFromLabel(FROZEN_RU[tag]), tag).toBe(key)
+    }
+    expect(archetypeKeyFromLabel('фанат Zorkovka')).toBe('Zorkovka')
+    expect(archetypeKeyFromLabel('Zorkovka fan')).toBe('Zorkovka')
+    expect(archetypeKeyFromLabel('фанат Base Building')).toBe('Base Building')
+  })
+
+  test('подпись не из словаря и не запасная — ключа нет', () => {
+    for (const label of ['', 'кто-то', 'фанат ', ' fan', 'fan', 'constructor', 'toString']) {
+      expect(archetypeKeyFromLabel(label), label).toBeNull()
+    }
+  })
+
+  test('ключа нет совсем — нейтральное «игрок», а не «undefined fan»', () => {
+    expect(archetypeLabel(undefined, 'en')).toBe('player')
+    expect(archetypeLabel(null, 'en')).toBe('player')
+    expect(archetypeLabel('', 'en')).toBe('player')
+    expect(archetypeLabel(undefined)).toBe('игрок')
+  })
+
+  test('archetypeLabelOf по-русски — label как есть, ни на букву иначе', () => {
+    expect(archetypeLabelOf({ key: 'FPS', label: 'стрелок' })).toBe('стрелок')
+    expect(archetypeLabelOf({ key: 'FPS', label: 'стрелок' }, 'ru')).toBe('стрелок')
+    expect(archetypeLabelOf({ label: 'что угодно' }, 'ru')).toBe('что угодно')
+    expect(archetypeLabelOf({ key: 'Zorkovka', label: 'фанат Zorkovka' }, 'ru')).toBe('фанат Zorkovka')
+  })
+
+  test('archetypeLabelOf по-английски: по ключу, без ключа — по русской подписи, кириллицы нет никогда', () => {
+    expect(archetypeLabelOf({ key: 'Automation', label: 'строитель фабрик' }, 'en')).toBe('factory builder')
+    // запись до ключей: только русская подпись
+    expect(archetypeLabelOf({ label: 'стрелок' }, 'en')).toBe('sharpshooter')
+    expect(archetypeLabelOf({ label: 'фанат Fantasy' }, 'en')).toBe('Fantasy fan')
+    expect(archetypeLabelOf({ key: null, label: 'рогалик-энтузиаст' }, 'en')).toBe('roguelike junkie')
+    // подпись уже английская — та же, а не «… fan»
+    expect(archetypeLabelOf({ label: 'strategist' }, 'en')).toBe('strategist')
+    // подпись, по которой ключ не узнать, — нейтральное слово, а не кириллица
+    expect(archetypeLabelOf({ label: 'кто-то' }, 'en')).toBe('player')
+    for (const tag of TAGS) {
+      const fromLabel = archetypeLabelOf({ label: FROZEN_RU[tag] }, 'en')
+      expect(fromLabel, tag).toBe(archetypeLabel(tag, 'en'))
+      expect(fromLabel, tag).not.toMatch(CYRILLIC)
+    }
+  })
+
+  test('архетипы портрета по-английски — без кириллицы и с ключом, и без', () => {
+    const metas = new Map<number, GameMeta>([
+      [10, meta(10, { FPS: 100, Strategy: 80 })],
+      [11, meta(11, { 'Deck Building': 60, Fantasy: 40 })],
+    ])
+    const p = buildPortrait([lib(10, 100), lib(11, 50)], (id) => metas.get(id))
+    expect(p.archetypes.length).toBeGreaterThan(2)
+    for (const a of p.archetypes) {
+      expect(archetypeLabelOf(a, 'en'), a.key).not.toMatch(CYRILLIC)
+      // та же подпись у записи без ключа — какой была модель до ключей
+      expect(archetypeLabelOf({ label: a.label }, 'en'), a.key).toBe(archetypeLabelOf(a, 'en'))
+    }
   })
 })
