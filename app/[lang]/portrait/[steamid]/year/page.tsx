@@ -67,7 +67,25 @@ export async function generateMetadata({
 
   // Ник от снапшота не зависит — читаем вместе; страница возьмёт оба из cache()
   const [snapshot, persona] = await Promise.all([snapshotOf(steamid), personaOf(steamid)])
-  if (!snapshot) return { title: tr(locale, { ru: 'Итоги года', en: 'Year in review' }), robots: { index: false } }
+  const url = `/portrait/${steamid}/year`
+  if (!snapshot) {
+    return {
+      title: tr(locale, { ru: 'Итоги года', en: 'Year in review' }),
+      robots: { index: false },
+      // На /en и у заглушки своя картинка — ради английского alt (ogImageOn);
+      // поля — те же, что дал бы корень. Русская заглушка — как была
+      ...(locale === 'en'
+        ? {
+            openGraph: {
+              type: 'website' as const,
+              ...ogSite(locale),
+              url: lp(locale, url),
+              ...ogImageOn(locale, url, 'Year in review — imbored'),
+            },
+          }
+        : {}),
+    }
+  }
 
   const name = playerName(steamid, persona, locale)
   const title = tr(locale, { ru: `Итоги года — ${name}`, en: `Year in review — ${name}` })
@@ -75,7 +93,6 @@ export async function generateMetadata({
     ru: 'Сколько наиграно за год, какие игры впервые запущены и какие появились в библиотеке — по снимкам Steam.',
     en: 'Hours played this year, games launched for the first time and games added to the library — from Steam snapshots.',
   })
-  const url = `/portrait/${steamid}/year`
 
   // Отметку года здесь не читаем: метаданные рендерятся мимо кэша итогов, а
   // без отметки закрытый год не узнать — описание честное и без чисел
@@ -465,10 +482,11 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
             ? tr(locale, { ru: 'К своему портрету', en: 'Your portrait' })
             : tr<ReactNode>(locale, {
                 ru: `К портрету игрока ${name}`,
+                // Одним узлом: у .link-more зазор между детьми, и «'s» отъезжал бы от ника
                 en: (
-                  <>
+                  <span>
                     <span lang={nameLang}>{name}</span>&apos;s portrait
-                  </>
+                  </span>
                 ),
               })}
         </Link>

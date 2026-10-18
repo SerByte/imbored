@@ -59,7 +59,7 @@ import type { LibraryGame } from '@/lib/types'
 import { Icon } from '@/components/Icon'
 import { withRef } from '@/lib/track'
 import { Notice } from '@/components/Notice'
-import { langOn, ogImageOn, playerName, SnapshotDates } from './portrait-text'
+import { langOn, ogImageOn, playerName, SnapshotDates, withForeignRuns } from './portrait-text'
 
 export const dynamic = 'force-dynamic'
 
@@ -131,7 +131,26 @@ export async function generateMetadata({
 
   // Ник от снапшота не зависит — читаем вместе; страница возьмёт оба из cache()
   const [snapshot, persona] = await Promise.all([snapshotOf(steamid), personaOf(steamid)])
-  if (!snapshot) return { title: tr(locale, { ru: 'Портрет игрока', en: 'Player portrait' }), robots: { index: false } }
+  // Свой адрес, а не корневой '/': см. ownAddress в lib/site.ts
+  const url = `/portrait/${steamid}`
+  if (!snapshot) {
+    return {
+      title: tr(locale, { ru: 'Портрет игрока', en: 'Player portrait' }),
+      robots: { index: false },
+      // На /en и у заглушки своя картинка — ради английского alt (ogImageOn);
+      // поля — те же, что дал бы корень. Русская заглушка — как была
+      ...(locale === 'en'
+        ? {
+            openGraph: {
+              type: 'website' as const,
+              ...ogSite(locale),
+              url: lp(locale, url),
+              ...ogImageOn(locale, url, 'Player portrait — imbored'),
+            },
+          }
+        : {}),
+    }
+  }
 
   const name = playerName(steamid, persona, locale)
   const hours = Math.round(snapshot.games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
@@ -147,9 +166,6 @@ export async function generateMetadata({
     ru: `${games} ${gameWord}, ${time}. ` + 'Посмотри портрет и проверь совместимость вкусов.',
     en: `${fmtNumber(locale, games)} ${gameWord}, ${time}. See the portrait and check your taste match.`,
   })
-
-  // Свой адрес, а не корневой '/': см. ownAddress в lib/site.ts
-  const url = `/portrait/${steamid}`
 
   return {
     title,
@@ -860,7 +876,8 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         {/* Текст — крупной цитатой, а не абзацем в стеклянной рамке: это
             вывод всей страницы, и читается он как вывод */}
         <m.figure {...inView()} className="portrait-quote">
-          <blockquote>{text}</blockquote>
+          {/* Русский ник и русское название игры внутри английского текста — с lang="ru" */}
+          <blockquote>{withForeignRuns(locale, text, [name, portrait.facts.topGame?.name])}</blockquote>
           {!isMine && (
             <figcaption>
               {tr(locale, {
