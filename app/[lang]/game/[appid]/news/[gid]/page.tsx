@@ -21,7 +21,7 @@ import { appBaseUrl, getDb } from '@/lib/server'
 import { lp, toLocale, tr } from '@/lib/i18n'
 import { localeAlternates, ogSite } from '@/lib/site'
 import { textLangOn } from '@/lib/textlang'
-import { loadPatch } from './load'
+import { loadPatch, patchHeading } from './load'
 
 /**
  * Страница одного патча: пересказ, тело поста и ссылка на оригинал.
@@ -53,6 +53,21 @@ export async function generateStaticParams(): Promise<Array<{ appid: string; gid
 
 type Params = { params: Promise<{ appid: string; gid: string; lang?: string }> }
 
+/**
+ * Карточка патча на /en — та же opengraph-image.tsx рядом, но с английской
+ * подписью. alt файловой карточки — статический экспорт, один на все языки
+ * (next-metadata-image-loader), и на /en og:image:alt был бы русским.
+ *
+ * Свой images этого же уровня Next ставит вместо файловой карточки
+ * (resolve-metadata, mergeStaticMetadata: файл — только пока у openGraph
+ * уровня нет ключа images), а twitter берёт картинку из openGraph сам.
+ * Русская страница своего images не задаёт и получает файловую карточку как
+ * была: адрес с хешем, размеры и alt — оттуда. Размеры и тип — копия size и
+ * contentType карточки, а не импорт: модуль карточки тянет next/og и шрифты в
+ * рендер страницы. Что они совпадают — сторож в page.test.ts.
+ */
+const EN_CARD = { width: 1200, height: 630, type: 'image/png', alt: 'What changed in this patch — imbored' }
+
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { appid, gid, lang } = await params
   const locale = toLocale(lang)
@@ -66,11 +81,12 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const description = newsDescription(item, game?.name, locale)
   const canonical = newsPath(item.appid, item.gid)
   /*
-   * Картинки здесь нет намеренно: у патча своя карточка (opengraph-image.tsx
-   * рядом), и Next подставляет её сам — но только пока у openGraph этого
-   * уровня нет своего ключа images. Раньше здесь передавалась картинка
-   * родителя, и патч разворачивался в чате карточкой игры — «СТОИТ ЛИ
-   * ИГРАТЬ» вместо того, что изменилось.
+   * Картинки у русской страницы здесь нет намеренно: у патча своя карточка
+   * (opengraph-image.tsx рядом), и Next подставляет её сам — но только пока
+   * у openGraph этого уровня нет своего ключа images. Раньше здесь
+   * передавалась картинка родителя, и патч разворачивался в чате карточкой
+   * игры — «СТОИТ ЛИ ИГРАТЬ» вместо того, что изменилось. На /en images есть,
+   * но это та же карточка, только с английским alt (EN_CARD выше).
    */
 
   return {
@@ -87,6 +103,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
       title,
       description,
       publishedTime: new Date(item.publishedAt * 1000).toISOString(),
+      ...(locale === 'en' ? { images: [{ url: `${lp(locale, canonical)}/opengraph-image`, ...EN_CARD }] } : {}),
     },
     twitter: { card: 'summary_large_image', title, description },
   }
@@ -115,9 +132,24 @@ export default async function PatchPage({ params }: Params) {
   // Заголовок поста на языке страницы: русский заголовок издателя на /en не
   // показывается — его место занимает titleEn или «{Game} update» (newsTitleOn)
   const titleOn = newsTitleOn(item, game?.name, locale)
-  const heading = newsHeading(titleOn, game?.name)
+  // Общий «{Game} update» в h1 не режется до голого «Update» (patchHeading)
+  const heading = patchHeading(item, game?.name, locale)
 
   const baseUrl = appBaseUrl()
+  /*
+   * Заголовок разметки — тот же, что в h1. patchArticleLd и patchBreadcrumbLd
+   * строят его сами через newsHeading и общий «{Game} update» режут до
+   * «Update» (lib/jsonld) — поэтому он ставится отсюда. На русской странице
+   * patchHeading и есть newsHeading, и разметка та же байт в байт: ключ
+   * перезаписывается на своём месте.
+   */
+  const article = { ...patchArticleLd({ item, game, baseUrl, locale }), headline: heading }
+  const crumbs = patchBreadcrumbLd({ item, game, baseUrl, locale })
+  const lastCrumb = crumbs.itemListElement.length - 1
+  const breadcrumb = {
+    ...crumbs,
+    itemListElement: crumbs.itemListElement.map((step, i) => (i === lastCrumb ? { ...step, name: heading } : step)),
+  }
 
   return (
     <div className="relative flex-1 overflow-x-clip">
@@ -125,12 +157,7 @@ export default async function PatchPage({ params }: Params) {
           как в h1, «Коротко», кадр, ссылка назад на игру, оригинал */}
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{
-          __html: ldScript([
-            patchArticleLd({ item, game, baseUrl, locale }),
-            patchBreadcrumbLd({ item, game, baseUrl, locale }),
-          ]),
-        }}
+        dangerouslySetInnerHTML={{ __html: ldScript([article, breadcrumb]) }}
       />
       {/*
         Свет игры за шапкой патча — тот же приём и тот же лёгкий файл, что

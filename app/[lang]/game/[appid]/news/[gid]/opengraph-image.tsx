@@ -1,11 +1,10 @@
 import { ImageResponse } from 'next/og'
 import { clip } from '@/lib/clip'
 import { dateLabel } from '@/lib/freshness'
-import { newsHeading, newsTitleOn } from '@/lib/newspage'
 import { ogFonts, ogGlow, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { ArtBackdrop, ogArt } from '@/lib/ogcard'
 import { CANVAS_WIDE } from '@/lib/ogwall'
-import { loadPatch } from './load'
+import { loadPatch, patchHeading } from './load'
 import { isLocale, tr } from '@/lib/i18n'
 
 /*
@@ -13,9 +12,9 @@ import { isLocale, tr } from '@/lib/i18n'
  * (next-metadata-image-loader), и по языку его не развести. generateImageMetadata
  * дал бы свой alt каждому языку, но ценой адреса: /opengraph-image/<id> вместо
  * /opengraph-image, то есть другой og:image у русской страницы и мёртвые
- * старые превью. А свой openGraph.images на странице запрещает сторож
- * lib/social.test.ts. Поэтому на /en og:image:alt пока русский: решение одно
- * на все карточки сайта, а не на эту.
+ * старые превью. Поэтому здесь — русская подпись, а английскую на /en ставит
+ * сама страница: свой openGraph.images того же уровня с адресом этой же
+ * карточки (EN_CARD в page.tsx).
  */
 export const alt = 'Что изменилось в патче — imbored'
 export const size = { width: 1200, height: 630 }
@@ -60,8 +59,9 @@ export default async function Image({ params }: { params: Promise<{ lang: string
   // Арт не дотянулся (чужой CDN, таймаут) — тёмная карточка со свечением
   const art = item && game ? await ogArt({ appid: item.appid, art: game.art, headerImage: game.headerImage }) : null
 
+  // Тот же заголовок, что в h1 страницы: общий «{Game} update» — целиком
   const heading = item
-    ? newsHeading(newsTitleOn(item, game?.name, locale), game?.name)
+    ? patchHeading(item, game?.name, locale)
     : tr(locale, { ru: 'Что изменилось в играх', en: 'What changed in games' })
   const tldr = item?.tldr?.trim() ? (clip(item.tldr.trim(), 150) ?? item.tldr.trim().slice(0, 150)) : null
   const eyebrowWord = tr(locale, { ru: 'ЧТО ИЗМЕНИЛОСЬ', en: 'WHAT CHANGED' })

@@ -138,9 +138,14 @@ describe('превью в мессенджерах', () => {
    * сырого баннера 920×430 вместо карточки.
    */
   test('там, где есть opengraph-image.tsx, нет мёртвого openGraph.images', () => {
+    // Живой, не мёртвый: страница патча ставит images только на /en — ту же
+    // карточку с английским alt, — и Next берёт images своего уровня вместо
+    // файла. Что он там один и ведёт на свою карточку — page.test.ts рядом
+    const live = new Set(['app/[lang]/game/[appid]/news/[gid]/page.tsx'])
     const offenders: string[] = []
     for (const [file, src] of appFiles()) {
       if (!/\bopenGraph:\s*\{/.test(src)) continue
+      if (live.has(path.relative(ROOT, file).split(path.sep).join('/'))) continue
       const dir = path.dirname(file)
       const hasFile =
         fs.existsSync(path.join(dir, 'opengraph-image.tsx')) ||
