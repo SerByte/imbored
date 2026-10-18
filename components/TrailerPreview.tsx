@@ -96,10 +96,22 @@ export function TrailerPreview({
           {forReader}
         </button>
       )}
+      {/*
+        Рамка плеера — .media-card: тёмная поверхность в обеих темах, как сам
+        ролик. Кнопка на постере — .btn-glass с текстом и подложкой из --ink, и
+        в светлой теме она становилась тёмным пятном на тёмном кадре: замер на
+        проде — 1.34:1 на CS2, 1.70:1 на Cyberpunk 2077, 2.48:1 на Hades. С
+        тёмными токенами подпись светлая, «без звука», спиннер и строка отказа
+        — тоже. Класс на рамке, а не на слое над постером: постера у трейлера
+        бывает и нет, и тогда под кнопкой фон самой рамки — молочный
+        bg-surface дал бы белую подпись на светлом. Фон теперь --bg кино-зоны.
+        Строка компактного вида выше стоит в потоке страницы и держит цвета
+        темы. Сторож — lib/trailer.test.ts.
+      */}
       <div
         ref={boxRef}
         tabIndex={-1}
-        className={`relative aspect-video w-full overflow-hidden rounded-(--radius-panel) border border-edge bg-surface ${
+        className={`media-card relative aspect-video w-full overflow-hidden rounded-(--radius-panel) border border-edge ${
           open ? '' : 'hidden'
         }`}
       >

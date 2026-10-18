@@ -60,3 +60,23 @@ export function islandsOf(node: unknown, name?: string): Array<Record<string, un
   walk(node)
   return out
 }
+
+/**
+ * className первого элемента с этим тегом в раскрытой странице, обходом в
+ * порядке разметки; undefined — такого тега нет. Для h1 героя и подобных
+ * единичных элементов, чей класс и есть проверяемое поведение.
+ */
+export function classOfTag(node: unknown, tag: string): string | undefined {
+  let cls: string | undefined
+  const walk = (n: unknown): void => {
+    if (cls !== undefined || n === null || typeof n !== 'object') return
+    const rec = n as { tag?: string; props?: { className?: unknown } }
+    if (rec.tag === tag) {
+      cls = String(rec.props?.className ?? '')
+      return
+    }
+    Object.values(n).forEach(walk)
+  }
+  walk(node)
+  return cls
+}

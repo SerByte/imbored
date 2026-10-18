@@ -40,6 +40,7 @@ import { seedable } from '@/lib/roomseed'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 import { tagRu } from '@/lib/tagsru'
+import { heroTitleClass } from '@/lib/titlesize'
 import { SectionLabel } from '@/components/Labels'
 import { TrailerPreview } from '@/components/TrailerPreview'
 import { GameCardBody } from '@/components/GameCard'
@@ -414,7 +415,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           тегов в ряд, описание в три строки, все кнопки в ряд, пустоты нет.
 
           Десктоп не тронут: max-w-5xl держит контейнер на 984, и с 1024 разрез
-          даёт те же 380 и 572, что и до правки.
+          даёт те же колонки, что и до правки: 380 и 556 (984 − 380 − зазор
+          lg:gap-12 в 48; 572 — это ещё при gap-8).
 
           Порог в sizes у обеих картинок героя сдвинут вместе с разрезом: между
           768 и 1024 арт теперь во всю ширину, и подсказка «380px» дала бы
@@ -462,7 +464,12 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 </Link>
               </nav>
             )}
-            <h1 className="font-display text-display-lg">{meta.name}</h1>
+            {/* Кегль — по длине имени: у 108-знаковых display-lg давал стену в
+                восемь строк, и оценка с кнопками уходили за первый экран. И
+                по самому широкому слову: «TROUBLESHOOTER:» в display-lg шире
+                колонки, а рваться посреди слова ему незачем — ступенью ниже
+                оно целое. Пороги и замеры — lib/titlesize */}
+            <h1 className={heroTitleClass(meta.name)}>{meta.name}</h1>
             {/*
               Русское название магазина — вторым рядом, если оно у игры своё.
               Заголовок — английское, как в Steam (nameSql в lib/db), а по
