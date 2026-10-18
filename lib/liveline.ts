@@ -47,10 +47,9 @@ export function liveLineFrom(raw: unknown, locale: Locale = 'ru'): LiveLine {
   const { ask, plan, daily } = raw as Record<string, unknown>
   const question = parseOutcomeAsk(ask)
   if (question) {
-    // Сыгранное (playedLine) пока печатается по-русски: язык в него
-    // прокидывается общим проходом после слияния веток (W1.5), а шаблон
-    // вокруг уже свой
-    const played = playedLine(question.minutes)
+    // Сыгранное — на языке строки (playedLine): «2 ч 15 мин» / «2 h 15 min»,
+    // а шаблон вокруг у каждого языка свой, целой фразой
+    const played = playedLine(question.minutes, locale)
     return {
       // Ответ даётся там же, где вся история советов, — в «Твоих вечерах»
       href: '/library#evenings',

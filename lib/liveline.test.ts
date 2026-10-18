@@ -102,12 +102,19 @@ describe('живая строка по-английски', () => {
     })
   })
 
-  // Сыгранное (playedLine из lib/outcome) получит язык общим проходом после
-  // слияния веток; здесь — шаблон вокруг него и порядок
+  // Шаблон вокруг сыгранного, порядок — и само сыгранное на языке строки
+  // (playedLine из lib/outcome): «2 h 15 min», а не «2 ч 15 мин»
   test('«как тебе?» — своим шаблоном и раньше плана', () => {
     const ask = { appid: 1145360, name: 'Hades', shownAt: 1_700_000_000, minutes: 135, bought: false }
     const line = liveLineFrom({ ask, plan, daily: { appid: 620, name: 'Portal 2' } }, 'en')
     expect(line.href).toBe('/library#evenings')
     expect(line.text).toMatch(/^How's “Hades”\? .+ played since our pick$/)
+    expect(line.text).toBe("How's “Hades”? 2 h 15 min played since our pick")
+    expect(line.text).not.toMatch(/[А-Яа-яЁё]/)
+    // от десяти часов — целыми, с разрядами
+    const long = liveLineFrom({ ask: { ...ask, minutes: 146_040 } }, 'en')
+    expect(long.text).toBe("How's “Hades”? 2,434 h played since our pick")
+    // русская строка — прежняя
+    expect(liveLineFrom({ ask }).text).toBe('Как тебе «Hades»? 2 ч 15 мин после совета')
   })
 })

@@ -11,7 +11,7 @@ import {
   topTags,
 } from './recommend'
 import { tr, type Locale } from './i18n'
-import { SOURCE_BADGE } from './sources'
+import { sourceBadge } from './sources'
 import { tagLabel } from './tagsru'
 import type { GameArtUrls } from './art'
 import type { Mood } from './types'
@@ -195,9 +195,9 @@ export function landingDemo(nowSec: number, locale: Locale = 'ru'): LandingDemo 
     picks[key] = chosen.map((p, i) => ({
       appid: p.appid,
       name: p.name,
-      // Подписи источников живут в lib/sources.ts и переводятся там: язык
-      // сюда доедет вместе с ними, а до того бейдж на /en — русский
-      badge: SOURCE_BADGE[p.source],
+      // Подпись источника — из lib/sources.ts, на языке главной: та же, что
+      // у полосы героя выдачи («Bought, never opened», «Time to go back»)
+      badge: sourceBadge(p.source, locale),
       tags: demoTags(p.appid, metaOf, locale),
       headerImage: metaOf(p.appid)?.headerImage ?? null,
       art: metaOf(p.appid)?.art ?? null,

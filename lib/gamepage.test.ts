@@ -1118,6 +1118,31 @@ describe('английская карточка', () => {
     expect(en.startsWith('ELDEN RING: THE NEW FANTASY ACTION RPG.')).toBe(true)
   })
 
+  /*
+   * Описание на /en — descriptionFor (lib/gamedesc): английский слот карточки
+   * сильнее своего русского, немецкое описание английским не считается, у
+   * игры другого магазина английское живёт в наложении. Русская страница —
+   * как была: только русское описание.
+   */
+  test('описание магазина на /en — английский слот, а не нерусское вообще', () => {
+    const slot = meta(1245620, { name: 'ELDEN RING', shortDescription: RUSSIAN, shortDescriptionEn: ENGLISH })
+    const en = gameDescription({ meta: slot, facts: null, prosCons: null, verdict: null }, 'en')
+    expect(en.startsWith('ELDEN RING: THE NEW FANTASY ACTION RPG.')).toBe(true)
+    expect(en).not.toMatch(CYRILLIC)
+    expect(gameDescription({ meta: slot, facts: null, prosCons: null, verdict: null })).toBe(`ELDEN RING: ${RUSSIAN}`)
+    const GERMAN = 'Das neue Fantasy-Action-Rollenspiel. Erhebe dich, Befleckter, und lass dich von der Gnade leiten.'
+    const de = gameDescription({ meta: meta(1, { name: 'X', shortDescription: GERMAN }), facts: null, prosCons: null, verdict: null }, 'en')
+    expect(de).toBe('X — reviews, tags and patch notes at a glance.')
+    const lol = meta(-106, { name: 'League of Legends', shortDescription: 'Та самая MOBA. Бесплатно.' })
+    expect(gameDescription({ meta: lol, facts: null, prosCons: null, verdict: null }, 'en')).toBe(
+      'League of Legends: The MOBA everyone knows. Free to play.',
+    )
+    // русская страница английский слот не берёт и английского текста не ставит
+    expect(gameDescription({ meta: meta(1, { name: 'X', shortDescription: ENGLISH }), facts: null, prosCons: null, verdict: null })).toBe(
+      'X — отзывы, теги и патчноуты на русском.',
+    )
+  })
+
   test('один отзыв — «1 review is», сказать нечего — общая фраза', () => {
     const one = gameDescription({ meta: meta(1, { name: 'X' }), facts: { percent: 100, total: 1, label: null }, prosCons: null, verdict: null }, 'en')
     expect(one).toBe('X: 100% of 1 review is positive.')

@@ -14,6 +14,7 @@ import {
 } from './db'
 import { collapseEditions, editionKey } from './editions'
 import { logSwallowed } from './errlog'
+import { descriptionFor } from './gamedesc'
 import {
   characterTrait,
   entryTrait,
@@ -482,19 +483,20 @@ function point(text: string): string {
 }
 
 /**
- * Описание магазина, годное странице этого языка: русское — русской, нерусское
- * — английской. Китайское английской странице тоже не годится, но такое
- * здесь не встречается: нерусское описание каталог берёт у магазина с
- * language=english.
+ * Описание магазина, годное странице этого языка: русской — только русское,
+ * английской — только английское.
  *
- * Временная замена descriptionFor (lib/gamedesc): когда чтение карточки
- * начнёт отдавать английское описание отдельным полем, английская ветка
- * возьмёт его оттуда, а здесь останется вызов.
+ * Английское — descriptionFor (lib/gamedesc): английский слот карточки,
+ * своё описание, если оно правда английское (isEnglishText — не китайское с
+ * «RPG» и не немецкое), или наложение пула других магазинов; иначе
+ * описания нет. Русское — то, что лежит, и только если оно русское: до
+ * прохода крона там бывает английский текст прогрева, а в русском сниппете
+ * он читался бы обрывком чужого языка.
  */
-function storeDescription(meta: Pick<GameMeta, 'shortDescription'>, locale: Locale): string | null {
-  const text = meta.shortDescription
+function storeDescription(meta: GameMeta, locale: Locale): string | null {
+  const text = descriptionFor(meta, locale)
   if (!text) return null
-  return isRussianText(text) === (locale === 'ru') ? text : null
+  return locale === 'en' || isRussianText(text) ? text : null
 }
 
 /**
@@ -515,7 +517,7 @@ function storeDescription(meta: Pick<GameMeta, 'shortDescription'>, locale: Loca
  * locale — язык страницы. На /en те же фразы по-английски, а всё, что
  * приходит готовым текстом (verdict, prosCons), вызывающий отдаёт на языке
  * страницы: deadVerdict(meta, locale) и prosCons из loadGamePage(appid,
- * locale). Описание магазина на /en — только нерусское (storeDescription).
+ * locale). Описание магазина на /en — только английское (storeDescription).
  */
 export function gameDescription(
   {

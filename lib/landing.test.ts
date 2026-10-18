@@ -3,8 +3,9 @@ import { DEMO_METAS } from './demo'
 import { landingDemo, MOOD_KEYS, type MoodKey } from './landing'
 import { REASON_MAX } from './llm'
 import { topTags } from './recommend'
-import { SOURCE_BADGE } from './sources'
+import { SOURCE_BADGE, sourceBadge } from './sources'
 import { tagRu } from './tagsru'
+import type { CandidateSource } from './types'
 
 /**
  * Сторож демо-выдачи главной.
@@ -228,6 +229,25 @@ describe('демо-выдача английской главной', () => {
       expect(first.why, `${key}: ${first.why}`).not.toMatch(CYR)
       for (const c of rest) expect(c.why, `${key}: ${c.name}`).toBeUndefined()
     }
+  })
+
+  /*
+   * Бейдж источника — та же подпись, что у полосы героя выдачи (sourceBadge
+   * из lib/sources), на языке главной. Источник у карточки тот же, что у
+   * русской на том же месте: выбор от языка не зависит.
+   */
+  test('бейджи источников — английские подписи глоссария', () => {
+    const sourceOf = new Map(Object.entries(SOURCE_BADGE).map(([source, badge]) => [badge, source as CandidateSource]))
+    for (const key of MOOD_KEYS) {
+      en.picks[key].forEach((card, i) => {
+        const source = sourceOf.get(ru.picks[key][i].badge)
+        expect(source, `${key}: ${ru.picks[key][i].badge}`).toBeDefined()
+        expect(card.badge, `${key}: ${card.name}`).toBe(sourceBadge(source!, 'en'))
+        expect(card.badge, `${key}: ${card.name}`).not.toMatch(CYR)
+      })
+    }
+    // «Куплена, но не распакована» в демо есть (тест выше) — и её английская пара
+    expect(MOOD_KEYS.flatMap((key) => en.picks[key].map((c) => c.badge))).toContain('Bought, never opened')
   })
 
   test('имена стены и совместимости — без кириллицы', () => {

@@ -1,4 +1,5 @@
 import { discountOf, trustedPrice } from './discount'
+import { descriptionFor } from './gamedesc'
 import { DEFAULT_LOCALE, htmlLang, lp, tr, type Locale } from './i18n'
 import { newsHeading, newsPath } from './newspage'
 import { OG_SITE, siteDescription } from './site'
@@ -95,19 +96,14 @@ function genresCrumb(locale: Locale): string {
 }
 
 /**
- * Описание игры для разметки на языке страницы. Русская страница — как было:
- * short_description как лежит. Английская — только нерусское: на /en
- * страница русского описания не показывает, а разметка не говорит больше
- * страницы.
- *
- * Временная замена descriptionFor (lib/gamedesc) — та же, что в
- * gameDescription (lib/gamepage): когда чтение карточки отдаст английское
- * описание отдельным полем, обе ветки возьмут его оттуда.
+ * Описание игры для разметки на языке страницы (descriptionFor из
+ * lib/gamedesc). Русская страница — как было: short_description как лежит.
+ * Английская — только английское: слот карточки, своё описание, если оно
+ * английское, или наложение других магазинов. Русского на /en страница не
+ * показывает, а разметка не говорит больше страницы.
  */
-function ldDescription(meta: Pick<GameMeta, 'shortDescription'>, locale: Locale): string | undefined {
-  const text = meta.shortDescription
-  if (!text) return undefined
-  return locale === 'en' && isRussianText(text) ? undefined : text
+function ldDescription(meta: GameMeta, locale: Locale): string | undefined {
+  return descriptionFor(meta, locale) ?? undefined
 }
 
 export type GameLdInput = {

@@ -569,6 +569,17 @@ describe('тексты разметки на языке страницы', () =>
     expect(ld({ shortDescription: 'A competitive shooter.' }).description).toBe('A competitive shooter.')
   })
 
+  test('описание на /en — английский слот и наложение других магазинов (descriptionFor)', () => {
+    expect(en({ shortDescriptionEn: 'A competitive shooter.' }).description).toBe('A competitive shooter.')
+    // немецкое — не английское, хоть и латиница
+    expect(en({ shortDescription: 'Der kompetitive Shooter mit der größten Community.' })).not.toHaveProperty('description')
+    expect(en({ appid: -106, shortDescription: 'Та самая MOBA. Бесплатно.' }).description).toBe(
+      'The MOBA everyone knows. Free to play.',
+    )
+    // русская — как лежит, слот её не касается
+    expect(ld({ shortDescriptionEn: 'A competitive shooter.' }).description).toBe('Соревновательный шутер.')
+  })
+
   test('inLanguage игры на /en не ставится: строки «Русский» там нет', () => {
     expect(en({ ruLang: 3 })).not.toHaveProperty('inLanguage')
     expect(ld({ ruLang: 3 }).inLanguage).toBe('ru')
