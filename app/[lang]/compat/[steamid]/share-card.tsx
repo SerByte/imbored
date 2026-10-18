@@ -1,5 +1,6 @@
 import type { CompatInvite } from '@/lib/compatpage'
 import { gamesCaption, hoursCaption } from '@/lib/factcaptions'
+import { tr, type Locale } from '@/lib/i18n'
 import { ogNum, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { PosterWall, WallShade } from '@/lib/ogcard'
 import { CANVAS_WIDE, WALL_WIDE } from '@/lib/ogwall'
@@ -19,8 +20,21 @@ import { CANVAS_WIDE, WALL_WIDE } from '@/lib/ogwall'
  * Про satori надо помнить две вещи (обе выучены на портрете): любому div с
  * несколькими детьми нужен явный display: flex, а у кириллицы «р», «у», «д»
  * уходят заметно ниже базовой линии и съедают margin снизу.
+ *
+ * Язык — от адреса карточки (opengraph-image): /en/compat/… разворачивается
+ * в чате английской. Заголовок — та же фраза, что у вкладки и героя
+ * приглашения («… wants to compare libraries»), и при имени до 20 знаков на
+ * 64 px он занимает не больше строк, чем русский.
  */
-export function CompatCardImage({ invite, posters }: { invite: CompatInvite; posters: string[] }) {
+export function CompatCardImage({
+  invite,
+  posters,
+  locale = 'ru',
+}: {
+  invite: CompatInvite
+  posters: string[]
+  locale?: Locale
+}) {
   return (
     <div
       style={{
@@ -62,20 +76,26 @@ export function CompatCardImage({ invite, posters }: { invite: CompatInvite; pos
         }}
       >
         <div style={{ fontSize: 20, letterSpacing: 6, color: OG_EMBER, marginBottom: 18 }}>
-          IMBORED.CC · СОВМЕСТИМОСТЬ
+          {tr(locale, { ru: 'IMBORED.CC · СОВМЕСТИМОСТЬ', en: 'IMBORED.CC · COMPATIBILITY' })}
         </div>
         {/* Отступ снизу большой намеренно — см. докблок про кириллические выносные */}
         <div style={{ fontSize: 64, lineHeight: 1.15, marginBottom: 30 }}>
-          {`${invite.name.slice(0, 20)} зовёт сравнить библиотеки`}
+          {tr(locale, {
+            ru: `${invite.name.slice(0, 20)} зовёт сравнить библиотеки`,
+            en: `${invite.name.slice(0, 20)} wants to compare libraries`,
+          })}
         </div>
         {/* Время скрыто настройками Steam (lib/playtime.ts) — слово, а не
             «0 часов»: картинку из чата уже не отозвать */}
         <div style={{ display: 'flex' }}>
-          <Stat value={ogNum(invite.gamesCount)} caption={gamesCaption(invite.gamesCount)} />
+          <Stat value={ogNum(invite.gamesCount, locale)} caption={gamesCaption(invite.gamesCount, locale)} />
           {invite.playtimeHidden ? (
-            <Stat value="скрыто" caption="время в играх" />
+            <Stat
+              value={tr(locale, { ru: 'скрыто', en: 'hidden' })}
+              caption={tr(locale, { ru: 'время в играх', en: 'playtime' })}
+            />
           ) : (
-            <Stat value={ogNum(invite.totalHours)} caption={hoursCaption(invite.totalHours)} />
+            <Stat value={ogNum(invite.totalHours, locale)} caption={hoursCaption(invite.totalHours, locale)} />
           )}
         </div>
       </div>

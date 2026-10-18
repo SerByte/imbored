@@ -1,11 +1,11 @@
 'use client'
 
+import { useLocale } from '@/components/LocaleProvider'
 import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useShareLink } from '@/components/ShareLink'
+import { lp, tr } from '@/lib/i18n'
 import { withRef } from '@/lib/track'
-
-const TITLE = 'Совместимость вкусов — imbored'
-const TEXT = 'Сравним библиотеки Steam по-настоящему, а не по анкете'
+import { COMPAT_SHARE } from './sharecopy'
 
 /**
  * className и label — необязательные, со старыми значениями по умолчанию.
@@ -21,6 +21,10 @@ const TEXT = 'Сравним библиотеки Steam по-настоящем�
  * а к нажатию он заведомо есть. Так обходится и прежняя оговорка про
  * `typeof window !== 'undefined'` при рендере, и правка состояния в эффекте.
  *
+ * Адрес — на языке страницы: с /en/compat/… друг получает /en/compat/…, а не
+ * русскую страницу. Подпись по умолчанию — тоже на нём (useLocale), поэтому
+ * пропом она приходит только там, где своя.
+ *
  * Если буфер закрыт наглухо (страница без фокуса, запрет в настройках,
  * webview мессенджера), кнопка уводит на /compat. Это не заглушка: там та же
  * ссылка стоит в поле, видимая и выделяемая руками, — то есть единственное
@@ -31,18 +35,21 @@ const TEXT = 'Сравним библиотеки Steam по-настоящем�
 export function CopyCompatLink({
   steamid,
   className = 'btn-ember is-block py-3',
-  label = 'Скопировать мою ссылку',
+  label,
 }: {
   steamid: string
   className?: string
   label?: string
 }) {
+  const locale = useLocale()
+  // push сам ставит префикс языка (useLocaleRouter): /en/compat на английской
   const router = useLocaleRouter()
+  const copy = COMPAT_SHARE[locale]
   const share = useShareLink(
     'compat',
-    () => withRef(`${window.location.origin}/compat/${steamid}`, 'compat'),
-    TITLE,
-    TEXT,
+    () => withRef(`${window.location.origin}${lp(locale, `/compat/${steamid}`)}`, 'compat'),
+    copy.title,
+    copy.text,
     () => router.push('/compat'),
   )
 
@@ -51,7 +58,9 @@ export function CopyCompatLink({
   return (
     <>
       <button type="button" onClick={() => void share.run()} className={className}>
-        {share.label(label, { native: 'Отправить мою ссылку' })}
+        {share.label(label ?? tr(locale, { ru: 'Скопировать мою ссылку', en: 'Copy my link' }), {
+          native: tr(locale, { ru: 'Отправить мою ссылку', en: 'Send my link' }),
+        })}
       </button>
       {share.status}
     </>
