@@ -1,7 +1,7 @@
 import { discountOf, trustedPrice } from './discount'
 import { descriptionFor } from './gamedesc'
 import { DEFAULT_LOCALE, htmlLang, lp, tr, type Locale } from './i18n'
-import { newsHeading, newsPath } from './newspage'
+import { newsHeading, newsPath, newsTitleOn } from './newspage'
 import { OG_SITE, siteDescription } from './site'
 import { STORE_LABEL } from './stores'
 import { tagLabel } from './tagsru'
@@ -412,6 +412,8 @@ type PatchLdItem = {
   appid: number
   gid: string
   title: string
+  /** Английский заголовок не английского поста (StoredNews.titleEn): на /en заголовок — newsTitleOn */
+  titleEn?: string | null
   url: string
   publishedAt: number
   tldr?: string | null
@@ -446,7 +448,8 @@ export type NewsArticleLd = {
  *
  * item.tldr — пересказ на языке страницы: на /en это английский пересказ
  * (tldr_en), и без него описания в разметке нет — как нет и «In short» на
- * странице. Пока чтение патча его не отдаёт, /en передаёт русский пересказ —
+ * странице. Заголовок на /en — newsTitleOn (titleEn, английский заголовок или
+ * «{Game} update»), как в h1: русского заголовка издателя там нет. Пока чтение патча его не отдаёт, /en передаёт русский пересказ —
  * и разметка повторяет страницу: description русский, inLanguage 'ru'.
  */
 export function patchArticleLd({
@@ -465,7 +468,7 @@ export function patchArticleLd({
   return {
     '@context': 'https://schema.org',
     '@type': 'NewsArticle',
-    headline: newsHeading(item.title, game?.name),
+    headline: newsHeading(newsTitleOn(item, game?.name, locale), game?.name),
     url,
     mainEntityOfPage: url,
     datePublished: new Date(item.publishedAt * 1000).toISOString(),
@@ -505,7 +508,7 @@ export function patchBreadcrumbLd({
   const steps = [
     { name: 'imbored', item: at(baseUrl, locale, '/') },
     ...(game ? [{ name: game.name, item: at(baseUrl, locale, `/game/${item.appid}`) }] : []),
-    { name: newsHeading(item.title, game?.name), item: at(baseUrl, locale, newsPath(item.appid, item.gid)) },
+    { name: newsHeading(newsTitleOn(item, game?.name, locale), game?.name), item: at(baseUrl, locale, newsPath(item.appid, item.gid)) },
   ]
   return {
     '@context': 'https://schema.org',

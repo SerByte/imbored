@@ -29,6 +29,7 @@ import { tr, type Locale } from './i18n'
 import { looksLikeJunkName } from './junk'
 import { judgeLiveness, type DeadReason } from './liveness'
 import { NEIGHBORS_K } from './neighbors'
+import { newsTitleOn } from './newspage'
 import { isEndless } from './recommend'
 import type { ProsCons } from './reviews'
 import { getDb } from './server'
@@ -92,15 +93,23 @@ export type GamePageData = {
 export type CardNews = Pick<FeedItem, 'appid' | 'gid' | 'title' | 'url' | 'publishedAt' | 'kind' | 'scale' | 'tldr' | 'rank'>
 
 /**
- * Строка ленты для островка — с пересказом на языке страницы в поле tldr.
+ * Строка ленты для островка — с заголовком и пересказом на языке страницы в
+ * полях title и tldr.
  *
  * Одно поле на оба языка, а не tldr и tldrEn рядом: островок рисует tldr как
  * есть, а indexedNewsPath решает по нему же, давать ли ссылку на страницу
  * патча, — и на /en страница патча идёт в индекс только с английским
  * пересказом. Русского пересказа на /en нет вовсе (docs/i18n.md, п. 8): нет
  * английского — нет и блока, а не блок по-русски.
+ *
+ * Заголовок — тем же правилом одним полем: титул поста издатель пишет на
+ * своём языке, а посты опрашиваются с l=russian (lib/news), так что русский
+ * заголовок у них обычен. На /en — newsTitleOn (lib/newspage): titleEn, иначе
+ * сам заголовок, если он английский, иначе «{Game} update» — gameName для него
+ * и нужен. Островок срезает ведущее название игры (stripGameName), и под
+ * названием игры строка читается просто «Update».
  */
-export function cardNews(item: StoredNews, locale: Locale = 'ru'): CardNews {
+export function cardNews(item: StoredNews, locale: Locale = 'ru', gameName?: string | null): CardNews {
   // Английский пересказ кладёт чтение ленты (StoredNews.tldrEn, колонка
   // tldr_en); нет его (и null из чужих рук) — английская карточка остаётся
   // без пересказа
@@ -108,7 +117,7 @@ export function cardNews(item: StoredNews, locale: Locale = 'ru'): CardNews {
   return {
     appid: item.appid,
     gid: item.gid,
-    title: item.title,
+    title: newsTitleOn(item, gameName, locale),
     url: item.url,
     publishedAt: item.publishedAt,
     kind: item.kind,
@@ -661,8 +670,10 @@ export function prosConsOn(stored: unknown, locale: Locale = 'ru'): ProsCons | n
  * неполная страница дешевле неограниченного счёта.
  *
  * locale — язык страницы: от него зависят только тексты модели — pros/cons
- * (prosConsOn) и пересказы патчей (cardNews). На /en их английские версии;
- * нет английской — блок пустой (null, пересказа нет), а не русский.
+ * (prosConsOn) и пересказы патчей (cardNews) — и заголовки постов (cardNews:
+ * titleEn, иначе английский заголовок, иначе «{Game} update»). На /en их
+ * английские версии; нет английской — блок пустой (null, пересказа нет), а
+ * не русский.
  */
 export async function loadGamePage(appid: number, locale: Locale = 'ru'): Promise<GamePageData | null> {
   const db = await getDb()
@@ -715,7 +726,7 @@ export async function loadGamePage(appid: number, locale: Locale = 'ru'): Promis
   // повторяет того, что уже стоит в «Похожих». Лимит на одну больше порога —
   // так studioLine узнаёт корпоративный каталог, не читая его целиком
   const [news, shelf, studioGames] = await Promise.all([
-    getGameNews(db, appid, 8).then((rows) => rows.map((row) => cardNews(row, locale))),
+    getGameNews(db, appid, 8).then((rows) => rows.map((row) => cardNews(row, locale, meta.name))),
     similarOf(),
     meta.developer?.trim()
       ? gamesByDeveloper(db, meta.developer, STUDIO_MAX_GAMES + 1)

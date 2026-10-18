@@ -8,6 +8,7 @@ import {
   newsIndexable,
   newsPageTitle,
   newsPath,
+  newsTitleOn,
   patchShareUrl,
   SITEMAP_NEWS_MAX,
   SITEMAP_NEWS_WINDOW_SEC,
@@ -241,6 +242,49 @@ describe('страница патча по-английски', () => {
     expect(newsDescription({ title: 'Patch 2.31', blocks: [] }, 'Cyberpunk 2077', 'en')).not.toMatch(CYRILLIC)
     // по-русски русское тело — как было
     expect(newsDescription({ title: 'Патч', blocks: BODY }, 'CS2')).toMatch(/^Геймплей/)
+  })
+
+  test('описание на /en: немецкое или китайское тело — не сниппет, как и русское (isEnglishText, п. 9)', () => {
+    const DE: NewsBlock[] = [
+      { kind: 'p', runs: [{ text: 'Wir haben die Karte und das Menü für dich überarbeitet, und die Steuerung ist nicht mehr träge.' }] },
+    ]
+    const ZH: NewsBlock[] = [{ kind: 'p', runs: [{ text: '修复了加载时的崩溃问题，并新增了 PvP 模式。' }] }]
+    expect(newsDescription({ title: 'Update 1.5', blocks: DE }, 'Some Game', 'en')).toBe('Some Game: Update 1.5 — what changed.')
+    expect(newsDescription({ title: 'Update 1.5', blocks: ZH }, 'Some Game', 'en')).toBe('Some Game: Update 1.5 — what changed.')
+    // по-русски тело любого языка — как было
+    expect(newsDescription({ title: 'Update 1.5', blocks: DE }, 'Some Game')).toMatch(/^Wir haben/)
+  })
+
+  test('описание на /en без пересказа и тела: заголовок — titleEn или «{Game} update», не русский', () => {
+    expect(
+      newsDescription({ title: 'Обновление 1.5: новая карта', titleEn: 'Update 1.5: a new map', blocks: BODY }, 'Some Game', 'en'),
+    ).toBe('Some Game: Update 1.5: a new map — what changed.')
+    expect(newsDescription({ title: 'Обновление 1.5: новая карта', blocks: [] }, 'Some Game', 'en')).toBe(
+      'Some Game: Update — what changed.',
+    )
+    // по-русски — заголовок издателя, titleEn не читается
+    expect(newsDescription({ title: 'Обновление 1.5', titleEn: 'Update 1.5', blocks: [] }, 'Some Game')).toBe(
+      'Some Game: Обновление 1.5 — что изменилось.',
+    )
+  })
+
+  test('заголовок поста на языке страницы (newsTitleOn)', () => {
+    const ru = { title: 'Обновление 1.5: новая карта' }
+    expect(newsTitleOn({ ...ru, titleEn: 'Update 1.5: a new map' }, 'Hades', 'en')).toBe('Update 1.5: a new map')
+    expect(newsTitleOn({ ...ru, titleEn: '  ' }, 'Hades', 'en')).toBe('Hades update')
+    expect(newsTitleOn({ ...ru, titleEn: null }, 'Hades', 'en')).toBe('Hades update')
+    expect(newsTitleOn(ru, null, 'en')).toBe('Update')
+    // английский заголовок и заголовок без букв — как есть
+    expect(newsTitleOn({ title: 'Patch 2.31 is out' }, 'Hades', 'en')).toBe('Patch 2.31 is out')
+    expect(newsTitleOn({ title: '1.0.3' }, 'Hades', 'en')).toBe('1.0.3')
+    // немецкий и китайский — как русский
+    expect(newsTitleOn({ title: 'Das Update für die Karte und das Menü' }, 'Hades', 'en')).toBe('Hades update')
+    expect(newsTitleOn({ title: '版本更新公告' }, 'Hades', 'en')).toBe('Hades update')
+    // повторный вызов ничего не меняет
+    expect(newsTitleOn({ title: newsTitleOn(ru, 'Hades', 'en') }, 'Hades', 'en')).toBe('Hades update')
+    // по-русски — заголовок издателя как есть, перевод не читается
+    expect(newsTitleOn({ ...ru, titleEn: 'Update 1.5' }, 'Hades')).toBe('Обновление 1.5: новая карта')
+    expect(newsTitleOn({ ...ru, titleEn: 'Update 1.5' }, 'Hades', 'ru')).toBe('Обновление 1.5: новая карта')
   })
 
   test('«Поделиться» с /en ведёт на английскую страницу', () => {

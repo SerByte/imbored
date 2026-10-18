@@ -13,11 +13,11 @@
  * читают островки ленты и карточки, чтобы построить ссылку.
  */
 import { clip, DESCRIPTION_MAX } from './clip'
+import { isEnglishText } from './englishtext'
 import { dateLabel } from './freshness'
 import { fmtDate, lp, tr, type Locale } from './i18n'
 import { stripGameName, withoutGameName } from './patchtitle'
 import { blocksToText, type NewsBlock } from './steamhtml'
-import { isRussianText } from './textlang'
 import { withRef } from './track'
 
 /**
@@ -64,6 +64,33 @@ export const SITEMAP_NEWS_MAX = 5000
 /** Заголовок патча без названия игры, которое на странице стоит строкой выше */
 export function newsHeading(title: string, gameName: string | null | undefined): string {
   return gameName ? stripGameName(title, gameName) : title.trim()
+}
+
+/**
+ * Заголовок поста на языке страницы — то, что передаётся дальше как title:
+ * в newsHeading, newsPageTitle, строку ленты и карточку игры (cardNews).
+ *
+ * ru — заголовок издателя как есть. en, по убыванию надёжности:
+ *   1. titleEn — перевод модели (claudeNewsDigest пишет его только для
+ *      заголовка с кириллицей, колонка title_en);
+ *   2. сам заголовок, если он годится для /en (isEnglishText) или в нём нет
+ *      ни одной буквы («1.0.3» языка не имеет);
+ *   3. общий «{Game} update» — русского, китайского или немецкого заголовка
+ *      на /en нет (docs/i18n.md, п. 9), а пустой строки у ссылки быть не
+ *      должно. Без названия игры — просто «Update».
+ * Повторный вызов на результате ничего не меняет: каждый вариант английский.
+ */
+export function newsTitleOn(
+  item: { title: string; titleEn?: string | null },
+  gameName: string | null | undefined,
+  locale: Locale = 'ru',
+): string {
+  if (locale !== 'en') return item.title
+  const translated = item.titleEn?.trim()
+  if (translated) return translated
+  if (isEnglishText(item.title) || (item.title.trim() && !/\p{L}/u.test(item.title))) return item.title
+  const name = gameName?.trim()
+  return name ? `${name} update` : 'Update'
 }
 
 /**
@@ -132,22 +159,24 @@ export function newsPageTitle(
  * по слову, с многоточием, целым предложением, если влезает.
  *
  * locale — язык страницы, и item.tldr вызывающий передаёт на нём (на /en —
- * английский пересказ). Начало поста на /en идёт, только если оно не
- * русское: издатель бывает пишет патчноут по-русски, а русский текст в
- * английском сниппете хуже заголовка.
+ * английский пересказ). Начало поста на /en идёт, только если оно
+ * английское (isEnglishText, docs/i18n.md, п. 9): издатель бывает пишет
+ * патчноут по-русски, по-немецки или по-китайски, а чужой язык в английском
+ * сниппете хуже заголовка. Заголовок запасного варианта — newsTitleOn: на
+ * /en это titleEn или «{Game} update», а не русский заголовок издателя.
  */
 export function newsDescription(
-  item: { title: string; tldr?: string; blocks: NewsBlock[] },
+  item: { title: string; titleEn?: string | null; tldr?: string; blocks: NewsBlock[] },
   gameName: string | null | undefined,
   locale: Locale = 'ru',
 ): string {
   const tldr = item.tldr?.replace(/\s+/g, ' ').trim()
   if (tldr) return clip(tldr, DESCRIPTION_MAX) ?? tldr.slice(0, DESCRIPTION_MAX)
   const body = blocksToText(item.blocks, 600).replace(/[•\s]+/g, ' ').trim()
-  if (body && !(locale === 'en' && isRussianText(body))) {
+  if (body && (locale !== 'en' || isEnglishText(body))) {
     return clip(body, DESCRIPTION_MAX) ?? body.slice(0, DESCRIPTION_MAX)
   }
-  const fallback = `${newsPageTitle(item.title, gameName, undefined, locale)}.`
+  const fallback = `${newsPageTitle(newsTitleOn(item, gameName, locale), gameName, undefined, locale)}.`
   return clip(fallback, DESCRIPTION_MAX) ?? fallback.slice(0, DESCRIPTION_MAX)
 }
 

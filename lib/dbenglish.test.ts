@@ -426,6 +426,36 @@ describe('пересказ патча: английский слот', () => {
     expect((await getRssFeedForApps(db2, [730]))[0]?.blocks).toEqual(ruBody)
     expect((await getRssFeedForApps(db2, [730], 30, undefined, undefined, 'en'))[0]?.blocks).toEqual([])
   })
+
+  test('немецкий или китайский пост без английского пересказа — в ридер /en тоже без тела', async () => {
+    // Тем же правилом, что newsDescription (isEnglishText, docs/i18n.md п. 9):
+    // «не русский» ещё не значит «годится для /en»
+    const deBody = [
+      { kind: 'p' as const, runs: [{ text: 'Wir haben die Karte und das Menü überarbeitet, und die Steuerung ist nicht mehr träge.' }] },
+    ]
+    const zhBody = [{ kind: 'p' as const, runs: [{ text: '修复了加载时的崩溃问题，并新增了 PvP 模式。' }] }]
+    const db = await freshDb()
+    await upsertNewsItems(
+      db,
+      [
+        patch(730, '1', { title: 'Update 1.5', blocks: deBody }),
+        // по посту на игру: лента берёт у игры только последний
+        patch(570, '2', { title: 'Update 1.6', blocks: zhBody, publishedAt: NOW - 2 * DAY }),
+        patch(440, '3', { title: 'Update 1.7', publishedAt: NOW - 3 * DAY }),
+      ],
+      NOW,
+    )
+    const ids = [730, 570, 440]
+    const en = await getRssFeedForApps(db, ids, 30, undefined, undefined, 'en')
+    expect(en.map((n) => [n.gid, n.blocks])).toEqual([
+      ['1', []],
+      ['2', []],
+      // английское тело — как лежит
+      ['3', [{ kind: 'p', runs: [{ text: 'Fixed the crash on load.' }] }]],
+    ])
+    // русская лента — тела как лежат
+    expect((await getRssFeedForApps(db, ids)).map((n) => n.blocks.length)).toEqual([1, 1, 1])
+  })
 })
 
 describe('доска пати: язык подписи', () => {

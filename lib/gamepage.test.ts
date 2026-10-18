@@ -1255,4 +1255,22 @@ describe('пересказ патча на карточке — на языке 
     expect(cardNews(post)).toEqual(cardNews(post, 'ru'))
     expect(cardNews(post).rank).toBe(1)
   })
+
+  test('заголовок на /en — titleEn, иначе английский заголовок, иначе «{Game} update»', () => {
+    const ruPost = { ...post, title: 'Обновление 1.5: новая карта', tldrEn: 'Adds a new map.' }
+    expect(cardNews({ ...ruPost, titleEn: 'Update 1.5: a new map' }, 'en', 'Counter-Strike 2')).toMatchObject({
+      title: 'Update 1.5: a new map',
+      tldr: 'Adds a new map.',
+    })
+    const generic = cardNews(ruPost, 'en', 'Counter-Strike 2')
+    expect(generic.title).toBe('Counter-Strike 2 update')
+    expect(JSON.stringify(generic)).not.toMatch(CYRILLIC)
+    // английский заголовок издателя — как есть
+    expect(cardNews(post, 'en', 'Counter-Strike 2').title).toBe('Release Notes for 9/25/2026')
+    // по-русски — заголовок издателя, перевод не читается
+    expect(cardNews({ ...ruPost, titleEn: 'Update 1.5: a new map' }, 'ru', 'Counter-Strike 2').title).toBe(
+      'Обновление 1.5: новая карта',
+    )
+    expect(cardNews({ ...ruPost, titleEn: 'Update 1.5: a new map' }).title).toBe('Обновление 1.5: новая карта')
+  })
 })

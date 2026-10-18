@@ -3,6 +3,7 @@ import { memberLabel, ROOM_KICK_SEC, ROOM_MAX_MEMBERS } from './room'
 import type { GameArtUrls } from './art'
 import { CYRILLIC_GLOB } from './cyrillic'
 import { PRICE_TRUST_SEC } from './discount'
+import { isEnglishText } from './englishtext'
 import type { FeedbackCtx } from './feedbackctx'
 import type { Locale } from './i18n'
 import {
@@ -7896,7 +7897,8 @@ const NEWS_COLS_UNTOLD = NEWS_COLS.replace(
  * То же для английской ленты: описание записи там — английский пересказ, и
  * тело нужно патчу без него, даже если русский пересказ есть. Английский
  * оригинал (у патчноутов почти всегда так) ридер покажет как есть, а русский
- * — нет: его тело getRssFeedForApps стирает уже после чтения (russianBody).
+ * или другой неанглийский — нет: его тело getRssFeedForApps стирает уже после
+ * чтения (englishBody).
  */
 const NEWS_COLS_UNTOLD_EN = NEWS_COLS.replace(
   'blocks_json',
@@ -7929,29 +7931,28 @@ export async function getRssFeedForApps(
   const items = await withBodies(db, head, locale === 'en' ? 'untold-en' : 'untold')
   if (locale !== 'en') return items
   /*
-   * Русский пост без английского пересказа на /en — без тела. Описание
+   * Неанглийский пост без английского пересказа на /en — без тела. Описание
    * записи ридер берёт из тела, когда пересказа нет (newsDescription в
    * lib/newspage), и до прохода догона у русского поста издателя это был бы
    * русский абзац в английской ленте — а русского на /en нет (docs/i18n.md,
-   * договор п. 7: ссылка на оригинал вместо тела). Заголовок здесь не
-   * трогается: titleEn, а без него запасной «{Игра} update» строит сам ридер.
-   * Фильтром после чтения, а не в SQL: кириллицу в теле SQL без счёта букв
-   * не взвесит, а тел в ленте не больше limit.
+   * договор п. 7: ссылка на оригинал вместо тела). Немецкий или китайский
+   * патчноут — тем же правилом (п. 9). Заголовок здесь не трогается: titleEn,
+   * а без него запасной «{Игра} update» строит сам ридер (newsTitleOn).
+   * Фильтром после чтения, а не в SQL: язык тела SQL без счёта букв не
+   * взвесит, а тел в ленте не больше limit.
    */
-  return items.map((n) => (!n.tldrEn && n.blocks.length && russianBody(n.blocks) ? { ...n, blocks: [] } : n))
+  return items.map((n) => (!n.tldrEn && n.blocks.length && !englishBody(n.blocks) ? { ...n, blocks: [] } : n))
 }
 
 /**
- * Русское ли тело поста — правилом detectLang из lib/news (кириллицы больше
- * 15 % букв): «есть ли тут что по-русски», а не «чем читать». Своей копией,
- * а не импортом: lib/news тянет lib/catalog, а тот — эту базу.
+ * Годится ли тело поста описанием записи на /en — ровно та проверка, которой
+ * newsDescription (lib/newspage) решает, брать ли начало поста: isEnglishText
+ * над теми же первыми 600 знаками. Одно правило в двух дверях: ридер не
+ * отдаёт тело, которое описание всё равно бы отвергло, и не стирает то,
+ * которое оно взяло бы.
  */
-function russianBody(blocks: NewsBlock[]): boolean {
-  const text = blocksToText(blocks)
-  const letters = text.match(/\p{L}/gu)?.length ?? 0
-  if (!letters) return false
-  const cyr = text.match(/[Ѐ-ӿ]/g)?.length ?? 0
-  return cyr / letters > 0.15
+function englishBody(blocks: NewsBlock[]): boolean {
+  return isEnglishText(blocksToText(blocks, 600))
 }
 
 /**

@@ -525,6 +525,26 @@ describe('язык статьи патча — язык пересказа', () 
     expect(ld.description).toBe('Поправили баланс AWP и карту Mirage.')
   })
 
+  test('заголовок статьи и крошки на /en — titleEn или «{Game} update», не русский заголовок издателя', () => {
+    const ru = { ...base, title: 'Обновление Counter-Strike 2: новая карта', tldr: 'AWP rebalanced.' }
+    const crumb = (item: typeof ru & { titleEn?: string }, locale?: 'en' | 'ru') =>
+      patchBreadcrumbLd({ item, game, baseUrl: BASE, locale }).itemListElement.at(-1)?.name
+    expect(patchArticleLd({ item: { ...ru, titleEn: 'Update 1.5: a new map' }, game, baseUrl: BASE, locale: 'en' }).headline).toBe(
+      'Update 1.5: a new map',
+    )
+    expect(crumb({ ...ru, titleEn: 'Update 1.5: a new map' }, 'en')).toBe('Update 1.5: a new map')
+    expect(patchArticleLd({ item: ru, game, baseUrl: BASE, locale: 'en' }).headline).toBe('Update')
+    expect(crumb(ru, 'en')).toBe('Update')
+    expect(JSON.stringify(patchArticleLd({ item: ru, game, baseUrl: BASE, locale: 'en' }))).not.toMatch(/[А-Яа-яЁё]/)
+    // английский заголовок издателя — как и был
+    expect(patchArticleLd({ item: base, game, baseUrl: BASE, locale: 'en' }).headline).toBe('Update')
+    // по-русски — заголовок издателя, перевод не читается
+    expect(patchArticleLd({ item: { ...ru, titleEn: 'Update' }, game, baseUrl: BASE }).headline).toBe(
+      'Обновление Counter-Strike 2: новая карта',
+    )
+    expect(crumb({ ...ru, titleEn: 'Update' })).toBe('Обновление Counter-Strike 2: новая карта')
+  })
+
   test('английский пересказ на /en — статья английская', () => {
     const ld = patchArticleLd({ item: { ...base, tldr: 'AWP rebalanced, Mirage reworked.' }, game, baseUrl: BASE, locale: 'en' })
     expect(ld.inLanguage).toBe('en')
