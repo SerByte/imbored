@@ -60,7 +60,10 @@ const STEPS = {
   en: [
     { title: 'Create a room', hint: "You'll get a six-character code and a link to it" },
     { title: 'Send the link to friends', hint: 'Everyone connects their own Steam library' },
-    { title: 'Swipe together', hint: "A deck of shared games; when all the votes line up, it's a match" },
+    // Не шире русской: длинная подсказка вставала в три строки и тянула все
+    // три карточки шагов (сетка равняет высоту) на 22 px выше русских на 768
+    // и 1280. «Everyone's in» — от кнопки голоса «I'm in» (SwipeDeck)
+    { title: 'Swipe together', hint: "A deck of shared games. Everyone's in? It's a match" },
   ],
 } satisfies Record<Locale, Array<{ title: string; hint: string }>>
 
@@ -250,7 +253,8 @@ export default function RoomsBoardPage() {
       <div className="flex flex-col gap-3">
         <SectionLabel className="flex items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-ember anim-pulse-dot" />
-          {tr(locale, { ru: 'Открытые пати — ищут игроков', en: 'Open parties — looking for players' })}
+          {/* Не шире русской: «… — looking for players» на 360 вставала в две строки */}
+          {tr(locale, { ru: 'Открытые пати — ищут игроков', en: 'Open parties — players wanted' })}
         </SectionLabel>
         {/*
           Доска уже на экране, а сервер молчит: последний снимок остаётся —
