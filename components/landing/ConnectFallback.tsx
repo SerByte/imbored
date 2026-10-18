@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import Link from '@/components/Link'
 
 /**
  * Дверь, которая работает без единой строчки скрипта.

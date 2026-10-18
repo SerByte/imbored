@@ -2,7 +2,7 @@
 
 import { AnimatePresence, m } from 'framer-motion'
 import { MotionLazy } from '@/components/motion/MotionLazy'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CardNews } from '@/lib/gamepage'
 import { indexedNewsPath, newsPath } from '@/lib/newspage'

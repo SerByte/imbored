@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { GameArt } from '@/components/GameArt'
 import { TilePending } from '@/components/TilePending'

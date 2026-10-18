@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import * as m from 'framer-motion/m'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { notFound } from 'next/navigation'
 import { after } from 'next/server'
 import { GameArt } from '@/components/GameArt'

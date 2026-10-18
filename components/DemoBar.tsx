@@ -1,6 +1,6 @@
 'use client'
 
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { useEffect, useSyncExternalStore } from 'react'
 import { demoDoors, noteDemoDoorShown } from '@/lib/demodoor'
 import { getServerSessionHint, getSessionHint, subscribeSessionHint } from '@/lib/sessionhint'

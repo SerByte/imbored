@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { Icon } from '@/components/Icon'
 import { LinkPending } from '@/components/LinkPending'
 import { Cover } from '@/components/whatsnew/Cover'

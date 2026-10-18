@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import { JetBrains_Mono, Manrope } from 'next/font/google'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { Backstage } from '@/components/BackstageLazy'
 import { ChromeZone } from '@/components/ChromeZone'
 import { Footer } from '@/components/Footer'

@@ -1,5 +1,5 @@
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'

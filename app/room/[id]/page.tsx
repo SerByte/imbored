@@ -1,7 +1,7 @@
 'use client'
 
 import dynamic from 'next/dynamic'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { useParams, useRouter } from 'next/navigation'
 import {
   type ComponentProps,

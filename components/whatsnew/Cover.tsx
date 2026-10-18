@@ -1,7 +1,7 @@
 'use client'
 
 import { m, useReducedMotion, useScroll, useTransform } from 'framer-motion'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { useRef } from 'react'
 import { BlurBand } from '@/components/BlurBand'
 import { CountNumber } from '@/components/CountNumber'

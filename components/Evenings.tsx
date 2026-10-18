@@ -1,6 +1,6 @@
 'use client'
 
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { useRouter } from 'next/navigation'
 import { useRef, useState, useTransition, type ReactNode } from 'react'
 import { GameCardBody } from '@/components/GameCard'

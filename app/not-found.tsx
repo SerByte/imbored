@@ -1,5 +1,5 @@
 import { unstable_cache } from 'next/cache'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { Ambient } from '@/components/Ambient'
 import { StaticGameCardBody } from '@/components/StaticGameCard'
 import { Icon } from '@/components/Icon'

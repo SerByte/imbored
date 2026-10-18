@@ -2,7 +2,7 @@
 
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { useCallback, useRef } from 'react'
 import { ClickSpark } from '@/components/ClickSpark'
 import { EchoTitle } from '@/components/EchoTitle'

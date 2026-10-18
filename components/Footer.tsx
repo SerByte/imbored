@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { navPrefetch } from '@/lib/nav'
 import { LogoMark } from './Logo'
 import { Wordmark } from './Wordmark'

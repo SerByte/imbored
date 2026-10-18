@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { Ambient } from '@/components/Ambient'
 import { Eyebrow, MetaLine } from '@/components/Labels'
 import { ownAddress } from '@/lib/site'

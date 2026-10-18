@@ -313,3 +313,10 @@ test('разделы — уникальны, без слэшей и в нижн�
   }
   expect(LOCALIZED_SECTIONS).not.toContain('api')
 })
+
+test('fmtDate без своей зоны печатает UTC — как сервер', () => {
+  // 23:30 UTC 9 октября — в Москве уже 10-е; разметка обязана сказать 9-е
+  const late = Date.UTC(2025, 9, 9, 23, 30) / 1000
+  expect(fmtDate('en', late, { day: 'numeric', month: 'long' })).toBe('October 9')
+  expect(fmtDate('en', late, { day: 'numeric', month: 'long', timeZone: 'Europe/Moscow' })).toBe('October 10')
+})

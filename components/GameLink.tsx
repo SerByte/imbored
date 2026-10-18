@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import Link from '@/components/Link'
 import type { ComponentProps } from 'react'
 import { TilePending } from '@/components/TilePending'
 

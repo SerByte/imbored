@@ -1,7 +1,7 @@
 'use client'
 
 import { AnimatePresence, m } from 'framer-motion'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { Ambient } from '@/components/Ambient'

@@ -1,6 +1,6 @@
 'use client'
 
-import { useLinkStatus } from 'next/link'
+import { useLinkStatus } from '@/components/Link'
 
 /**
  * Подпись ссылки, которая сама говорит «нажато, едем».

@@ -1,7 +1,7 @@
 'use client'
 
 import { AnimatePresence, m } from 'framer-motion'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameLink } from '@/components/GameLink'

@@ -1,5 +1,5 @@
 import type { InStatement } from '@libsql/client'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GameArt } from '@/components/GameArt'
 import { TilePending } from '@/components/TilePending'

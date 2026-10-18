@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { Ambient } from '@/components/Ambient'
 import { LogoMark } from '@/components/Logo'
 import { ownAddress } from '@/lib/site'

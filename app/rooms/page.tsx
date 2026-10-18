@@ -2,7 +2,7 @@
 
 import { AnimatePresence, m } from 'framer-motion'
 import { MotionMax } from '@/components/motion/MotionMax'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { FlapCode } from '@/components/FlapCode'

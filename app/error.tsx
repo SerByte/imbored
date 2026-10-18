@@ -1,6 +1,6 @@
 'use client'
 
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { useEffect } from 'react'
 import { LogoMark } from '@/components/Logo'
 import { clientErrorCode, isChunkLoadError, reportClientError } from '@/lib/clienterr'

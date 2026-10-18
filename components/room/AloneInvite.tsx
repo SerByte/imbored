@@ -2,7 +2,7 @@
 
 import { type Ref, useState } from 'react'
 import { Icon } from '@/components/Icon'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { ShareLinkInput, type ShareLink } from '@/components/ShareLink'
 import { FlapCode } from '@/components/FlapCode'
 import { Eyebrow } from '@/components/Labels'

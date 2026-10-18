@@ -1,7 +1,7 @@
 'use client'
 
 import gsap from 'gsap'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { Icon, type IconName } from '@/components/Icon'
 import { Stage } from '@/components/landing/Stage'
 import { LinkPending } from '@/components/LinkPending'

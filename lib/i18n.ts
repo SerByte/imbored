@@ -92,9 +92,17 @@ export function fmtNumber(locale: Locale, n: number, opts?: Intl.NumberFormatOpt
   return new Intl.NumberFormat(intlLocale(locale), opts).format(n)
 }
 
-/** Число — секунды unix, как везде в базе и в API, а не миллисекунды Date. */
+/**
+ * Число — секунды unix, как везде в базе и в API, а не миллисекунды Date.
+ *
+ * Зона по умолчанию — UTC, если вызывающий не задал свою: без неё сервер
+ * (UTC) и браузер (зона читателя) печатали бы после 21:00 разные дни, и
+ * гидратация падала бы с #418 (lib/hydration.test.ts).
+ */
 export function fmtDate(locale: Locale, d: Date | number, opts: Intl.DateTimeFormatOptions): string {
-  return new Intl.DateTimeFormat(intlLocale(locale), opts).format(typeof d === 'number' ? new Date(d * 1000) : d)
+  return new Intl.DateTimeFormat(intlLocale(locale), { timeZone: 'UTC', ...opts }).format(
+    typeof d === 'number' ? new Date(d * 1000) : d,
+  )
 }
 
 /** Где кончается путь: дальше ?запрос и #якорь, они едут как есть */
