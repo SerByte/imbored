@@ -39,6 +39,7 @@ import {
   type Db,
   type StoredNews,
 } from './db'
+import { freshPortraitText, PORTRAIT_TEXT_V } from './portraitvoice'
 import type { GameMeta, LibraryGame } from './types'
 
 /*
@@ -121,6 +122,28 @@ describe('портрет: слот на язык', () => {
     await setUserPortrait(db, 'u3', { takenAt: NOW, text: 'an English-only portrait' }, 'en')
     expect(await getUserPortrait(db, 'u3')).toBeNull()
     expect(await getUserPortrait(db, 'u3', 'en')).toEqual({ takenAt: NOW, text: 'an English-only portrait' })
+  })
+
+  /*
+   * Как страница портрета сводит чтение и свежесть: язык уходит в чтение
+   * (getUserPortrait(…, locale) отдаёт слот своего языка верхним уровнем), а
+   * freshPortraitText (lib/portraitvoice) судит уже выбранный слот — без
+   * locale. Язык в обоих местах сразу выбрал бы слот дважды: у прочтённого
+   * английского слота вложенного en нет, и текст не находился бы никогда.
+   */
+  test('чтение по языку + свежесть без языка — текст своего языка, и при одном английском', async () => {
+    const db = await withSnapshot('u6')
+    await setUserPortrait(db, 'u6', { takenAt: NOW, text: 'an English-only portrait', v: PORTRAIT_TEXT_V }, 'en')
+    expect(freshPortraitText(await getUserPortrait(db, 'u6', 'en'), NOW, true)).toBe('an English-only portrait')
+    expect(freshPortraitText(await getUserPortrait(db, 'u6'), NOW, true)).toBeNull()
+    // язык в обоих местах — ровно та ошибка, которую сторожит этот тест
+    expect(freshPortraitText(await getUserPortrait(db, 'u6', 'en'), NOW, true, 'en')).toBeNull()
+
+    await setUserPortrait(db, 'u6', { takenAt: NOW, text: 'портрет по-русски', v: PORTRAIT_TEXT_V })
+    expect(freshPortraitText(await getUserPortrait(db, 'u6'), NOW, true)).toBe('портрет по-русски')
+    expect(freshPortraitText(await getUserPortrait(db, 'u6', 'en'), NOW, true)).toBe('an English-only portrait')
+    // снимок сменился — устарели оба
+    expect(freshPortraitText(await getUserPortrait(db, 'u6', 'en'), NOW + 60, true)).toBeNull()
   })
 
   test('английский — под тем же условием снимка, что и русский', async () => {
