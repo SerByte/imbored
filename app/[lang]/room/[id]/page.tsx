@@ -1757,8 +1757,18 @@ export default function RoomPage() {
         <Ambient />
         <div className="relative max-w-md w-full panel-lift p-8 text-center flex flex-col gap-4 anim-rise">
           <h1 className="font-display text-display-sm">
+            {/*
+              «agreed: “X”» — калька с двоеточием: по-английски «agreed»
+              без «on» игру не называет. Фраза та же, что у отказа 409 выше.
+              Название в кавычках — inline-block: строка рвётся перед ним, а
+              не внутри («“Counter-Strike» / «2”» на 360), а название шире
+              строки переносится уже внутри себя
+            */}
             {locale === 'en' ? (
-              `This party already agreed: “${state.matchedGame.name}”`
+              <>
+                This party has already agreed on{' '}
+                <span className="inline-block">“{state.matchedGame.name}”</span>
+              </>
             ) : (
               <>Эта пати уже договорилась: «{state.matchedGame.name}»</>
             )}
