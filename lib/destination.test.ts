@@ -7,6 +7,7 @@ import {
   destinationPath,
   destinationUrl,
   GUEST_BOUNCE,
+  GUEST_HUBS,
   guestBounce,
   loginCarry,
   loginTarget,
@@ -144,6 +145,10 @@ describe('гость разворачивается до рендера', () => 
     expect(guestBounce('/library', false)).toBe('/?next=%2Flibrary')
     expect(guestBounce('/compat', false)).toBe('/?next=%2Fcompat')
     expect(guestBounce('/portrait', false)).toBe('/?next=%2Fportrait')
+    // английский хаб — на английский лендинг, next — адрес без языка
+    expect(guestBounce('/en/library', false)).toBe('/en?next=%2Flibrary')
+    expect(guestBounce('/en/compat', false)).toBe('/en?next=%2Fcompat')
+    expect(guestBounce('/en/portrait', false)).toBe('/en?next=%2Fportrait')
   })
 
   test('с сессией пропускает — подпись проверит сама страница', () => {
@@ -158,6 +163,8 @@ describe('гость разворачивается до рендера', () => 
     // похожее на хаб — не хаб
     expect(guestBounce('/libraryx', false)).toBeNull()
     expect(guestBounce('/compat/', false)).toBeNull()
+    expect(guestBounce('/en/compat/76561197960287930', false)).toBeNull()
+    expect(guestBounce('/en', false)).toBeNull()
   })
 
   /**
@@ -166,7 +173,7 @@ describe('гость разворачивается до рендера', () => 
    * ради которого всё затевалось.
    */
   test('каждый хаб — место назначения лендинга', () => {
-    for (const p of GUEST_BOUNCE) {
+    for (const p of GUEST_HUBS) {
       expect((DESTINATION_PATHS as readonly string[]).includes(p), p).toBe(true)
       expect(Object.hasOwn(DESTINATIONS, p), `${p}: нет текста лендинга`).toBe(true)
     }
@@ -218,7 +225,7 @@ describe('гость разворачивается до рендера', () => 
       '/compat': path.join('app', '[lang]', 'compat', 'page.tsx'),
       '/portrait': path.join('app', '[lang]', 'portrait', 'page.tsx'),
     }
-    expect(Object.keys(pages).sort()).toEqual([...GUEST_BOUNCE].sort())
+    expect(Object.keys(pages).sort()).toEqual([...GUEST_HUBS].sort())
     for (const [p, file] of Object.entries(pages)) {
       const src = fs.readFileSync(path.join(ROOT, file), 'utf8')
       expect(src, file).toContain(`bounceTo('${p}')`)

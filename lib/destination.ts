@@ -21,11 +21,12 @@
  * Хвост запроса едет тоже, но так же по списку — см. destinationUrl.
  *
  * Импорты — разбор настроения из lib/mood, пресеты комнаты и разбор затравки
- * из lib/presets, у которых самих зависимостей нет (у presets они только типовые): модуль
- * читают и серверные страницы, и клиентский лендинг, и роут возврата из
- * Steam, и proxy.ts.
+ * из lib/presets, у которых самих зависимостей нет (у presets они только типовые),
+ * и такой же чистый lib/i18n: модуль читают и серверные страницы, и
+ * клиентский лендинг, и роут возврата из Steam, и proxy.ts.
  */
 
+import { LOCALES, lp, splitLocale } from './i18n'
 import { parseLean, parseMood } from './mood'
 import { parseSeedParam, roomPresetByKey, roomSeedOf } from './presets'
 
@@ -185,8 +186,14 @@ export function bounceTo(
  *
  * /daily, /play и /room/new здесь нет: это клиентские страницы, они
  * разворачивают сами, после ответа сервера про библиотеку.
+ *
+ * GUEST_HUBS — сами хабы, адресом без языка (их и знает лендинг, см.
+ * DESTINATION_PATHS); GUEST_BOUNCE — те же хабы на каждом языке, ровно то,
+ * на чём стоит matcher в proxy.ts.
  */
-export const GUEST_BOUNCE: readonly string[] = ['/library', '/compat', '/portrait']
+export const GUEST_HUBS: readonly DestinationPath[] = ['/library', '/compat', '/portrait']
+
+export const GUEST_BOUNCE: readonly string[] = LOCALES.flatMap((locale) => GUEST_HUBS.map((hub) => lp(locale, hub)))
 
 /**
  * Куда развернуть гостя до рендера, либо null — пропустить к странице.
@@ -195,10 +202,15 @@ export const GUEST_BOUNCE: readonly string[] = ['/library', '/compat', '/portrai
  * базу и секрет (см. lib/origin.ts). Протухшую или поддельную куку ловит
  * сама страница тем же redirect(bounceTo(…)) — это редкий случай, и платит
  * за него только он.
+ *
+ * Лендинг — на языке хаба: гость с /en/library попадает на /en?next=…, а
+ * не на русскую главную. next — адрес без языка, как его знает
+ * destinationUrl; префикс к нему ставит уже сам лендинг.
  */
 export function guestBounce(pathname: string, hasSession: boolean): string | null {
   if (hasSession || !GUEST_BOUNCE.includes(pathname)) return null
-  return bounceTo(pathname)
+  const { locale, path } = splitLocale(pathname)
+  return lp(locale, bounceTo(path))
 }
 
 const JOIN_RE = /^[A-Z0-9]{6}$/
