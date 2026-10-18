@@ -128,15 +128,21 @@ describe('превью в мессенджерах', () => {
   })
 
   /**
-   * Файловая метадата приоритетнее объекта metadata. Значит openGraph.images
-   * рядом с opengraph-image.tsx никогда не применится — такие строки не
-   * ломают превью, но врут читающему код, а однажды уже стоили страницы игры
-   * сырого баннера 920×430 вместо карточки.
+   * openGraph.images страницы ВЫТЕСНЯЕТ карточку opengraph-image.tsx: файл
+   * Next берёт, только когда у страницы images нет (mergeStaticMetadata в
+   * next/dist/lib/metadata/resolve-metadata.js). Случайная такая строка тихо
+   * подменяет превью — однажды она уже стоила странице игры сырого баннера
+   * 920×430 вместо карточки.
    */
-  test('там, где есть opengraph-image.tsx, нет мёртвого openGraph.images', () => {
+  test('там, где есть opengraph-image.tsx, нет случайного openGraph.images', () => {
+    // Намеренно: на /en та же карточка того же маршрута, но с английской
+    // подписью — alt файловой карточки без языка (cardOn). Именем, а не
+    // окном в 300 знаков ниже: оно пропускало эту страницу случайно
+    const deliberate = new Set(['app/[lang]/compat/[steamid]/page.tsx'])
     const offenders: string[] = []
     for (const [file, src] of appFiles()) {
       if (!/\bopenGraph:\s*\{/.test(src)) continue
+      if (deliberate.has(path.relative(ROOT, file).split(path.sep).join('/'))) continue
       const dir = path.dirname(file)
       const hasFile =
         fs.existsSync(path.join(dir, 'opengraph-image.tsx')) ||
@@ -145,7 +151,7 @@ describe('превью в мессенджерах', () => {
         offenders.push(path.relative(ROOT, file))
       }
     }
-    expect(offenders, 'images здесь мёртв — картинку даёт opengraph-image.tsx').toEqual([])
+    expect(offenders, 'images здесь подменяет карточку opengraph-image.tsx').toEqual([])
   })
 
   /**
