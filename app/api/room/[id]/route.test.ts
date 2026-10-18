@@ -458,8 +458,11 @@ describe('/api/room/[id]: экран приглашения', () => {
     signOut()
     const res = (await (await peekEn()).json()) as Door & View
     expect(res.invite?.title).toBe("You're invited to pick tonight's game")
-    expect(res.invite?.here).toMatch(/^Already here: Player \w{1,4} and Player \w{1,4}$/)
+    // внутри имени — неразрывный пробел: строка на 360 рвётся между именами
+    expect(res.invite?.here).toMatch(/^Already here: Player\u00a0\w{1,4} and Player\u00a0\w{1,4}$/)
     expect(res.members.map((m) => m.name).join(' ')).not.toMatch(CYRILLIC)
+    // а ростер — с обычным пробелом: неразрывность нужна одной строке экрана
+    expect(res.members.some((m) => m.name.includes('\u00a0'))).toBe(false)
   })
 
   /*
@@ -476,7 +479,7 @@ describe('/api/room/[id]: экран приглашения', () => {
     signOut()
     const en = ((await (await peekEn()).json()) as Door).invite
     expect(en?.title).toBe("Demo player wants to pick tonight's game")
-    expect(en?.here).toBe('Already here: Demo player and Аня')
+    expect(en?.here).toBe('Already here: Demo\u00a0player and Аня')
     // русский экран — прежний до байта: ник как записан
     const ru = ((await (await peek(ROOM, '203.0.113.8')).json()) as Door).invite
     expect(ru?.title).toBe('Демо-игрок зовёт выбрать игру на вечер')

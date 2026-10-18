@@ -203,13 +203,20 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     const seed = await seedRead
     const host = members.find((m) => m.steamid === room.createdBy)
     const hostFirst = host ? [host, ...members.filter((m) => m !== host)] : members
+    // «Already here» на /en — имена неразрывно: «Demo player and Demo friend»
+    // на 360 рвался посреди имени («… and Demo» / «friend»), а русская
+    // строка с теми же двумя демо в ширину влезает. Неразрывный пробел внутри
+    // метки переносит строку между именами; длина метки та же, и обрезка
+    // inviteDoor прежняя. Ростер (memberViews) — с обычными пробелами, ru —
+    // до байта как был
+    const doorName = (label: string) => (locale === 'en' ? label.replace(/ /g, '\u00a0') : label)
     // Демо-хост — признаком, не steamid: на /en его русская подпись
     // становится «Demo player», тем же словом, что в «Уже здесь» (memberLabel)
     invite = inviteDoor(
       {
         host: host?.personaName ?? null,
         hostDemo: host ? isDemoId(host.steamid) : false,
-        names: hostFirst.map((m) => memberLabel(id, m.steamid, m.personaName, locale)),
+        names: hostFirst.map((m) => doorName(memberLabel(id, m.steamid, m.personaName, locale))),
         seed: seed
           ? { appid: seed.appid, name: seed.name, headerImage: seed.headerImage ?? null, art: seed.art ?? null }
           : null,
