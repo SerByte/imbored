@@ -435,7 +435,8 @@ export type DigestResult = {
   llmStatus?: number | null
   /**
    * Сколько из digested — английский догон (getUnsummarizedEn). Есть, только
-   * если срез шёл догоном: русская очередь была пуста.
+   * если срез дошёл до догона: русская очередь была пуста на входе или
+   * выбрана в этом же срезе до дна.
    */
   english?: number
   /**
@@ -459,8 +460,9 @@ export type DigestResult = {
  * Пересказ пишет оба языка одним вызовом (режим 'both'): русский, английский
  * и английский заголовок не английского поста. Английский догон — для того,
  * что пересказано до английской версии или чей английский не вышел, — идёт,
- * только когда русская очередь пуста на входе в срез: русский — язык сайта
- * по умолчанию, и новый патч не ждёт за старым переводом. Догон берёт тело из
+ * только когда русская очередь пуста: на входе в срез или выбрана в нём до
+ * дна (тогда догону достаётся остаток пачки). Русский — язык сайта по
+ * умолчанию, и новый патч не ждёт за старым переводом. Догон берёт тело из
  * базы (getUnsummarizedEn), в Steam не ходит и платит своей долей суточного
  * бюджета (lib/enbackfill), чтобы не выбрать его за утро.
  *
@@ -506,6 +508,13 @@ export async function runDigestSlice(
   let digested = 0
   const cards = new Set<number>()
   let stopped: DigestResult['stopped'] = 'done'
+  /*
+   * Ответила ли модель хоть раз без английского ключа вовсе — прежним
+   * договором claudeNewsDigest, до английской версии. Тогда догон в этом
+   * срезе не начинаем: режим 'en' она не знает, и первый же его вызов был бы
+   * оплачен впустую (runEnglishBackfill на нём и встанет).
+   */
+  let legacyModel = false
 
   for (const item of pending) {
     /*
@@ -562,12 +571,52 @@ export async function runDigestSlice(
     if (res && tldr) {
       digested++
       cards.add(item.appid)
+      if (res.tldrEn === undefined) legacyModel = true
     }
   }
 
   // Взяли полную пачку — значит в очереди почти наверняка ещё есть. Случай
   // «модель отвалилась» сюда не доходит: он возвращается выше по return.
-  return { digested, cards: [...cards], hasMore: pending.length === limit, stopped }
+  const ru: DigestResult = { digested, cards: [...cards], hasMore: pending.length === limit, stopped }
+  /*
+   * Русская очередь выбрана до дна — остаток звена уходит догону, в этом же
+   * срезе. Иначе догон не шёл бы почти никогда: крон пересказов приходит раз
+   * в час вместе с опросом, и почти каждый час приносит хоть один новый патч
+   * или повтор упавшего. Неполная пачка давала hasMore: false, цепочка
+   * (digestLinkVerdict) кончалась на 'done', и до догона очередь не доходила
+   * — его выбирал только ручной --en-backfill. Порядок прежний: русский
+   * первым, догону — только то, что от него осталось, и не больше остатка
+   * пачки, чтобы звено не вышло за свои сорок восемь секунд.
+   *
+   * Записи, пересказанные выше, догон в этом срезе не берёт: если английский
+   * у них не вышел, только что спрашивать модель о том же ещё раз — потратить
+   * вторую из трёх попыток за ту же минуту. Они дождутся следующего звена.
+   */
+  if (stopped !== 'done' || ru.hasMore || opts.english === false || legacyModel) return ru
+  const en = await runEnglishBackfill(db, {
+    deadlineAt: opts.deadlineAt,
+    now,
+    limit: limit - pending.length,
+    digest,
+    log,
+    skip: new Set(pending.map((p) => newsKey(p.appid, p.gid))),
+  })
+  return mergeDigest(ru, en)
+}
+
+const newsKey = (appid: number, gid: string) => `${appid}:${gid}`
+
+/**
+ * Итог среза, в котором за русской очередью шёл догон: числа складываются,
+ * а остановка, «есть ли ещё» и отказ модели — от догона, он шёл последним.
+ * english — только если догон что-то делал (см. DigestResult.english).
+ */
+function mergeDigest(ru: DigestResult, en: DigestResult): DigestResult {
+  return {
+    ...en,
+    digested: ru.digested + en.digested,
+    cards: [...new Set([...ru.cards, ...en.cards])],
+  }
 }
 
 /**
@@ -615,9 +664,15 @@ async function runEnglishBackfill(
     limit: number
     digest: DigestFn
     log: (line: string) => void
+    /** Записи, которых догон не берёт: их только что пересказал этот же срез */
+    skip?: ReadonlySet<string>
   },
 ): Promise<DigestResult> {
-  const pending = await getUnsummarizedEn(db, o.limit)
+  const skip = o.skip ?? new Set<string>()
+  // Пропуск — свежие записи, а очередь идёт от свежих: читаем с запасом на них
+  const pending = (await getUnsummarizedEn(db, o.limit + skip.size))
+    .filter((p) => !skip.has(newsKey(p.appid, p.gid)))
+    .slice(0, o.limit)
   if (!pending.length) return { digested: 0, cards: [], hasMore: false, stopped: 'done' }
   const metas = await getGamesMeta(
     db,

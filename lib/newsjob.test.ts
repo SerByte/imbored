@@ -5,9 +5,11 @@ import {
   getGameNews,
   getMajorFeed,
   getUnsummarized,
+  getUnsummarizedEn,
   upsertGameMeta,
   type Db,
 } from './db'
+import { digestLinkVerdict } from './cron'
 import type { RawNewsItem } from './news'
 import { LlmUnavailableError } from './llm'
 import { nextPollAt, runDigestSlice, runNewsSlice } from './newsjob'
@@ -766,21 +768,124 @@ describe('пересказ по-английски', () => {
     })
   })
 
-  test('новый патч не ждёт за догоном: пока русская очередь не пуста, догона нет', async () => {
+  test('новый патч не ждёт за догоном: русская очередь первой, догону — остаток среза', async () => {
     const db = await freshDb()
     await seedPatch(db, 730, '1')
     await digestedRu(db)
     await seedPatch(db, 570, '2')
-    const modes: Array<string | undefined> = []
-    await runDigestSlice(db, {
+    const calls: Array<{ mode?: string; appid: string }> = []
+    const res = await runDigestSlice(db, {
       nowSec: NOW + 5000,
       deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async (a) => {
+        calls.push({ mode: a.mode, appid: a.gameName })
+        return both()
+      },
+    })
+    // сперва новый патч обоими языками, и только потом — английский старого
+    expect(calls).toEqual([
+      { mode: undefined, appid: 'Game 570' },
+      { mode: 'en', appid: 'Game 730' },
+    ])
+    expect(res).toMatchObject({ digested: 2, english: 1, hasMore: false, stopped: 'done' })
+    expect(res.cards.sort()).toEqual([570, 730])
+  })
+
+  test('полная русская пачка — догона в этом срезе нет: впереди ещё русские', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await digestedRu(db)
+    await seedPatch(db, 570, '2')
+    await seedPatch(db, 440, '3')
+    const modes: Array<string | undefined> = []
+    const res = await runDigestSlice(db, {
+      nowSec: NOW + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      limit: 2,
       digestFn: async (a) => {
         modes.push(a.mode)
         return both()
       },
     })
+    expect(modes).toEqual([undefined, undefined])
+    expect(res).toMatchObject({ digested: 2, hasMore: true, stopped: 'done' })
+    expect(res).not.toHaveProperty('english')
+  })
+
+  test('цепочка крона: новый патч не обрывает догон — старые переводятся в тот же запуск', async () => {
+    // Ровно случай с прода: крон пересказов приходит раз в час вместе с
+    // опросом, и почти каждый час приносит хоть один новый патч. Неполная
+    // русская пачка давала hasMore: false, цепочка кончалась на 'done', и
+    // догон не доходил до очереди никогда.
+    const db = await freshDb()
+    for (let i = 1; i <= 5; i++) await seedPatch(db, 100 + i, `old${i}`)
+    await digestedRu(db)
+    await seedPatch(db, 200, 'new1')
+
+    const calls: string[] = []
+    const digestFn = async (a: { mode?: string; gameName: string }) => {
+      calls.push(`${a.mode ?? 'both'}:${a.gameName}`)
+      return a.mode === 'en'
+        ? { tldrEn: `English for ${a.gameName}.`, titleEn: null, scale: 'major' as const }
+        : both()
+    }
+    // runChain в /api/cron/digest: звено за звеном, пока вердикт не скажет стоп
+    const verdicts: Array<string | null> = []
+    for (let link = 0; link < 8; link++) {
+      const slice = await runDigestSlice(db, {
+        nowSec: NOW + 5000,
+        deadlineAt: Date.now() + ЗАПАС_MS,
+        limit: 25,
+        digestFn,
+      })
+      const verdict = digestLinkVerdict({ failed: false, result: slice })
+      verdicts.push(verdict)
+      if (verdict) break
+    }
+    expect(verdicts).toEqual(['done'])
+    expect(calls[0]).toBe('both:Game 200')
+    expect(calls.slice(1).sort()).toEqual([101, 102, 103, 104, 105].map((a) => `en:Game ${a}`))
+    expect(await getUnsummarizedEn(db)).toEqual([])
+    const r = await db.execute("SELECT COUNT(*) AS n FROM news_items WHERE tldr_en IS NULL")
+    expect(Number(r.rows[0]!.n)).toBe(0)
+  })
+
+  test('модель прежнего договора — догон за русской очередью не начинается, вызов не тратится', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await digestedRu(db)
+    await seedPatch(db, 570, '2')
+    const modes: Array<string | undefined> = []
+    const res = await runDigestSlice(db, {
+      nowSec: NOW + 5000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async (a) => {
+        modes.push(a.mode)
+        return okDigest()
+      },
+    })
     expect(modes).toEqual([undefined])
+    expect(res).toMatchObject({ digested: 1, hasMore: false, stopped: 'done' })
+    expect(res).not.toHaveProperty('english')
+  })
+
+  test('цепочка крона: догон больше пачки идёт звеньями, пока очередь не опустеет', async () => {
+    const db = await freshDb()
+    for (let i = 1; i <= 5; i++) await seedPatch(db, 100 + i, `old${i}`)
+    await digestedRu(db)
+    await seedPatch(db, 200, 'new1')
+    const digestFn = async (a: { mode?: string; gameName: string }) =>
+      a.mode === 'en' ? { tldrEn: 'Fixed it.', titleEn: null, scale: 'major' as const } : both()
+    const verdicts: Array<string | null> = []
+    for (let link = 0; link < 8; link++) {
+      const slice = await runDigestSlice(db, { nowSec: NOW + 5000, deadlineAt: Date.now() + ЗАПАС_MS, limit: 2, digestFn })
+      const verdict = digestLinkVerdict({ failed: false, result: slice })
+      verdicts.push(verdict)
+      if (verdict) break
+    }
+    // 1-е звено: новый патч + один старый; дальше по два старых; пустое — стоп
+    expect(verdicts.at(-1)).toBe('done')
+    expect(await getUnsummarizedEn(db)).toEqual([])
   })
 
   test('опрос с пересказом догоном не занимается — у него своя доля и свой крон', async () => {
