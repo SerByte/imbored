@@ -29,11 +29,11 @@ import {
 import { claudePortraitText, llmAvailable } from '@/lib/llm'
 import { takeLlmBudgetForIp } from '@/lib/llmcap'
 import { reconnectHref } from '@/lib/destination'
-import { lp, toLocale } from '@/lib/i18n'
+import { fmtNumber, lp, pl, toLocale, tr, type Locale } from '@/lib/i18n'
 import { localeAlternates, ogSite } from '@/lib/site'
 import { gamesCaption, playedFact, unplayedCaption } from '@/lib/factcaptions'
-import { dateLabel } from '@/lib/freshness'
 import { playedLine } from '@/lib/outcome'
+import { archetypeLabelOf } from '@/lib/portrait'
 import { pickYearWindow, yearEyebrow, yearsToRead, type WrappedYear } from '@/lib/wrapped'
 import { plural } from '@/lib/plural'
 import { playedShort, playtimeHidden } from '@/lib/playtime'
@@ -42,9 +42,9 @@ import { buildPortraitModel, portraitTag, type PortraitModel } from '@/lib/portr
 import {
   concentrationVerdict,
   eraLead,
+  freshPortraitText,
   paretoLead,
   portraitFallbackText,
-  portraitTextFresh,
   PORTRAIT_TEXT_V,
   socialTail,
   unplayedHeading,
@@ -52,12 +52,14 @@ import {
 } from '@/lib/portraitvoice'
 import { appBaseUrl, currentSteamId, getDb, nowSec } from '@/lib/server'
 import { backlogEquivalent } from '@/lib/stats'
+import { quoted } from '@/lib/sharedpick'
 import { byPrices, formatPrice } from '@/lib/steamregion'
 import { tagWeightFrom } from '@/lib/tagweight'
 import type { LibraryGame } from '@/lib/types'
 import { Icon } from '@/components/Icon'
 import { withRef } from '@/lib/track'
 import { Notice } from '@/components/Notice'
+import { langOn, ogImageOn, playerName, SnapshotDates, withForeignRuns } from './portrait-text'
 
 export const dynamic = 'force-dynamic'
 
@@ -125,27 +127,55 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { steamid, lang } = await params
   const locale = toLocale(lang)
-  if (!/^\d{17}$/.test(steamid)) return {}
+  // Свой адрес, а не корневой '/': см. ownAddress в lib/site.ts
+  const url = `/portrait/${steamid}`
+  // Битый адрес: файловая картинка всё равно встаёт в метаданные, а с ней и
+  // её русский alt — поэтому на /en и здесь своя запись с английским. Без
+  // og:url, как у корня: адреса у такой страницы нет. Русская — как была
+  if (!/^\d{17}$/.test(steamid)) {
+    return locale === 'en'
+      ? { openGraph: { type: 'website', ...ogSite(locale), ...ogImageOn(locale, url, 'Player portrait — imbored') } }
+      : {}
+  }
 
   // Ник от снапшота не зависит — читаем вместе; страница возьмёт оба из cache()
   const [snapshot, persona] = await Promise.all([snapshotOf(steamid), personaOf(steamid)])
-  if (!snapshot) return { title: 'Портрет игрока', robots: { index: false } }
+  if (!snapshot) {
+    return {
+      title: tr(locale, { ru: 'Портрет игрока', en: 'Player portrait' }),
+      robots: { index: false },
+      // На /en и у заглушки своя картинка — ради английского alt (ogImageOn);
+      // поля — те же, что дал бы корень. Русская заглушка — как была
+      ...(locale === 'en'
+        ? {
+            openGraph: {
+              type: 'website' as const,
+              ...ogSite(locale),
+              url: lp(locale, url),
+              ...ogImageOn(locale, url, 'Player portrait — imbored'),
+            },
+          }
+        : {}),
+    }
+  }
 
-  const name = persona ?? `Игрок ${steamid.slice(-4)}`
+  const name = playerName(steamid, persona, locale)
   const hours = Math.round(snapshot.games.reduce((s, g) => s + g.playtimeForever, 0) / 60)
   const games = snapshot.games.length
-  const title = `Портрет игрока ${name}`
+  // По-английски ник — после тире, как у итогов года: «{name}'s player
+  // portrait» у самых частых имён («Demo player», «Player 0007») ставило
+  // «player» дважды подряд
+  const title = tr(locale, { ru: `Портрет игрока ${name}`, en: `Player portrait — ${name}` })
   // Превью ссылки в чате — то же правило, что и сама страница: при скрытом
   // времени «0 часов» было бы сказано про галочку Steam (lib/playtime.ts)
   const time = playtimeHidden(snapshot.games)
-    ? 'время скрыто'
-    : `${hours.toLocaleString('ru-RU')} ${plural(hours, 'час', 'часа', 'часов')}`
-  const description =
-    `${games} ${plural(games, 'игра', 'игры', 'игр')}, ${time}. ` +
-    'Посмотри портрет и проверь совместимость вкусов.'
-
-  // Свой адрес, а не корневой '/': см. ownAddress в lib/site.ts
-  const url = `/portrait/${steamid}`
+    ? tr(locale, { ru: 'время скрыто', en: 'playtime hidden' })
+    : `${fmtNumber(locale, hours)} ${pl(locale, hours, { ru: ['час', 'часа', 'часов'], en: ['hour', 'hours'] })}`
+  const gameWord = pl(locale, games, { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] })
+  const description = tr(locale, {
+    ru: `${games} ${gameWord}, ${time}. ` + 'Посмотри портрет и проверь совместимость вкусов.',
+    en: `${fmtNumber(locale, games)} ${gameWord}, ${time}. See the portrait and check your taste match.`,
+  })
 
   return {
     title,
@@ -158,7 +188,14 @@ export async function generateMetadata({
     // поиска по картинкам их убирает X-Robots-Tag (lib/robots.ts): метатега
     // у PNG нет.
     robots: { index: false, follow: true },
-    openGraph: { ...ogSite(locale), title, description, type: 'profile', url: lp(locale, url) },
+    openGraph: {
+      ...ogSite(locale),
+      title,
+      description,
+      type: 'profile',
+      url: lp(locale, url),
+      ...ogImageOn(locale, url, 'Player portrait — imbored'),
+    },
     twitter: { card: 'summary_large_image', title, description },
   }
 }
@@ -267,8 +304,11 @@ async function loadModel(
     // топ-игры из минут и «полные дни» вниз — без смены ключа запись v5
     // сутки держала бы «142%» и «1 полный день» за 12 часов. И всё наигранное —
     // минутами (Wrapped.totalMinutes, а не готовые часы): запись без поля
-    // отдала бы герою undefined вместо «0 часов»
-    ['portrait-model:v6', steamid, String(snapshot.takenAt)],
+    // отдала бы герою undefined вместо «0 часов».
+    // v7 — у архетипов есть ключ (Archetype.key): подпись на языке страницы
+    // берётся по нему (archetypeLabelOf), а запись v6 несла бы один русский
+    // label. Ключ кэша без языка: модель — числа и игры, слов в ней нет
+    ['portrait-model:v7', steamid, String(snapshot.takenAt)],
     { tags: [portraitTag(steamid)], revalidate: MODEL_TTL_SEC },
   )
   try {
@@ -282,8 +322,10 @@ async function loadModel(
   }
 }
 
-export default async function PortraitPage({ params }: { params: Promise<{ steamid: string }> }) {
-  const { steamid } = await params
+export default async function PortraitPage({ params }: { params: Promise<{ steamid: string; lang?: string }> }) {
+  const { steamid, lang } = await params
+  // Язык — из params, как в generateMetadata: без маршрута (тест) — русский
+  const locale = toLocale(lang)
   if (!/^\d{17}$/.test(steamid)) notFound()
 
   const now = nowSec()
@@ -291,11 +333,14 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
   if (!snapshot) {
     return (
       <Notice
-        title="Портрета пока нет"
-        body="Этот игрок ещё не подключал библиотеку к imbored — рисовать не из чего. Свой портрет собирается за минуту."
+        title={tr(locale, { ru: 'Портрета пока нет', en: 'No portrait yet' })}
+        body={tr(locale, {
+          ru: 'Этот игрок ещё не подключал библиотеку к imbored — рисовать не из чего. Свой портрет собирается за минуту.',
+          en: "This player hasn't connected their library to imbored yet, so there's nothing to draw from. Yours takes about a minute to build.",
+        })}
       >
         <Link href={reconnectHref()} className="btn-ember px-6 py-3">
-          Подключить свою
+          {tr(locale, { ru: 'Подключить свою', en: 'Connect your library' })}
         </Link>
       </Notice>
     )
@@ -311,6 +356,8 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
    * необработанным отклонением промиса).
    * Текст НЕ читается внутри кэша модели: он меняется без снапшота
    * (setUserPortrait ниже), и замыкание кэша заморозило бы его.
+   * Читается слот языка страницы: на /en — английский текст, а нет его —
+   * null, и русский на английской странице не показывается никогда.
    */
   const ip = clientIp(await headers())
   const db = await getDb()
@@ -318,17 +365,21 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     loadModel(steamid, snapshot, ip, now),
     personaOf(steamid),
     currentSteamId(),
-    getUserPortrait(db, steamid),
+    getUserPortrait(db, steamid, locale),
   ])
   const { portrait, wrapped, backlog, headline, evidence, starter, mosaic, purgatory } = model
   // Число вынимается из фразы, чтобы остаться моноширинным, как все числа
   const equivalent = (() => {
-    const eq = backlogEquivalent(backlog.cents, backlog.cc, steamid)
+    const eq = backlogEquivalent(backlog.cents, backlog.cc, steamid, locale)
     if (!eq) return null
     const [before, after] = eq.text.split('{n}')
     return { count: eq.count, before, after }
   })()
-  const name = persona ?? `Игрок ${steamid.slice(-4)}`
+  const name = playerName(steamid, persona, locale)
+  // Русский ник на /en — с lang="ru" (langOn); на русской странице — без атрибута
+  const nameLang = langOn(locale, name)
+  // Счёт посреди фразы: по-английски — с разрядами, по-русски — как был, голым числом
+  const count = (n: number) => (locale === 'en' ? fmtNumber(locale, n) : n)
 
   /*
    * Свой портрет или чужой — от этого зависит голос страницы (lib/portraitvoice).
@@ -337,7 +388,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
    */
   const isMine = me === steamid
   const voice: PortraitVoice = isMine ? 'you' : 'them'
-  const fallbackText = () => portraitFallbackText(name, portrait.archetypes, portrait.facts, voice)
+  const fallbackText = () => portraitFallbackText(name, portrait.archetypes, portrait.facts, voice, locale)
 
   /*
    * Текст портрета: кэш по времени снапшота, Claude при наличии ключа, иначе шаблон.
@@ -365,9 +416,12 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
    */
   let text: string
   // Снапшот тот же — но текст про «0 часов», записанный до того, как промпт
-  // узнал о скрытом времени, не годится и при нём (PORTRAIT_TEXT_V)
-  if (cached && portraitTextFresh(cached, snapshot.takenAt, portrait.facts.playtimeHidden)) {
-    text = cached.text
+  // узнал о скрытом времени, не годится и при нём (PORTRAIT_TEXT_V).
+  // Свежесть и сам текст — одного слота, языка страницы: судить английский,
+  // а показать русский так нельзя (freshPortraitText)
+  const fresh = freshPortraitText(cached, snapshot.takenAt, portrait.facts.playtimeHidden, locale)
+  if (fresh !== null) {
+    text = fresh
   } else if (!complete) {
     text = fallbackText()
   } else {
@@ -399,10 +453,11 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
     // Доля выбрана — тот же шаблон, что и при отказе по потолку
     const written =
       allowed && llmAvailable() && (await takeLlmBudgetForIp(db, ip, now))
-        ? await claudePortraitText({ name, archetypes: portrait.archetypes, facts: portrait.facts })
+        ? await claudePortraitText({ name, archetypes: portrait.archetypes, facts: portrait.facts, locale })
         : null
     text = written ?? fallbackText()
-    if (written) await setUserPortrait(db, steamid, { takenAt: snapshot.takenAt, text, v: PORTRAIT_TEXT_V })
+    // В слот своего языка: английский текст не стирает русский, и наоборот
+    if (written) await setUserPortrait(db, steamid, { takenAt: snapshot.takenAt, text, v: PORTRAIT_TEXT_V }, locale)
   }
 
   /*
@@ -478,31 +533,41 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         <div aria-hidden className="grain" />
 
         <div className="relative mx-auto w-full max-w-6xl px-safe pb-16 pt-40">
-          <Eyebrow className="mb-3">Портрет игрока</Eyebrow>
-          <SplitHeading
-            className="font-display text-display-xl"
-            delay={0.18}
-          >
-            {name}
-          </SplitHeading>
+          <Eyebrow className="mb-3">{tr(locale, { ru: 'Портрет игрока', en: 'Player portrait' })}</Eyebrow>
+          {/* Обёртка с lang — только у русского ника на /en: у SplitHeading своего
+              lang нет, а русская разметка героя остаётся прежней до узла */}
+          {nameLang ? (
+            <div lang={nameLang}>
+              <SplitHeading className="font-display text-display-xl" delay={0.18}>
+                {name}
+              </SplitHeading>
+            </div>
+          ) : (
+            <SplitHeading
+              className="font-display text-display-xl"
+              delay={0.18}
+            >
+              {name}
+            </SplitHeading>
+          )}
           <dl className="mt-8 flex flex-wrap gap-x-10 gap-y-4">
-            <Fact value={wrapped.gamesCount} caption={gamesCaption(wrapped.gamesCount)} delay={300} />
+            <Fact value={wrapped.gamesCount} caption={gamesCaption(wrapped.gamesCount, locale)} delay={300} />
             {/* Время скрыто настройками Steam (lib/playtime.ts): одно слово
                 вместо «0 часов» и «0 не запущено» — оба нуля были бы про
                 галочку, а не про человека */}
             {wrapped.playtimeHidden ? (
               <div className="flex flex-col-reverse">
-                <dt className="lib-stat-label">время в играх</dt>
-                <dd className="lib-stat">скрыто</dd>
+                <dt className="lib-stat-label">{tr(locale, { ru: 'время в играх', en: 'playtime' })}</dt>
+                <dd className="lib-stat">{tr(locale, { ru: 'скрыто', en: 'hidden' })}</dd>
               </div>
             ) : (
               <>
                 {/* Меньше получаса на всю библиотеку — минутами (playedFact):
                     «0 часов» стояло над «Куда ушло время» с «20 мин» */}
-                <Fact {...playedFact(wrapped.totalMinutes)} delay={360} />
+                <Fact {...playedFact(wrapped.totalMinutes, locale)} delay={360} />
                 <Fact
                   value={wrapped.unplayedCount}
-                  caption={unplayedCaption(wrapped.unplayedCount)}
+                  caption={unplayedCaption(wrapped.unplayedCount, locale)}
                   delay={420}
                   accent
                 />
@@ -513,14 +578,29 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             <p className="mt-6 text-dim text-sm md:text-base">
               {/* «Дней», а не «суток»: у «суток» нет формы на 21, 31, 101 —
                   выходило «31 полных суток» */}
-              Это <span className="tabular-nums text-ink">{wrapped.days.toLocaleString('ru-RU')}</span>{' '}
-              {plural(wrapped.days, 'полный день', 'полных дня', 'полных дней')} за экраном.
+              {tr(locale, {
+                ru: (
+                  <>
+                    Это <span className="tabular-nums text-ink">{fmtNumber(locale, wrapped.days)}</span>{' '}
+                    {plural(wrapped.days, 'полный день', 'полных дня', 'полных дней')} за экраном.
+                  </>
+                ),
+                en: (
+                  <>
+                    That&apos;s <span className="tabular-nums text-ink">{fmtNumber(locale, wrapped.days)}</span>{' '}
+                    {pl(locale, wrapped.days, { ru: ['полный день', 'полных дня', 'полных дней'], en: ['full day', 'full days'] })}{' '}
+                    of screen time.
+                  </>
+                ),
+              })}
             </p>
           )}
           {!complete && (
             <p className="mt-3 max-w-md text-dim text-sm">
-              С этого адреса сейчас открывают слишком много портретов подряд. Диагноз по жанрам
-              появится здесь через несколько минут.
+              {tr(locale, {
+                ru: 'С этого адреса сейчас открывают слишком много портретов подряд. Диагноз по жанрам появится здесь через несколько минут.',
+                en: 'Too many portraits are being opened from this address right now. The genre diagnosis will show up here in a few minutes.',
+              })}
             </p>
           )}
         </div>
@@ -530,18 +610,28 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
       {wrapped.top.length > 0 && (
         <section className="relative mx-auto w-full max-w-5xl px-safe py-24 md:py-32">
           <m.h2 {...inView()} className="mb-8 font-display text-display-lg">
-            Куда ушло время
+            {tr(locale, { ru: 'Куда ушло время', en: 'Where the time went' })}
           </m.h2>
 
           <div className="flex flex-col gap-3">
             {wrapped.top.map((g, i) => (
               <m.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
                 <span className="portrait-rank w-7 shrink-0">{i + 1}</span>
-                <GameLink appid={g.appid} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
+                <GameLink
+                  appid={g.appid}
+                  aria-label={g.name}
+                  lang={langOn(locale, g.name)}
+                  className="game-card w-28 shrink-0 md:w-44"
+                >
                   <span className="card-thumb">{cover(g, '(min-width: 768px) 176px, 112px')}</span>
                 </GameLink>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base">{g.name}</div>
+                  <div
+                    lang={langOn(locale, g.name)}
+                    className="truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base"
+                  >
+                    {g.name}
+                  </div>
                   <div className="mt-1.5 h-1.5 rounded-full bg-track overflow-hidden">
                     <m.div
                       className="h-full rounded-full bg-ember"
@@ -555,7 +645,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                 {/* Минуты, а не округлённые часы: игра на 20 минут была «0 ч»
                     рядом с непустой полосой (playedShort) */}
                 <span className="shrink-0 text-sm font-bold tabular-nums text-dim">
-                  {playedShort(g.minutes)}
+                  {playedShort(g.minutes, locale)}
                 </span>
               </m.div>
             ))}
@@ -577,24 +667,33 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                   {wrapped.concentration}
                   <span className="portrait-index-of">/100</span>
                 </span>
-                <span className="sr-only">Концентрация {wrapped.concentration} из 100</span>
+                <span className="sr-only">
+                  {tr(locale, {
+                    ru: <>Концентрация {wrapped.concentration} из 100</>,
+                    en: <>Concentration {wrapped.concentration} out of 100</>,
+                  })}
+                </span>
               </p>
             </m.div>
             <m.div {...inView(1)} className="text-center md:text-left">
               <p className="font-display text-display-sm">
-                {paretoLead(voice)}{' '}
-                <span className="tabular-nums text-ember-text">{wrapped.pareto80}</span>{' '}
-                {plural(wrapped.pareto80, 'игра', 'игры', 'игр')} из{' '}
-                <span className="tabular-nums">{wrapped.gamesCount}</span>.
+                {paretoLead(voice, locale)}{' '}
+                <span className="tabular-nums text-ember-text">{count(wrapped.pareto80)}</span>{' '}
+                {pl(locale, wrapped.pareto80, { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] })}
+                {tr(locale, { ru: ' из', en: ' out of' })}{' '}
+                <span className="tabular-nums">{count(wrapped.gamesCount)}</span>.
               </p>
               <p className="mt-2 text-dim text-sm">
-                Концентрация {wrapped.concentration} из 100:{' '}
-                {concentrationVerdict(wrapped.concentration, voice)}.
+                {tr(locale, {
+                  ru: <>Концентрация {wrapped.concentration} из 100:</>,
+                  en: <>Concentration {wrapped.concentration} out of 100:</>,
+                })}{' '}
+                {concentrationVerdict(wrapped.concentration, voice, locale)}.
               </p>
               {wrapped.social && (
                 <p className="mt-2 text-dim text-sm">
                   <span className="tabular-nums text-ink">{wrapped.social.percent}%</span>{' '}
-                  {socialTail(voice)}
+                  {socialTail(voice, locale)}
                 </p>
               )}
             </m.div>
@@ -604,21 +703,22 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
 
       {/* ——— 2½. Итоги года ——— */}
       {model.year && (
-        <YearBlock year={model.year} steamid={steamid} cover={cover} />
+        <YearBlock year={model.year} steamid={steamid} cover={cover} locale={locale} />
       )}
 
       {/* ——— 3. Диагноз ——— */}
       {portrait.archetypes.length > 0 && (
         <section className="relative mx-auto w-full max-w-5xl px-safe py-24 md:py-32">
           <m.p {...inView()} className={`${eyebrow()} mb-3`}>
-            Диагноз
+            {tr(locale, { ru: 'Диагноз', en: 'Diagnosis' })}
           </m.p>
           {headline && (
             <m.h2
               {...inView(1)}
               className="font-display text-display-lg mb-10"
             >
-              {headline.label}
+              {/* label у архетипа всегда русский — подпись по ключу (lib/archetypes) */}
+              {archetypeLabelOf(headline, locale)}
             </m.h2>
           )}
 
@@ -626,7 +726,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             <div className="mb-12 grid grid-cols-3 gap-3 md:gap-4">
               {evidence.map((g, i) => (
                 <m.div key={g.appid} {...inView(i)}>
-                  <GameLink appid={g.appid} className="game-card block">
+                  <GameLink appid={g.appid} lang={langOn(locale, g.name)} className="game-card block">
                     {/* grid-cols-3 без порогов — треть экрана на любой ширине */}
                     <GameCardBody
                       appid={g.appid}
@@ -645,7 +745,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
             {portrait.archetypes.map((a, i) => (
               <m.div key={a.tag} {...inView(i)}>
                 <div className="flex items-baseline justify-between mb-1.5">
-                  <span className="text-[15px] font-bold">{a.label}</span>
+                  <span className="text-[15px] font-bold">{archetypeLabelOf(a, locale)}</span>
                   <span className="tabular-nums text-ember-text text-sm font-extrabold">
                     <CountNumber value={a.percent} delay={i * 90} duration={800} suffix="%" />
                   </span>
@@ -676,11 +776,11 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
       {wrapped.unplayedCount > 0 && (
         <section className="relative mx-auto w-full max-w-6xl px-safe py-24 md:py-32">
           <m.p {...inView()} className={`${eyebrow()} mb-3`}>
-            Чистилище
+            {tr(locale, { ru: 'Чистилище', en: 'Purgatory' })}
           </m.p>
           <m.h2 {...inView(1)} className="font-display text-display-lg">
             <CountNumber value={wrapped.unplayedCount} />{' '}
-            {unplayedHeading(wrapped.unplayedCount, voice)}
+            {unplayedHeading(wrapped.unplayedCount, voice, locale)}
           </m.h2>
 
           <m.div {...inView(2)} className="mt-4 flex flex-wrap gap-x-8 gap-y-2 text-dim text-sm">
@@ -688,13 +788,18 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
               <p>
                 {/* «Не меньше» и «цена известна у 8 из 8» — только при
                     неполном счёте, как в карточке бэклога на /library */}
-                {backlog.pricedCount < backlog.unplayedCount ? 'В них лежит не меньше' : 'В них лежит'}{' '}
-                <span className="tabular-nums text-ember-text">
-                  {formatPrice(backlog.cents, backlog.cc, { whole: true })}
-                </span>{' '}
-                {byPrices(backlog.cc)}
                 {backlog.pricedCount < backlog.unplayedCount
-                  ? ` — цена известна у ${backlog.pricedCount} из ${backlog.unplayedCount}.`
+                  ? tr(locale, { ru: 'В них лежит не меньше', en: "They're worth at least" })
+                  : tr(locale, { ru: 'В них лежит', en: "They're worth" })}{' '}
+                <span className="tabular-nums text-ember-text">
+                  {formatPrice(backlog.cents, backlog.cc, { whole: true, locale })}
+                </span>{' '}
+                {byPrices(backlog.cc, locale)}
+                {backlog.pricedCount < backlog.unplayedCount
+                  ? tr(locale, {
+                      ru: ` — цена известна у ${backlog.pricedCount} из ${backlog.unplayedCount}.`,
+                      en: ` — ${fmtNumber(locale, backlog.pricedCount)} of ${fmtNumber(locale, backlog.unplayedCount)} have a known price.`,
+                    })
                   : '.'}
               </p>
             )}
@@ -707,14 +812,25 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                 {equivalent.after}
               </p>
             )}
-            {wrapped.era && (
-              <p>
-                {eraLead(voice)}{' '}
-                <span className="tabular-nums text-ink">{wrapped.era.medianYear}</span>, а самая старая
-                игра с наигранным временем — «{wrapped.era.oldest.name}»{' '}
-                <span className="tabular-nums">{wrapped.era.oldest.year}</span> года.
-              </p>
-            )}
+            {/* Целой фразой на язык: «2004 года» по-английски — «from 2004», и
+                склейка русских кусков с переведённым началом не собралась бы */}
+            {wrapped.era &&
+              (locale === 'en' ? (
+                <p>
+                  {eraLead(voice, locale)}{' '}
+                  <span className="tabular-nums text-ink">{wrapped.era.medianYear}</span>, and the oldest game
+                  with any playtime is{' '}
+                  <span lang={langOn(locale, wrapped.era.oldest.name)}>{quoted(wrapped.era.oldest.name, locale)}</span> from{' '}
+                  <span className="tabular-nums">{wrapped.era.oldest.year}</span>.
+                </p>
+              ) : (
+                <p>
+                  {eraLead(voice)}{' '}
+                  <span className="tabular-nums text-ink">{wrapped.era.medianYear}</span>, а самая старая
+                  игра с наигранным временем — «{wrapped.era.oldest.name}»{' '}
+                  <span className="tabular-nums">{wrapped.era.oldest.year}</span> года.
+                </p>
+              ))}
           </m.div>
 
           {purgatory.length > 0 && (
@@ -724,6 +840,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
                   key={g.appid}
                   appid={g.appid}
                   aria-label={g.name}
+                  lang={langOn(locale, g.name)}
                   // library-tile уже обесцвечивает обложку в покое нулём JS —
                   // ровно то, что здесь нужно по смыслу
                   className="library-tile game-card block"
@@ -738,10 +855,13 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           {/* Совет, с чего начать, — владельцу: у гостя этой игры может не быть вовсе */}
           {isMine && starter && (
             <m.div {...inView()} className="mt-12 flex flex-col items-start gap-3">
-              <p className="text-sm text-dim">Если решишься — начни с этой:</p>
+              <p className="text-sm text-dim">
+                {tr(locale, { ru: 'Если решишься — начни с этой:', en: "If you're up for it, start with this one:" })}
+              </p>
               <Magnet>
                 <GameLink
                   appid={starter.appid}
+                  lang={langOn(locale, starter.name)}
                   className="panel-lift game-card no-lift flex items-center gap-4 p-2 pr-5"
                 >
                   <span className="card-thumb w-40 shrink-0">{cover(starter, '160px')}</span>
@@ -766,30 +886,43 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         {/* Текст — крупной цитатой, а не абзацем в стеклянной рамке: это
             вывод всей страницы, и читается он как вывод */}
         <m.figure {...inView()} className="portrait-quote">
-          <blockquote>{text}</blockquote>
-          {!isMine && <figcaption>— imbored об игроке {name}</figcaption>}
+          {/* Русский ник и русское название игры внутри английского текста — с lang="ru" */}
+          <blockquote>{withForeignRuns(locale, text, [name, portrait.facts.topGame?.name])}</blockquote>
+          {!isMine && (
+            <figcaption>
+              {tr(locale, {
+                ru: <>— imbored об игроке {name}</>,
+                en: (
+                  <>
+                    — imbored on <span lang={nameLang}>{name}</span>
+                  </>
+                ),
+              })}
+            </figcaption>
+          )}
         </m.figure>
 
         {/* Превью — обычная картинка на тот же роут, что и скачивание: каждый
             лишний рендер satori заново тянет обложки со Steam. Поэтому
-            скачивание считается нажатием (CardDownload), а не на роуте. */}
+            скачивание считается нажатием (CardDownload), а не на роуте.
+            Адрес — на языке страницы: под /en роут рисует английскую карточку. */}
         <CardDownload
           what="portrait"
           {...inView(1)}
-          href={`/portrait/${steamid}/card.png`}
+          href={lp(locale, `/portrait/${steamid}/card.png`)}
           download={`imbored-${steamid}.png`}
           className="game-card block w-56"
         >
           <span className="card-thumb">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={`/portrait/${steamid}/card.png`}
-              alt="Карточка портрета"
+              src={lp(locale, `/portrait/${steamid}/card.png`)}
+              alt={tr(locale, { ru: 'Карточка портрета', en: 'Portrait card' })}
               loading="lazy"
               className="w-full aspect-[1080/1350] object-cover"
             />
           </span>
-          <span className="link-more mt-3">Скачать карточку</span>
+          <span className="link-more mt-3">{tr(locale, { ru: 'Скачать карточку', en: 'Download card' })}</span>
         </CardDownload>
 
         {!isMine && (
@@ -799,7 +932,7 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
           >
             {/* Без «с ним»: кто за ником, мы не знаем, а угаданный род
                 ошибается в половине случаев */}
-            Сравнить вкусы
+            {tr(locale, { ru: 'Сравнить вкусы', en: 'Compare tastes' })}
           </Link>
         )}
         {/*
@@ -812,14 +945,23 @@ export default async function PortraitPage({ params }: { params: Promise<{ steam
         {isMine && (
           <m.div {...inView(2)} className="flex w-full flex-col gap-2.5 text-left">
             <p className="text-xs text-dim">
-              По этой ссылке увидят твой портрет и смогут проверить совместимость.
+              {tr(locale, {
+                ru: 'По этой ссылке увидят твой портрет и смогут проверить совместимость.',
+                en: 'Anyone with this link can see your portrait and check their compatibility with you.',
+              })}
             </p>
+            {/* Адрес — на языке страницы: друг по английской ссылке откроет английский портрет */}
             <ShareLinkField
               what="portrait"
-              url={withRef(`${appBaseUrl()}/portrait/${steamid}`, 'portrait')}
-              label="Ссылка на твой портрет игрока"
-              title={`Портрет игрока ${name} — imbored`}
-              text="Мой портрет игрока по библиотеке Steam — проверь, совпадаем ли мы"
+              url={withRef(`${appBaseUrl()}${lp(locale, `/portrait/${steamid}`)}`, 'portrait')}
+              label={tr(locale, { ru: 'Ссылка на твой портрет игрока', en: 'Link to your player portrait' })}
+              // «{name}'s portrait», как у ссылки с итогов года: «player» уже
+              // есть в демо-нике и в «Player 1234», а второе тире к « — imbored» лишнее
+              title={tr(locale, { ru: `Портрет игрока ${name} — imbored`, en: `${name}'s portrait — imbored` })}
+              text={tr(locale, {
+                ru: 'Мой портрет игрока по библиотеке Steam — проверь, совпадаем ли мы',
+                en: 'My player portrait from my Steam library — see if our tastes match',
+              })}
             />
           </m.div>
         )}
@@ -862,32 +1004,40 @@ function YearBlock({
   year,
   steamid,
   cover,
+  locale,
 }: {
   year: WrappedYear
   steamid: string
   cover: (g: { appid: number; name: string }, sizes: string) => ReactNode
+  locale: Locale
 }) {
+  // Счёт посреди фразы: по-английски — с разрядами, по-русски — как был
+  const count = (n: number) => (locale === 'en' ? fmtNumber(locale, n) : n)
   return (
     <section className="relative mx-auto w-full max-w-5xl px-safe py-24 md:py-32">
       <m.p {...inView()} className={`${eyebrow()} mb-3`}>
-        {yearEyebrow(year)}
+        {yearEyebrow(year, locale)}
       </m.p>
       {/* Без минут (только новые игры с нулём) заголовок — они, а не «0 мин в играх» */}
       <m.h2 {...inView(1)} className="font-display text-display-lg">
         {year.minutes > 0 ? (
           <>
-            <span className="tabular-nums text-ember-text">{playedLine(year.minutes)}</span> в играх
+            <span className="tabular-nums text-ember-text">{playedLine(year.minutes, locale)}</span>
+            {tr(locale, { ru: ' в играх', en: ' played' })}
           </>
         ) : (
           <>
-            <span className="tabular-nums text-ember-text">{year.added.count}</span>{' '}
-            {plural(year.added.count, 'игра появилась', 'игры появились', 'игр появилось')} в библиотеке
+            <span className="tabular-nums text-ember-text">{count(year.added.count)}</span>{' '}
+            {pl(locale, year.added.count, {
+              ru: ['игра появилась', 'игры появились', 'игр появилось'],
+              en: ['game added', 'games added'],
+            })}
+            {tr(locale, { ru: ' в библиотеке', en: ' to the library' })}
           </>
         )}
       </m.h2>
       <m.p {...inView(2)} className="mt-3 text-dim text-sm">
-        По снимкам библиотеки: с {dateLabel(year.from, { year: year.fromPrevYear })} по{' '}
-        {dateLabel(year.to, { year: year.closed })}.
+        <SnapshotDates year={year} locale={locale} />
       </m.p>
 
       {year.top.length > 0 && (
@@ -895,13 +1045,21 @@ function YearBlock({
           {year.top.slice(0, 3).map((g, i) => (
             <m.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
               <span className="portrait-rank w-7 shrink-0">{i + 1}</span>
-              <GameLink appid={g.appid} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
+              <GameLink
+                appid={g.appid}
+                aria-label={g.name}
+                lang={langOn(locale, g.name)}
+                className="game-card w-28 shrink-0 md:w-44"
+              >
                 <span className="card-thumb">{cover(g, '(min-width: 768px) 176px, 112px')}</span>
               </GameLink>
-              <div className="min-w-0 flex-1 truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base">
+              <div
+                lang={langOn(locale, g.name)}
+                className="min-w-0 flex-1 truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base"
+              >
                 {g.name}
               </div>
-              <span className="shrink-0 text-sm font-bold tabular-nums text-dim">+{playedLine(g.minutes)}</span>
+              <span className="shrink-0 text-sm font-bold tabular-nums text-dim">+{playedLine(g.minutes, locale)}</span>
             </m.div>
           ))}
         </div>
@@ -911,15 +1069,22 @@ function YearBlock({
         <m.p {...inView()} className="mt-8 text-dim text-sm">
           {year.unpacked.count > 0 && (
             <>
-              <span className="tabular-nums text-ink">{year.unpacked.count}</span>{' '}
-              {plural(year.unpacked.count, 'игра впервые запущена', 'игры впервые запущены', 'игр впервые запущено')}
+              <span className="tabular-nums text-ink">{count(year.unpacked.count)}</span>{' '}
+              {pl(locale, year.unpacked.count, {
+                ru: ['игра впервые запущена', 'игры впервые запущены', 'игр впервые запущено'],
+                en: ['game launched for the first time', 'games launched for the first time'],
+              })}
             </>
           )}
           {year.unpacked.count > 0 && year.added.count > 0 && ' · '}
           {year.added.count > 0 && (
             <>
-              <span className="tabular-nums text-ink">{year.added.count}</span>{' '}
-              {plural(year.added.count, 'появилась', 'появились', 'появилось')} в библиотеке
+              <span className="tabular-nums text-ink">{count(year.added.count)}</span>{' '}
+              {tr(locale, {
+                ru: plural(year.added.count, 'появилась', 'появились', 'появилось'),
+                en: 'added',
+              })}
+              {tr(locale, { ru: ' в библиотеке', en: ' to the library' })}
             </>
           )}
         </m.p>
@@ -927,7 +1092,7 @@ function YearBlock({
 
       <m.div {...inView()} className="mt-8">
         <Link href={`/portrait/${steamid}/year`} prefetch={false} className="tap link-more">
-          Все итоги года
+          {tr(locale, { ru: 'Все итоги года', en: 'Full year in review' })}
           <Icon name="arrow" size={16} />
         </Link>
       </m.div>

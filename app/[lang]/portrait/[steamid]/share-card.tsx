@@ -2,10 +2,13 @@ import { getGamesMetaLite, getLatestSnapshot, getPersonaName } from '@/lib/db'
 import { ogFonts, ogNum, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { PosterWall, postersOf, WALL_POSTERS, WallShade } from '@/lib/ogcard'
 import { CANVAS_TALL, CANVAS_WIDE, WALL_TALL, WALL_WIDE } from '@/lib/ogwall'
-import { buildPortrait } from '@/lib/portrait'
+import { archetypeLabelOf, buildPortrait } from '@/lib/portrait'
 import { getDb } from '@/lib/server'
 import { buildWrapped } from '@/lib/wrapped'
 import { gamesCaption, playedFact, unplayedCaption } from '@/lib/factcaptions'
+import { tr, type Locale } from '@/lib/i18n'
+import { quoted } from '@/lib/sharedpick'
+import { playerName } from './portrait-text'
 
 /**
  * Общая начинка для двух картинок: OG-превью 1200×630 и скачиваемой карточки
@@ -21,6 +24,12 @@ import { gamesCaption, playedFact, unplayedCaption } from '@/lib/factcaptions'
 export const fonts = ogFonts
 
 export type CardData = {
+  /**
+   * Язык карточки — адреса, с которого её взяли (/en/portrait/…/card.png).
+   * Едет в данных, а не отдельным пропом: подписи под числами решает
+   * CardImage, и язык у них обязан быть тем же, что у ника и архетипов.
+   */
+  locale: Locale
   name: string
   /** Минуты, а не часы: подпись решает playedFact, как у героя портрета */
   totalMinutes: number
@@ -37,7 +46,7 @@ export type CardData = {
   playtimeHidden: boolean
 }
 
-export async function loadCardData(steamid: string): Promise<CardData | null> {
+export async function loadCardData(steamid: string, locale: Locale = 'ru'): Promise<CardData | null> {
   if (!/^\d{17}$/.test(steamid)) return null
   const db = await getDb()
   const snapshot = await getLatestSnapshot(db, steamid)
@@ -63,11 +72,17 @@ export async function loadCardData(steamid: string): Promise<CardData | null> {
   const posters = await postersOf(played, metaOf)
 
   return {
-    name: (await getPersonaName(db, steamid)) ?? `Игрок ${steamid.slice(-4)}`,
+    locale,
+    // Ник — тем же правилом, что у страницы: демо-ник и запасное имя на языке карточки
+    name: playerName(steamid, await getPersonaName(db, steamid), locale),
     totalMinutes: wrapped.totalMinutes,
     gamesCount: wrapped.gamesCount,
     unplayedCount: wrapped.unplayedCount,
-    archetypes: portrait.archetypes.filter((a) => a.known).slice(0, 2).map((a) => a.label),
+    // label у архетипа всегда русский — подпись по ключу (lib/archetypes)
+    archetypes: portrait.archetypes
+      .filter((a) => a.known)
+      .slice(0, 2)
+      .map((a) => archetypeLabelOf(a, locale)),
     posters,
     topGame: portrait.facts.topGame,
     playtimeHidden: hidden,
@@ -78,7 +93,6 @@ const BG = OG_BG
 const INK = OG_INK
 const DIM = OG_DIM
 const EMBER = OG_EMBER
-const num = ogNum
 
 /**
  * Раскладка карточки. Ориентация задаёт всё остальное: у широкой OG числа
@@ -89,7 +103,9 @@ const num = ogNum
  * в чате читалась как таблица, а не как чей-то портрет.
  */
 export function CardImage({ data, wide }: { data: CardData; wide: boolean }) {
-  const played = playedFact(data.totalMinutes)
+  const locale = data.locale
+  const num = (n: number) => ogNum(n, locale)
+  const played = playedFact(data.totalMinutes, locale)
   return (
     <div
       style={{
@@ -125,7 +141,7 @@ export function CardImage({ data, wide }: { data: CardData; wide: boolean }) {
             marginBottom: 18,
           }}
         >
-          IMBORED.CC · ПОРТРЕТ ИГРОКА
+          {tr(locale, { ru: 'IMBORED.CC · ПОРТРЕТ ИГРОКА', en: 'IMBORED.CC · PLAYER PORTRAIT' })}
         </div>
 
         {/* Отступ большой намеренно: у кириллицы «р», «у», «д» уходят заметно
@@ -146,16 +162,20 @@ export function CardImage({ data, wide }: { data: CardData; wide: boolean }) {
         {/* Числа строкой и в сторис: колонкой они поднимали текст на полкарточки и прятали стену */}
         {data.playtimeHidden ? (
           <div style={{ display: 'flex' }}>
-            <Stat value={num(data.gamesCount)} caption={gamesCaption(data.gamesCount)} wide={wide} />
-            <Stat value="скрыто" caption="время в играх" wide={wide} />
+            <Stat value={num(data.gamesCount)} caption={gamesCaption(data.gamesCount, locale)} wide={wide} />
+            <Stat
+              value={tr(locale, { ru: 'скрыто', en: 'hidden' })}
+              caption={tr(locale, { ru: 'время в играх', en: 'playtime' })}
+              wide={wide}
+            />
           </div>
         ) : (
           <div style={{ display: 'flex' }}>
             <Stat value={num(played.value)} caption={played.caption} wide={wide} />
-            <Stat value={num(data.gamesCount)} caption={gamesCaption(data.gamesCount)} wide={wide} />
+            <Stat value={num(data.gamesCount)} caption={gamesCaption(data.gamesCount, locale)} wide={wide} />
             <Stat
               value={num(data.unplayedCount)}
-              caption={unplayedCaption(data.unplayedCount)}
+              caption={unplayedCaption(data.unplayedCount, locale)}
               wide={wide}
             />
           </div>
@@ -166,7 +186,10 @@ export function CardImage({ data, wide }: { data: CardData; wide: boolean }) {
             роняет рендер целиком. */}
         {!wide && data.topGame && data.topGame.sharePercent >= 25 && (
           <div style={{ fontSize: 22, color: DIM, marginTop: 22 }}>
-            {`${data.topGame.sharePercent}% всего времени — «${data.topGame.name.slice(0, 34)}»`}
+            {tr(locale, {
+              ru: `${data.topGame.sharePercent}% всего времени — «${data.topGame.name.slice(0, 34)}»`,
+              en: `${data.topGame.sharePercent}% of all playtime — ${quoted(data.topGame.name.slice(0, 34), 'en')}`,
+            })}
           </div>
         )}
       </div>

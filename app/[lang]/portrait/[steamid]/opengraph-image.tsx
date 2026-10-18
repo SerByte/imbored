@@ -39,7 +39,8 @@ export default async function Image({ params }: { params: Promise<{ lang: string
   const { lang, steamid } = await params
   // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
   if (!isLocale(lang)) return new Response('Not found', { status: 404 })
-  const data = await loadCardData(steamid)
+  // Язык — из params: next/root-params в обработчиках картинок не работает
+  const data = await loadCardData(steamid, lang)
 
   if (!data) {
     return new ImageResponse(

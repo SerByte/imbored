@@ -22,7 +22,8 @@ export async function GET(
   const { lang, steamid } = await params
   // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
   if (!isLocale(lang)) return new Response('Not found', { status: 404 })
-  const data = await loadYearCardData(steamid)
+  // Язык — из params: next/root-params в обработчиках картинок не работает
+  const data = await loadYearCardData(steamid, lang)
   if (!data) return new Response('Not found', { status: 404 })
 
   return new ImageResponse(<YearCardImage data={data} wide={false} />, {

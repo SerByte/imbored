@@ -21,17 +21,17 @@ import {
   getPersonaName,
 } from '@/lib/db'
 import { reconnectHref } from '@/lib/destination'
-import { dateLabel } from '@/lib/freshness'
 import { playedLine } from '@/lib/outcome'
 import { plural } from '@/lib/plural'
 import { buildYearModel, portraitTag, type YearModel } from '@/lib/portraitmodel'
 import { checkRate, clientIp } from '@/lib/ratelimit'
 import { appBaseUrl, currentSteamId, getDb, nowSec } from '@/lib/server'
-import { lp, toLocale } from '@/lib/i18n'
+import { fmtNumber, lp, pl, toLocale, tr, type Locale } from '@/lib/i18n'
 import { localeAlternates, ogSite } from '@/lib/site'
 import { withRef } from '@/lib/track'
 import type { LibraryGame } from '@/lib/types'
 import { pickYearWindow, yearCandidates, yearEyebrow, yearsToRead } from '@/lib/wrapped'
+import { langOn, ogImageOn, playerName, SnapshotDates } from '../portrait-text'
 
 export const dynamic = 'force-dynamic'
 
@@ -63,17 +63,41 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { steamid, lang } = await params
   const locale = toLocale(lang)
-  if (!/^\d{17}$/.test(steamid)) return {}
+  const url = `/portrait/${steamid}/year`
+  // Битый адрес — как у портрета: на /en своя картинка ради английского alt
+  if (!/^\d{17}$/.test(steamid)) {
+    return locale === 'en'
+      ? { openGraph: { type: 'website', ...ogSite(locale), ...ogImageOn(locale, url, 'Year in review — imbored') } }
+      : {}
+  }
 
   // Ник от снапшота не зависит — читаем вместе; страница возьмёт оба из cache()
   const [snapshot, persona] = await Promise.all([snapshotOf(steamid), personaOf(steamid)])
-  if (!snapshot) return { title: 'Итоги года', robots: { index: false } }
+  if (!snapshot) {
+    return {
+      title: tr(locale, { ru: 'Итоги года', en: 'Year in review' }),
+      robots: { index: false },
+      // На /en и у заглушки своя картинка — ради английского alt (ogImageOn);
+      // поля — те же, что дал бы корень. Русская заглушка — как была
+      ...(locale === 'en'
+        ? {
+            openGraph: {
+              type: 'website' as const,
+              ...ogSite(locale),
+              url: lp(locale, url),
+              ...ogImageOn(locale, url, 'Year in review — imbored'),
+            },
+          }
+        : {}),
+    }
+  }
 
-  const name = persona ?? `Игрок ${steamid.slice(-4)}`
-  const title = `Итоги года — ${name}`
-  const description =
-    'Сколько наиграно за год, какие игры впервые запущены и какие появились в библиотеке — по снимкам Steam.'
-  const url = `/portrait/${steamid}/year`
+  const name = playerName(steamid, persona, locale)
+  const title = tr(locale, { ru: `Итоги года — ${name}`, en: `Year in review — ${name}` })
+  const description = tr(locale, {
+    ru: 'Сколько наиграно за год, какие игры впервые запущены и какие появились в библиотеке — по снимкам Steam.',
+    en: 'Hours played this year, games launched for the first time and games added to the library — from Steam snapshots.',
+  })
 
   // Отметку года здесь не читаем: метаданные рендерятся мимо кэша итогов, а
   // без отметки закрытый год не узнать — описание честное и без чисел
@@ -83,7 +107,14 @@ export async function generateMetadata({
     alternates: localeAlternates(locale, url),
     // Как у портрета: в переписку по ссылке — да, в поисковую выдачу — нет
     robots: { index: false, follow: true },
-    openGraph: { ...ogSite(locale), title, description, type: 'profile', url: lp(locale, url) },
+    openGraph: {
+      ...ogSite(locale),
+      title,
+      description,
+      type: 'profile',
+      url: lp(locale, url),
+      ...ogImageOn(locale, url, 'Year in review — imbored'),
+    },
     twitter: { card: 'summary_large_image', title, description },
   }
 }
@@ -149,17 +180,24 @@ async function loadYear(
   }
 }
 
-export default async function YearPage({ params }: { params: Promise<{ steamid: string }> }) {
-  const { steamid } = await params
+export default async function YearPage({ params }: { params: Promise<{ steamid: string; lang?: string }> }) {
+  const { steamid, lang } = await params
+  // Язык — из params, как в generateMetadata: next/root-params и страницы без маршрута (тесты) не дружат
+  const locale = toLocale(lang)
   if (!/^\d{17}$/.test(steamid)) notFound()
 
   const snapshot = await snapshotOf(steamid)
   if (!snapshot) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-5 text-center">
-        <p className="text-lg">Этот игрок ещё не подключал библиотеку к imbored.</p>
+        <p className="text-lg">
+          {tr(locale, {
+            ru: 'Этот игрок ещё не подключал библиотеку к imbored.',
+            en: "This player hasn't connected their library to imbored yet.",
+          })}
+        </p>
         <Link href={reconnectHref()} className="tap link-more">
-          Подключить свою
+          {tr(locale, { ru: 'Подключить свою', en: 'Connect your library' })}
           <Icon name="arrow" size={16} />
         </Link>
       </div>
@@ -175,22 +213,39 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
     personaOf(steamid),
     currentSteamId(),
   ])
-  const name = persona ?? `Игрок ${steamid.slice(-4)}`
+  const name = playerName(steamid, persona, locale)
+  // Русский ник на /en — с lang="ru" (langOn); на русской странице — без атрибута
+  const nameLang = langOn(locale, name)
   const isMine = me === steamid
+  // Счёт в заголовках: по-английски — с разрядами, по-русски — как был, голым числом
+  const count = (n: number) => (locale === 'en' ? fmtNumber(locale, n) : n)
 
   if (loaded === null || loaded === 'limited') {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-5 text-center">
-        <Eyebrow>Итоги года</Eyebrow>
+        <Eyebrow>{tr(locale, { ru: 'Итоги года', en: 'Year in review' })}</Eyebrow>
         <p className="text-lg max-w-md">
           {loaded === 'limited'
-            ? 'С этого адреса сейчас открывают слишком много итогов подряд. Загляни через несколько минут.'
+            ? tr(locale, {
+                ru: 'С этого адреса сейчас открывают слишком много итогов подряд. Загляни через несколько минут.',
+                en: 'Too many year reviews are being opened from this address right now. Check back in a few minutes.',
+              })
             : isMine
-              ? 'Итоги начнут считаться со следующего снимка библиотеки: сравнивать пока не с чем.'
-              : `У игрока ${name} считать итоги пока не из чего.`}
+              ? tr(locale, {
+                  ru: 'Итоги начнут считаться со следующего снимка библиотеки: сравнивать пока не с чем.',
+                  en: "Your year in review starts with the next library snapshot: there's nothing to compare yet.",
+                })
+              : tr<ReactNode>(locale, {
+                  ru: `У игрока ${name} считать итоги пока не из чего.`,
+                  en: (
+                    <>
+                      There&apos;s not enough data for <span lang={nameLang}>{name}</span>&apos;s year in review yet.
+                    </>
+                  ),
+                })}
         </p>
         <Link href={`/portrait/${steamid}`} prefetch={false} className="tap link-more">
-          К портрету
+          {tr(locale, { ru: 'К портрету', en: 'See the portrait' })}
           <Icon name="arrow" size={16} />
         </Link>
       </div>
@@ -242,29 +297,38 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
         <div aria-hidden className="grain" />
 
         <div className="relative mx-auto w-full max-w-6xl px-safe pb-16 pt-40">
-          <Eyebrow className="mb-3">{yearEyebrow(year)}</Eyebrow>
-          <h1 className="font-display text-display-xl">{name}</h1>
+          <Eyebrow className="mb-3">{yearEyebrow(year, locale)}</Eyebrow>
+          <h1 lang={nameLang} className="font-display text-display-xl">
+            {name}
+          </h1>
           <dl className="mt-8 flex flex-wrap gap-x-10 gap-y-4">
+            {/* Подписи под числами — не шире русских: три числа стоят в строку */}
             {year.minutes > 0 && (
               <div className="flex flex-col-reverse">
-                <dt className="lib-stat-label">наиграно</dt>
-                <dd className="lib-stat text-ember-text">{playedLine(year.minutes)}</dd>
+                <dt className="lib-stat-label">{tr(locale, { ru: 'наиграно', en: 'played' })}</dt>
+                <dd className="lib-stat text-ember-text">{playedLine(year.minutes, locale)}</dd>
               </div>
             )}
             {year.unpacked.count > 0 && (
               <div className="flex flex-col-reverse">
                 <dt className="lib-stat-label">
-                  {plural(year.unpacked.count, 'впервые запущена', 'впервые запущены', 'впервые запущено')}
+                  {tr(locale, {
+                    ru: plural(year.unpacked.count, 'впервые запущена', 'впервые запущены', 'впервые запущено'),
+                    en: 'first launched',
+                  })}
                 </dt>
-                <dd className="lib-stat">{year.unpacked.count.toLocaleString('ru-RU')}</dd>
+                <dd className="lib-stat">{fmtNumber(locale, year.unpacked.count)}</dd>
               </div>
             )}
             {year.added.count > 0 && (
               <div className="flex flex-col-reverse">
                 <dt className="lib-stat-label">
-                  {plural(year.added.count, 'появилась', 'появились', 'появилось')} в библиотеке
+                  {tr<ReactNode>(locale, {
+                    ru: <>{plural(year.added.count, 'появилась', 'появились', 'появилось')} в библиотеке</>,
+                    en: 'added to library',
+                  })}
                 </dt>
-                <dd className="lib-stat">{year.added.count.toLocaleString('ru-RU')}</dd>
+                <dd className="lib-stat">{fmtNumber(locale, year.added.count)}</dd>
               </div>
             )}
           </dl>
@@ -274,8 +338,7 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
             и последнего снимка. Чего сервис не видел, того в итогах нет.
           */}
           <p className="mt-6 max-w-md text-dim text-sm">
-            По снимкам библиотеки: с {dateLabel(year.from, { year: year.fromPrevYear })} по{' '}
-            {dateLabel(year.to, { year: year.closed })}.
+            <SnapshotDates year={year} locale={locale} />
           </p>
         </div>
       </section>
@@ -284,16 +347,21 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
       {year.top.length > 0 && (
         <section className="relative mx-auto w-full max-w-5xl px-safe py-24 md:py-32">
           <m.p {...inView()} className={`${eyebrow()} mb-3`}>
-            Игры года
+            {tr(locale, { ru: 'Игры года', en: 'Games of the year' })}
           </m.p>
           <m.h2 {...inView(1)} className="mb-8 font-display text-display-lg">
-            Куда ушёл год
+            {tr(locale, { ru: 'Куда ушёл год', en: 'Where the year went' })}
           </m.h2>
           <div className="flex flex-col gap-3">
             {year.top.map((g, i) => (
               <m.div key={g.appid} {...inView(i)} className="flex items-center gap-4">
                 <span className="portrait-rank w-7 shrink-0">{i + 1}</span>
-                <GameLink appid={g.appid} aria-label={g.name} className="game-card w-28 shrink-0 md:w-44">
+                <GameLink
+                  appid={g.appid}
+                  aria-label={g.name}
+                  lang={langOn(locale, g.name)}
+                  className="game-card w-28 shrink-0 md:w-44"
+                >
                   <span className="card-thumb">
                     <GameArt
                       appid={g.appid}
@@ -305,7 +373,10 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
                   </span>
                 </GameLink>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base">
+                  <div
+                    lang={langOn(locale, g.name)}
+                    className="truncate text-[15px] font-extrabold tracking-[-0.01em] md:text-base"
+                  >
                     {g.name}
                   </div>
                   <div className="mt-1.5 h-1.5 rounded-full bg-track overflow-hidden">
@@ -318,7 +389,7 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
                     />
                   </div>
                 </div>
-                <span className="shrink-0 text-sm font-bold tabular-nums text-dim">+{playedLine(g.minutes)}</span>
+                <span className="shrink-0 text-sm font-bold tabular-nums text-dim">+{playedLine(g.minutes, locale)}</span>
               </m.div>
             ))}
           </div>
@@ -328,16 +399,26 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
       {/* ——— 3. Распакованное ——— */}
       {year.unpacked.games.length > 0 && (
         <YearShelf
-          eyebrowText="Из бэклога"
+          locale={locale}
+          eyebrowText={tr(locale, { ru: 'Из бэклога', en: 'From the backlog' })}
           heading={
             <>
-              <span className="tabular-nums text-ember-text">{year.unpacked.count}</span>{' '}
-              {plural(year.unpacked.count, 'игра впервые запущена', 'игры впервые запущены', 'игр впервые запущено')}
+              <span className="tabular-nums text-ember-text">{count(year.unpacked.count)}</span>{' '}
+              {pl(locale, year.unpacked.count, {
+                ru: ['игра впервые запущена', 'игры впервые запущены', 'игр впервые запущено'],
+                en: ['game launched for the first time', 'games launched for the first time'],
+              })}
             </>
           }
-          note="Лежали с нулём минут на начало окна — и дождались."
+          note={tr(locale, {
+            ru: 'Лежали с нулём минут на начало окна — и дождались.',
+            // «Окно» — наше слово для срока итогов (с первого снимка по
+            // последний); английскому читателю «the window opened» звучит как
+            // про настоящее окно, поэтому — «this period»
+            en: 'They were at zero minutes when this period began, and they finally got their turn.',
+          })}
           more={year.unpacked.count > year.unpacked.games.length}
-          games={year.unpacked.games.map((g) => ({ ...g, meta: `+${playedLine(g.minutes)}` }))}
+          games={year.unpacked.games.map((g) => ({ ...g, meta: `+${playedLine(g.minutes, locale)}` }))}
           cover={cover}
         />
       )}
@@ -345,22 +426,36 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
       {/* ——— 4. Новое в библиотеке ——— */}
       {year.added.games.length > 0 && (
         <YearShelf
-          eyebrowText="Новое"
+          locale={locale}
+          eyebrowText={tr(locale, { ru: 'Новое', en: 'New' })}
           heading={
             <>
-              <span className="tabular-nums text-ember-text">{year.added.count}</span>{' '}
-              {plural(year.added.count, 'игра появилась', 'игры появились', 'игр появилось')} в библиотеке
+              <span className="tabular-nums text-ember-text">{count(year.added.count)}</span>{' '}
+              {pl(locale, year.added.count, {
+                ru: ['игра появилась', 'игры появились', 'игр появилось'],
+                en: ['game added', 'games added'],
+              })}
+              {tr(locale, { ru: ' в библиотеке', en: ' to the library' })}
             </>
           }
           // «Появились», а не «куплены»: покупок сервис не видит, а бесплатные
-          // Steam отдаёт только после первого запуска
-          note="Появились — не значит куплены: сервис видит библиотеку, а не покупки."
+          // Steam отдаёт только после первого запуска. По-английски — «added»:
+          // о покупке оно тоже молчит
+          note={tr(locale, {
+            ru: 'Появились — не значит куплены: сервис видит библиотеку, а не покупки.',
+            en: "Added doesn't mean bought: we see the library, not purchases.",
+          })}
           more={year.added.count > year.added.games.length}
           games={year.added.games.map((g) => ({
             appid: g.appid,
             name: g.name,
             // При скрытом времени ноль минут — галочка Steam, и подпись молчит
-            meta: g.playtimeForever > 0 ? playedLine(g.playtimeForever) : year.playtimeHidden ? '' : 'не запускалась',
+            meta:
+              g.playtimeForever > 0
+                ? playedLine(g.playtimeForever, locale)
+                : year.playtimeHidden
+                  ? ''
+                  : tr(locale, { ru: 'не запускалась', en: 'never launched' }),
           }))}
           cover={cover}
         />
@@ -370,37 +465,54 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
       <section className="relative mx-auto flex w-full max-w-2xl flex-col items-center gap-8 px-safe pb-24 pt-8 text-center">
         {/* Превью — картинка на тот же роут, что и скачивание: лишний рендер
             satori заново тянул бы постеры со Steam. Поэтому скачивание
-            считается нажатием (CardDownload), а не на роуте */}
+            считается нажатием (CardDownload), а не на роуте. Адрес — на
+            языке страницы: под /en роут рисует английскую карточку */}
         <CardDownload
           what="year"
-          href={`/portrait/${steamid}/year/card.png`}
+          href={lp(locale, `/portrait/${steamid}/year/card.png`)}
           download={`imbored-${steamid}-${year.year}.png`}
           className="game-card block w-56"
         >
           <span className="card-thumb">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={`/portrait/${steamid}/year/card.png`}
-              alt="Карточка итогов года"
+              src={lp(locale, `/portrait/${steamid}/year/card.png`)}
+              alt={tr(locale, { ru: 'Карточка итогов года', en: 'Year in review card' })}
               loading="lazy"
               className="w-full aspect-[1080/1350] object-cover"
             />
           </span>
-          <span className="link-more mt-3">Скачать карточку</span>
+          <span className="link-more mt-3">{tr(locale, { ru: 'Скачать карточку', en: 'Download card' })}</span>
         </CardDownload>
         <Link href={`/portrait/${steamid}`} prefetch={false} className="tap link-more">
           <Icon name="arrow" size={16} className="rotate-180" />
-          {isMine ? 'К своему портрету' : `К портрету игрока ${name}`}
+          {isMine
+            ? tr(locale, { ru: 'К своему портрету', en: 'Your portrait' })
+            : tr<ReactNode>(locale, {
+                ru: `К портрету игрока ${name}`,
+                // Одним узлом: у .link-more зазор между детьми, и «'s» отъезжал бы от ника
+                en: (
+                  <span>
+                    <span lang={nameLang}>{name}</span>&apos;s portrait
+                  </span>
+                ),
+              })}
         </Link>
         {isMine && (
           <div className="flex w-full flex-col gap-2.5 text-left">
-            <p className="text-xs text-dim">По этой ссылке увидят твои итоги года и смогут открыть портрет.</p>
+            <p className="text-xs text-dim">
+              {tr(locale, {
+                ru: 'По этой ссылке увидят твои итоги года и смогут открыть портрет.',
+                en: 'Anyone with this link can see your year in review and open your portrait.',
+              })}
+            </p>
+            {/* Адрес — на языке страницы: друг по английской ссылке откроет английскую */}
             <ShareLinkField
               what="year"
-              url={withRef(`${appBaseUrl()}/portrait/${steamid}/year`, 'portrait')}
-              label="Ссылка на твои итоги года"
-              title={`Итоги года ${name} — imbored`}
-              text="Мои итоги года по библиотеке Steam"
+              url={withRef(`${appBaseUrl()}${lp(locale, `/portrait/${steamid}/year`)}`, 'portrait')}
+              label={tr(locale, { ru: 'Ссылка на твои итоги года', en: 'Link to your year in review' })}
+              title={tr(locale, { ru: `Итоги года ${name} — imbored`, en: `${name}'s year in review — imbored` })}
+              text={tr(locale, { ru: 'Мои итоги года по библиотеке Steam', en: 'My year in review from my Steam library' })}
             />
           </div>
         )}
@@ -414,6 +526,7 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
 
 /** Полка итогов: заголовок со счётом, сетка обложек, строка «здесь не все» */
 function YearShelf({
+  locale,
   eyebrowText,
   heading,
   note,
@@ -421,6 +534,7 @@ function YearShelf({
   games,
   cover,
 }: {
+  locale: Locale
   eyebrowText: string
   heading: ReactNode
   note: string
@@ -438,22 +552,33 @@ function YearShelf({
       </m.h2>
       <p className="mt-2 mb-8 max-w-md text-dim text-sm">
         {note}
-        {more && ' Здесь — первые двенадцать.'}
+        {more && tr(locale, { ru: ' Здесь — первые двенадцать.', en: ' Showing the first twelve.' })}
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-        {games.map((g, i) => (
-          <m.div key={g.appid} {...inView(i % 6)}>
-            <GameLink appid={g.appid} className="game-card block">
-              <GameCardBody
-                appid={g.appid}
-                name={g.name}
-                {...cover(g)}
-                sizes="(min-width: 1024px) 17vw, (min-width: 640px) 33vw, 50vw"
-                meta={<span className="truncate tabular-nums">{g.meta}</span>}
-              />
-            </GameLink>
-          </m.div>
-        ))}
+        {games.map((g, i) => {
+          // lang="ru" ставится на всю ссылку (у GameCardBody своего lang у
+          // названия нет), а подпись под ним — на языке страницы: её
+          // возвращаем на /en обратно, иначе «never launched» скринридер
+          // читал бы русским голосом. На русской странице атрибутов нет вовсе
+          const nameLang = langOn(locale, g.name)
+          return (
+            <m.div key={g.appid} {...inView(i % 6)}>
+              <GameLink appid={g.appid} lang={nameLang} className="game-card block">
+                <GameCardBody
+                  appid={g.appid}
+                  name={g.name}
+                  {...cover(g)}
+                  sizes="(min-width: 1024px) 17vw, (min-width: 640px) 33vw, 50vw"
+                  meta={
+                    <span lang={nameLang && locale} className="truncate tabular-nums">
+                      {g.meta}
+                    </span>
+                  }
+                />
+              </GameLink>
+            </m.div>
+          )
+        })}
       </div>
     </section>
   )
