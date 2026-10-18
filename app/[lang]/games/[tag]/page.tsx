@@ -64,7 +64,9 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 export default async function GenrePage({ params }: Params) {
-  const { tag: slug } = await params
+  const { tag: slug, lang } = await params
+  // Адреса в разметке — на языке страницы, как её canonical
+  const locale = toLocale(lang)
   const genre = await loadGenre(slug)
   if (!genre) notFound()
   const { tag, title, games } = genre
@@ -80,8 +82,8 @@ export default async function GenrePage({ params }: Params) {
         type="application/ld+json"
         dangerouslySetInnerHTML={{
           __html: ldScript([
-            genreBreadcrumbLd({ title, path, baseUrl }),
-            ...(thin(games) ? [] : [genreItemListLd({ title, games, baseUrl })]),
+            genreBreadcrumbLd({ title, path, baseUrl, locale }),
+            ...(thin(games) ? [] : [genreItemListLd({ title, games, baseUrl, locale })]),
           ]),
         }}
       />

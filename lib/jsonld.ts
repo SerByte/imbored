@@ -1,6 +1,7 @@
 import { discountOf, trustedPrice } from './discount'
+import { DEFAULT_LOCALE, htmlLang, lp, type Locale } from './i18n'
 import { newsHeading, newsPath } from './newspage'
-import { OG_SITE, SITE_DESCRIPTION } from './site'
+import { OG_SITE, siteDescription } from './site'
 import { STORE_LABEL } from './stores'
 import { tagRu } from './tagsru'
 import type { GameMeta } from './types'
@@ -74,10 +75,25 @@ export type GameLd = {
  */
 const TAGS_AS_GENRE = 8
 
+/**
+ * Абсолютный адрес страницы на языке разметки: '/game/730' → …/en/game/730.
+ *
+ * Разметка /en-страницы обязана называть ту же страницу, что её canonical
+ * (localeAlternates в lib/site.ts): url и mainEntityOfPage на русский адрес
+ * при canonical на английский — две разные страницы для робота. Тексты
+ * разметки (названия крошек) — те же, что видит человек, и переводятся
+ * вместе со страницей.
+ */
+function at(baseUrl: string, locale: Locale, path: string): string {
+  return `${baseUrl}${lp(locale, path)}`
+}
+
 export type GameLdInput = {
   meta: GameMeta
   /** абсолютный адрес сайта — schema.org требует полных ссылок */
   baseUrl: string
+  /** язык страницы: адреса в разметке — на нём (по умолчанию ru) */
+  locale?: Locale
   /**
    * ISO 4217 региона цен — regionCurrency(priceRegion()) из lib/steamregion.
    * Цена в мете всегда этого региона: чужую rowToMeta не отдаёт вовсе.
@@ -103,6 +119,7 @@ const PLAY_MODES: Array<[number[], string]> = [
 export function gameJsonLd({
   meta,
   baseUrl,
+  locale = DEFAULT_LOCALE,
   currency,
   now,
 }: GameLdInput): GameLd {
@@ -110,7 +127,7 @@ export function gameJsonLd({
     '@context': 'https://schema.org',
     '@type': 'VideoGame',
     name: meta.name,
-    url: `${baseUrl}/game/${meta.appid}`,
+    url: at(baseUrl, locale, `/game/${meta.appid}`),
     // Каталог — только PC-игры: и Steam, и кураторский пул других магазинов.
     gamePlatform: 'PC',
   }
@@ -268,26 +285,28 @@ export type BreadcrumbLd = {
 export function gameBreadcrumbLd({
   meta,
   baseUrl,
+  locale = DEFAULT_LOCALE,
   genre = null,
 }: {
   meta: GameMeta
   baseUrl: string
+  locale?: Locale
   /** Видимый путь над названием: заголовок страницы жанра и её адрес */
   genre?: { title: string; path: string } | null
 }): BreadcrumbLd {
   const trail = genre
     ? [
-        { name: 'Игры по жанрам', item: `${baseUrl}/games` },
-        { name: genre.title, item: `${baseUrl}${genre.path}` },
+        { name: 'Игры по жанрам', item: at(baseUrl, locale, '/games') },
+        { name: genre.title, item: at(baseUrl, locale, genre.path) },
       ]
     : []
   return {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { name: 'imbored', item: `${baseUrl}/` },
+      { name: 'imbored', item: at(baseUrl, locale, '/') },
       ...trail,
-      { name: meta.name, item: `${baseUrl}/game/${meta.appid}` },
+      { name: meta.name, item: at(baseUrl, locale, `/game/${meta.appid}`) },
     ].map((step, i) => ({ '@type': 'ListItem' as const, position: i + 1, ...step })),
   }
 }
@@ -303,18 +322,20 @@ export function genreBreadcrumbLd({
   title,
   path,
   baseUrl,
+  locale = DEFAULT_LOCALE,
 }: {
   title: string
   path: string
   baseUrl: string
+  locale?: Locale
 }): BreadcrumbLd {
   return {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'imbored', item: `${baseUrl}/` },
-      { '@type': 'ListItem', position: 2, name: 'Игры по жанрам', item: `${baseUrl}/games` },
-      { '@type': 'ListItem', position: 3, name: title, item: `${baseUrl}${path}` },
+      { '@type': 'ListItem', position: 1, name: 'imbored', item: at(baseUrl, locale, '/') },
+      { '@type': 'ListItem', position: 2, name: 'Игры по жанрам', item: at(baseUrl, locale, '/games') },
+      { '@type': 'ListItem', position: 3, name: title, item: at(baseUrl, locale, path) },
     ],
   }
 }
@@ -338,10 +359,12 @@ export function genreItemListLd({
   title,
   games,
   baseUrl,
+  locale = DEFAULT_LOCALE,
 }: {
   title: string
   games: ReadonlyArray<{ appid: number; name: string }>
   baseUrl: string
+  locale?: Locale
 }): ItemListLd {
   return {
     '@context': 'https://schema.org',
@@ -351,7 +374,7 @@ export function genreItemListLd({
     itemListElement: games.map((g, i) => ({
       '@type': 'ListItem',
       position: i + 1,
-      url: `${baseUrl}/game/${g.appid}`,
+      url: at(baseUrl, locale, `/game/${g.appid}`),
       name: g.name,
     })),
   }
@@ -397,12 +420,14 @@ export function patchArticleLd({
   item,
   game,
   baseUrl,
+  locale = DEFAULT_LOCALE,
 }: {
   item: PatchLdItem
   game: { name: string } | null
   baseUrl: string
+  locale?: Locale
 }): NewsArticleLd {
-  const url = `${baseUrl}${newsPath(item.appid, item.gid)}`
+  const url = at(baseUrl, locale, newsPath(item.appid, item.gid))
   const site = { '@type': 'Organization' as const, name: OG_SITE.siteName, url: `${baseUrl}/` }
   return {
     '@context': 'https://schema.org',
@@ -411,10 +436,12 @@ export function patchArticleLd({
     url,
     mainEntityOfPage: url,
     datePublished: new Date(item.publishedAt * 1000).toISOString(),
+    // Язык ТЕКСТА статьи, а не адреса: заголовок и пересказ хранятся по-русски.
+    // Английский пересказ сменит его вместе с самим текстом (docs/i18n.md, п. 8)
     inLanguage: 'ru',
     ...(item.tldr?.trim() ? { description: item.tldr.trim() } : {}),
     ...(item.imageUrl ? { image: [item.imageUrl] } : {}),
-    ...(game ? { about: { '@type': 'VideoGame', name: game.name, url: `${baseUrl}/game/${item.appid}` } } : {}),
+    ...(game ? { about: { '@type': 'VideoGame', name: game.name, url: at(baseUrl, locale, `/game/${item.appid}`) } } : {}),
     isBasedOn: item.url,
     author: site,
     publisher: site,
@@ -429,15 +456,17 @@ export function patchBreadcrumbLd({
   item,
   game,
   baseUrl,
+  locale = DEFAULT_LOCALE,
 }: {
   item: PatchLdItem
   game: { name: string } | null
   baseUrl: string
+  locale?: Locale
 }): BreadcrumbLd {
   const steps = [
-    { name: 'imbored', item: `${baseUrl}/` },
-    ...(game ? [{ name: game.name, item: `${baseUrl}/game/${item.appid}` }] : []),
-    { name: newsHeading(item.title, game?.name), item: `${baseUrl}${newsPath(item.appid, item.gid)}` },
+    { name: 'imbored', item: at(baseUrl, locale, '/') },
+    ...(game ? [{ name: game.name, item: at(baseUrl, locale, `/game/${item.appid}`) }] : []),
+    { name: newsHeading(item.title, game?.name), item: at(baseUrl, locale, newsPath(item.appid, item.gid)) },
   ]
   return {
     '@context': 'https://schema.org',
@@ -460,17 +489,20 @@ export type WebSiteLd = {
  *
  * Без него имя сайта в выдаче Google берёт откуда придётся — из og:site_name
  * строчными или из домена. Описание — то же, что в метаданных корня
- * (SITE_DESCRIPTION), а не своя формулировка: две копии обещания уже однажды
+ * (siteDescription), а не своя формулировка: две копии обещания уже однажды
  * разъехались, см. lib/site.ts.
+ *
+ * На языке главной: /en — английская версия сайта со своим адресом, языком и
+ * описанием, как её canonical и <html lang>.
  */
-export function websiteJsonLd(baseUrl: string): WebSiteLd {
+export function websiteJsonLd(baseUrl: string, locale: Locale = DEFAULT_LOCALE): WebSiteLd {
   return {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
     name: OG_SITE.siteName,
-    url: `${baseUrl}/`,
-    inLanguage: 'ru',
-    description: SITE_DESCRIPTION,
+    url: at(baseUrl, locale, '/'),
+    inLanguage: htmlLang(locale),
+    description: siteDescription(locale),
   }
 }
 

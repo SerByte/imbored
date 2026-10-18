@@ -89,7 +89,9 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 const OTHERS = 6
 
 export default async function PatchPage({ params }: Params) {
-  const { appid: rawAppid, gid: rawGid } = await params
+  const { appid: rawAppid, gid: rawGid, lang } = await params
+  // Адреса в разметке — на языке страницы, как её canonical
+  const locale = toLocale(lang)
   /*
    * notFound() даёт настоящий 404 потому же, почему у карточки игры: над
    * страницей нет границы Suspense — ни loading.tsx, ни своей. Каркас сюда
@@ -114,7 +116,10 @@ export default async function PatchPage({ params }: Params) {
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
-          __html: ldScript([patchArticleLd({ item, game, baseUrl }), patchBreadcrumbLd({ item, game, baseUrl })]),
+          __html: ldScript([
+            patchArticleLd({ item, game, baseUrl, locale }),
+            patchBreadcrumbLd({ item, game, baseUrl, locale }),
+          ]),
         }}
       />
       {/*

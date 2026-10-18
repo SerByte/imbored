@@ -9,7 +9,7 @@ import {
   patchBreadcrumbLd,
   websiteJsonLd,
 } from './jsonld'
-import { SITE_DESCRIPTION } from './site'
+import { SITE_DESCRIPTION, siteDescription } from './site'
 import { regionCurrency } from './steamregion'
 import { tagRu } from './tagsru'
 import type { GameMeta } from './types'
@@ -447,5 +447,58 @@ describe('страница патча', () => {
       'https://imbored.cc/game/730/news/5123894512345',
     ])
     expect(patchBreadcrumbLd({ item, game: null, baseUrl: BASE }).itemListElement).toHaveLength(2)
+  })
+})
+
+/**
+ * Разметка /en-страницы обязана называть ту же страницу, что её canonical
+ * (/en/…). Русский url и mainEntityOfPage при английском canonical — две
+ * разные страницы для робота.
+ */
+describe('адреса разметки на языке страницы', () => {
+  const item = {
+    appid: 730,
+    gid: '5123894512345',
+    title: 'Counter-Strike 2: Release Notes for 9/25/2026',
+    url: 'https://store.steampowered.com/news/app/730/view/5123894512345',
+    publishedAt: Date.parse('2026-09-25T18:00:00Z') / 1000,
+  }
+
+  test('сайт на /en — английская версия: адрес /en, язык и описание английские', () => {
+    expect(websiteJsonLd(BASE, 'en')).toEqual({
+      '@context': 'https://schema.org',
+      '@type': 'WebSite',
+      name: 'imbored',
+      url: 'https://imbored.cc/en',
+      inLanguage: 'en',
+      description: siteDescription('en'),
+    })
+    expect(websiteJsonLd(BASE, 'ru')).toEqual(websiteJsonLd(BASE))
+  })
+
+  test('карточка, её крошки, жанр и патч — под /en', () => {
+    expect(gameJsonLd({ meta: game(), baseUrl: BASE, locale: 'en', currency: 'USD', now: NOW }).url).toBe(
+      'https://imbored.cc/en/game/730',
+    )
+    expect(
+      gameBreadcrumbLd({ meta: game(), baseUrl: BASE, locale: 'en', genre: { title: 'Шутеры', path: '/games/fps' } })
+        .itemListElement.map((i) => i.item),
+    ).toEqual(['https://imbored.cc/en', 'https://imbored.cc/en/games', 'https://imbored.cc/en/games/fps', 'https://imbored.cc/en/game/730'])
+    expect(
+      genreBreadcrumbLd({ title: 'Шутеры', path: '/games/fps', baseUrl: BASE, locale: 'en' }).itemListElement.map((i) => i.item),
+    ).toEqual(['https://imbored.cc/en', 'https://imbored.cc/en/games', 'https://imbored.cc/en/games/fps'])
+    expect(
+      genreItemListLd({ title: 'Шутеры', games: [{ appid: 730, name: 'CS2' }], baseUrl: BASE, locale: 'en' }).itemListElement[0].url,
+    ).toBe('https://imbored.cc/en/game/730')
+
+    const article = patchArticleLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE, locale: 'en' })
+    expect(article.url).toBe('https://imbored.cc/en/game/730/news/5123894512345')
+    expect(article.mainEntityOfPage).toBe(article.url)
+    expect(article.about?.url).toBe('https://imbored.cc/en/game/730')
+    // язык ТЕКСТА статьи: пересказ хранится по-русски
+    expect(article.inLanguage).toBe('ru')
+    expect(
+      patchBreadcrumbLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE, locale: 'en' }).itemListElement.map((i) => i.item),
+    ).toEqual(['https://imbored.cc/en', 'https://imbored.cc/en/game/730', 'https://imbored.cc/en/game/730/news/5123894512345'])
   })
 })

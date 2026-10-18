@@ -9,6 +9,7 @@ import { Repertoire } from '@/components/landing/scenes/Repertoire'
 import { landingDemo } from '@/lib/landing'
 import { ribbonGames, RIBBON_MAX, type RibbonSource } from '@/lib/ribbon'
 import { topCatalogGames } from '@/lib/db'
+import { toLocale } from '@/lib/i18n'
 import { ldScript, websiteJsonLd } from '@/lib/jsonld'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { ownAddress } from '@/lib/site'
@@ -94,19 +95,20 @@ async function ribbonForLanding() {
  */
 export const dynamicParams = false
 
-export default async function Home() {
+export default async function Home({ params }: PageProps<'/[lang]'>) {
   const demo = landingDemo(nowSec())
-  const ribbon = await ribbonForLanding()
+  const [ribbon, { lang }] = await Promise.all([ribbonForLanding(), params])
 
   return (
     <div className="media-dark media-full landing">
       {/*
-        Сайт как сущность для поисковика: имя, адрес, язык. Статичности не
-        мешает — appBaseUrl читает только окружение, как metadataBase корня.
+        Сайт как сущность для поисковика: имя, адрес, язык — той версии, чья
+        это главная. Статичности не мешает — appBaseUrl читает только
+        окружение, как metadataBase корня, а язык — сегмент маршрута.
       */}
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: ldScript(websiteJsonLd(appBaseUrl())) }}
+        dangerouslySetInnerHTML={{ __html: ldScript(websiteJsonLd(appBaseUrl(), toLocale(lang))) }}
       />
       {/*
         Лента уходит в портал у <body>: слой обязан быть fixed, а под плавной

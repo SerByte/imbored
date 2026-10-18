@@ -269,8 +269,10 @@ const SCORE_RU: Record<string, string> = {
   'Overwhelmingly Negative': 'Крайне отрицательные',
 }
 
-export default async function GamePage({ params }: { params: Promise<{ appid: string }> }) {
-  const { appid: raw } = await params
+export default async function GamePage({ params }: { params: Promise<{ appid: string; lang?: string }> }) {
+  const { appid: raw, lang } = await params
+  // Адреса в разметке — на языке страницы, как её canonical
+  const locale = toLocale(lang)
   const appid = Number(raw)
   /*
    * Оба notFound() дают настоящий 404 только потому, что над страницей нет
@@ -347,12 +349,13 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               // Оценки (facts) здесь нет намеренно: доля отзывов — Steam, а
               // чужие оценки размечать нельзя. Почему — докблок lib/jsonld
               baseUrl: appBaseUrl(),
+              locale,
               // Та же валюта, что на ценнике: цену другого региона rowToMeta
               // сюда не пропускает, и Offer без неё не строится вовсе
               currency: regionCurrency(priceRegion()),
               now,
             }),
-            gameBreadcrumbLd({ meta, baseUrl: appBaseUrl(), genre }),
+            gameBreadcrumbLd({ meta, baseUrl: appBaseUrl(), locale, genre }),
           ]),
         }}
       />
