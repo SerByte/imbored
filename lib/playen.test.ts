@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { createElement, type ReactNode } from 'react'
+import { createElement, type ComponentProps, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import { LocaleProvider } from '../components/LocaleProvider'
@@ -25,7 +25,9 @@ const CYRILLIC = /[А-Яа-яЁё]/
 const ROOT = path.join(__dirname, '..')
 
 const under = (locale: Locale | null, node: ReactNode) =>
-  renderToStaticMarkup(locale ? createElement(LocaleProvider, { locale, children: node }) : node)
+  renderToStaticMarkup(
+    locale ? createElement(LocaleProvider, { locale } as ComponentProps<typeof LocaleProvider>, node) : node,
+  )
 
 const warmup = () =>
   createElement(WarmupScreen, {
