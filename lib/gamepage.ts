@@ -105,6 +105,37 @@ export function cardNews(item: StoredNews): CardNews {
   }
 }
 
+/**
+ * Лента карточки: восемь свежих патчей (CARD_PATCHES; остальные — в архиве
+ * обновлений, lib/patcharchive) — по нынешнему правилу классификатора,
+ * тому же, что у страницы патча (isStoredPatch, loadPatch). Строка, которую та
+ * отдаёт 404, не должна стоять здесь патчем со ссылкой туда.
+ *
+ * Отсев идёт в памяти — правилу нужно тело, а SQL его не прочтёт, — и потому
+ * после LIMIT. Если остановиться на этом, каждая отсеянная строка съедала бы
+ * место настоящего патча: две «дорожные карты» среди восьми свежих — и
+ * карточка показывает шесть, хотя патчи постарше в базе есть. Само это не
+ * проходит: запись за окном ленты опрос не перечитывает (MAX_ITEMS в
+ * lib/news) и kind её не перепишет никогда.
+ *
+ * Поэтому дочитываем — но только когда отсеивать было что. Читать с запасом
+ * всегда значило бы везти лишние blocks_json (до десятков килобайт у
+ * строки) на каждой перегенерации каждой карточки, хотя самой карточке тела
+ * не нужны вовсе (cardNews), а у большинства игр отсеивать нечего. Втрое —
+ * с запасом, а не впритык: постов у игры в базе не больше тридцати (NEWS_KEEP
+ * в lib/newsjob). На выгрузке прода от 24.09.2026 отсев задевал восемь свежих
+ * патчей у 76 игр из 485, недобор без дочитывания был бы у 19, с ним — ни у
+ * одной.
+ */
+async function cardPatches(db: Db, appid: number): Promise<CardNews[]> {
+  const head = await getGameNews(db, appid, CARD_PATCHES)
+  let kept = head.filter(isStoredPatch)
+  if (kept.length < head.length && head.length === CARD_PATCHES) {
+    kept = (await getGameNews(db, appid, CARD_PATCHES * 3)).filter(isStoredPatch)
+  }
+  return kept.slice(0, CARD_PATCHES).map(cardNews)
+}
+
 export type ReviewFacts = {
   /** Доля положительных отзывов, 0…100. */
   percent: number
@@ -629,11 +660,7 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   // повторяет того, что уже стоит в «Похожих». Лимит на одну больше порога —
   // так studioLine узнаёт корпоративный каталог, не читая его целиком
   const [news, shelf, studioGames] = await Promise.all([
-    // Патч — по нынешнему правилу классификатора, тому же, что у страницы
-    // патча (isStoredPatch, loadPatch): строка, которую та отдаёт 404, не
-    // должна стоять здесь патчем со ссылкой туда. Восемь последних;
-    // остальное — в архиве обновлений (lib/patcharchive)
-    getGameNews(db, appid, CARD_PATCHES).then((rows) => rows.filter(isStoredPatch).map(cardNews)),
+    cardPatches(db, appid),
     similarOf(),
     meta.developer?.trim()
       ? gamesByDeveloper(db, meta.developer, STUDIO_MAX_GAMES + 1)

@@ -99,6 +99,41 @@ describe('loadGamePage', () => {
     expect(page?.news.map((n) => n.gid)).toEqual(['1'])
   })
 
+  /*
+   * Правилу нужно тело, и отсев идёт в памяти — после LIMIT. Без дочитывания
+   * «дорожная карта» среди восьми свежих съедала бы место настоящего патча, и
+   * за окном ленты опроса так оставалось бы навсегда: kind такой записи никто
+   * не перепишет.
+   */
+  test('отсеянная строка не съедает место: в ленте карточки всё равно восемь патчей', async () => {
+    const db = await withDb()
+    await addGame(db, 11)
+    const post = (gid: string, title: string, publishedAt: number) => ({
+      appid: 11,
+      gid,
+      title,
+      url: `https://store.steampowered.com/news/app/11/view/${gid}`,
+      publishedAt,
+      kind: 'patch' as const,
+      scale: 'major' as const,
+      blocks: [{ kind: 'p' as const, runs: [{ text: 'Исправлен вылет при загрузке.' }] }],
+      bodyHash: `h${gid}`,
+      rank: 5000,
+    })
+    const patches = Array.from({ length: 9 }, (_, i) => post(`p${i}`, `Патч 2.${i}`, NOW - 1000 - i * 100))
+    await upsertNewsItems(
+      db,
+      [
+        // самая свежая запись — дорожная карта, записанная патчем старым правилом
+        post('roadmap', 'Marathon: дорожная карта обновлений на 2026 год', NOW - 10),
+        ...patches,
+      ],
+      NOW,
+    )
+    const page = await loadGamePage(11)
+    expect(page?.news.map((n) => n.gid)).toEqual(patches.slice(0, 8).map((p) => p.gid))
+  })
+
   /**
    * Эвристические pros/cons — это первые предложения самых залайканных отзывов
    * как есть. В проде это дало китайский, испанский, зацензуренный мат и прямую
