@@ -156,14 +156,16 @@ const QUERY_OF: Record<string, (src: URLSearchParams) => URLSearchParams> = {
  * библиотеку. Результат собирается заново из проверенного, поэтому его можно
  * класть и в next, и в редирект.
  */
-function bareDestination(raw: string | null | undefined): { locale: Locale; url: string } | null {
+function bareDestination(
+  raw: string | null | undefined,
+): { locale: Locale; path: DestinationPath; url: string } | null {
   if (!raw) return null
   const cut = raw.indexOf('?')
   const { locale, path } = splitLocale(cut < 0 ? raw : raw.slice(0, cut))
   if (!isDestination(path)) return null
   const tail = Object.hasOwn(QUERY_OF, path) ? QUERY_OF[path] : null
   const query = cut >= 0 && tail ? tail(new URLSearchParams(raw.slice(cut + 1))) : null
-  return { locale, url: query?.size ? `${path}?${query}` : path }
+  return { locale, path, url: query?.size ? `${path}?${query}` : path }
 }
 
 /**
@@ -179,12 +181,18 @@ export function destinationUrl(raw: string | null | undefined): string | null {
 
 /**
  * Место назначения — из DESTINATION_PATHS — из адреса, в том числе с хвостом,
- * либо null. С языком адреса: '/en/play?…' → '/en/play'. Ключ текстов
- * лендинга — путь без языка: его отдаёт destinationFor (lib/destinationtext).
+ * либо null. Адрес принимается и с языком, но место отдаётся БЕЗ него:
+ * '/en/play?…' → '/play'.
+ *
+ * Без языка — потому что это ключ: место ищут в текстах лендинга
+ * (DESTINATIONS в lib/destinationtext), а там ключи без префикса. Отдай мы
+ * '/en/library', карточка входа не нашла бы текста, и на /?next=/en/library
+ * обещание над заголовком (destinationPromise) говорило бы про библиотеку, а
+ * кнопка — общее «Подобрать игру», хотя вела бы в библиотеку. Куда вести —
+ * решает destinationUrl, он язык сохраняет; язык места — splitLocale от него.
  */
-export function destinationPath(raw: string | null | undefined): string | null {
-  const url = destinationUrl(raw)
-  return url === null ? null : url.split('?', 1)[0]
+export function destinationPath(raw: string | null | undefined): DestinationPath | null {
+  return bareDestination(raw)?.path ?? null
 }
 
 /**

@@ -661,7 +661,9 @@ describe('места назначения на английском', () => {
   test('английский адрес места проходит и сохраняет язык; русский — без префикса', () => {
     for (const p of DESTINATION_PATHS) {
       expect(destinationUrl(`/en${p}`), p).toBe(`/en${p}`)
-      expect(destinationPath(`/en${p}`), p).toBe(`/en${p}`)
+      // место — ключ текстов лендинга, он без языка (см. ниже про кнопку)
+      expect(destinationPath(`/en${p}`), p).toBe(p)
+      expect(destinationPath(`/en${p}?x=1`), p).toBe(p)
       // так страница русской ветки видит свой путь на сервере (usePathname)
       expect(destinationUrl(`/ru${p}`), p).toBe(p)
     }
@@ -782,6 +784,28 @@ describe('места назначения на английском', () => {
     const start = loginCarry(new URLSearchParams({ next: `/en${QUIZ}` }))
     expect(start.get('lang')).toBe('en')
     expect(loginTarget(start)).toBe(`/en${QUIZ}`)
+  })
+
+  /*
+   * Карточка входа (components/landing/ConnectCard) ищет кнопку по
+   * DESTINATIONS[destinationPath(next)], а строка над заголовком — по
+   * destinationPromise(next). На /?next=/en/library место с языком не
+   * находилось в текстах: обещание говорило про библиотеку, кнопка — общее
+   * «Подобрать игру», а вела в библиотеку. Кнопка, обещание и адрес обязаны
+   * называть одно место.
+   */
+  test('кнопка карточки, обещание и адрес — про одно место и для адреса с языком', () => {
+    for (const p of DESTINATION_PATHS) {
+      for (const raw of [`/en${p}`, `/ru${p}`, p]) {
+        const next = destinationUrl(raw)
+        const key = destinationPath(next)
+        expect(key, raw).toBe(p)
+        const dest = key ? DESTINATIONS[key] : null
+        expect(dest, raw).toBe(DESTINATIONS[p])
+        expect(destinationFor(next), raw).toBe(dest)
+        expect(destinationPromise(next), raw).toBe(dest?.promise)
+      }
+    }
   })
 
   test('«Подключить заново» — на главную языка места', () => {
