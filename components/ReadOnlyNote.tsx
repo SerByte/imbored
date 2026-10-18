@@ -2,10 +2,16 @@
 
 import { useCallback, useEffect, useState, type ComponentType } from 'react'
 import { reportIslandFailure } from '@/components/lazyIsland'
+import { useLocale } from '@/components/LocaleProvider'
+import type { Locale } from '@/lib/i18n'
 import { peekReadOnlyNote, READONLY_NOTE_EVENT, takeReadOnlyNote } from '@/lib/readonlynote'
 
-/** Привезённое тело записки: панель и то, что записка говорит скринридеру */
-type Note = { Box: ComponentType<{ onHide: () => void }>; say: string }
+/**
+ * Привезённое тело записки: панель и то, что записка говорит скринридеру, —
+ * на обоих языках. Язык выбирается при рендере, а не при приезде чанка:
+ * оболочка стоит в лэйауте и переживает переход на другой язык.
+ */
+type Note = { Box: ComponentType<{ onHide: () => void }>; say: Record<Locale, string> }
 
 /**
  * Записка «это режим просмотра» — оболочка в корневом лэйауте. Сама записка
@@ -48,6 +54,7 @@ type Note = { Box: ComponentType<{ onHide: () => void }>; say: string }
  * трансформ не страшен. Панель тела — в своём портале, как и была.
  */
 export function ReadOnlyNote() {
+  const locale = useLocale()
   const [note, setNote] = useState<Note | null>(null)
 
   useEffect(() => {
@@ -63,7 +70,9 @@ export function ReadOnlyNote() {
           if (!live) return
           waiting()
           waiting = m.noteVerdict((show) => {
-            if (live && takeReadOnlyNote() && show) setNote({ Box: m.ReadOnlyNoteBox, say: m.READONLY_SAY })
+            if (live && takeReadOnlyNote() && show) {
+              setNote({ Box: m.ReadOnlyNoteBox, say: { ru: m.READONLY_SAY, en: m.READONLY_SAY_EN } })
+            }
           })
         },
         (err: unknown) => reportIslandFailure('readonly-note', err),
@@ -83,7 +92,7 @@ export function ReadOnlyNote() {
   return (
     <>
       <p role="status" className="sr-only">
-        {note ? note.say : ''}
+        {note ? note.say[locale] : ''}
       </p>
       {note && <note.Box onHide={hide} />}
     </>

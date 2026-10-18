@@ -622,10 +622,14 @@ describe('окно поиска — комбобокс по шаблону ARIA'
     }
   }
 
+  /** Имя элемента: строкой или парой языков tr(locale, { ru, en }) — обе непустые */
+  const NAMED = /aria-label=(?:"[^"]+"|\{tr\(locale, \{ ru: '[^']+', en: '[^']+' \}\)\})/
+
   test('окно — модальный диалог с именем', () => {
     const dialog = openingTag('div', 'role="dialog"')
     expect(dialog).toContain('aria-modal="true"')
-    expect(dialog).toMatch(/aria-label="[^"]+"/)
+    // имя — строкой или парой языков (tr): на /en окно называется по-английски
+    expect(dialog).toMatch(NAMED)
   })
 
   test('поле — комбобокс, связанный со списком, с выбранной строкой через activedescendant', () => {
@@ -645,7 +649,7 @@ describe('окно поиска — комбобокс по шаблону ARIA'
   test('список — listbox с тем id, на который указывает поле', () => {
     const list = openingTag('div', 'role="listbox"')
     expect(list).toContain('id={listId}')
-    expect(list).toMatch(/aria-label="[^"]+"/)
+    expect(list).toMatch(NAMED)
   })
 
   test('строки — option, выбор объявлен, из обхода Tab вынуты', () => {

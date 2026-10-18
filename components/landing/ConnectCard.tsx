@@ -16,12 +16,12 @@ import {
   PASSWORD_NOTE_ID,
 } from '@/components/landing/ConnectFallback'
 import { LinkHelp, LinkHelpToggle, toggleLinkHelp } from '@/components/landing/LinkHelp'
-import { destinationPath, destinationUrl } from '@/lib/destination'
-import { DESTINATIONS } from '@/lib/destinationtext'
+import { destinationUrl } from '@/lib/destination'
+import { destinationFor } from '@/lib/destinationtext'
+import { pl, tr, withLang, type Locale } from '@/lib/i18n'
 import { lastMoodStore, pickHrefNow, pickHrefServer, QUIZ_HREF } from '@/lib/lastmood'
-import { lastMoodCaptionNow, lastMoodCaptionServer } from '@/lib/lastmoodcaption'
-import { plural } from '@/lib/plural'
-import { presetHref, VIBE_PRESETS } from '@/lib/presets'
+import { lastMoodCaptionNowFor, lastMoodCaptionServer } from '@/lib/lastmoodcaption'
+import { presetHref, presetLabel, VIBE_PRESETS } from '@/lib/presets'
 import {
   getServerSessionHint,
   getSessionHint,
@@ -35,7 +35,7 @@ import { markSessionTouched } from '@/lib/sessiontouch'
 import { writerFrom, writerStore } from '@/lib/writer'
 import { forgetPrewarm } from '@/lib/warmup'
 import { announceReadOnly } from '@/lib/readonlynote'
-import { LIVE_DEFAULT, liveLineFrom } from '@/lib/liveline'
+import { liveDefault, liveLineFrom } from '@/lib/liveline'
 
 /**
  * Рабочая карточка главной: единственная форма страницы, и стоит она в герое.
@@ -76,7 +76,10 @@ import { LIVE_DEFAULT, liveLineFrom } from '@/lib/liveline'
  */
 const QUICK_PRESETS = VIBE_PRESETS.slice(0, 3)
 
-const ERROR_TEXT: Record<string, string> = {
+/** Коды отказа, которые приходят в ?error= и из /api/connect */
+type ErrorCode = 'auth' | 'nokey' | 'steam' | 'empty' | 'notfound' | 'badinput' | 'nosession' | 'ratelimited' | 'private'
+
+const ERROR_TEXT_RU: Record<ErrorCode, string> = {
   auth: 'Steam не подтвердил вход. Попробуй ещё раз.',
   nokey: 'На сервере не настроен STEAM_API_KEY — попробуй демо-режим.',
   steam: 'Steam сейчас не отвечает. Подожди минуту и попробуй снова.',
@@ -109,6 +112,35 @@ const ERROR_TEXT: Record<string, string> = {
   private: 'Steam прячет твою библиотеку. Это меняется одной настройкой — как, написано ниже.',
 }
 
+/*
+ * Те же отказы по-английски и с теми же решениями: badinput объясняет, что
+ * подойдёт (ссылка, ник из её конца — по-английски это «custom URL» — или код
+ * друга), а не констатирует, что не подошло.
+ */
+const ERROR_TEXT_EN: Record<ErrorCode, string> = {
+  auth: 'Steam didn’t confirm the sign-in. Try again.',
+  nokey: 'STEAM_API_KEY isn’t set on the server — try the demo.',
+  steam: 'Steam isn’t responding right now. Wait a minute and try again.',
+  empty: 'Steam returned an empty library for this profile.',
+  notfound: 'We couldn’t find that profile. Check the link, custom URL or friend code.',
+  badinput:
+    'We need a profile link, the custom URL from its end, or a friend code. Steam doesn’t search by display name.',
+  nosession: 'Your session expired — connect your library again and we’ll take you back to the party.',
+  ratelimited: 'Too many tries in a row. Wait a bit and try again.',
+  /*
+    Не «Steam is hiding your library»: так по-английски названа панель
+    PrivacyHelp прямо под строкой, и одна фраза читалась бы дважды подряд.
+    Как и в русском, здесь — что случилось с играми, в панели — что делать.
+  */
+  private: 'Your game list is hidden on Steam. One setting changes that — see how below.',
+}
+
+/** Строка отказа на языке страницы; чужой код — общее «что-то пошло не так» */
+function errorText(locale: Locale, error: string): string {
+  const texts: Record<string, string | undefined> = locale === 'en' ? ERROR_TEXT_EN : ERROR_TEXT_RU
+  return texts[error] ?? tr(locale, { ru: 'Что-то пошло не так.', en: 'Something went wrong.' })
+}
+
 export function ConnectCard() {
   const router = useLocaleRouter()
   const locale = useLocale()
@@ -120,8 +152,8 @@ export function ConnectCard() {
   // Адрес целиком, с настроением квиза у выдачи (destinationUrl), — его везёт
   // вход и в него же ведёт кнопка. Тексты карточки — по месту назначения.
   const next = destinationUrl(search.get('next'))
-  const nextPath = destinationPath(next)
-  const dest = nextPath ? DESTINATIONS[nextPath] : null
+  // Тексты места — на языке страницы; адрес — с языком или без, место одно
+  const dest = destinationFor(next, locale)
 
   const [input, setInput] = useState('')
   /** go — уходит главная кнопка вошедшего; connect и demo — запрос в /api/connect */
@@ -153,7 +185,7 @@ export function ConnectCard() {
   const [rechecking, setRechecking] = useState(false)
   const [session, setSession] = useState<SessionHint | null>(null)
   /** Живая строка вошедшего — до ответа touch дверь по умолчанию (lib/liveline) */
-  const [live, setLive] = useState(LIVE_DEFAULT)
+  const [live, setLive] = useState(liveDefault(locale))
 
   const hint = useSyncExternalStore(subscribeSessionHint, getSessionHint, getServerSessionHint)
   const view: SessionHint = session ?? hint ?? { authed: false, personaName: null }
@@ -202,9 +234,10 @@ export function ConnectCard() {
    * быть молчаливой подменой.
    */
   const remembered = useSyncExternalStore(lastMoodStore.subscribe, pickHrefNow, pickHrefServer)
+  // Снимок — одна функция на язык (lastMoodCaptionNowFor), а не новая на рендер
   const moodLine = useSyncExternalStore(
     lastMoodStore.subscribe,
-    lastMoodCaptionNow,
+    lastMoodCaptionNowFor(locale),
     lastMoodCaptionServer,
   )
 
@@ -232,20 +265,29 @@ export function ConnectCard() {
           live?: unknown
         }
         settle(d.authed ? hintFrom(d) : null, d.authed === false)
-        setLive(liveLineFrom(d.live))
+        // Ответ — данные, а не текст: слова строки собираются здесь, на языке страницы
+        setLive(liveLineFrom(d.live, locale))
         // SessionKeeper на главной молчит, так что признак записи берём здесь
         writerStore.set(writerFrom(d))
       })
       .catch(() => settle(null))
-  }, [])
+  }, [locale])
 
-  const steamHref = joinTarget
-    ? `/api/auth/steam?join=${joinTarget}`
-    : compatTarget
-      ? `/api/auth/steam?compat=${compatTarget}`
-      : next
-        ? `/api/auth/steam?next=${encodeURIComponent(next)}`
-        : '/api/auth/steam'
+  /*
+   * Язык входа — в самом адресе (withLang): возврат из Steam ведёт на
+   * страницу того же языка (app/api/auth/steam), а без lang=en его нёс бы
+   * только Referer, который режут расширения и настройки браузера.
+   */
+  const steamHref = withLang(
+    joinTarget
+      ? `/api/auth/steam?join=${joinTarget}`
+      : compatTarget
+        ? `/api/auth/steam?compat=${compatTarget}`
+        : next
+          ? `/api/auth/steam?next=${encodeURIComponent(next)}`
+          : '/api/auth/steam',
+    locale,
+  )
 
   const target = joinTarget
     ? `/room/${joinTarget}`
@@ -269,10 +311,10 @@ export function ConnectCard() {
   // «Войти в комнату» — тем же словом, что кнопка на экране приглашения:
   // одно действие под двумя именами читается как два разных
   const action = joinTarget
-    ? 'Войти в комнату'
+    ? tr(locale, { ru: 'Войти в комнату', en: 'Join the room' })
     : compatTarget
-      ? 'Посмотреть совместимость'
-      : (dest?.action ?? 'Подобрать игру')
+      ? tr(locale, { ru: 'Посмотреть совместимость', en: 'See compatibility' })
+      : (dest?.action ?? tr(locale, { ru: 'Подобрать игру', en: 'Find a game' }))
 
   /*
    * Приглашённый попадает в комнату сразу, а не ещё одним нажатием.
@@ -399,17 +441,21 @@ export function ConnectCard() {
               */}
               {demo && (
                 <div>
-                  <p className="text-xl font-extrabold tracking-[-0.02em] text-ink">Ты в демо-режиме.</p>
+                  <p className="text-xl font-extrabold tracking-[-0.02em] text-ink">
+                    {tr(locale, { ru: 'Ты в демо-режиме.', en: 'You’re in demo mode.' })}
+                  </p>
                   <p className="mt-1 max-w-md text-sm leading-relaxed text-dim">
-                    Подбор идёт по чужой витрине. Вставь ссылку на свой профиль — и он пойдёт по
-                    твоей библиотеке.
+                    {tr(locale, {
+                      ru: 'Подбор идёт по чужой витрине. Вставь ссылку на свой профиль — и он пойдёт по твоей библиотеке.',
+                      en: 'Picks come from someone else’s library. Paste your profile link and they’ll come from yours.',
+                    })}
                   </p>
                 </div>
               )}
               {!demo && (
                 <div>
                   <p className="text-xl font-extrabold tracking-[-0.02em] text-ink">
-                    С возвращением
+                    {tr(locale, { ru: 'С возвращением', en: 'Welcome back' })}
                     {view.personaName ? (
                       <>
                         , <span className="font-semibold">{view.personaName}</span>
@@ -424,15 +470,7 @@ export function ConnectCard() {
                     убрана, чтобы не звать дважды. Строка добавляет карточке
                     высоту только этой сессии (см. CONNECT_CARD_MIN_H).
                   */}
-                  {readOnly && (
-                    <p className="mt-1 max-w-md text-sm leading-relaxed text-dim">
-                      Вход по ссылке — только просмотр: оценки и запуски не сохраняются.{' '}
-                      <a href={steamHref} className="tap tap-tight text-ember-text hover:underline">
-                        Войти через Steam
-                      </a>
-                      , чтобы сервис запоминал.
-                    </p>
-                  )}
+                  {readOnly && <ReadOnlyLine steamHref={steamHref} />}
                   {/*
                     Живая строка (lib/liveline): «как тебе?», готовая игра дня
                     или дверь в «Твои вечера». Место держится с первого кадра,
@@ -489,7 +527,7 @@ export function ConnectCard() {
                     href={QUIZ_HREF}
                     className="tap tap-tight underline decoration-edge hover:text-ink"
                   >
-                    Изменить
+                    {tr(locale, { ru: 'Изменить', en: 'Change' })}
                   </Link>
                 </p>
               )}
@@ -513,11 +551,11 @@ export function ConnectCard() {
               */}
               {showPresets && !formShown && (
                 <div className="flex flex-col gap-2">
-                  <Eyebrow>Или сразу</Eyebrow>
+                  <Eyebrow>{tr(locale, { ru: 'Или сразу', en: 'Or jump right in' })}</Eyebrow>
                   <div className="flex flex-wrap gap-2">
                     {QUICK_PRESETS.map((p) => (
                       <Link key={p.key} href={presetHref(p)} className="pill">
-                        {p.label}
+                        {presetLabel(p, locale)}
                       </Link>
                     ))}
                   </div>
@@ -531,7 +569,7 @@ export function ConnectCard() {
                   invalid={inputError}
                   busy={busy}
                   autoFocus={focusField}
-                  submit="Подключить"
+                  submit={tr(locale, { ru: 'Подключить', en: 'Connect' })}
                   primary={false}
                   onSubmit={submitProfile}
                 />
@@ -592,8 +630,11 @@ export function ConnectCard() {
           >
             {error
               ? error === 'ratelimited' && retryIn
-                ? `Слишком много попыток подряд. Попробуй снова через ${retryIn} ${plural(retryIn, 'минуту', 'минуты', 'минут')}.`
-                : (ERROR_TEXT[error] ?? 'Что-то пошло не так.')
+                ? tr(locale, {
+                    ru: `Слишком много попыток подряд. Попробуй снова через ${retryIn} ${pl(locale, retryIn, MINUTES)}.`,
+                    en: `Too many tries in a row. Try again in ${retryIn} ${pl(locale, retryIn, MINUTES)}.`,
+                  })
+                : errorText(locale, error)
               : ''}
           </p>
           {view.authed ? (
@@ -621,7 +662,7 @@ export function ConnectCard() {
                     }}
                     className="tap py-1 text-sm text-dim transition-colors hover:text-ink active:text-ember-text"
                   >
-                    Сменить библиотеку
+                    {tr(locale, { ru: 'Сменить библиотеку', en: 'Switch library' })}
                   </button>
                 )}
                 {!readOnly && (
@@ -629,7 +670,7 @@ export function ConnectCard() {
                     href={steamHref}
                     className="tap py-1 text-sm text-dim transition-colors hover:text-ink active:text-ember-text"
                   >
-                    Войти через Steam
+                    {tr(locale, { ru: 'Войти через Steam', en: 'Sign in with Steam' })}
                   </a>
                 )}
               </div>
@@ -653,7 +694,7 @@ export function ConnectCard() {
                   aria-describedby={PASSWORD_NOTE_ID}
                   className="tap py-1 text-ink transition-colors hover:text-dim"
                 >
-                  Войти через Steam
+                  {tr(locale, { ru: 'Войти через Steam', en: 'Sign in with Steam' })}
                 </a>
                 <span aria-hidden className="text-faint">
                   ·
@@ -668,7 +709,13 @@ export function ConnectCard() {
                   aria-disabled={busy !== null}
                   className="tap py-1 text-dim transition-colors hover:text-ink active:text-ember-text"
                 >
-                  {busy === 'demo' ? 'Готовлю демо…' : 'Демо без Steam'}
+                  {/* По-английски — «Try the demo», а не «Demo without Steam» глоссария:
+                      ряд дверей гостя замерен, и на 360 px полная фраза роняла его в
+                      две строки, а карточку — за потолок CONNECT_CARD_MIN_H. Рядом
+                      с «Sign in with Steam» «без Steam» и так понятно */}
+                  {busy === 'demo'
+                    ? tr(locale, { ru: 'Готовлю демо…', en: 'Loading demo…' })
+                    : tr(locale, { ru: 'Демо без Steam', en: 'Try the demo' })}
                 </button>
               </div>
               {/* Сноска общая с фолбэком — подмена при гидратации не меняет в ней ни слова */}
@@ -690,6 +737,48 @@ export function ConnectCard() {
 }
 
 type Busy = 'go' | 'connect' | 'demo' | null
+
+/**
+ * Строка «вход по ссылке — только просмотр» с дверью в Steam посреди фразы.
+ * Своим компонентом: по-английски дверь стоит в другом месте фразы, и ветка
+ * по языку здесь не ложится тернарником в ветку вошедшего, где её искал бы
+ * сторож раскладки (lib/landingdoor.test.ts делит карточку по «) : (»).
+ */
+function ReadOnlyLine({ steamHref }: { steamHref: string }) {
+  if (useLocale() === 'en') {
+    return (
+      <p className="mt-1 max-w-md text-sm leading-relaxed text-dim">
+        Signed in with a link, so it’s view-only: ratings and launches aren’t saved.{' '}
+        <a href={steamHref} className="tap tap-tight text-ember-text hover:underline">
+          Sign in with Steam
+        </a>{' '}
+        so we can remember them.
+      </p>
+    )
+  }
+  return (
+    <p className="mt-1 max-w-md text-sm leading-relaxed text-dim">
+      Вход по ссылке — только просмотр: оценки и запуски не сохраняются.{' '}
+      <a href={steamHref} className="tap tap-tight text-ember-text hover:underline">
+        Войти через Steam
+      </a>
+      , чтобы сервис запоминал.
+    </p>
+  )
+}
+
+/** Минуты до снятия потолка попыток — формы слова для pl() */
+const MINUTES: Parameters<typeof pl>[2] = { ru: ['минуту', 'минуты', 'минут'], en: ['minute', 'minutes'] }
+
+/**
+ * Подсказка в поле по-английски. Строку поля делят подсказка и «Where’s
+ * that?» (.join-field в globals.css: счёт там — на русскую пару). Замер
+ * шрифтом страницы: «Where’s that?» на 18 px шире «Где взять?» (80 против
+ * 62), подсказка на 17 уже русской (184.5 против 201.8 при 16 px), и
+ * запас до края поля на 360 px — 11.5 px против русских 12.2. Длиннее
+ * «Profile link or friend code» сюда ничего не встанет.
+ */
+const PLACEHOLDER_EN = 'Profile link or friend code'
 
 /**
  * Поле для ссылки на профиль — одно на карточку.
@@ -722,7 +811,10 @@ function ProfileForm({
   primary: boolean
   onSubmit: () => void
 }) {
-  const label = busy === 'connect' ? 'Читаю библиотеку…' : submit
+  const locale = useLocale()
+  // Кнопка — nowrap в пилюле поля: английская подпись занятой кнопки не шире
+  // русской (128 px против 160 при 16 px), «Reading your library…» было бы шире
+  const label = busy === 'connect' ? tr(locale, { ru: 'Читаю библиотеку…', en: 'Reading library…' }) : submit
   /** «Где взять?» раскрыта (LinkHelp). Закрыта, пока о ней не попросили */
   const [helpOpen, setHelpOpen] = useState(false)
   return (
@@ -743,7 +835,10 @@ function ProfileForm({
             а placeholder подписью не является — он исчезает при вводе и
             не читается скринридером как имя поля. */}
         <label htmlFor="steam-profile" className="sr-only">
-          Ссылка, ник или код друга в Steam
+          {tr(locale, {
+            ru: 'Ссылка, ник или код друга в Steam',
+            en: 'Steam profile link, custom URL or friend code',
+          })}
         </label>
         {/*
           «Где взять?» — в строке поля, а не строкой под ней: закрытая
@@ -764,7 +859,7 @@ function ProfileForm({
             type="text"
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            placeholder="Ссылка, ник или код друга"
+            placeholder={tr(locale, { ru: 'Ссылка, ник или код друга', en: PLACEHOLDER_EN })}
             inputMode="url"
             autoCapitalize="none"
             autoCorrect="off"

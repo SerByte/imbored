@@ -4,10 +4,12 @@ import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react'
 import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
+import { useLocale } from '@/components/LocaleProvider'
 import { Portal } from '@/components/Portal'
 import { StatusLine } from '@/components/StatusLine'
 import { requestCatalogIndex, useCatalogIndex } from '@/lib/catalogindex'
 import { SEARCH_QUERY_MAX, searchCatalog, searchStatus, stepActive, type SearchHit } from '@/lib/catalogsearch'
+import { tr } from '@/lib/i18n'
 import { backdropOf, holdScroll, makeInert } from '@/lib/pagelock'
 
 /**
@@ -67,6 +69,7 @@ export function CatalogSearch({
   onClose: () => void
 }) {
   const router = useLocaleRouter()
+  const locale = useLocale()
   const index = useCatalogIndex()
   // Потолок длины — как у поля: у подставки maxLength нет
   const [query, setQuery] = useState(seed.slice(0, SEARCH_QUERY_MAX))
@@ -86,7 +89,7 @@ export function CatalogSearch({
   )
   const games = found.games
   const current = active < games.length ? active : -1
-  const status = searchStatus(index.phase, query, found)
+  const status = searchStatus(index.phase, query, found, locale)
 
   /*
    * Что слышит скринридер: от набора — после паузы, от фазы индекса — сразу.
@@ -228,7 +231,7 @@ export function CatalogSearch({
           ref={panelRef}
           role="dialog"
           aria-modal="true"
-          aria-label="Найти игру"
+          aria-label={tr(locale, { ru: 'Найти игру', en: 'Search games' })}
           className="panel-lift anim-rise relative flex max-h-[calc(var(--vvh,100dvh)-max(1rem,env(safe-area-inset-top))-1rem)] w-full max-w-xl flex-col self-start p-2 sm:max-h-[calc(var(--vvh,100dvh)-12vh-1rem)]"
         >
           <form
@@ -241,7 +244,7 @@ export function CatalogSearch({
             }}
           >
             <label htmlFor={`${id}-q`} className="sr-only">
-              Название игры
+              {tr(locale, { ru: 'Название игры', en: 'Game title' })}
             </label>
             <span className="relative flex-1">
               <Icon
@@ -260,7 +263,7 @@ export function CatalogSearch({
                 aria-activedescendant={current >= 0 ? optionId(current) : undefined}
                 value={query}
                 maxLength={SEARCH_QUERY_MAX}
-                placeholder="Название игры"
+                placeholder={tr(locale, { ru: 'Название игры', en: 'Game title' })}
                 autoComplete="off"
                 autoCorrect="off"
                 autoCapitalize="none"
@@ -275,7 +278,12 @@ export function CatalogSearch({
                 className="h-12 w-full rounded-full border border-ink/15 bg-ink/7 pr-4 pl-11 text-base font-medium text-ink placeholder:text-dim focus:border-ink/45 focus:bg-ink/10 [&::-webkit-search-cancel-button]:grayscale"
               />
             </span>
-            <button type="button" aria-label="Закрыть поиск" onClick={onClose} className="btn-circle">
+            <button
+              type="button"
+              aria-label={tr(locale, { ru: 'Закрыть поиск', en: 'Close search' })}
+              onClick={onClose}
+              className="btn-circle"
+            >
               <Icon name="close" size={18} />
             </button>
           </form>
@@ -298,7 +306,7 @@ export function CatalogSearch({
                   void requestCatalogIndex()
                 }}
               >
-                Попробовать снова
+                {tr(locale, { ru: 'Попробовать снова', en: 'Try again' })}
               </button>
             </div>
           )}
@@ -306,7 +314,7 @@ export function CatalogSearch({
           <div
             id={listId}
             role="listbox"
-            aria-label="Игры каталога"
+            aria-label={tr(locale, { ru: 'Игры каталога', en: 'Catalog games' })}
             hidden={games.length === 0}
             className="mt-2 flex min-h-0 flex-col overflow-y-auto overscroll-contain"
           >
@@ -347,7 +355,11 @@ export function CatalogSearch({
             aria-hidden
             className="hidden px-3 pt-2 pb-1 text-xs text-dim [@media(pointer:fine)]:block"
           >
-            ↑↓ — выбрать · Enter — открыть · Esc — {query ? 'стереть' : 'закрыть'}
+            {locale === 'en' ? (
+              <>↑↓ to select · Enter to open · Esc to {query ? 'clear' : 'close'}</>
+            ) : (
+              <>↑↓ — выбрать · Enter — открыть · Esc — {query ? 'стереть' : 'закрыть'}</>
+            )}
           </p>
         </div>
       </div>

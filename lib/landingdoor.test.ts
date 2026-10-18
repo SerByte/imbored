@@ -102,8 +102,9 @@ describe('главная', () => {
    */
   test('вход без параметров назначения есть только в фолбэке', () => {
     const hits = [PAGE, ...landing].flatMap((file) => {
-      const n = [...code(fs.readFileSync(file, 'utf8')).matchAll(/href="\/api\/auth\/steam"/g)]
-        .length
+      // голый адрес — строкой или с одним только языком входа (withLang в фолбэке)
+      const bare = /href=(?:"\/api\/auth\/steam"|\{withLang\('\/api\/auth\/steam', locale\)\})/g
+      const n = [...code(fs.readFileSync(file, 'utf8')).matchAll(bare)].length
       return n ? [rel(file)] : []
     })
     expect(hits).toEqual(['components/landing/ConnectFallback.tsx'])

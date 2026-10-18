@@ -251,7 +251,7 @@ describe('подпись у «Войти через Steam»', () => {
 
   test('дверь Steam ссылается на фразу — и в фолбэке, и у гостя', () => {
     expect(code(read(FALLBACK))).toMatch(
-      /href="\/api\/auth\/steam"\s+aria-describedby=\{PASSWORD_NOTE_ID\}/,
+      /href=\{withLang\('\/api\/auth\/steam', locale\)\}\s+aria-describedby=\{PASSWORD_NOTE_ID\}/,
     )
     const card = code(read(CARD))
     const guestAt = card.indexOf(') : (', card.indexOf('view.authed ?'))

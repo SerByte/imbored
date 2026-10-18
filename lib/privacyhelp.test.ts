@@ -177,8 +177,9 @@ describe('каждое место панели даёт ей проверку', 
     expect(card, 'повтор нажатия во время проверки не шлёт второй запрос').toMatch(
       /function recheckProfile\(\) \{\s*if \(!input \|\| busy !== null\) return/,
     )
+    // язык входа добавляет withLang поверх того же адреса
     expect(card, 'steamHref везёт join, compat и next').toMatch(
-      /const steamHref = joinTarget\s*\?\s*`\/api\/auth\/steam\?join=/,
+      /const steamHref = withLang\(\s*joinTarget\s*\?\s*`\/api\/auth\/steam\?join=/,
     )
   })
 })

@@ -1,18 +1,57 @@
+import { use } from 'react'
 import Link from '@/components/Link'
 import { Ambient } from '@/components/Ambient'
 import { LogoMark } from '@/components/Logo'
+import { toLocale, type Locale } from '@/lib/i18n'
 import { ownAddress } from '@/lib/site'
 import { Icon } from '@/components/Icon'
 
 /*
- * Своё описание: без него /support наследовал описание главной, и поиск
- * получал из карты сайта две страницы с одинаковым сниппетом.
+ * Адрес страницы — canonical, og:url и корневая карточка. Свои заголовок и
+ * описание на языке страницы — в ./layout.tsx: ownAddress принимает их одним
+ * объектом без языка.
  */
-export const generateMetadata = ownAddress('/support', {
-  title: 'Поддержать',
-  description:
-    'imbored бесплатен и без рекламы в выдаче: рекомендации не продаются. Здесь можно поддержать проект, если он попадает в твои вечера.',
-})
+export const generateMetadata = ownAddress('/support')
+
+/**
+ * Текст страницы на обоих языках.
+ *
+ * Принцип внизу — та же фраза, что в сцене денег на главной (глоссарий:
+ * «We don't sell spots in our picks. A recommendation is trust, and trust
+ * isn't for sale.»); на неё ссылается и components/TagChips.tsx как на
+ * обещание продукта. Неразрывные пробелы — как в русском: строка на телефоне
+ * не начинается с тире и не кончается предлогом (по-английски — артиклем «A»).
+ */
+const COPY = {
+  ru: {
+    title: 'imbored бесплатен. И\u00a0останется таким.',
+    lede: 'Подбор, пати, совместимость, портрет и итоги года — бесплатны навсегда, без рекламы в выдаче и без проданных рекомендаций. Если сервис попадает в твои вечера — можно поддержать.',
+    donateTitle: 'Поддержать рублём',
+    donateLead: 'Донат — это спасибо, а не подписка.',
+    donateNote: 'За него ничего не открывается: платного в сервисе нет.',
+    donateButton: 'Поддержать проект',
+    howTitle: 'Как поддержать',
+    howLead: 'Денег сервис пока не принимает: реквизитов нет, и живёт он без них.',
+    howWrite:
+      'Лучшее «спасибо» сейчас — рассказать о нём тому, кому он пригодится. А если подбор промахнулся или что-то сломалось, напиши на',
+    rule: 'Принцип-табу: мы никогда не продаём места в\u00a0выдаче. Рекомендация\u00a0— это доверие, а\u00a0доверие не продаётся.',
+    back: 'К подбору игры',
+  },
+  en: {
+    title: 'imbored is free. And it’ll stay that\u00a0way.',
+    lede: 'Picks, parties, compatibility, the portrait and the year in review are free forever — no ads in the picks and no paid recommendations. If imbored has become part of your evenings, you can support it.',
+    donateTitle: 'Support with a donation',
+    donateLead: 'A donation is a thank-you, not a subscription.',
+    donateNote: 'It doesn’t unlock anything: nothing here is paid.',
+    donateButton: 'Support the project',
+    howTitle: 'How to support us',
+    howLead: 'We don’t take money yet: there’s no way to pay, and the service runs without it.',
+    howWrite:
+      'The best thank-you right now is telling someone who’d find it useful. And if a pick missed or something broke, write to',
+    rule: 'Our hard rule: we don’t sell spots in our picks. A\u00a0recommendation is trust, and trust isn’t for\u00a0sale.',
+    back: 'Find a game',
+  },
+} satisfies Record<Locale, Record<string, string>>
 
 /*
  * БЛОКА imbored+ ЗДЕСЬ БОЛЬШЕ НЕТ.
@@ -71,7 +110,12 @@ function donateHref(raw: string | undefined): string | null {
  */
 export const dynamicParams = false
 
-export default function SupportPage() {
+/**
+ * Язык — из params через use(), а не await: страница остаётся синхронной, и
+ * её тест рендерит её вызовом без params — тогда она русская, как была.
+ */
+export default function SupportPage({ params }: Partial<PageProps<'/[lang]/support'>> = {}) {
+  const t = COPY[params ? toLocale(use(params).lang) : 'ru']
   const donateUrl = donateHref(process.env.NEXT_PUBLIC_DONATE_URL)
 
   return (
@@ -80,14 +124,8 @@ export default function SupportPage() {
       <div className="relative mx-auto w-full max-w-xl px-5 pt-28 pb-16 flex flex-col gap-8">
         <div className="text-center flex flex-col items-center gap-4 anim-reveal">
           <LogoMark size={48} happy />
-          <h1 className="font-display text-display-md">
-            imbored бесплатен. И&nbsp;останется таким.
-          </h1>
-          <p className="text-dim leading-relaxed max-w-md">
-            Подбор, пати, совместимость, портрет и итоги года — бесплатны навсегда, без рекламы в
-            выдаче и без проданных рекомендаций. Если сервис попадает в твои вечера — можно
-            поддержать.
-          </p>
+          <h1 className="font-display text-display-md">{t.title}</h1>
+          <p className="text-dim leading-relaxed max-w-md">{t.lede}</p>
         </div>
 
         {/*
@@ -112,29 +150,24 @@ export default function SupportPage() {
         */}
         {donateUrl ? (
           <div className="panel-lift p-6 flex flex-col gap-3 anim-rise">
-            <h2 className="font-display text-display-xs">Поддержать рублём</h2>
-            <p className="font-medium leading-relaxed">Донат — это спасибо, а не подписка.</p>
-            <p className="text-dim leading-relaxed">
-              За него ничего не открывается: платного в сервисе нет.
-            </p>
+            <h2 className="font-display text-display-xs">{t.donateTitle}</h2>
+            <p className="font-medium leading-relaxed">{t.donateLead}</p>
+            <p className="text-dim leading-relaxed">{t.donateNote}</p>
             <a
               href={donateUrl}
               target="_blank"
               rel="noreferrer"
               className="btn-ember is-block py-3 text-center"
             >
-              Поддержать проект
+              {t.donateButton}
             </a>
           </div>
         ) : (
           <div className="panel-lift p-6 flex flex-col gap-3 anim-rise">
-            <h2 className="font-display text-display-xs">Как поддержать</h2>
-            <p className="font-medium leading-relaxed">
-              Денег сервис пока не принимает: реквизитов нет, и живёт он без них.
-            </p>
+            <h2 className="font-display text-display-xs">{t.howTitle}</h2>
+            <p className="font-medium leading-relaxed">{t.howLead}</p>
             <p className="text-dim leading-relaxed">
-              Лучшее «спасибо» сейчас — рассказать о нём тому, кому он пригодится. А если подбор
-              промахнулся или что-то сломалось, напиши на{' '}
+              {t.howWrite}{' '}
               <a href="mailto:hello@imbored.cc" className="tap text-ember-text hover:underline">
                 hello@imbored.cc
               </a>
@@ -143,15 +176,12 @@ export default function SupportPage() {
           </div>
         )}
 
-        <p className="text-xs text-faint text-center">
-          Принцип-табу: мы никогда не продаём места в&nbsp;выдаче. Рекомендация&nbsp;— это доверие,
-          а&nbsp;доверие не продаётся.
-        </p>
+        <p className="text-xs text-faint text-center">{t.rule}</p>
 
         <div className="text-center">
           <Link href="/quiz" className="tap link-more">
             <Icon name="arrow" size={16} className="rotate-180" />
-            К подбору игры
+            {t.back}
           </Link>
         </div>
       </div>

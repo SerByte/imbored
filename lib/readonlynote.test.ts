@@ -1,4 +1,4 @@
-import { createElement, type FunctionComponent } from 'react'
+import { createElement, type ComponentProps, type FunctionComponent } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { reportClientError } from '@/lib/clienterr'
@@ -81,6 +81,7 @@ afterEach(() => {
 /** Тело записки, как его привёз бы чанк: видимая панель и строка для скринридера */
 const Box: FunctionComponent<{ onHide: () => void }> = () => createElement('section', null, 'панель')
 const SAY = 'Режим просмотра: сказано'
+const SAY_EN = 'View-only mode: said'
 
 type Verdict = (then: (show: boolean) => void) => () => void
 
@@ -91,7 +92,12 @@ const reads: Verdict = (then) => {
 }
 
 /** Модуль тела; вердикт свой — чтобы держать его в руках */
-const body = (noteVerdict: Verdict = reads) => ({ ReadOnlyNoteBox: Box, READONLY_SAY: SAY, noteVerdict })
+const body = (noteVerdict: Verdict = reads) => ({
+  ReadOnlyNoteBox: Box,
+  READONLY_SAY: SAY,
+  READONLY_SAY_EN: SAY_EN,
+  noteVerdict,
+})
 
 /** Флажок, поставленный ago мс назад */
 const flag = (ago = 0) => String(Date.now() - ago)
@@ -100,6 +106,13 @@ const MINUTE = 60 * 1000
 async function shell() {
   const { ReadOnlyNote } = await import('@/components/ReadOnlyNote')
   return () => renderToStaticMarkup(createElement(ReadOnlyNote))
+}
+
+/** Та же оболочка под провайдером языка — как на /en */
+async function shellIn(locale: 'ru' | 'en') {
+  const { ReadOnlyNote } = await import('@/components/ReadOnlyNote')
+  const { LocaleProvider } = await import('@/components/LocaleProvider')
+  return () => renderToStaticMarkup(createElement(LocaleProvider, { locale } as ComponentProps<typeof LocaleProvider>, createElement(ReadOnlyNote)))
 }
 
 /** Исполнить эффекты первого рендера и дождаться чанка */
@@ -205,6 +218,19 @@ describe('оболочка записки в лэйауте', () => {
     await new Promise((r) => setTimeout(r, 0))
     expect(session[KEY]).toBeUndefined()
     expect(render()).toContain(SAY)
+  })
+
+  /*
+   * На /en живая область говорит по-английски — строкой из того же чанка
+   * тела, а не из первой загрузки: язык выбирает оболочка, при рендере.
+   */
+  test('на английском — английская строка в ту же область', async () => {
+    vi.doMock('@/components/ReadOnlyNoteBox', () => body())
+    session[KEY] = flag()
+    const render = await shellIn('en')
+    render()
+    await mount()
+    expect(render()).toBe(`<p role="status" class="sr-only">${SAY_EN}</p><section>панель</section>`)
   })
 
   /*

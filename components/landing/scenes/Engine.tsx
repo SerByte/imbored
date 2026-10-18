@@ -6,8 +6,8 @@ import { useState, useSyncExternalStore } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { Eyebrow } from '@/components/Labels'
 import { Stage } from '@/components/landing/Stage'
+import { fmtNumber, pl, tr, type Locale } from '@/lib/i18n'
 import type { LandingDemo, MoodKey } from '@/lib/landing'
-import { plural } from '@/lib/plural'
 
 /**
  * СЦЕНА 3: КАК ЭТО РАБОТАЕТ. Главный аттракцион страницы.
@@ -53,15 +53,24 @@ const BEAT_AT = [0, 0.45, 0.7]
 /** С этой доли сцена отдаёт руки — до того, как начнётся уход кадра. */
 const LIVE_AT = 0.82
 
+/*
+ * Подписи чипов — те же, что у квиза (lib/quiz, глоссарий: Unwind / Lock in /
+ * Solo / With friends): сцена показывает его вопросы до входа, и слова
+ * обязаны совпасть с теми, что человек нажмёт потом. Подсказки — короче
+ * квизовых: чип узкий.
+ */
+/** Чип переключателя: значение настроения и подписи на обоих языках */
+type Chip = { value: string; label: Record<Locale, string>; hint: Record<Locale, string> }
+
 const VIBES = [
-  { value: 'chill', label: 'Расслабиться', hint: 'без стресса' },
-  { value: 'engaged', label: 'Напрячься', hint: 'думать и потеть' },
-] as const
+  { value: 'chill', label: { ru: 'Расслабиться', en: 'Unwind' }, hint: { ru: 'без стресса', en: 'no stress' } },
+  { value: 'engaged', label: { ru: 'Напрячься', en: 'Lock in' }, hint: { ru: 'думать и потеть', en: 'think and sweat' } },
+] as const satisfies readonly Chip[]
 
 const SOCIALS = [
-  { value: 'solo', label: 'Один', hint: 'только я и игра' },
-  { value: 'friends', label: 'С друзьями', hint: 'нужен кооп' },
-] as const
+  { value: 'solo', label: { ru: 'Один', en: 'Solo' }, hint: { ru: 'только я и игра', en: 'just me and the game' } },
+  { value: 'friends', label: { ru: 'С друзьями', en: 'With friends' }, hint: { ru: 'нужен кооп', en: 'needs co-op' } },
+] as const satisfies readonly Chip[]
 
 const ALL_KEYS: readonly MoodKey[] = [
   'chill:solo',
@@ -98,7 +107,13 @@ const readReduced = () => window.matchMedia(REDUCED).matches
 /** На сервере медиазапроса нет — и разметка обязана совпасть с этим. */
 const readReducedOnServer = () => false
 
-export function Engine({ demo }: { demo: LandingDemo }) {
+/**
+ * Язык — пропом от главной, тем же, на каком собрана демо-выдача (причина
+ * первой, бейджи и теги уже на нём, lib/landing): так сцену можно вызвать и
+ * прямо функцией, без провайдера (lib/enginescene.test.ts). Без пропа —
+ * русский.
+ */
+export function Engine({ demo, locale = 'ru' }: { demo: LandingDemo; locale?: Locale }) {
   const [key, setKey] = useState<MoodKey>('chill:solo')
   /**
    * Прокрутка довела партитуру до конца — сцена отпустила сама. У
@@ -167,7 +182,7 @@ export function Engine({ demo }: { demo: LandingDemo }) {
   return (
     <Stage
       id="engine"
-      label="Как это работает"
+      label={tr(locale, { ru: 'Как это работает', en: 'How it works' })}
       end={END}
       enter={(intro, root) => {
         /*
@@ -205,13 +220,13 @@ export function Engine({ demo }: { demo: LandingDemo }) {
 
       <p className="slate">
         <b>03</b>
-        <span>Как это работает</span>
+        <span>{tr(locale, { ru: 'Как это работает', en: 'How it works' })}</span>
       </p>
 
       <div className="engine-grid" data-live={live ? '1' : '0'}>
         <div className="min-w-0">
           <Eyebrow tone="faint" className="mb-3">
-            Из чего выбираем
+            {tr(locale, { ru: 'Из чего выбираем', en: 'What we pick from' })}
           </Eyebrow>
           <ul className="wall" data-wall>
             {demo.wall.map((g) => (
@@ -235,13 +250,21 @@ export function Engine({ demo }: { demo: LandingDemo }) {
             подпись значило бы спрятать единственное, что отличает
             демонстрацию от вранья.
           */}
-          <p className="mt-3 max-w-md text-xs leading-relaxed text-faint" data-wall-note>
-            Чужая библиотека: {demo.libraryCount}{' '}
-            {plural(demo.libraryCount, 'игра', 'игры', 'игр')} демо-игрока,{' '}
-            {demo.libraryHours.toLocaleString('ru-RU')}{' '}
-            {plural(demo.libraryHours, 'час', 'часа', 'часов')}. Твоя будет другой, механика та
-            же.
-          </p>
+          {locale === 'en' ? (
+            <p className="mt-3 max-w-md text-xs leading-relaxed text-faint" data-wall-note>
+              Someone else’s library: the demo player’s {demo.libraryCount}{' '}
+              {pl(locale, demo.libraryCount, GAMES)}, {fmtNumber(locale, demo.libraryHours)}{' '}
+              {pl(locale, demo.libraryHours, HOURS)}. Yours will be different; the mechanics are the same.
+            </p>
+          ) : (
+            <p className="mt-3 max-w-md text-xs leading-relaxed text-faint" data-wall-note>
+              Чужая библиотека: {demo.libraryCount}{' '}
+              {pl(locale, demo.libraryCount, GAMES)} демо-игрока,{' '}
+              {fmtNumber(locale, demo.libraryHours)}{' '}
+              {pl(locale, demo.libraryHours, HOURS)}. Твоя будет другой, механика та
+              же.
+            </p>
+          )}
 
           {/*
             «ПОЧЕМУ ПЕРВАЯ» — обещание первой строки главной («И почему
@@ -279,7 +302,7 @@ export function Engine({ demo }: { demo: LandingDemo }) {
             {whys.map((w) => (
               <div key={w} className={`engine-why${w === whyNow ? ' is-on' : ''}`}>
                 <Eyebrow tone="ember" className="mb-1.5">
-                  Почему первая
+                  {tr(locale, { ru: 'Почему первая', en: 'Why this one first' })}
                 </Eyebrow>
                 <p className="text-sm leading-relaxed text-ink/90">{w}</p>
               </div>
@@ -305,7 +328,7 @@ export function Engine({ demo }: { demo: LandingDemo }) {
             }}
           >
             <div className="switch">
-              <Eyebrow tone="faint">Вайб</Eyebrow>
+              <Eyebrow tone="faint">{tr(locale, { ru: 'Вайб', en: 'Vibe' })}</Eyebrow>
               <div className="switch-row">
                 {VIBES.map((o) => (
                   <button
@@ -315,14 +338,14 @@ export function Engine({ demo }: { demo: LandingDemo }) {
                     aria-pressed={vibe === o.value}
                     onClick={(e) => pick(`${o.value}:${social}` as MoodKey, e.detail === 0)}
                   >
-                    <b>{o.label}</b>
-                    <i>{o.hint}</i>
+                    <b>{o.label[locale]}</b>
+                    <i>{o.hint[locale]}</i>
                   </button>
                 ))}
               </div>
             </div>
             <div className="switch">
-              <Eyebrow tone="faint">Компания</Eyebrow>
+              <Eyebrow tone="faint">{tr(locale, { ru: 'Компания', en: 'Company' })}</Eyebrow>
               <div className="switch-row">
                 {SOCIALS.map((o) => (
                   <button
@@ -332,15 +355,15 @@ export function Engine({ demo }: { demo: LandingDemo }) {
                     aria-pressed={social === o.value}
                     onClick={(e) => pick(`${vibe}:${o.value}` as MoodKey, e.detail === 0)}
                   >
-                    <b>{o.label}</b>
-                    <i>{o.hint}</i>
+                    <b>{o.label[locale]}</b>
+                    <i>{o.hint[locale]}</i>
                   </button>
                 ))}
               </div>
             </div>
           </div>
 
-          <Eyebrow className="mb-3 mt-5">Что предложит</Eyebrow>
+          <Eyebrow className="mb-3 mt-5">{tr(locale, { ru: 'Что предложит', en: 'What you’d get' })}</Eyebrow>
           <div className="picks" data-picks>
             {ALL_KEYS.map((k) => (
               /*
@@ -387,14 +410,20 @@ export function Engine({ demo }: { demo: LandingDemo }) {
           </div>
 
           <p className="mt-3 max-w-md text-xs leading-relaxed text-faint">
-            Своё идёт первым, покупок в пятёрке не больше двух. Третий вопрос — сколько у тебя
-            времени — задаём в самом подборе.
+            {tr(locale, {
+              ru: 'Своё идёт первым, покупок в пятёрке не больше двух. Третий вопрос — сколько у тебя времени — задаём в самом подборе.',
+              en: 'Your own games come first, and no more than two in the five are purchases. The third question — how much time you have — comes in the pick itself.',
+            })}
           </p>
         </div>
       </div>
     </Stage>
   )
 }
+
+/** Формы слов подписи под стеной — для pl() */
+const GAMES: Parameters<typeof pl>[2] = { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] }
+const HOURS: Parameters<typeof pl>[2] = { ru: ['час', 'часа', 'часов'], en: ['hour', 'hours'] }
 
 /**
  * ПАРТИТУРА СЦЕНЫ — тело `build`, отдельной функцией, а не стрелкой в

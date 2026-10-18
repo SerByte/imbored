@@ -5,7 +5,9 @@ import Link from '@/components/Link'
 import { Icon, type IconName } from '@/components/Icon'
 import { Stage } from '@/components/landing/Stage'
 import { LinkPending } from '@/components/LinkPending'
+import { useLocale } from '@/components/LocaleProvider'
 import { PosterFan, type FanGame } from '@/components/PosterFan'
+import { tr, type Locale } from '@/lib/i18n'
 import { navPrefetch } from '@/lib/nav'
 
 /**
@@ -38,10 +40,14 @@ import { navPrefetch } from '@/lib/nav'
  * lib/navprefetch.test.ts.
  */
 
+/*
+ * Имена разделов — те же, что в навигации (глоссарий docs/i18n.md): человек
+ * узнаёт их здесь и в шапке одними словами. Строки — парой языков рядом.
+ */
 type Section = {
   href: string
-  name: string
-  line: string
+  name: Record<Locale, string>
+  line: Record<Locale, string>
   icon: IconName
   art: readonly FanGame[]
 }
@@ -49,8 +55,8 @@ type Section = {
 const REPERTOIRE: readonly Section[] = [
   {
     href: '/rooms',
-    name: 'Пати',
-    line: 'Комната, ссылка своим, свайпаете вместе.',
+    name: { ru: 'Пати', en: 'Party' },
+    line: { ru: 'Комната, ссылка своим, свайпаете вместе.', en: 'A room, a link for your friends, and you swipe together.' },
     icon: 'users',
     art: [
       { appid: 548430, name: 'Deep Rock Galactic' },
@@ -60,8 +66,8 @@ const REPERTOIRE: readonly Section[] = [
   },
   {
     href: '/compat',
-    name: 'Совместимость',
-    line: 'Сравним библиотеки и часы с кем угодно.',
+    name: { ru: 'Совместимость', en: 'Compatibility' },
+    line: { ru: 'Сравним библиотеки и часы с кем угодно.', en: 'Compare libraries and hours with anyone.' },
     icon: 'heart',
     art: [
       { appid: 570, name: 'Dota 2' },
@@ -70,15 +76,15 @@ const REPERTOIRE: readonly Section[] = [
   },
   {
     href: '/daily',
-    name: 'Игра дня',
-    line: 'Одна игра на день. Завтра будет другая.',
+    name: { ru: 'Игра дня', en: 'Game of the day' },
+    line: { ru: 'Одна игра на день. Завтра будет другая.', en: 'One game a day. Tomorrow brings another.' },
     icon: 'calendar',
     art: [{ appid: 1145360, name: 'Hades' }],
   },
   {
     href: '/library',
-    name: 'Библиотека',
-    line: 'Заброшенное и нераспакованное — одной стеной.',
+    name: { ru: 'Библиотека', en: 'Library' },
+    line: { ru: 'Заброшенное и нераспакованное — одной стеной.', en: 'Abandoned and unopened games — on one wall.' },
     icon: 'grid',
     art: [
       { appid: 413150, name: 'Stardew Valley' },
@@ -88,8 +94,8 @@ const REPERTOIRE: readonly Section[] = [
   },
   {
     href: '/portrait',
-    name: 'Портрет игрока',
-    line: 'Куда ушло время — страницей, которой делятся.',
+    name: { ru: 'Портрет игрока', en: 'Player portrait' },
+    line: { ru: 'Куда ушло время — страницей, которой делятся.', en: 'Where your time went — a page worth sharing.' },
     icon: 'spark',
     art: [
       { appid: 632470, name: 'Disco Elysium' },
@@ -98,8 +104,8 @@ const REPERTOIRE: readonly Section[] = [
   },
   {
     href: '/whatsnew',
-    name: 'Что нового',
-    line: 'Только крупные патчи по твоим играм.',
+    name: { ru: 'Что нового', en: 'What’s new' },
+    line: { ru: 'Только крупные патчи по твоим играм.', en: 'Only major patches for your games.' },
     icon: 'news',
     art: [
       { appid: 1091500, name: 'Cyberpunk 2077' },
@@ -109,10 +115,12 @@ const REPERTOIRE: readonly Section[] = [
 ]
 
 export function Repertoire() {
+  const locale = useLocale()
+  const slate = tr(locale, { ru: 'Что здесь ещё есть', en: 'What else is here' })
   return (
     <Stage
       id="more"
-      label="Что здесь ещё есть"
+      label={slate}
       end="+=120%"
       enter={(intro, root) => {
         /*
@@ -145,7 +153,7 @@ export function Repertoire() {
 
       <p className="slate">
         <b>05</b>
-        <span>Что здесь ещё есть</span>
+        <span>{slate}</span>
       </p>
 
       <ul className="rep">
@@ -157,9 +165,9 @@ export function Repertoire() {
                 <Icon name={item.icon} size={18} />
               </span>
               <span className="rep-name">
-                <LinkPending>{item.name}</LinkPending>
+                <LinkPending>{item.name[locale]}</LinkPending>
               </span>
-              <span className="rep-line">{item.line}</span>
+              <span className="rep-line">{item.line[locale]}</span>
               <span aria-hidden className="rep-arrow">
                 <Icon name="arrow" size={18} />
               </span>

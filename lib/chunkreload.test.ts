@@ -1,4 +1,4 @@
-import { createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
+import { createElement, isValidElement, type ComponentProps, type ReactElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { isChunkLoadError } from './clienterr'
@@ -35,6 +35,11 @@ vi.mock('react', async (importOriginal) => ({
   // язык аварийного экрана — из адреса (app/global-error.tsx); при прямом
   // вызове компонента хук отдаёт снимок браузера как есть
   useSyncExternalStore: (_subscribe: unknown, get: () => unknown) => get(),
+  // язык границы app/[lang]/error.tsx — из контекста (useLocale). Значение
+  // берётся из того гнезда контекста, куда его кладёт react-dom/server
+  // (_currentValue2: первое гнездо — у клиентского react-dom); при прямом
+  // вызове компонента там значение по умолчанию — русский, как без провайдера
+  useContext: (context: { _currentValue2: unknown }) => context._currentValue2,
 }))
 
 afterEach(() => {
@@ -121,6 +126,31 @@ describe('экраны ошибки и отказ чанка', () => {
     button!.props.onClick()
     expect(retry).toHaveBeenCalledTimes(1)
     expect(reload).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Граница под корневым layout берёт язык из его провайдера: на /en экран и
+ * обе его кнопки — по-английски, «На главную» ведёт на английскую главную.
+ */
+describe('граница ошибок на языке страницы', () => {
+  test('под провайдером en — по-английски, без кириллицы', async () => {
+    vi.stubGlobal('window', { location: { reload, href: 'https://imbored.cc/en/play' } })
+    const { default: Screen } = await import('@/app/[lang]/error')
+    const { LocaleProvider } = await import('@/components/LocaleProvider')
+    const en = (error: Error) =>
+      renderToStaticMarkup(
+        createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, createElement(Screen, { error, retry: vi.fn() })),
+      )
+    const stale = en(turbopackChunk())
+    expect(stale).toContain('Something broke')
+    expect(stale).toContain('Reload page')
+    expect(stale).toContain('href="/en"')
+    expect(stale).not.toMatch(/[А-Яа-яЁё]/)
+    const plain = en(new TypeError('boom'))
+    expect(plain).toContain('Try again')
+    expect(plain).toContain('Back to home')
+    expect(plain).not.toMatch(/[А-Яа-яЁё]/)
   })
 })
 

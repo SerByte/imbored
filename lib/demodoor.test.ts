@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { DemoBar } from '../components/DemoBar'
@@ -101,6 +101,25 @@ describe('полоса', () => {
 
   test('в потоке — только сама строка, без слоя', () => {
     expect(html({ from: '/library', className: 'mb-6' })).toMatch(/^<p class="[^"]*\bmb-6\b/)
+  })
+
+  /*
+   * Страницы зовут полосу русским путём (from="/daily"), и на /en двери
+   * обязаны вести обратно на английскую: те же адреса, что у demoDoors от
+   * '/en/daily', — и ни слова по-русски.
+   */
+  test('на английском — по-английски, и обе двери ведут на /en', async () => {
+    const { LocaleProvider } = await import('@/components/LocaleProvider')
+    const out = renderToStaticMarkup(
+      createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, createElement(DemoBar, { from: '/daily' })),
+    )
+    const { steam, link } = demoDoors('/en/daily')
+    expect(out).toContain(`href="${steam.replace(/&/g, '&amp;')}"`)
+    expect(out).toContain(`href="${link.replace(/&/g, '&amp;')}"`)
+    expect(out).toMatch(/>Sign in with Steam<\/a>/)
+    // вопрос, на который двери отвечают, а не обрубок фразы перед ними
+    expect(out).toContain('<span class="text-dim">Want picks from yours?</span>')
+    expect(out).not.toMatch(/[А-Яа-яЁё]/)
   })
 })
 

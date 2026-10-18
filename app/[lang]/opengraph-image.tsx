@@ -1,7 +1,15 @@
 import { ImageResponse } from 'next/og'
-import { LOCALES } from '@/lib/i18n'
+import { LOCALES, toLocale, tr, type Locale } from '@/lib/i18n'
 import { ogFonts, ogGlow, OG_BG, OG_DIM, OG_EMBER, OG_INK, OG_PLATE } from '@/lib/og'
 
+/*
+ * Подпись картинки — одна на оба языка, и она русская: alt файловой карточки
+ * Next читает как константу модуля, без params. Языковая подпись — только
+ * через generateImageMetadata, а он меняет адрес картинки (…/opengraph-image/<id>)
+ * и у русской главной. Подпись на языке страницы может поставить только тот,
+ * кто переносит корневую карточку в метадату страницы (ownAddress в
+ * lib/site.ts): у русской она равна SITE_TITLE, у английской — siteTitle('en').
+ */
 export const alt = 'imbored — во что поиграть'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
@@ -58,7 +66,23 @@ const WORD = 172
 const STRIKE_TOP = Math.round(WORD * 0.526)
 const STRIKE_H = Math.round(WORD * 0.07)
 
-export default async function Image() {
+/**
+ * Текст карточки — на языке адреса (/en/opengraph-image): тот, кто кинул
+ * английскую ссылку, получает английскую карточку. Знак «imbored» общий.
+ */
+const COPY = {
+  ru: {
+    eyebrow: 'ВО ЧТО ПОИГРАТЬ',
+    lede: 'Скажи, сколько у тебя времени и сил, — дадим одну игру и объясним, почему она',
+  },
+  en: {
+    eyebrow: 'WHAT TO PLAY',
+    lede: 'Tell us how much time and energy you have — we’ll pick one game and tell you why',
+  },
+} satisfies Record<Locale, { eyebrow: string; lede: string }>
+
+export default async function Image({ params }: { params: Promise<{ lang: string }> }) {
+  const copy = tr(toLocale((await params).lang), COPY)
   return new ImageResponse(
     (
       <div
@@ -101,7 +125,7 @@ export default async function Image() {
               color: OG_EMBER,
             }}
           >
-            ВО ЧТО ПОИГРАТЬ
+            {copy.eyebrow}
           </div>
         </div>
 
@@ -132,7 +156,7 @@ export default async function Image() {
 
           {/* Отступ сверху с запасом — см. lib/og: кириллические выносные «р», «у», «д» */}
           <div style={{ display: 'flex', marginTop: 34, fontSize: 34, color: OG_DIM, maxWidth: 900 }}>
-            Скажи, сколько у тебя времени и сил, — дадим одну игру и объясним, почему она
+            {copy.lede}
           </div>
         </div>
 

@@ -96,8 +96,15 @@ async function ribbonForLanding() {
 export const dynamicParams = false
 
 export default async function Home({ params }: PageProps<'/[lang]'>) {
-  const demo = landingDemo(nowSec())
   const [ribbon, { lang }] = await Promise.all([ribbonForLanding(), params])
+  /*
+   * Язык — сегмент маршрута, а не куки и не заголовки: обе главные остаются
+   * статическими, каждая собирается своим вызовом. Демо-выдача считается под
+   * язык страницы (причина первой, бейджи, теги), и сцены, которые её рисуют,
+   * получают тот же язык пропом.
+   */
+  const locale = toLocale(lang)
+  const demo = landingDemo(nowSec(), locale)
 
   return (
     <div className="media-dark media-full landing">
@@ -108,7 +115,7 @@ export default async function Home({ params }: PageProps<'/[lang]'>) {
       */}
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: ldScript(websiteJsonLd(appBaseUrl(), toLocale(lang))) }}
+        dangerouslySetInnerHTML={{ __html: ldScript(websiteJsonLd(appBaseUrl(), locale)) }}
       />
       {/*
         Лента уходит в портал у <body>: слой обязан быть fixed, а под плавной
@@ -119,8 +126,8 @@ export default async function Home({ params }: PageProps<'/[lang]'>) {
 
       <Hero />
       <Pain />
-      <Engine demo={demo} />
-      <Compat demo={demo} />
+      <Engine demo={demo} locale={locale} />
+      <Compat demo={demo} locale={locale} />
       <Repertoire />
       <Money />
 
