@@ -4,6 +4,7 @@ import path from 'node:path'
 import { createElement, Fragment, isValidElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
+import PrivacyPage from '../app/[lang]/privacy/page'
 import { COPY, type PolicyCopy } from '../app/[lang]/privacy/page.copy'
 import { LOCALES, type Locale } from './i18n'
 
@@ -20,11 +21,14 @@ import { LOCALES, type Locale } from './i18n'
  *
  * Поэтому тест снимает отпечаток с ПРОЗЫ политики — с того, что человек
  * читает глазами, — и сравнивает с записанным ниже. Текст живёт в
- * app/[lang]/privacy/page.copy.tsx, по объекту на язык (COPY), и отпечаток
- * снимается с каждого отдельно: со всех его строк и с видимого текста его
- * абзацев, без разметки. Классы оформления, перестановка вёрстки в page.tsx и
- * комментарии в отпечаток не входят: переверстать страницу можно свободно, а
- * переписать текст — только вместе с датой своего языка.
+ * app/[lang]/privacy/page.copy.tsx, по объекту на язык (COPY), но отпечаток
+ * снимается не с COPY, а с того, что рисует сама страница на каждом языке:
+ * с её видимого текста и подписей (aria-label, title, alt, placeholder) и с
+ * title и description из COPY.meta. Слово, вписанное прямо в page.tsx мимо
+ * COPY, читатель видит так же — значит, и сторож обязан его видеть. Классы
+ * оформления, перестановка вёрстки и комментарии в отпечаток не входят:
+ * переверстать страницу можно свободно, а переписать текст — только вместе с
+ * датой своего языка.
  *
  * Когда прогон упал: правка текста была намеренной — обнови COPY[язык].updated
  * в app/[lang]/privacy/page.copy.tsx, дату здесь и подставь новый отпечаток из
@@ -36,8 +40,8 @@ const PAGE = path.join(__dirname, '..', 'app', '[lang]', 'privacy', 'page.tsx')
 
 /** Отпечаток прозы каждого языка и дата, для которой он действителен. Дата дублируется, чтобы тест видел смену. */
 const LOCKS: Record<Locale, { digest: string; updated: string }> = {
-  ru: { digest: '3cbccb731af036f3', updated: '18 октября 2026' },
-  en: { digest: '7e55c69e0c4cefa1', updated: 'October 18, 2026' },
+  ru: { digest: '9bad6c32f480dfcb', updated: '18 октября 2026' },
+  en: { digest: '816c7205349fb06d', updated: 'October 18, 2026' },
 }
 
 /** Видимый текст куска JSX: абзацы — строками, разметка и сущности HTML — прочь */
@@ -53,9 +57,9 @@ function textOf(node: ReactNode): string {
 }
 
 /**
- * Проза языка — все строки COPY и видимый текст всех его абзацев, по порядку
+ * Проза языка в COPY — все строки и видимый текст всех абзацев, по порядку
  * ключей. Обходом, а не списком полей: новое поле с текстом попадёт в
- * отпечаток само. Без даты: отпечаток действителен ДЛЯ неё.
+ * проверки ниже само. Без даты.
  */
 function prose(copy: PolicyCopy): string {
   const chunks: string[] = []
@@ -74,6 +78,29 @@ function prose(copy: PolicyCopy): string {
     .join('\n')
 }
 
+/** Страница политики на языке — тем же вызовом, что делает Next */
+const renderPage = (locale: Locale) =>
+  PrivacyPage({ params: Promise.resolve({ lang: locale }), searchParams: Promise.resolve({}) })
+
+/**
+ * Проза, которую рисует страница языка: видимый текст и текстовые подписи
+ * разметки — тем же рендером, что у читателя, — и без даты: отпечаток
+ * действителен ДЛЯ неё. Заголовок вкладки и описание для поиска — из
+ * COPY.meta: их отдаёт generateMetadata (вызов держит lib/social.test.ts).
+ */
+async function pageProse(locale: Locale): Promise<string> {
+  const copy = COPY[locale]
+  const page = await renderPage(locale)
+  const labels = [...renderToStaticMarkup(page).matchAll(/\s(?:aria-label|title|alt|placeholder)="([^"]*)"/g)].map(
+    (m) => m[1],
+  )
+  return [copy.meta.title, copy.meta.description, ...labels, textOf(page).split(copy.updated).join('')]
+    .flatMap((s) => s.split('\n'))
+    .map((s) => s.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
 /** Раздел политики по номеру — видимым текстом: ответ и абзацы */
 function sectionText(locale: Locale, n: string): string {
   const s = COPY[locale].sections.find((x) => x.n === n)
@@ -82,15 +109,16 @@ function sectionText(locale: Locale, n: string): string {
 }
 
 describe.each(LOCALES)('политика конфиденциальности: %s', (locale) => {
-  test('на странице стоит дата обновления', () => {
+  test('на странице стоит дата обновления', async () => {
     expect(COPY[locale].updated).toBe(LOCKS[locale].updated)
     // и страница её показывает — сразу за «Обновлено»
     expect(fs.readFileSync(PAGE, 'utf8')).toMatch(/\{copy\.updatedLead\}\s*\{copy\.updated\}/)
+    expect(textOf(await renderPage(locale))).toContain(`${COPY[locale].updatedLead}${COPY[locale].updated}`)
   })
 
-  test('текст политики не менялся в обход даты', () => {
-    const text = prose(COPY[locale])
-    expect(text.length, 'проза не извлеклась — проверь prose()').toBeGreaterThan(1500)
+  test('текст политики не менялся в обход даты', async () => {
+    const text = await pageProse(locale)
+    expect(text.length, 'проза не извлеклась — проверь pageProse()').toBeGreaterThan(1500)
     const digest = crypto.createHash('sha256').update(text).digest('hex').slice(0, 16)
     expect(
       digest,
@@ -116,9 +144,11 @@ describe('английская политика — та же, что русск
     expect(shape('en')).toEqual(shape('ru'))
   })
 
-  test('ни буквы кириллицы', () => {
-    const text = prose(COPY.en)
-    expect(text.match(/[^\n]*[А-Яа-яЁё][^\n]*/g) ?? []).toEqual([])
+  test('ни буквы кириллицы', async () => {
+    // и в COPY.en, и в том, что рисует /en/privacy: слово мимо COPY — тоже
+    for (const text of [prose(COPY.en), await pageProse('en')]) {
+      expect(text.match(/[^\n]*[А-Яа-яЁё][^\n]*/g) ?? []).toEqual([])
+    }
   })
 
   /*
