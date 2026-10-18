@@ -281,6 +281,17 @@ describe('shareText: английская причина', () => {
       'Since your last session, a big patch landed with new maps.',
       'A lot has changed since you played.',
       'SINCE THEY LAST PLAYED, TWO BIG UPDATES CAME OUT.',
+      // Пересказы, которые прежнее правило пропускало на публичную /pick
+      'A big update dropped since the last time you played: new weapons.',
+      'Since you were last here, a major update came out: new weapons.',
+      'Since you stopped playing, it got a new biome.',
+      'since you were last here, the Labor of Love update added new pets.',
+      'A lot changed in “Terraria” since you dropped it: new pets.',
+      'Since you abandoned “Terraria”, it got a major update.',
+      'It got a major update after you put it down.',
+      'While you were away, “Terraria” got a major update.',
+      "Since you've been away, the devs added a new biome.",
+      'In your absence, the game got a co-op mode.',
     ]) {
       expect(shareText(`${known} ${fact} ${recall}`, ''), fact).toBe(`${known} ${recall}`)
     }
@@ -289,11 +300,102 @@ describe('shareText: английская причина', () => {
   test('«last session» без «since» — не факт о патче, остаётся', () => {
     const plain = 'Your last session ended on a cliffhanger, and the boss is still standing.'
     expect(shareText(`${known} ${plain}`, '')).toBe(`${known} ${plain}`)
+    for (const keep of [
+      "Since you're new to the genre, this is a gentle start.",
+      'Since you like roguelikes, this one fits.',
+      'It has been a hit since launch.',
+    ]) {
+      expect(shareText(keep, ''), keep).toBe(keep)
+    }
+  })
+
+  test('суммы в любой записи — знак перед числом, код валюты, валюта словом', () => {
+    for (const money of [
+      "It'll set you back 1,999 rubles.",
+      "It's RUB 1,999 right now.",
+      "It's 9.99 USD right now.",
+      "It's ₽999 right now, down from ₽1,999.",
+      'A ₽1,999 purchase, but worth it.',
+      "It's a purchase at 1,999 rubles.",
+      'Down to 999 rubles.',
+      'Only 499 RUB.',
+      'Just ¥1,980 in the store.',
+      'Just ₹499 in the store.',
+      'Only zł 49 now.',
+      'Under ten bucks.',
+      "It's 4 499 ₸ on Steam.",
+    ]) {
+      expect(shareText(`First. ${money} Last.`, ''), money).toBe('First. Last.')
+    }
+  })
+
+  test('скидка без минуса: save, marked down, half off, percent off, cheaper', () => {
+    for (const money of [
+      'Save 40% if you grab it this week.',
+      "Right now it's marked down 40%.",
+      'Half off right now.',
+      '50 percent off this week.',
+      "It's 40% cheaper than usual.",
+      'You can grab it for free this weekend.',
+      "It's free to play.",
+    ]) {
+      expect(shareText(`First. ${money} Last.`, ''), money).toBe('First. Last.')
+    }
+  })
+
+  test('ценовой хвост на /en с ценой знаком впереди — выпадает, даже если роут передал другой хвост', () => {
+    const base = '“Hades” isn\'t in your library, but its tag (Roguelike) matches what you play the most.'
+    const enTail = " It's ₽1,999 on Steam."
+    // хвост не совпал (роут отрезал по русскому) — предложение с суммой всё равно уходит
+    expect(shareText(base + enTail, ' В Steam — 1\u00a0999\u00a0₽.')).toBe(base)
+  })
+
+  test('«free» не о деньгах и слова о деньгах в названиях игр — не трогаем', () => {
+    for (const keep of [
+      "With the whole evening free, “Disco Elysium” is the deep story you've been saving.",
+      "Your evening is free, so sink into “Disco Elysium” — it's closest to what you love.",
+      'Feel free to take it slow.',
+      'A free-roam sandbox with no timers.',
+      'Lots of free time in the open world.',
+      '“Cheap Golf” is short and silly, perfect for tonight.',
+      '“Garage Sale” is a cozy puzzler.',
+      '“Free Fire” is a fast shooter you can play with friends.',
+      '“Cost of Living” is a calm sim for a quiet night.',
+    ]) {
+      expect(shareText(keep, ''), keep).toBe(keep)
+    }
   })
 
   test('русские правила на месте и для английского вызова — языки не мешают друг другу', () => {
     const ru = `У тебя в «Hades» уже 40 ч. ${PATCH_SINCE_LEAD}: новые карты. Зайдёт на вечер.`
     expect(shareText(ru, '', 'Новые карты')).toBe('У тебя в «Hades» уже 40 ч. Зайдёт на вечер.')
+  })
+
+  /*
+   * Русская причина режется ровно как раньше: английские слова о деньгах к
+   * русскому предложению не применяются. Прежде «free-to-play шутер» и
+   * «Cheap Golf» в русской причине доезжали до ссылки — и доезжают.
+   */
+  test('русская причина с латиницей — прежний текст: ни название игры, ни «free-to-play» не режут её', () => {
+    for (const keep of [
+      '«Cheap Golf» — короткая и смешная, на вечер хватит.',
+      '«Garage Sale» — уютная головоломка.',
+      '«Warframe» — free-to-play шутер, где можно играть с друзьями.',
+      '«Price of Glory» — стратегия. Зайдёт на вечер.',
+      '«The Sale» — детектив. Его ценят за сюжет.',
+      '«Hurry Up» — аркада, где всё решают секунды.',
+    ]) {
+      expect(shareText(keep, ''), keep).toBe(keep)
+    }
+    // а русская цена по-прежнему уходит
+    expect(shareText('«Cheap Golf» — короткая. Стоит 499 ₽.', '')).toBe('«Cheap Golf» — короткая.')
+  })
+
+  test('английская причина с названием кириллицей — английские правила: сумма уходит, имя не мешает', () => {
+    expect(shareText("“Смута” isn't in your library. It's 999 rubles right now.", '')).toBe("“Смута” isn't in your library.")
+    expect(shareText('“Цена свободы” is a story you finish in an evening.', '')).toBe(
+      '“Цена свободы” is a story you finish in an evening.',
+    )
   })
 })
 
