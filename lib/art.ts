@@ -216,6 +216,49 @@ export function artSrcSet(game: ArtSource, variant: ArtVariant = 'card'): string
   return parts.length > 1 ? parts.join(', ') : undefined
 }
 
+/**
+ * sizes героя по умолчанию (GameArt variant="hero"): арт во всю ширину окна.
+ *
+ * Константой, потому что её обязан повторить тот, кто рисует ТОТ ЖЕ файл
+ * вторым слоем: размытая заливка /whatsnew (components/whatsnew/Stage)
+ * начинается с арта обложки, и только с тем же srcSet и тем же sizes
+ * браузер выберет тот же кандидат и возьмёт его из кэша. Без этого ретина
+ * качала обложку дважды: library_hero_2x (1.27 МБ) под обложку и
+ * library_hero (397 КБ) под заливку, которую не видно за blur-3xl и скримом.
+ */
+export const HERO_SIZES = '100vw'
+
+/**
+ * Когда герою с portrait (GameArt) брать вертикальный постер вместо
+ * library_hero: окно не шире, чем высоко, — телефон и планшет в портрете.
+ *
+ * Полоса library_hero — 3.1:1, а герой там — стоячий бокс: object-cover
+ * вписывал её по высоте и оставлял на экране 10–23% ширины, растянутые в
+ * 2–4 раза (замер на проде, /pick при 390×844 и DPR 2: видно 19%, ×2.12).
+ * Постер 2:3 в том же боксе виден почти целиком. В альбомной ориентации
+ * бокс шире, чем высок, и полоса героя ложится как задумано.
+ */
+export const PORTRAIT_HERO_MEDIA = '(max-aspect-ratio: 1/1)'
+
+/**
+ * sizes капсулы в полке-ряду (.shelf-rail): хаб /games и «Вечера» на /library.
+ *
+ * Капсула там — `width: clamp(200px, 21vw, 264px)` (.shelf-rail > li в
+ * globals.css), то есть 200 px на любом телефоне. А sizes стоял одним
+ * числом — «260px» на хабе, «264px» у «Вечеров», — и браузер телефона с
+ * DPR 2 искал файл на 520 физических пикселей: header в 460 мал, значит
+ * header_2x в 920. Замер на проде (390×844, DPR 2): каждая капсула ряда —
+ * header_2x на 67–187 КБ там, где header на 25–53 КБ закрывает 400 нужных
+ * пикселей с запасом; две из пяти первых капсул хаба — так. На DPR от 2.3 и
+ * на десктопе выбор не меняется: там 920 нужен и так.
+ *
+ * Здесь та же кривая, что в clamp: 21vw равно 200 px на 952 px окна и
+ * 264 px на 1257. clamp() внутри sizes нарочно не пишем — Chrome его
+ * понимает, а за WebKit не поручимся. Меняется clamp — меняется и строка:
+ * сверку держит lib/art.test.ts.
+ */
+export const SHELF_RAIL_SIZES = '(max-width: 952px) 200px, (max-width: 1257px) 21vw, 264px'
+
 /** Плоский путь как последний источник — тот же, что в конце artCandidates. */
 function candidateHeader(game: ArtSource): string | null {
   return game.appid > 0 ? legacyArtUrl(game.appid, 'header') : null

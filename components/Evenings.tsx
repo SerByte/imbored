@@ -10,7 +10,7 @@ import { lazyIsland } from '@/components/lazyIsland'
 import { NeedSteam } from '@/components/NeedSteam'
 import { StatusLine } from '@/components/StatusLine'
 import { SteamLaunch } from '@/components/SteamLaunch'
-import type { GameArtUrls } from '@/lib/art'
+import { SHELF_RAIL_SIZES, type GameArtUrls } from '@/lib/art'
 import { eveningKey as keyOf, keepOnShelf } from '@/lib/eveningshelf'
 import { latestWins } from '@/lib/latestwins'
 import type { OutcomeVerdict } from '@/lib/outcome'
@@ -243,7 +243,7 @@ export function Evenings({
                   name={item.name}
                   headerImage={item.headerImage}
                   art={item.art}
-                  sizes="264px"
+                  sizes={SHELF_RAIL_SIZES}
                   meta={
                     <>
                       <span className="truncate">{item.date}</span>

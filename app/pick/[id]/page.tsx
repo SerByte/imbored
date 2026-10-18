@@ -85,6 +85,9 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
           sizes="100vw"
           eager
           fetchPriority="high"
+          // На телефоне — постер игры, а не 19% полосы library_hero вдвое
+          // крупнее себя: друг по ссылке должен узнать игру (GameArt, portrait)
+          portrait
           fallback={null}
           className="absolute inset-0 h-full w-full object-cover"
         />

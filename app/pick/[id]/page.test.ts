@@ -185,3 +185,22 @@ describe('«Похожее на «X» — по моей библиотеке»',
     expect(await seedLinks(params, 23)).toHaveLength(0)
   })
 })
+
+/**
+ * Герой выбора на телефоне — постер игры, а не обрывок полосы.
+ *
+ * Стоячий бокс героя вписывал library_hero (3.1:1) по высоте и показывал
+ * 19% её ширины вдвое крупнее себя: на проде у Ravenswatch друг по ссылке
+ * видел фиолетово-золотое пятно. Как GameArt раскладывает постер и героя —
+ * lib/heroportrait.test.ts; здесь — что /pick об этом просит.
+ */
+describe('герой /pick на портретном экране', () => {
+  test('просит у GameArt вертикальный постер', async () => {
+    const params = await share('aaaaaaaaaaaa', game(1145360, {}))
+    const arts = islandsOf(flightOf(await PickPage(params), ISLANDS), 'GameArt')
+    const hero = arts.filter((a) => a.variant === 'hero')
+    expect(hero).toHaveLength(1)
+    expect(hero[0]?.portrait).toBe(true)
+    expect(hero[0]?.fetchPriority).toBe('high')
+  })
+})

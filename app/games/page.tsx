@@ -5,6 +5,7 @@ import { Icon } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'
 import { SearchLauncher } from '@/components/SearchLauncher'
 import { StaticGameCardBody } from '@/components/StaticGameCard'
+import { SHELF_RAIL_SIZES } from '@/lib/art'
 import { topGamesByTags } from '@/lib/db'
 import {
   assembleHub,
@@ -174,13 +175,21 @@ function Shelf({ shelf, eager }: { shelf: HubShelf; eager: boolean }) {
                 рендерятся функцией и читают базу — прокрутка хаба будила бы
                 её на каждую капсулу, по которой никто не пойдёт. */}
             <GameLink appid={g.appid} className="game-card block">
+              {/* sizes — ширина капсулы из .shelf-rail > li по всем
+                  экранам, а не одно «260px»: на телефоне капсула 200 px, и
+                  при DPR 2 «260» уводило браузер на header_2x — 67–187 КБ
+                  вместо 25–53 КБ за ту же картинку (lib/art, SHELF_RAIL_SIZES).
+                  Высокий приоритет — только первой капсуле первой полки:
+                  она LCP хаба на телефоне, а в очереди стояла Low рядом с
+                  четырьмя соседями */}
               <StaticGameCardBody
                 appid={g.appid}
                 name={g.name}
                 headerImage={g.headerImage}
                 art={g.art}
-                sizes="260px"
+                sizes={SHELF_RAIL_SIZES}
                 eager={eager && i < 5}
+                fetchPriority={eager && i === 0 ? 'high' : undefined}
               />
             </GameLink>
           </li>

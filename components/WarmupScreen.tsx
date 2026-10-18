@@ -1,14 +1,15 @@
 'use client'
 
 import { AnimatePresence, m } from 'framer-motion'
+import { useEffect, useRef, useState } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { CountNumber } from '@/components/CountNumber'
-import { GameArt } from '@/components/GameArt'
 import { ProgressRing } from '@/components/ProgressRing'
 import { Spinner } from '@/components/Spinner'
 import { legacyArtUrl, type GameArtUrls } from '@/lib/art'
 import { plural } from '@/lib/plural'
 import { warmupPercent, warmupStage, type WallMemo, type WarmupProgress } from '@/lib/warmup'
+import { NARROW_WALL_MEDIA, stopWallLoads, wallPool } from '@/lib/warmupwall'
 import { Eyebrow } from '@/components/Labels'
 
 /**
@@ -22,8 +23,15 @@ import { Eyebrow } from '@/components/Labels'
  * Кольцо появляется только когда объём работы известен: до первого ответа
  * /api/prepare показывать «0%» было бы враньём, поэтому там спиннер.
  */
-/** Игра, которая вышла из стены: её постер встаёт в центр перед выдачей */
-export type ChosenGame = { appid: number; name: string; art?: GameArtUrls | null }
+/**
+ * Игра, которая вышла из стены: её постер встаёт в центр перед выдачей.
+ *
+ * poster — ровно тот адрес, что страница дождалась загруженным
+ * (lib/warmupwall: chosenPoster и posterReady). Без srcSet и без цепочки
+ * запасных: такт начинается, только когда этот файл уже раскодирован, иначе
+ * его не бывает вовсе.
+ */
+export type ChosenGame = { appid: number; name: string; art?: GameArtUrls | null; poster: string }
 
 export function WarmupScreen({
   progress,
@@ -71,21 +79,14 @@ export function WarmupScreen({
       } ${leaving ? 'is-leaving' : ''}`}
     >
       <Ambient className="anim-breathe" />
-      {wall.length > 0 && <PosterWall ids={wall} />}
+      {wall.length > 0 && <PosterWall ids={wall} stop={chosen !== null} />}
       <div aria-hidden className="grain" />
 
       {chosen && (
         <div aria-hidden className="warmup-chosen">
           <div className="warmup-chosen-poster">
-            <GameArt
-              appid={chosen.appid}
-              name={chosen.name}
-              art={chosen.art}
-              variant="poster"
-              sizes="280px"
-              eager
-              className="h-full w-full object-cover"
-            />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={chosen.poster} alt="" decoding="async" className="h-full w-full object-cover" />
           </div>
           <p className="warmup-chosen-line">
             {games > 1 ? `Из ${games.toLocaleString('ru-RU')} — одна` : 'Вот она'}
@@ -217,16 +218,42 @@ export function WarmupScreen({
  * заметка про кадр, что у ленты главной (docs/landing-visual.md).
  *
  * Ряд — треть стены, повторённая дважды: сдвиг на −50% возвращает его в ту
- * же картинку, и петля бесшовная. Маленькую библиотеку добираем повтором,
- * чтобы ряд был шире экрана и на петле не появлялась дыра.
+ * же картинку, и петля бесшовная. Сколько постеров в ряду и как добирается
+ * маленькая библиотека — wallPool в lib/warmupwall: на телефоне стена
+ * короче, потому что дальше края стекла её не видно, а качалась она вся.
+ *
+ * СТЕНА НЕ ДЕРЖИТ КАНАЛ ПОСЛЕ СЕБЯ. Стена — фон ожидания, а за ней по тому
+ * же хосту едут постер выбранной игры и арт героя выдачи. Поэтому:
+ *   • приоритет низкий — видимые плитки и так в экране, а вперёд них никто,
+ *     кроме постера и героя, не встанет;
+ *   • с тактом выбора (stop) и с уходом экрана недокачанные плитки
+ *     обрываются (stopWallLoads): вынутый из DOM <img> иначе докачивает
+ *     своё, и на телефоне стена доезжала через 4–7 с после того, как её не
+ *     стало, — вперёд арта героя.
+ *
+ * Обрыв при уходе — только если узел и правда отцеплен: в StrictMode
+ * эффект в разработке «размонтируется» понарошку, и стена оставалась бы
+ * пустой.
  */
-const WALL_MIN = 18
-
-function PosterWall({ ids }: { ids: number[] }) {
-  const pool = ids.length >= WALL_MIN ? ids : Array.from({ length: WALL_MIN }, (_, i) => ids[i % ids.length])
+function PosterWall({ ids, stop }: { ids: number[]; stop: boolean }) {
+  const ref = useRef<HTMLDivElement>(null)
+  // Один раз на монтирование: стена не пересобирается на повороте экрана.
+  // На сервере её нет — без стены прогрева она не рисуется вовсе
+  const [narrow] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia?.(NARROW_WALL_MEDIA).matches === true,
+  )
+  useEffect(() => {
+    const root = ref.current
+    if (!root) return
+    if (stop) stopWallLoads(root)
+    return () => {
+      if (!root.isConnected) stopWallLoads(root)
+    }
+  }, [stop])
+  const pool = wallPool(ids, narrow)
   const rows = [0, 1, 2].map((r) => pool.filter((_, i) => i % 3 === r))
   return (
-    <div aria-hidden className="pwall">
+    <div ref={ref} aria-hidden className="pwall">
       <div className="pwall-grid">
         {rows.map((row, r) => (
           <div key={r} className="pwall-row">
@@ -239,6 +266,7 @@ function PosterWall({ ids }: { ids: number[] }) {
                 src={legacyArtUrl(appid, 'poster')}
                 alt=""
                 decoding="async"
+                fetchPriority="low"
                 onError={(e) => {
                   e.currentTarget.style.visibility = 'hidden'
                 }}

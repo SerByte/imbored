@@ -21,6 +21,32 @@ import { GameMorph } from './Morph'
  * Цепочки запасных источников по onError здесь нет — только первый кандидат.
  * Поэтому годится лишь для игр каталога с разрешённым артом (appid > 0);
  * если картинка всё же не загрузится, под ней остаётся фон .card-thumb.
+ *
+ * EAGER-ОБЛОЖКА — ВНУТРИ <picture>, И ЭТО НЕ УКРАШЕНИЕ РАЗМЕТКИ.
+ *
+ * Серверный <img> без loading="lazy" React превращает в подсказку
+ * предзагрузки — `:HL[…,"image"]` в RSC-части страницы (getChildFormatContext,
+ * case "img", в react-server-dom-turbopack). А RSC-часть приезжает и с
+ * префетчем: <Link> на /games стоит в шапке («Каталог»), в подвале и в
+ * крошках каждой карточки игры, и браузер, получив префетч, качал обложки
+ * первой полки хаба на ЧУЖОЙ странице. Замер на проде: 215 КБ на каждом
+ * просмотре любой страницы с десктопа (401 КБ на ретине), около 676 КБ на
+ * телефонной карточке игры вместе с полкой жанра — и всё мимо экрана, при
+ * пяти «preloaded but not used» в консоли. Внутри <picture> (и <noscript>)
+ * подсказку не ставит ни Flight, ни Fizz — то же правило, что для lazy и
+ * fetchPriority="low". На самом хабе обложки находит сканер предзагрузки в
+ * разметке страницы, теряется только дубль-preload в <head>. fetchPriority
+ * «low» вместо обёртки не годится: он прижал бы и видимые обложки, включая
+ * LCP хаба. Сторож — imageHints в app/games/page.test.ts.
+ *
+ * className="contents" — обёртка не создаёт своего бокса: картинка
+ * по-прежнему заполняет .card-thumb, как прямой ребёнок.
+ *
+ * Обёртка — только у eager. Ленивой картинке подсказку React не ставит и
+ * так, а <picture> на каждой из 360 капсул хаба — это около 20 КБ лишнего в
+ * RSC-части и столько же в HTML на каждую перегенерацию страницы (замер
+ * сборки: 358 → 400 КБ games.rsc с обёрткой у всех), то есть ещё и
+ * ISR Writes.
  */
 export function StaticGameCardBody({
   appid,
@@ -31,6 +57,7 @@ export function StaticGameCardBody({
   corner,
   meta,
   eager = false,
+  fetchPriority,
   morph = false,
 }: {
   appid: number
@@ -44,25 +71,33 @@ export function StaticGameCardBody({
   meta?: ReactNode
   /** обложка над сгибом — грузить сразу, а не лениво */
   eager?: boolean
+  /**
+   * Только для обложки, которая станет LCP экрана (как у GameArt): eager
+   * снимает ленивость, но в очереди браузера картинка остаётся Low рядом с
+   * соседями по полке.
+   */
+  fetchPriority?: 'high' | 'low' | 'auto'
   morph?: boolean
 }) {
   const source = { appid, art, headerImage }
   const src = artCandidates(source, 'card')[0]
   const srcSet = artSrcSet(source, 'card')
+  const img = src ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      srcSet={srcSet}
+      sizes={srcSet ? sizes : undefined}
+      alt=""
+      loading={eager ? 'eager' : 'lazy'}
+      fetchPriority={fetchPriority}
+      decoding="async"
+      className="h-full w-full object-cover"
+    />
+  ) : null
   const thumb = (
     <span className="card-thumb aspect-[460/215]">
-      {src ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={src}
-          srcSet={srcSet}
-          sizes={srcSet ? sizes : undefined}
-          alt=""
-          loading={eager ? 'eager' : 'lazy'}
-          decoding="async"
-          className="h-full w-full object-cover"
-        />
-      ) : null}
+      {img && eager ? <picture className="contents">{img}</picture> : img}
       {corner}
     </span>
   )

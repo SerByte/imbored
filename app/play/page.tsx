@@ -94,6 +94,7 @@ import { SectionLabel } from '@/components/Labels'
 import { WarmStrip } from '@/components/WarmStrip'
 import { track, trackWait, type WaitPath } from '@/lib/track'
 import { parseWallMemo, remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
+import { CHOSEN_POSTER_WAIT_MS, chosenPoster, posterReady } from '@/lib/warmupwall'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { plural } from '@/lib/plural'
 import { TagChips } from '@/components/TagChips'
@@ -1064,11 +1065,27 @@ function Player({ say }: { say: (line: string) => void }) {
        * той свой барабан, и два выбора подряд читались бы как заминка.
        */
       const hero = got.picks[at]
-      // У игры не из Steam вертикального постера нет — выходить из стены нечему
-      if (!roulette && hero.appid > 0 && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      /*
+       * Такт — только с постером, который УЖЕ здесь. Он держит экран 1.6 с
+       * ради картинки, и на медленной сети шёл на пустой рамке: постер
+       * просился в ту же секунду и доезжал через десяток (замер на проде —
+       * запрос на 4.1 с, конец на 16.4 с), а герой выдачи всё это время
+       * ждал. Не успел за CHOSEN_POSTER_WAIT_MS — такта нет, герой встаёт
+       * сразу (lib/warmupwall). У игры не из Steam постера нет вовсе.
+       */
+      const poster = chosenPoster(hero)
+      const ceremony =
+        !roulette &&
+        poster !== undefined &&
+        !window.matchMedia('(prefers-reduced-motion: reduce)').matches &&
+        (await posterReady(poster, CHOSEN_POSTER_WAIT_MS))
+      // Ожидание постера — тоже await: ушедшему за эти доли секунды ни такта,
+      // ни выдачи, ни реплики не положено, как и после fetchPicks выше
+      if (ac.signal.aborted) return false
+      if (ceremony && poster) {
         // прерванный показ мог оставить такт ухода взведённым
         setLeaving(false)
-        setChosen({ appid: hero.appid, name: hero.name, art: hero.art })
+        setChosen({ appid: hero.appid, name: hero.name, art: hero.art, poster })
         await new Promise((done) => window.setTimeout(done, CHOSEN_MS))
         if (ac.signal.aborted) return false
         setLeaving(true)

@@ -3,6 +3,7 @@
 import { AnimatePresence, m, useReducedMotion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
 import { Portal } from '@/components/Portal'
+import { HERO_SIZES } from '@/lib/art'
 import { NowProvider } from './Now'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -28,6 +29,7 @@ const EASE = [0.22, 1, 0.36, 1] as const
 export function Stage({
   children,
   initialWash,
+  initialWashSrcSet,
   rowsKey,
   nowSec,
   publishedAts,
@@ -35,6 +37,18 @@ export function Stage({
   children: React.ReactNode
   /** Арт обложки: заливка начинается с него, иначе первый экран пустой */
   initialWash?: string
+  /**
+   * srcSet того же арта — ровно тот, что у обложки (artSrcSet, 'hero').
+   *
+   * Заливка первой страницы рисует ТОТ ЖЕ файл, что обложка, и обязана
+   * выбрать того же кандидата: тогда браузер берёт его из кэша (или из уже
+   * идущей загрузки), и второй загрузки нет. С одним src заливка просила
+   * library_hero, а обложка на ретине — library_hero_2x: 1.27 МБ + 397 КБ
+   * за один арт, причём второй — под blur-3xl, прозрачность 0.34 и скрим.
+   * sizes — HERO_SIZES, как у героя GameArt: другой sizes дал бы другой
+   * выбор и ту же двойную загрузку.
+   */
+  initialWashSrcSet?: string
   /**
    * Отпечаток набора строк. Наблюдатель собирается ОДИН раз на набор, а
    * router.refresh() приносит новые строки, не перемонтируя Stage — без этой
@@ -51,6 +65,7 @@ export function Stage({
 }) {
   const scope = useRef<HTMLDivElement>(null)
   const [wash, setWash] = useState<string | null>(initialWash ?? null)
+  const coverWash = wash !== null && wash === initialWash && Boolean(initialWashSrcSet)
   const reduced = useReducedMotion()
 
   useEffect(() => {
@@ -100,6 +115,9 @@ export function Stage({
             <m.img
               key={wash}
               src={wash}
+              // Только у арта обложки: заливки строк — уже их миниатюры
+              srcSet={coverWash ? initialWashSrcSet : undefined}
+              sizes={coverWash ? HERO_SIZES : undefined}
               alt=""
               initial={{ opacity: 0 }}
               animate={{ opacity: 0.34 }}
