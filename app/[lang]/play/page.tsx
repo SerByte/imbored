@@ -325,9 +325,12 @@ const FAIL: Record<Locale, Record<string, FailCard>> = {
       title: "Can't read the mood",
       text: 'The link came with odd parameters — pick your mood again.',
     },
+    // Не калька «под»: по-английски игры прячет фильтр. И «по ссылке» тут
+    // ничего не называет — ссылка под текстом зовётся «Change mood», её и
+    // называем
     muted: {
-      title: "Everything is under “Don't suggest”",
-      text: 'Change the filter via the link.',
+      title: "Everything's filtered out by “Don't suggest”",
+      text: 'The filter is under “Change mood” below.',
       seedless: true,
     },
   },

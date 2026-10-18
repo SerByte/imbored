@@ -22,7 +22,9 @@ export async function generateMetadata({ params }: LayoutProps<'/[lang]/play'>):
     title: tr(locale, { ru: 'Одна игра', en: 'One game' }),
     description: tr(locale, {
       ru: 'Одна игра на сегодня из твоей библиотеки, а если своего не хватит — пара находок из магазина. С объяснением, почему именно она, и с числом тех, кто играет в неё прямо сейчас.',
-      en: "One game for tonight from your library, and if that's not enough, a couple of finds from the store. With why it's the one, and how many people are playing it right now.",
+      // Не калька «С объяснением, почему…»: по-английски это обрывок без
+      // глагола, а описание уходит в каждое превью ссылки (og, twitter)
+      en: "One game for tonight from your library — and a couple of store finds if that's not enough. You'll see why it's the one and how many people are playing it right now.",
     }),
   }
 }
