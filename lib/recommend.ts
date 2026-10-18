@@ -1,7 +1,9 @@
 import { discountOf } from './discount'
 import { editionKey } from './editions'
 import { entryCost } from './entry'
+import { AXIS_WORDS } from './gametraits'
 import { CONTENT_WARNING_TAGS, GENERIC_TAGS } from './hook'
+import { tr, type Locale } from './i18n'
 import { isJunk } from './junk'
 import { playMode } from './liveness'
 import { VIBE_TAGS, type Lean } from './mood'
@@ -9,7 +11,7 @@ import type { MutePreset } from './mutetags'
 import { playtimeHidden } from './playtime'
 import { axisBucket, SEMANTICS_MIN_CONFIDENCE } from './semantics'
 import { isMultiplayerCategories } from './steamcats'
-import { tagRu } from './tagsru'
+import { tagLabel, tagRu } from './tagsru'
 import {
   cosine,
   cosineOf,
@@ -295,16 +297,32 @@ export function mutedTaste(
  * доступ» в отметках глубоко под героем не стоит браузеру отбора заново.
  * Предупреждений о контенте в отметках не бывает вовсе. Без набора — false
  * сразу.
+ *
+ * Английские причины записи (written.en — та же запись для /en, если она
+ * есть) судятся тем же правилом, но своей подписью: по-английски причина
+ * называет тег его ключом Steam (tagLabel на en), и «Competitive» в ней —
+ * ровно то, что запретили. Язык здесь не параметр: годность записи одна на
+ * браузер, а какую причину он увидит, решает язык страницы, — поэтому
+ * судятся обе.
  */
 export function namesMutedTaste(
-  written: { sharedTags: readonly string[]; reasonBase: string; reasonPatched?: string },
+  written: {
+    sharedTags: readonly string[]
+    reasonBase: string
+    reasonPatched?: string
+    en?: { reasonBase?: string | null; reasonPatched?: string | null } | null
+  },
   mutes: readonly MutePreset[],
 ): boolean {
   if (!mutes.length) return false
   const muted = new Set(mutes.flatMap((p) => p.tags))
   const reasons = [written.reasonBase, written.reasonPatched ?? '']
+  const reasonsEn = [written.en?.reasonBase ?? '', written.en?.reasonPatched ?? ''].filter(Boolean)
   return written.sharedTags.some(
-    (t) => muted.has(t) && !GENERIC_TAGS.has(t) && reasons.some((r) => r.includes(tagRu(t))),
+    (t) =>
+      muted.has(t) &&
+      !GENERIC_TAGS.has(t) &&
+      (reasons.some((r) => r.includes(tagRu(t))) || reasonsEn.some((r) => r.includes(tagLabel(t, 'en')))),
   )
 }
 
@@ -795,12 +813,18 @@ export function hasTaste(profile: Record<string, number>): boolean {
   return false
 }
 
-/** Прозрачность выдачи: из чего сложился скоринг этой игры */
+/**
+ * Прозрачность выдачи: из чего сложился скоринг этой игры.
+ *
+ * locale — язык слов настроения (moodWords); теги и процент от языка не
+ * зависят: теги — ключи, подпись им ставит место вывода.
+ */
 export function explainMatch(
   profile: Record<string, number>,
   meta: GameMeta,
   mood: Mood,
   tagWeight: TagWeight | null = null,
+  locale: Locale = 'ru',
 ): MatchExplanation {
   // Профиль из нулей — тоже пустой: «совпадение 0%» было бы про пустоту (hasTaste)
   const profileEmpty = !hasTaste(profile)
@@ -816,7 +840,7 @@ export function explainMatch(
     .filter((t) => moodWanted.has(t))
     .slice(0, 3)
 
-  return { matchPercent, sharedTags, moodTags, moodWords: moodWordsOf(meta, mood) }
+  return { matchPercent, sharedTags, moodTags, moodWords: moodWordsOf(meta, mood, locale) }
 }
 
 export type LibraryGameState = 'unplayed' | 'comeback' | 'active' | 'played'
@@ -1338,37 +1362,41 @@ export function entryMultiplier(meta: GameMeta, source: CandidateSource, mood: M
  * их объяснение называет само (moodTags). Слова совпадают с корзинами осей
  * (axisBucket): «спокойная» — это ровно та сложность, которую отчёт по
  * семантике называет низкой.
+ *
+ * Слова осей — из AXIS_WORDS строки «Характер» (lib/gametraits), одной
+ * таблицей на оба языка: «calm» в «Почему она?» и «calm» на карточке игры
+ * обязаны значить одно и то же.
  */
-const SESSION_MOOD_WORD: Record<Mood['time'], string> = {
-  short: 'короткие сессии',
-  medium: 'заход на час',
-  long: 'на весь вечер',
+const SESSION_MOOD_WORD: Record<Locale, Record<Mood['time'], string>> = {
+  ru: { short: 'короткие сессии', medium: 'заход на час', long: 'на весь вечер' },
+  en: { short: 'short sessions', medium: 'an hour at a time', long: 'all evening' },
 }
 
 /** Больше трёх слов — уже не объяснение, а анкета */
 const MOOD_WORDS = 3
 
-export function moodWordsOf(meta: GameMeta, mood: Mood): string[] {
+export function moodWordsOf(meta: GameMeta, mood: Mood, locale: Locale = 'ru'): string[] {
   const s = trustedSemantics(meta)
   if (!s) return []
   const words: string[] = []
+  const axis = AXIS_WORDS[locale]
   const { challenge, complexity, pace } = s.axes
   if (mood.vibe === 'chill') {
-    if (axisBucket(challenge) === 'low') words.push('спокойная')
-    if (axisBucket(pace) === 'low') words.push('неторопливая')
-    if (axisBucket(complexity) === 'low') words.push('без долгого освоения')
+    if (axisBucket(challenge) === 'low') words.push(axis.challenge.low)
+    if (axisBucket(pace) === 'low') words.push(axis.pace.low)
+    if (axisBucket(complexity) === 'low') words.push(axis.complexity.low)
   } else {
-    if (axisBucket(challenge) === 'high') words.push('с вызовом')
-    if (axisBucket(complexity) === 'high') words.push('есть что осваивать')
-    if (axisBucket(pace) === 'high') words.push('динамичная')
+    if (axisBucket(challenge) === 'high') words.push(axis.challenge.high)
+    if (axisBucket(complexity) === 'high') words.push(axis.complexity.high)
+    if (axisBucket(pace) === 'high') words.push(axis.pace.high)
   }
   // Длина идёт последней, но оси вайба её не вытесняют, когда слов много:
   // про время человек ответил прямо, и совпадение с ответом важнее оттенков
   const session =
     s.session.bucket === mood.time
-      ? SESSION_MOOD_WORD[mood.time]
+      ? SESSION_MOOD_WORD[locale][mood.time]
       : mood.time === 'short' && s.session.canStopAnytime
-        ? 'можно бросить в любой момент'
+        ? tr(locale, { ru: 'можно бросить в любой момент', en: 'stop anytime' })
         : null
   if (session) return [...words.slice(0, MOOD_WORDS - 1), session]
   return words.slice(0, MOOD_WORDS)

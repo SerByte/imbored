@@ -53,6 +53,7 @@ import {
   type Cooldown,
 } from './recommend'
 import { DEMO_METAS, demoLibrary } from './demo'
+import { AXIS_WORDS } from './gametraits'
 import { GENERIC_TAGS } from './hook'
 import { LEANS, NEUTRAL_MOOD, type Lean } from './mood'
 import { heuristicPicks } from './llm'
@@ -2616,6 +2617,42 @@ describe('настроение по осям семантики', () => {
       expect(out.moodWords).toEqual([])
       expect(out.moodTags).toContain('Relaxing')
     })
+
+    test('по-английски — те же правила и те же слова, что у «Feel» на карточке', () => {
+      const calm = { ...meta(1, { Action: 100 }), semantics: sem({ challenge: 20, pace: 50, complexity: 50, minutes: 20 }) }
+      expect(explainMatch({ Action: 1 }, calm, chillShort, null, 'en').moodWords).toEqual(['calm', 'short sessions'])
+      const slow = { ...meta(1, {}), semantics: sem({ challenge: 10, pace: 10, complexity: 10, minutes: 20 }) }
+      expect(moodWordsOf(slow, chillShort, 'en')).toEqual(['calm', 'unhurried', 'short sessions'])
+      const hard = { ...meta(1, {}), semantics: sem({ challenge: 90, pace: 90, complexity: 90, minutes: 160 }) }
+      expect(moodWordsOf(hard, { time: 'long', vibe: 'engaged', social: 'solo' }, 'en')).toEqual([
+        'challenging',
+        'plenty to master',
+        'all evening',
+      ])
+      const stop = { ...meta(1, {}), semantics: sem({ minutes: 40, canStopAnytime: true }) }
+      expect(moodWordsOf(stop, chillShort, 'en')).toEqual(['stop anytime'])
+      // заход на час — своей фразой, а не «hour session»
+      const hour = { ...meta(1, {}), semantics: sem({ minutes: 50 }) }
+      expect(moodWordsOf(hour, { time: 'medium', vibe: 'chill', social: 'solo' }, 'en')).toEqual(['an hour at a time'])
+      // без языка — русские слова, как были
+      expect(explainMatch({ Action: 1 }, calm, chillShort).moodWords).toEqual(['спокойная', 'короткие сессии'])
+    })
+
+    test('слова осей «под настроение» — ровно слова «Характер»/«Feel» карточки', () => {
+      for (const locale of ['ru', 'en'] as const) {
+        const low = { ...meta(1, {}), semantics: sem({ challenge: 10, pace: 10, complexity: 10, minutes: 200 }) }
+        const high = { ...meta(1, {}), semantics: sem({ challenge: 90, pace: 90, complexity: 90, minutes: 200 }) }
+        const words = [
+          ...moodWordsOf(low, { time: 'short', vibe: 'chill', social: 'solo' }, locale),
+          ...moodWordsOf(high, { time: 'short', vibe: 'engaged', social: 'solo' }, locale),
+        ]
+        const axis = AXIS_WORDS[locale]
+        expect(words.sort()).toEqual(
+          [axis.challenge.low, axis.pace.low, axis.complexity.low, axis.challenge.high, axis.complexity.high, axis.pace.high].sort(),
+        )
+      }
+      expect(moodWordsOf({ ...meta(1, {}), semantics: sem({ challenge: 10, pace: 10, complexity: 10, minutes: 20 }) }, chillShort, 'en').join(' ')).not.toMatch(/[А-Яа-яЁё]/)
+    })
   })
 })
 
@@ -3001,6 +3038,32 @@ describe('«Не предлагать»: namesMutedTaste', () => {
     expect(namesMutedTaste(cozy, parseMutes('pvp.horror'))).toBe(false)
     // подпись в тексте, но не вкусом: отметок нет — и судить нечего
     expect(namesMutedTaste({ sharedTags: [], reasonBase: byTags(['Competitive']) }, pvp)).toBe(false)
+  })
+
+  /*
+   * Английская причина записи (written.en) называет тег ключом Steam —
+   * tagLabel на en. Годность записи одна на браузер, и судятся причины обоих
+   * языков: человек мог сменить язык после того, как запись написали.
+   */
+  test('английская причина записи называет запретный тег ключом — да', () => {
+    const tags = ['Puzzle', 'Competitive']
+    const enByTags = `You've never launched “Solitaire”. By tags (${tags.join(', ')}) it's very you.`
+    const enAnchored = 'You never launched “Solitaire”, and it is closest to “Stardew Valley”.'
+    expect(namesMutedTaste({ sharedTags: tags, reasonBase: anchored, en: { reasonBase: enByTags } }, pvp)).toBe(true)
+    expect(
+      namesMutedTaste({ sharedTags: tags, reasonBase: anchored, en: { reasonBase: enAnchored, reasonPatched: enByTags } }, pvp),
+    ).toBe(true)
+    expect(namesMutedTaste({ sharedTags: tags, reasonBase: anchored, en: { reasonBase: enAnchored } }, pvp)).toBe(false)
+    // пустые и отсутствующие английские причины — как их нет
+    expect(namesMutedTaste({ sharedTags: tags, reasonBase: anchored, en: null }, pvp)).toBe(false)
+    expect(namesMutedTaste({ sharedTags: tags, reasonBase: anchored, en: { reasonBase: null, reasonPatched: '' } }, pvp)).toBe(
+      false,
+    )
+    // общий тег английская причина тоже «не называет»
+    const early = ['Puzzle', 'Early Access']
+    expect(
+      namesMutedTaste({ sharedTags: early, reasonBase: anchored, en: { reasonBase: `By tags (${early.join(', ')})` } }, parseMutes('early')),
+    ).toBe(false)
   })
 
   /*
