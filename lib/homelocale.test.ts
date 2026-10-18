@@ -45,9 +45,13 @@ describe('язык главной', () => {
    * — сменить язык на полпути.
    */
   test('запросы роутера и переходы со своей страницы не уводятся', () => {
-    expect(homeLocale(req('/', { 'accept-language': EN, rsc: '1' }))).toBe(null)
-    expect(homeLocale(req('/', { 'accept-language': EN, 'next-router-prefetch': '1' }))).toBe(null)
+    // RSC и префетч роутера — fetch: Sec-Fetch-Dest у них empty, а не document
+    expect(homeLocale(req('/', { 'accept-language': EN, 'sec-fetch-dest': 'empty' }))).toBe(null)
+    expect(homeLocale(req('/', { 'accept-language': EN, 'sec-fetch-site': 'same-origin', 'sec-fetch-dest': 'document' }))).toBe(null)
     expect(homeLocale(req('/', { 'accept-language': EN, referer: `${BASE}/game/730` }))).toBe(null)
+    // вход: адрес руками, закладка, ссылка извне
+    expect(homeLocale(req('/', { 'accept-language': EN, 'sec-fetch-site': 'none', 'sec-fetch-dest': 'document' }))).toBe('/en')
+    expect(homeLocale(req('/', { 'accept-language': EN, 'sec-fetch-site': 'cross-site', 'sec-fetch-dest': 'document' }))).toBe('/en')
     // чужой Referer — это вход на сайт
     expect(homeLocale(req('/', { 'accept-language': EN, referer: 'https://www.google.com/' }))).toBe('/en')
     expect(homeLocale(req('/', { 'accept-language': EN, referer: 'not a url' }))).toBe('/en')

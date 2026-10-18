@@ -20,8 +20,14 @@ export type HomeRequest = {
  * Только вход на сайт, а не ходьба по нему. Запрос роутера (RSC, префетч
  * ссылки «домой» из шапки) и переход со своей же страницы не уводятся:
  * человек читал русскую карточку игры, пришедшую из поиска, нажал логотип —
- * и обязан попасть на русскую главную, а не сменить язык на полпути. Своё —
- * по Referer того же хоста; без него (закладка, ввод адреса) — вход.
+ * и обязан попасть на русскую главную, а не сменить язык на полпути.
+ *
+ * Заголовки роутера (RSC, Next-Router-Prefetch) прокси не видит: Next снимает
+ * их до прокси (FLIGHT_HEADERS в next/dist/server/web/adapter.js). Поэтому
+ * по тому, что ставит браузер: Sec-Fetch-Dest не document — это fetch
+ * роутера, а не переход; Sec-Fetch-Site: same-origin или Referer того же
+ * хоста — переход со своей страницы. Без них (закладка, ввод адреса,
+ * ссылка извне) — вход.
  *
  * 307 и запрос с собой: /?next=%2Fplay приезжает на /en?next=%2Fplay.
  * Статику главной это не трогает — прокси стоит перед кэшем, а сама
@@ -29,7 +35,9 @@ export type HomeRequest = {
  */
 export function homeLocale(req: HomeRequest): string | null {
   if (req.method !== 'GET' || req.nextUrl.pathname !== '/') return null
-  if (req.headers.get('rsc') || req.headers.get('next-router-prefetch')) return null
+  const dest = req.headers.get('sec-fetch-dest')
+  if (dest && dest !== 'document') return null
+  if (req.headers.get('sec-fetch-site') === 'same-origin') return null
   const referer = req.headers.get('referer')
   if (referer) {
     try {

@@ -32,6 +32,20 @@ export function localeRewrites(): Rewrite[] {
   return [
     { source: '/', destination: '/ru' },
     { source: `/:section(${SECTION_RE})/:path*`, destination: '/ru/:section/:path*' },
+    /*
+     * Мусор в два сегмента и глубже (/wp-admin/setup.php, /xx/quiz) — в
+     * ловушку русской ветки: 404 со шапкой и полкой, как было до [lang].
+     * Без правила такой адрес доходил до корневого layout с языком «wp-admin»,
+     * тот отвечал notFound(), и рисовать 404 было уже не в чем — Next отдавал
+     * голую стоковую страницу.
+     *
+     * Только два сегмента и глубже: одиночный /xyz может оказаться файлом
+     * корня (/favicon.ico, /robots.txt), а beforeFiles идут ДО файлов — его
+     * правило не трогает, им занимается app/global-not-found.tsx. Не трогает
+     * и свои первые сегменты: языки, /api, служебные /_next, /_vercel и
+     * /.well-known (всё, что с «_» и «.»).
+     */
+    { source: '/:first((?!(?:ru|en|api)/)[^/_.][^/]*)/:rest+', destination: '/ru/:first/:rest+' },
   ]
 }
 

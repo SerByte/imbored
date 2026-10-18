@@ -108,6 +108,35 @@ describe('rewrites русской ветки', () => {
   })
 })
 
+describe('мусор глубже одного сегмента', () => {
+  /**
+   * Без правила /wp-admin/setup.php доходил до корневого layout с языком
+   * «wp-admin», и 404 рисовать было не в чем — стоковая страница Next.
+   */
+  test('уходит в ловушку русской ветки — 404 со шапкой', async () => {
+    expect((await route('/wp-admin/setup.php')).rewrite).toBe('/ru/wp-admin/setup.php')
+    expect((await route('/xx/quiz')).rewrite).toBe('/ru/xx/quiz')
+    expect((await route('/run/x')).rewrite).toBe('/ru/run/x')
+    expect((await route('/enx/y')).rewrite).toBe('/ru/enx/y')
+  })
+
+  test('свои первые сегменты и служебное не трогает', async () => {
+    for (const url of [
+      '/en/xyz-nope',
+      '/en/play',
+      '/api/session/touch',
+      '/api/auth/steam/return',
+      '/_next/static/chunks/a.js',
+      '/_next/image',
+      '/_vercel/insights/script.js',
+      '/.well-known/security.txt',
+      '/ru/game/730/opengraph-image',
+    ]) {
+      expect((await route(url)).rewrite, url).toBe(null)
+    }
+  })
+})
+
 describe('редирект с /ru', () => {
   test('/ru и всё под ним — постоянно на адрес без префикса', async () => {
     expect(await route('/ru')).toMatchObject({ status: 308, redirect: '/' })

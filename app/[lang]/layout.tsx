@@ -180,9 +180,12 @@ export async function generateMetadata({ params }: LayoutProps<'/[lang]'>): Prom
 export default async function RootLayout({ children, params }: LayoutProps<'/[lang]'>) {
   /*
    * Язык — из сегмента, а не из кук и заголовков: layout обязан остаться
-   * статическим (см. Backstage ниже). Чужой сегмент (/xx/play) сюда доезжает,
-   * потому что dynamicParams в корне не выключен (см. generateStaticParams), —
-   * и получает 404, а не русскую страницу по мусорному адресу.
+   * статическим (см. Backstage ниже). Чужой сегмент сюда почти не доезжает:
+   * одиночный мусор (/xyz) отбивает dynamicParams = false у страниц, а
+   * глубже (/xx/play) rewrites уводят в ловушку русской ветки
+   * (lib/i18nroutes.ts). Проверка — страховка: dynamicParams в корне не
+   * выключен (см. generateStaticParams), и без неё мусорный адрес мог бы
+   * отрисовать русскую страницу с кодом 200.
    */
   const { lang } = await params
   if (!isLocale(lang)) notFound()
