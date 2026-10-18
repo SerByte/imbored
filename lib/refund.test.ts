@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { REFUND_NOTE, REFUND_NOTE_NEUTRAL, REFUND_URL, refundEligible, releaseStartSec } from './refund'
+import { REFUND_NOTE, REFUND_NOTE_NEUTRAL, REFUND_URL, refundEligible, refundNote, releaseStartSec } from './refund'
 
 /** 23 сентября 2026, полдень UTC */
 const NOW = Date.UTC(2026, 8, 23, 12) / 1000
@@ -90,5 +90,34 @@ describe('текст', () => {
   test('в промпт и шаблоны причин возврат не попадает', () => {
     const llm = fs.readFileSync(path.join(__dirname, 'llm.ts'), 'utf8')
     expect(llm).not.toMatch(/refund|возврат|вернёт деньги/i)
+  })
+})
+
+/**
+ * Строка на языке страницы: для ru — ровно константы выше, для en — те же два
+ * условия Steam теми же числами.
+ */
+describe('refundNote', () => {
+  test('по-русски — те же константы', () => {
+    expect(refundNote('pick')).toBe(REFUND_NOTE)
+    expect(refundNote('neutral')).toBe(REFUND_NOTE_NEUTRAL)
+    expect(refundNote('pick', 'ru')).toBe(REFUND_NOTE)
+  })
+
+  test('по-английски — целые фразы с обоими условиями', () => {
+    expect(refundNote('pick', 'en')).toBe(
+      'Not for you? Steam refunds it: up to 14 days after purchase and under 2 h played.',
+    )
+    expect(refundNote('neutral', 'en')).toBe(
+      "Steam gives a refund if it's been less than 14 days since purchase and you've played under 2 h.",
+    )
+    for (const tone of ['pick', 'neutral'] as const) {
+      const note = refundNote(tone, 'en')
+      expect(note).toContain('14 days')
+      expect(note).toContain('2 h')
+      expect(note).not.toMatch(/[А-Яа-яЁё]/)
+    }
+    // публичная страница игры не советует купить — «Not for you?» только у совета
+    expect(refundNote('neutral', 'en')).not.toContain('Not for you')
   })
 })

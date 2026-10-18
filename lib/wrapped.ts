@@ -1,4 +1,5 @@
 import { dateLabel } from './freshness'
+import { tr, type Locale } from './i18n'
 import { parseReleaseYear } from './ingest'
 import { isJunk, looksLikeNonGame } from './junk'
 import { isEmptyDelta, libraryDelta, minutesByApp } from './libdelta'
@@ -349,9 +350,17 @@ export function buildWrappedYear(w: YearWindow, metaOf: MetaOf): WrappedYear {
  * поставлена осенью или взята из снимка, сделанного задолго до января
  * («2026 · с 5 марта 2024 г.»). Заголовок карточки читают раньше подписи с
  * датами, и «Итоги 2026» над полутора годами игры были бы неправдой.
+ *
+ * По-английски — «2026 in review» и «2026 · since September 23» («since
+ * March 5, 2024» у старой отметки): та же честность, слова глоссария.
  */
-export function yearEyebrow(y: Pick<WrappedYear, 'year' | 'partial' | 'from' | 'fromPrevYear'>): string {
-  return y.partial ? `${y.year} · с ${dateLabel(y.from, { year: y.fromPrevYear })}` : `Итоги ${y.year}`
+export function yearEyebrow(
+  y: Pick<WrappedYear, 'year' | 'partial' | 'from' | 'fromPrevYear'>,
+  locale: Locale = 'ru',
+): string {
+  if (!y.partial) return tr(locale, { ru: `Итоги ${y.year}`, en: `${y.year} in review` })
+  const since = dateLabel(y.from, { year: y.fromPrevYear, locale })
+  return tr(locale, { ru: `${y.year} · с ${since}`, en: `${y.year} · since ${since}` })
 }
 
 /** Сказать нечего — блок итогов не рисуется */

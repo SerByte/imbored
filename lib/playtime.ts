@@ -1,5 +1,5 @@
+import { fmtNumber, pl, tr, type Locale } from './i18n'
 import { createLocalStore } from './localstore'
-import { plural } from './plural'
 import type { LibraryGame } from './types'
 
 /**
@@ -61,11 +61,15 @@ export function minutesHidden(minutes: ReadonlyMap<number, number>): boolean {
  * с этой — писала «1234 ч» без разрядов.
  * Длинное «3 ч 25 мин» — это playedLine (lib/outcome): в колонку w-14 оно
  * не влезает.
+ *
+ * По-английски — «20 min», «1,234 h»: сокращения из глоссария, тоже без
+ * склонений и не шире русских — колонка та же.
  */
-export function playedShort(minutes: number): string {
+export function playedShort(minutes: number, locale: Locale = 'ru'): string {
   const hours = Math.round(minutes / 60)
-  if (hours > 0) return `${hours.toLocaleString('ru-RU')} ч`
-  return minutes > 0 ? `${Math.round(minutes)} мин` : '0 ч'
+  const h = tr(locale, { ru: 'ч', en: 'h' })
+  if (hours > 0) return `${fmtNumber(locale, hours)} ${h}`
+  return minutes > 0 ? `${Math.round(minutes)} ${tr(locale, { ru: 'мин', en: 'min' })}` : `0 ${h}`
 }
 
 /**
@@ -77,11 +81,13 @@ export function playedShort(minutes: number): string {
  * заголовком — по-прежнему. Ноль остаётся «0 часов»: общие игры есть, но их
  * никто не запускал.
  */
-export function playedWords(minutes: number): string {
+export function playedWords(minutes: number, locale: Locale = 'ru'): string {
   const hours = Math.round(minutes / 60)
   const rest = Math.round(minutes)
-  if (hours === 0 && rest > 0) return `${rest} ${plural(rest, 'минута', 'минуты', 'минут')}`
-  return `${hours.toLocaleString('ru-RU')} ${plural(hours, 'час', 'часа', 'часов')}`
+  if (hours === 0 && rest > 0) {
+    return `${rest} ${pl(locale, rest, { ru: ['минута', 'минуты', 'минут'], en: ['minute', 'minutes'] })}`
+  }
+  return `${fmtNumber(locale, hours)} ${pl(locale, hours, { ru: ['час', 'часа', 'часов'], en: ['hour', 'hours'] })}`
 }
 
 /**

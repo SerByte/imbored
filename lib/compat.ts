@@ -1,4 +1,5 @@
 import { CONTENT_WARNING_TAGS } from './hook'
+import { tr, type Locale } from './i18n'
 import { playedWords, playtimeHidden } from './playtime'
 import { buildTagProfile } from './recommend'
 import { cosine, rarityOf, rarityScale } from './tagweight'
@@ -283,13 +284,17 @@ export function pairTasteProfile(
  * вернувшийся уровнем ниже — в словах. Замеры намекают на 25, но тот же коммит
  * просил настраивать пороги по ЖИВЫМ процентам, а живого распределения в
  * репозитории до сих пор нет. Двигать вслепую — менять одну догадку на другую.
+ *
+ * Английская лестница — те же пять ступеней на тех же порогах, шутка
+ * перенесена смыслом, а не словами: «You're basically the same person» …
+ * «Opposites. Do they attract?» (глоссарий).
  */
-export function verdict(percent: number): string {
-  if (percent >= 80) return 'Вы буквально один человек'
-  if (percent >= 60) return 'Отличная пара для коопа'
-  if (percent >= 40) return 'Есть о чём поиграть вместе'
-  if (percent >= 20) return 'Разные, но это даже интересно'
-  return 'Противоположности. Притянетесь?'
+export function verdict(percent: number, locale: Locale = 'ru'): string {
+  if (percent >= 80) return tr(locale, { ru: 'Вы буквально один человек', en: "You're basically the same person" })
+  if (percent >= 60) return tr(locale, { ru: 'Отличная пара для коопа', en: 'A great co-op duo' })
+  if (percent >= 40) return tr(locale, { ru: 'Есть о чём поиграть вместе', en: 'Plenty to play together' })
+  if (percent >= 20) return tr(locale, { ru: 'Разные, но это даже интересно', en: "Different, but that's half the fun" })
+  return tr(locale, { ru: 'Противоположности. Притянетесь?', en: 'Opposites. Do they attract?' })
 }
 
 /**
@@ -299,16 +304,38 @@ export function verdict(percent: number): string {
  *
  * Сумма — playedWords: меньше получаса — минутами, как строки под ним
  * (playedShort). Иначе над «20 мин | 5 мин» стояло «Вместе в них — 0 часов».
+ *
+ * По-английски — четыре целые фразы на четыре случая: имя друга встаёт в
+ * них на своё английское место («mira has…», «…mira's playtime is hidden»),
+ * а не туда, где оно стояло в русской.
  */
-export function commonTimeLine(d: {
-  commonMinutes: number
-  otherName: string
-  myTimeHidden: boolean
-  otherTimeHidden: boolean
-}): string {
-  const spent = playedWords(d.commonMinutes)
-  if (d.myTimeHidden && d.otherTimeHidden) return 'Время в играх скрыто у обоих — сравниваем только сами игры.'
-  if (d.myTimeHidden) return `У ${d.otherName} в них — ${spent}, твоё время скрыто.`
-  if (d.otherTimeHidden) return `У тебя в них — ${spent}, время ${d.otherName} скрыто.`
-  return `Вместе в них — ${spent}.`
+export function commonTimeLine(
+  d: {
+    commonMinutes: number
+    otherName: string
+    myTimeHidden: boolean
+    otherTimeHidden: boolean
+  },
+  locale: Locale = 'ru',
+): string {
+  const spent = playedWords(d.commonMinutes, locale)
+  if (d.myTimeHidden && d.otherTimeHidden) {
+    return tr(locale, {
+      ru: 'Время в играх скрыто у обоих — сравниваем только сами игры.',
+      en: 'Playtime is hidden for both of you, so we compare just the games.',
+    })
+  }
+  if (d.myTimeHidden) {
+    return tr(locale, {
+      ru: `У ${d.otherName} в них — ${spent}, твоё время скрыто.`,
+      en: `${d.otherName} has ${spent} in them; your playtime is hidden.`,
+    })
+  }
+  if (d.otherTimeHidden) {
+    return tr(locale, {
+      ru: `У тебя в них — ${spent}, время ${d.otherName} скрыто.`,
+      en: `You have ${spent} in them; ${d.otherName}'s playtime is hidden.`,
+    })
+  }
+  return tr(locale, { ru: `Вместе в них — ${spent}.`, en: `Together you've spent ${spent} in them.` })
 }

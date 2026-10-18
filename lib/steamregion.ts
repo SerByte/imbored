@@ -20,7 +20,15 @@
  *
  * Регион, а не код валюты, хранится рядом с ценой (games.price_cc): у США и у
  * СНГ-доллара одна валюта, а цены разные, и сравнивать их как одно нельзя.
+ *
+ * Английская версия сайта показывает те же цены того же региона: регион — один
+ * на развёртывание, а не на читателя. Поэтому подпись называет его прямо —
+ * «price on Russian Steam», — и никогда «in your region»: регион читателя
+ * сервис не знает, и такая подпись была бы неправдой про каждого, чей
+ * магазин не совпал с регионом развёртывания.
  */
+
+import { intlLocale, tr, type Locale } from './i18n'
 
 type Region = {
   /** ISO 4217 */
@@ -29,6 +37,8 @@ type Region = {
   where: string
   /** «по ценам российского Steam» */
   whose: string
+  /** Английское прилагательное: «price on Russian Steam», «at US Steam prices» */
+  en: string
 }
 
 /**
@@ -37,22 +47,24 @@ type Region = {
  * стояла лира, размечала бы доллары лирами.
  */
 export const STEAM_REGIONS: Readonly<Record<string, Region>> = {
-  us: { currency: 'USD', where: 'американском', whose: 'американского' },
-  ru: { currency: 'RUB', where: 'российском', whose: 'российского' },
-  kz: { currency: 'KZT', where: 'казахстанском', whose: 'казахстанского' },
-  ua: { currency: 'UAH', where: 'украинском', whose: 'украинского' },
-  gb: { currency: 'GBP', where: 'британском', whose: 'британского' },
-  de: { currency: 'EUR', where: 'немецком', whose: 'немецкого' },
-  fr: { currency: 'EUR', where: 'французском', whose: 'французского' },
-  pl: { currency: 'PLN', where: 'польском', whose: 'польского' },
-  br: { currency: 'BRL', where: 'бразильском', whose: 'бразильского' },
-  jp: { currency: 'JPY', where: 'японском', whose: 'японского' },
-  cn: { currency: 'CNY', where: 'китайском', whose: 'китайского' },
-  ca: { currency: 'CAD', where: 'канадском', whose: 'канадского' },
-  au: { currency: 'AUD', where: 'австралийском', whose: 'австралийского' },
-  in: { currency: 'INR', where: 'индийском', whose: 'индийского' },
-  tr: { currency: 'USD', where: 'турецком', whose: 'турецкого' },
-  ar: { currency: 'USD', where: 'аргентинском', whose: 'аргентинского' },
+  // «US» и «UK», а не «American» и «British»: так эти магазины называют
+  // по-английски, «American Steam» звучит переводом
+  us: { currency: 'USD', where: 'американском', whose: 'американского', en: 'US' },
+  ru: { currency: 'RUB', where: 'российском', whose: 'российского', en: 'Russian' },
+  kz: { currency: 'KZT', where: 'казахстанском', whose: 'казахстанского', en: 'Kazakhstani' },
+  ua: { currency: 'UAH', where: 'украинском', whose: 'украинского', en: 'Ukrainian' },
+  gb: { currency: 'GBP', where: 'британском', whose: 'британского', en: 'UK' },
+  de: { currency: 'EUR', where: 'немецком', whose: 'немецкого', en: 'German' },
+  fr: { currency: 'EUR', where: 'французском', whose: 'французского', en: 'French' },
+  pl: { currency: 'PLN', where: 'польском', whose: 'польского', en: 'Polish' },
+  br: { currency: 'BRL', where: 'бразильском', whose: 'бразильского', en: 'Brazilian' },
+  jp: { currency: 'JPY', where: 'японском', whose: 'японского', en: 'Japanese' },
+  cn: { currency: 'CNY', where: 'китайском', whose: 'китайского', en: 'Chinese' },
+  ca: { currency: 'CAD', where: 'канадском', whose: 'канадского', en: 'Canadian' },
+  au: { currency: 'AUD', where: 'австралийском', whose: 'австралийского', en: 'Australian' },
+  in: { currency: 'INR', where: 'индийском', whose: 'индийского', en: 'Indian' },
+  tr: { currency: 'USD', where: 'турецком', whose: 'турецкого', en: 'Turkish' },
+  ar: { currency: 'USD', where: 'аргентинском', whose: 'аргентинского', en: 'Argentine' },
 }
 
 /**
@@ -110,11 +122,12 @@ export function regionCurrency(cc: string | null | undefined): string {
 
 const formatters = new Map<string, Intl.NumberFormat>()
 
-function formatter(currency: string, digits: number): Intl.NumberFormat {
-  const key = `${currency}:${digits}`
+/** Язык в ключе обязателен: иначе первый вызов решал бы разряды и знак для обоих */
+function formatter(currency: string, digits: number, locale: Locale): Intl.NumberFormat {
+  const key = `${locale}:${currency}:${digits}`
   let f = formatters.get(key)
   if (!f) {
-    f = new Intl.NumberFormat('ru-RU', {
+    f = new Intl.NumberFormat(intlLocale(locale), {
       style: 'currency',
       currency,
       // «$», а не «US$»: регион называет подпись рядом (priceWhere)
@@ -140,28 +153,42 @@ function formatter(currency: string, digits: number): Intl.NumberFormat {
  *
  * cc — регион ЭТОЙ цены, а не текущий: карточка, отданная до переключения
  * региона, приезжает со своим и рисует свою валюту.
+ *
+ * locale — язык записи числа, а не регион: та же цена по-английски — «₽1,999»,
+ * «$59.99», знак перед числом и разряды запятой. Валюту по-прежнему решает cc.
  */
-export function formatPrice(minor: number, cc: string, opts: { whole?: boolean } = {}): string {
+export function formatPrice(
+  minor: number,
+  cc: string,
+  opts: { whole?: boolean; locale?: Locale } = {},
+): string {
   const digits = opts.whole || minor % 100 === 0 ? 0 : 2
-  return formatter(regionCurrency(cc), digits).format(minor / 100)
+  return formatter(regionCurrency(cc), digits, opts.locale ?? 'ru').format(minor / 100)
 }
 
-/** «цена в российском Steam» — подпись под ценником */
-export function priceWhere(cc: string): string {
-  return `цена в ${STEAM_REGIONS[steamRegion(cc)].where} Steam`
+/** «цена в российском Steam» · «price on Russian Steam» — подпись под ценником */
+export function priceWhere(cc: string, locale: Locale = 'ru'): string {
+  const r = STEAM_REGIONS[steamRegion(cc)]
+  return tr(locale, { ru: `цена в ${r.where} Steam`, en: `price on ${r.en} Steam` })
 }
 
 /** «не продаётся в российском Steam» — вместо цены у скрытой регионом игры */
-export function notSold(cc: string): string {
-  return `не продаётся в ${STEAM_REGIONS[steamRegion(cc)].where} Steam`
+export function notSold(cc: string, locale: Locale = 'ru'): string {
+  const r = STEAM_REGIONS[steamRegion(cc)]
+  return tr(locale, { ru: `не продаётся в ${r.where} Steam`, en: `not sold on ${r.en} Steam` })
 }
 
-/** «нет в российском Steam» — то же для строки, где места на глагол нет (чип колоды) */
-export function notSoldShort(cc: string): string {
-  return `нет в ${STEAM_REGIONS[steamRegion(cc)].where} Steam`
+/**
+ * «нет в российском Steam» — то же для строки, где места на глагол нет (чип
+ * колоды). Английская короче русской: «not on Russian Steam».
+ */
+export function notSoldShort(cc: string, locale: Locale = 'ru'): string {
+  const r = STEAM_REGIONS[steamRegion(cc)]
+  return tr(locale, { ru: `нет в ${r.where} Steam`, en: `not on ${r.en} Steam` })
 }
 
-/** «по ценам российского Steam» — хвост суммы бэклога */
-export function byPrices(cc: string): string {
-  return `по ценам ${STEAM_REGIONS[steamRegion(cc)].whose} Steam`
+/** «по ценам российского Steam» · «at Russian Steam prices» — хвост суммы бэклога */
+export function byPrices(cc: string, locale: Locale = 'ru'): string {
+  const r = STEAM_REGIONS[steamRegion(cc)]
+  return tr(locale, { ru: `по ценам ${r.whose} Steam`, en: `at ${r.en} Steam prices` })
 }

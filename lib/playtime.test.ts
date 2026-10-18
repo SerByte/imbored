@@ -139,10 +139,12 @@ describe('playedShort', () => {
     const portrait = fs.readFileSync(path.join(ROOT, 'app/[lang]/portrait/[steamid]/page.tsx'), 'utf8')
     const compat = fs.readFileSync(path.join(ROOT, 'app/[lang]/compat/[steamid]/page.tsx'), 'utf8')
     const library = fs.readFileSync(path.join(ROOT, 'app/[lang]/library/page.tsx'), 'utf8')
-    expect(portrait).toContain('{playedShort(g.minutes)}')
+    // Вторым аргументом страница передаёт свой язык (playedShort(minutes, locale)) —
+    // сторож про то, ЧЕМ подписаны часы, а не про то, на каком языке
+    expect(portrait).toMatch(/\{playedShort\(g\.minutes(?:,\s*\w+)?\)\}/)
     expect(portrait).not.toMatch(/g\.hours\.toLocaleString\('ru-RU'\)\} ч/)
-    expect(compat).toMatch(/playedShort\(m\)/)
-    expect(library).toContain('{playedShort(g.playtimeForever)}')
+    expect(compat).toMatch(/playedShort\(m(?:,\s*\w+)?\)/)
+    expect(library).toMatch(/\{playedShort\(g\.playtimeForever(?:,\s*\w+)?\)\}/)
     expect(library).not.toMatch(/`\$\{hours\} ч`/)
     expect(library).not.toMatch(/\} мин`/)
   })
@@ -198,5 +200,43 @@ describe('timeHiddenStore', () => {
     timeHiddenStore.set(null)
     expect(data).toEqual({})
     expect(timeHiddenStore.fresh()).toBeNull()
+  })
+})
+
+/** Английская версия: те же пороги, сокращения из глоссария, разряды по-английски */
+describe('playedShort и playedWords по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('playedShort: «min» и «h», тысячи через запятую', () => {
+    expect(playedShort(20, 'en')).toBe('20 min')
+    expect(playedShort(29, 'en')).toBe('29 min')
+    expect(playedShort(30, 'en')).toBe('1 h')
+    expect(playedShort(6000, 'en')).toBe('100 h')
+    expect(playedShort(1234 * 60, 'en')).toBe('1,234 h')
+    expect(playedShort(0, 'en')).toBe('0 h')
+  })
+
+  test('playedWords: одна минута и один час — в единственном, ноль — во множественном', () => {
+    expect(playedWords(1, 'en')).toBe('1 minute')
+    expect(playedWords(25, 'en')).toBe('25 minutes')
+    expect(playedWords(30, 'en')).toBe('1 hour')
+    expect(playedWords(3 * 60, 'en')).toBe('3 hours')
+    expect(playedWords(1235 * 60, 'en')).toBe('1,235 hours')
+    expect(playedWords(0, 'en')).toBe('0 hours')
+  })
+
+  test('ни одной русской буквы и не шире русской подписи в колонке', () => {
+    for (const m of [0, 1, 20, 29, 30, 90, 6000, 1234 * 60, 99_999 * 60]) {
+      expect(playedShort(m, 'en'), String(m)).not.toMatch(CYRILLIC)
+      expect(playedWords(m, 'en'), String(m)).not.toMatch(CYRILLIC)
+      expect(playedShort(m, 'en').length, String(m)).toBeLessThanOrEqual(playedShort(m).length)
+    }
+  })
+
+  test('явный ru — та же строка, что без языка', () => {
+    for (const m of [0, 1, 25, 30, 1234 * 60]) {
+      expect(playedShort(m, 'ru')).toBe(playedShort(m))
+      expect(playedWords(m, 'ru')).toBe(playedWords(m))
+    }
   })
 })

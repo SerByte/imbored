@@ -395,3 +395,57 @@ describe('tasteCosine', () => {
     expect(percent).toBeLessThan(80)
   })
 })
+
+describe('по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('verdict: те же пять ступеней на тех же порогах', () => {
+    expect(verdict(0, 'en')).toBe('Opposites. Do they attract?')
+    expect(verdict(22, 'en')).toBe("Different, but that's half the fun")
+    expect(verdict(45, 'en')).toBe('Plenty to play together')
+    expect(verdict(65, 'en')).toBe('A great co-op duo')
+    expect(verdict(80, 'en')).toBe("You're basically the same person")
+    const steps = new Set<string>()
+    for (let percent = 0; percent <= 100; percent++) {
+      const en = verdict(percent, 'en')
+      expect(en).not.toMatch(CYRILLIC)
+      steps.add(en)
+      // ступень меняется ровно там же, где русская
+      expect(verdict(percent, 'ru')).toBe(verdict(percent))
+      if (percent > 0) {
+        expect(en === verdict(percent - 1, 'en')).toBe(verdict(percent) === verdict(percent - 1))
+      }
+    }
+    expect(steps.size).toBe(5)
+  })
+
+  test('commonTimeLine: четыре целые фразы, имя на английском месте', () => {
+    expect(commonTimeLine({ ...OPEN_PAIR, commonMinutes: 3 * 60 }, 'en')).toBe("Together you've spent 3 hours in them.")
+    expect(commonTimeLine({ ...OPEN_PAIR, commonMinutes: 1234 * 60 }, 'en')).toBe(
+      "Together you've spent 1,234 hours in them.",
+    )
+    expect(commonTimeLine({ ...OPEN_PAIR, commonMinutes: 1 }, 'en')).toBe("Together you've spent 1 minute in them.")
+    expect(commonTimeLine({ ...OPEN_PAIR, commonMinutes: 0 }, 'en')).toBe("Together you've spent 0 hours in them.")
+    expect(commonTimeLine({ ...OPEN_PAIR, myTimeHidden: true, commonMinutes: 20 }, 'en')).toBe(
+      'mira has 20 minutes in them; your playtime is hidden.',
+    )
+    expect(commonTimeLine({ ...OPEN_PAIR, otherTimeHidden: true, commonMinutes: 20 }, 'en')).toBe(
+      "You have 20 minutes in them; mira's playtime is hidden.",
+    )
+    expect(
+      commonTimeLine({ otherName: 'mira', myTimeHidden: true, otherTimeHidden: true, commonMinutes: 0 }, 'en'),
+    ).toBe('Playtime is hidden for both of you, so we compare just the games.')
+  })
+
+  test('ни одной русской буквы при латинском имени; явный ru — как без языка', () => {
+    for (const my of [false, true]) {
+      for (const other of [false, true]) {
+        for (const commonMinutes of [0, 1, 25, 30, 600, 1234 * 60]) {
+          const d = { otherName: 'mira', myTimeHidden: my, otherTimeHidden: other, commonMinutes }
+          expect(commonTimeLine(d, 'en')).not.toMatch(CYRILLIC)
+          expect(commonTimeLine(d, 'ru')).toBe(commonTimeLine(d))
+        }
+      }
+    }
+  })
+})

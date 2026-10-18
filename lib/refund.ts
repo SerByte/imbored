@@ -1,3 +1,4 @@
+import { tr, type Locale } from './i18n'
 import type { GameMeta } from './types'
 
 /**
@@ -30,6 +31,26 @@ export const REFUND_NOTE = 'Не зайдёт — Steam вернёт деньг�
  */
 export const REFUND_NOTE_NEUTRAL =
   'Steam возвращает деньги, если с покупки прошло меньше 14 дней и в игре меньше 2 ч.'
+
+/**
+ * Та же строка на языке страницы. Русские константы выше остаются: их уже
+ * читают компоненты и карточки, и для ru функция отдаёт ровно их.
+ *
+ * Английская называет те же два условия Steam теми же числами — 14 дней и
+ * 2 часа: правило одно, меняется язык, а не обещание.
+ */
+export function refundNote(tone: 'pick' | 'neutral', locale: Locale = 'ru'): string {
+  if (tone === 'neutral') {
+    return tr(locale, {
+      ru: REFUND_NOTE_NEUTRAL,
+      en: "Steam gives a refund if it's been less than 14 days since purchase and you've played under 2 h.",
+    })
+  }
+  return tr(locale, {
+    ru: REFUND_NOTE,
+    en: 'Not for you? Steam refunds it: up to 14 days after purchase and under 2 h played.',
+  })
+}
 
 /** Месяцы в том виде, в каком их пишет магазин: английский и русский appdetails */
 const MONTHS: RegExp[] = [

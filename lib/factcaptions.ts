@@ -1,3 +1,4 @@
+import { pl, tr, type Locale } from './i18n'
 import { plural } from './plural'
 
 /**
@@ -21,16 +22,31 @@ import { plural } from './plural'
  *
  * Отсюда этот файл: одна функция на страницу и на карточку. Дублировать
  * подписи в двух местах — значит однажды поправить их в одном.
+ *
+ * Английские подписи — по тому же правилу: одна игра — «game», всё прочее,
+ * включая ноль, — «games». Причастие по-английски не согласуется («played»
+ * при любом числе), поэтому английская фраза — своя целая строка, а не
+ * русская с заменёнными словами.
  */
 
-/** «1 игра в библиотеке» · «22 игры в библиотеке» · «5 игр в библиотеке» */
-export function gamesCaption(n: number): string {
-  return `${plural(n, 'игра', 'игры', 'игр')} в библиотеке`
+/** Формы слова при числе — как их ждёт pl(): три русские, две английские */
+type Forms = Parameters<typeof pl>[2]
+
+const GAMES: Forms = { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] }
+const HOURS: Forms = { ru: ['час', 'часа', 'часов'], en: ['hour', 'hours'] }
+const MINUTES: Forms = { ru: ['минута', 'минуты', 'минут'], en: ['minute', 'minutes'] }
+
+/** «1 игра в библиотеке» · «22 игры в библиотеке» · «5 игр в библиотеке» · «22 games in library» */
+export function gamesCaption(n: number, locale: Locale = 'ru'): string {
+  const word = pl(locale, n, GAMES)
+  return tr(locale, { ru: `${word} в библиотеке`, en: `${word} in library` })
 }
 
-/** «1 час сыгран» · «22 часа сыграно» · «5 часов сыграно» */
-export function hoursCaption(n: number): string {
-  return `${plural(n, 'час', 'часа', 'часов')} ${plural(n, 'сыгран', 'сыграно', 'сыграно')}`
+/** «1 час сыгран» · «22 часа сыграно» · «5 часов сыграно» · «1 hour played» */
+export function hoursCaption(n: number, locale: Locale = 'ru'): string {
+  const word = pl(locale, n, HOURS)
+  if (locale === 'en') return `${word} played`
+  return `${word} ${plural(n, 'сыгран', 'сыграно', 'сыграно')}`
 }
 
 /**
@@ -44,14 +60,15 @@ export function hoursCaption(n: number): string {
  * запускали. Страница и карточка берут одно и то же отсюда — по той же
  * причине, что и остальные подписи этого файла.
  */
-export function playedFact(minutes: number): { value: number; caption: string } {
+export function playedFact(minutes: number, locale: Locale = 'ru'): { value: number; caption: string } {
   const hours = Math.round(minutes / 60)
   const rest = Math.round(minutes)
   if (hours === 0 && rest > 0) {
-    const caption = `${plural(rest, 'минута', 'минуты', 'минут')} ${plural(rest, 'сыграна', 'сыграно', 'сыграно')}`
+    const word = pl(locale, rest, MINUTES)
+    const caption = locale === 'en' ? `${word} played` : `${word} ${plural(rest, 'сыграна', 'сыграно', 'сыграно')}`
     return { value: rest, caption }
   }
-  return { value: hours, caption: hoursCaption(hours) }
+  return { value: hours, caption: hoursCaption(hours, locale) }
 }
 
 /**
@@ -60,7 +77,11 @@ export function playedFact(minutes: number): { value: number; caption: string } 
  * Не «так и не запущены»: число — бэклог по isUnplayed (меньше двух часов), и
  * «не запущена» было неправдой про каждую игру, где наигран час. Почему
  * слова именно такие — в lib/portraitvoice.ts, у unplayedHeading.
+ *
+ * По-английски — «barely touched» из глоссария: причастие не согласуется с
+ * числом, подпись одна на любое.
  */
-export function unplayedCaption(n: number): string {
+export function unplayedCaption(n: number, locale: Locale = 'ru'): string {
+  if (locale === 'en') return 'barely touched'
   return `почти не ${plural(n, 'тронута', 'тронуты', 'тронуты')}`
 }
