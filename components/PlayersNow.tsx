@@ -1,3 +1,8 @@
+'use client'
+
+import { useLocale } from '@/components/LocaleProvider'
+import { fmtNumber, tr } from '@/lib/i18n'
+
 /**
  * Насколько свежим должен быть замер, чтобы про него можно было сказать
  * «сейчас». Шесть часов — та же величина, что CCU_MAX_AGE_SEC в /api/prepare,
@@ -17,6 +22,12 @@ const СВЕЖЕСТЬ_SEC = 6 * 3600
  * про светлую тему — а именно на ней emerald и проваливался (в globals.css
  * записано: emerald-300 давал 1.39:1). Признак «сейчас играют» обязан быть
  * виден в обеих темах, иначе он не признак.
+ *
+ * Клиентский ради языка (useLocale), и это меняет то, что уезжает со
+ * страницы: пропсы — ccu, ccuAt и nowSec — теперь лежат в её RSC-части.
+ * Серверная страница из недельного кэша обязана передать часы, которые от
+ * момента рендера не зависят (страница игры — см. её вызов), иначе каждая
+ * перегенерация давала бы новую запись ISR из-за одного числа.
  */
 export function PlayersNow({
   ccu,
@@ -40,6 +51,7 @@ export function PlayersNow({
   nowSec: number
   className?: string
 }) {
+  const locale = useLocale()
   if (ccu === null || ccu === undefined) return null
 
   /*
@@ -77,13 +89,17 @@ export function PlayersNow({
   return (
     <span
       className={`inline-flex items-center gap-1.5 text-xs text-dim ${className}`}
-      title={свежий ? undefined : 'Онлайн по последнему известному замеру'}
+      title={
+        свежий
+          ? undefined
+          : tr(locale, { ru: 'Онлайн по последнему известному замеру', en: 'Last known player count' })
+      }
     >
       {ccu > 0 && свежий ? (
         <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-ok anim-pulse-dot" />
       ) : null}
-      <span className="tabular-nums">{ccu.toLocaleString('ru-RU')}</span>{' '}
-      {свежий ? 'сейчас играют' : 'играли'}
+      <span className="tabular-nums">{fmtNumber(locale, ccu)}</span>{' '}
+      {свежий ? tr(locale, { ru: 'сейчас играют', en: 'playing now' }) : tr(locale, { ru: 'играли', en: 'were playing' })}
     </span>
   )
 }

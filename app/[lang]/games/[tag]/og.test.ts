@@ -48,3 +48,20 @@ describe('карточка жанра и осечка базы', () => {
     await expect(render('no-such-genre')).resolves.toBeDefined()
   })
 })
+
+describe('английская карточка жанра', () => {
+  /*
+   * Порядок полки — по числу отзывов, а не по их доле, и подпись говорит
+   * так же, как страница («most-reviewed first»), а не «ranked by reviews».
+   */
+  test('подписи по-английски, без кириллицы', async () => {
+    const card = (await Image({ params: Promise.resolve({ lang: 'en', tag: 'no-such-genre' }) })) as unknown as {
+      element: unknown
+    }
+    const tree = JSON.stringify(card.element)
+    expect(tree).toContain('IMBORED.CC · GAMES BY GENRE')
+    expect(tree).toContain('Games by genre')
+    expect(tree).toContain('Thirty genres, most-reviewed games first')
+    expect(tree).not.toMatch(/[А-Яа-яЁё]/)
+  })
+})

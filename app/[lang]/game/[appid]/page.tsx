@@ -17,8 +17,9 @@ import { sitemapGames } from '@/lib/db'
 import { discountTrustedUntil, discountView, trustedPrice } from '@/lib/discount'
 import { trimArt } from '@/lib/art'
 import { PRERENDER_TOP, prerenderAtBuild } from '@/lib/gamecache'
-import { HUB_GENRES, hubPath, primaryGenre } from '@/lib/gamehub'
+import { hubPath, hubTitle, primaryGenre } from '@/lib/gamehub'
 import { byline } from '@/lib/byline'
+import { descriptionFor, storeUrlFor } from '@/lib/gamedesc'
 import {
   deadVerdict,
   gameDescription,
@@ -28,18 +29,20 @@ import {
   reviewFacts,
   type StudioLine,
 } from '@/lib/gamepage'
+import { reviewsLine, steamScoreLabel } from '@/lib/gametraits'
 import { gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
 import { priceRegion, regionCurrency } from '@/lib/steamregion'
-import { DEFAULT_LOCALE, lp, toLocale } from '@/lib/i18n'
+import { DEFAULT_LOCALE, fmtNumber, lp, pl, toLocale, tr, type Locale } from '@/lib/i18n'
 import { localeAlternates, ogSite } from '@/lib/site'
-import { plural } from '@/lib/plural'
 import { quizHref, roomSeedHref } from '@/lib/presets'
 import { isReplayable } from '@/lib/recommend'
 import { refundEligible } from '@/lib/refund'
 import { seedable } from '@/lib/roomseed'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
+import { storeLink } from '@/lib/storelink'
 import { STORE_LABEL } from '@/lib/stores'
-import { tagRu } from '@/lib/tagsru'
+import { tagLabel } from '@/lib/tagsru'
+import { textLangOn } from '@/lib/textlang'
 import { SectionLabel } from '@/components/Labels'
 import { TrailerPreview } from '@/components/TrailerPreview'
 import { GameCardBody } from '@/components/GameCard'
@@ -92,8 +95,11 @@ export const revalidate = 604_800
  * layout (generate-static-params.md: child — «once for each set of params
  * the parent generates»), и одинаковый список удвоил бы пререндер: двести
  * карточек вместо PRERENDER_TOP, вдвое больше записей ISR на каждой сборке.
- * Английские карточки пока говорят по-русски, и досоздаются по требованию,
- * как хвост каталога.
+ * Английские карточки досоздаются по требованию, как хвост каталога, и это
+ * решение, а не недоделка: пререндер окупается там, где адрес посетят
+ * наверняка (докблок PRERENDER_TOP), а своего верха у английской версии на
+ * старте ещё нет. Первый заход на /en/game/<appid> платит холодным рендером и
+ * дальше живёт в кэше ту же неделю.
  *
  * Сборка не должна падать из-за базы: локально TURSO_DATABASE_URL может быть
  * не задан, и тогда предрендерить просто нечего.
@@ -115,6 +121,27 @@ export async function generateStaticParams({
 /** generateMetadata и сам компонент рендерят один запрос — читаем базу однажды. */
 const loadOnce = cache(loadGamePage)
 
+/**
+ * Карточка превью на /en — та же opengraph-image.tsx рядом, но с английской
+ * подписью. alt файловой карточки — константа модуля, одна на все языки, и
+ * на /en og:image:alt был бы русским. Свой images этого уровня Next ставит
+ * вместо файла, а twitter:image дозаполняет из openGraph сам. Русская
+ * страница images не объявляет и получает файловую карточку как была: адрес
+ * с хешем, размеры и alt — оттуда. Хеша у английского адреса нет — его
+ * ставит только файловая метадата; карточку и так перерисовывает revalidate.
+ *
+ * Размеры и тип — копия size и contentType карточки, а не импорт: модуль
+ * карточки тянет next/og и шрифты в рендер страницы. Что они совпадают —
+ * сторож в page.test.ts. Не «мёртвый images» из lib/social.test.ts: тот —
+ * images, которые перекрыл бы файл, а здесь images перекрывают файл.
+ */
+const EN_CARD = { width: 1200, height: 630, type: 'image/png', alt: 'Is it worth playing? — imbored' }
+
+function enCard(locale: Locale, canonical: string) {
+  if (locale !== 'en') return {}
+  return { images: [{ url: lp(locale, `${canonical}/opengraph-image`), ...EN_CARD }] }
+}
+
 export async function generateMetadata({
   params,
 }: {
@@ -125,32 +152,38 @@ export async function generateMetadata({
   const appid = Number(raw)
   if (!Number.isInteger(appid) || appid === 0) return {}
 
-  const data = await loadOnce(appid)
+  const data = await loadOnce(appid, locale)
   if (!data) return {}
   const { meta, reviewsSummary, prosCons } = data
 
   // Описание собираем из того, что на странице и так есть, а не из шаблона:
   // в выдаче должно стоять то, ради чего на неё имеет смысл заходить.
-  // Правила длины и языка — в gameDescription, там же почему.
-  const description = gameDescription({
-    meta,
-    facts: reviewFacts(meta, reviewsSummary),
-    prosCons,
-    verdict: deadVerdict(meta),
-  })
+  // Правила длины и языка — в gameDescription, там же почему. prosCons уже
+  // на языке страницы: его отдал loadGamePage того же locale.
+  const description = gameDescription(
+    {
+      meta,
+      facts: reviewFacts(meta, reviewsSummary),
+      prosCons,
+      verdict: deadVerdict(meta, locale),
+    },
+    locale,
+  )
 
   const canonical = `/game/${appid}`
 
   /*
-   * Картинки здесь больше нет, и это не потеря, а переезд. Раньше в openGraph
-   * подставлялся сырой header-файл из Steam 920×430: чужая пропорция, которую
-   * мессенджеры режут по краям, без названия поверх и без единого следа
-   * imbored. Теперь карточку рисует opengraph-image.tsx рядом — арт во всю
-   * карточку, скрим и текст, как на самой странице.
+   * Картинки у русской страницы здесь нет, и это не потеря, а переезд. Раньше
+   * в openGraph подставлялся сырой header-файл из Steam 920×430: чужая
+   * пропорция, которую мессенджеры режут по краям, без названия поверх и без
+   * единого следа imbored. Теперь карточку рисует opengraph-image.tsx рядом —
+   * арт во всю карточку, скрим и текст, как на самой странице.
    *
-   * Оставлять здесь images было нельзя даже «на всякий случай»: файловая
-   * метадата приоритетнее объекта metadata, так что эти строки всё равно
-   * никогда бы не применились — они бы только врали читающему код.
+   * Файл Next подставляет сам, но только пока у openGraph этого уровня нет
+   * своего ключа images (resolve-metadata, mergeStaticMetadata): свой images
+   * встаёт ВМЕСТО файла. Поэтому чужой картинки здесь быть не должно, а на
+   * /en images есть — но это та же карточка, только с английским alt
+   * (enCard ниже).
    */
   /*
    * Записи, которые каталог сам считает мёртвыми, не идут в индекс.
@@ -189,21 +222,26 @@ export async function generateMetadata({
     meta.supersededBy !== undefined ||
     Object.keys(meta.tags).length === 0
 
+  // Вопрос — целой фразой своего языка: по-английски название встаёт внутрь
+  // вопроса, а не перед тире
+  const title = tr(locale, { ru: `${meta.name} — стоит ли играть`, en: `Is ${meta.name} worth playing?` })
+
   return {
-    title: `${meta.name} — стоит ли играть`,
+    title,
     description,
     alternates: localeAlternates(locale, canonical),
     ...(мёртвая ? { robots: { index: false, follow: true } } : {}),
     openGraph: {
       ...ogSite(locale),
-      title: `${meta.name} — стоит ли играть`,
+      title,
       description,
       url: lp(locale, canonical),
       type: 'article',
+      ...enCard(locale, canonical),
     },
     twitter: {
       card: 'summary_large_image',
-      title: `${meta.name} — стоит ли играть`,
+      title,
       description,
     },
   }
@@ -234,12 +272,23 @@ function PriceLine({ until, children }: { until: number | null; children: ReactN
  * карточек. Ссылки без prefetch: строку видят все, а идут по ней редко.
  *
  * Имя студии — ровно как в подписи героя: та же строка из базы, без
- * «исправлений», которые разошлись бы с ней на той же странице.
+ * «исправлений», которые разошлись бы с ней на той же странице. Неразрывный
+ * пробел — только у русского «у»: короткий предлог не остаётся в конце строки
+ * один, а у «from» такого правила нет.
  */
-function StudioLinks({ studio, className = '' }: { studio: StudioLine; className?: string }) {
+function StudioLinks({
+  studio,
+  locale,
+  className = '',
+}: {
+  studio: StudioLine
+  locale: Locale
+  className?: string
+}) {
   return (
     <p className={`text-sm text-dim leading-relaxed ${className}`}>
-      Ещё у&nbsp;{studio.developer}:{' '}
+      {tr(locale, { ru: 'Ещё у ', en: 'More from ' })}
+      {studio.developer}:{' '}
       {studio.games.map((g, i) => (
         <Fragment key={g.appid}>
           {i > 0 && ' · '}
@@ -257,16 +306,22 @@ function StudioLinks({ studio, className = '' }: { studio: StudioLine; className
   )
 }
 
-const SCORE_RU: Record<string, string> = {
-  'Overwhelmingly Positive': 'Крайне положительные',
-  'Very Positive': 'Очень положительные',
-  Positive: 'Положительные',
-  'Mostly Positive': 'В основном положительные',
-  Mixed: 'Смешанные',
-  'Mostly Negative': 'В основном отрицательные',
-  Negative: 'Отрицательные',
-  'Very Negative': 'Очень отрицательные',
-  'Overwhelmingly Negative': 'Крайне отрицательные',
+/**
+ * Подпись под кольцом. По-русски: «из 1 000 отзывов» рядом со словом Steam,
+ * без него — «положительных из 1 000 отзывов». По-английски кольцо и подпись
+ * читаются одной фразой глоссария: «80% · of 1,000 reviews are positive»; со
+ * словом Steam хвост «are positive» уже сказан им. Целым шаблоном на язык, а
+ * не русской склейкой: порядок слов у них разный.
+ */
+function ReviewsTail({ total, labelled, locale }: { total: number; labelled: boolean; locale: Locale }) {
+  const n = fmtNumber(locale, total)
+  const reviews = pl(locale, total, { ru: ['отзыва', 'отзывов', 'отзывов'], en: ['review', 'reviews'] })
+  if (locale === 'en') return labelled ? `of ${n} ${reviews}` : `of ${n} ${reviews} ${total === 1 ? 'is' : 'are'} positive`
+  return (
+    <>
+      {labelled ? 'из' : 'положительных из'} {n} {reviews}
+    </>
+  )
 }
 
 export default async function GamePage({ params }: { params: Promise<{ appid: string; lang?: string }> }) {
@@ -283,14 +338,15 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   // отрицательные appid — кураторский пул других магазинов
   if (!Number.isInteger(appid) || appid === 0) notFound()
 
-  const data = await loadOnce(appid)
+  const data = await loadOnce(appid, locale)
   if (!data) notFound()
 
   const { meta, reviewsSummary, prosCons } = data
   const now = nowSec()
   // Срок — датой: отсчёт «осталось 2 дня» менял бы страницу каждые сутки и
-  // врал бы из недельного кэша (см. докблок revalidate)
-  const deal = discountView(meta, now, { calendar: true })
+  // врал бы из недельного кэша (см. докблок revalidate). Подпись — на языке
+  // страницы («until Oct 14»): её собирает сервер, ценник рисует как есть
+  const deal = discountView(meta, now, { calendar: true, locale })
   // Страница переживёт скидку — после этого момента цену прячет клиент
   const dealUntil = deal ? discountTrustedUntil(meta, now) : null
   // null — цене верить нечему (сгоревшая распродажа), см. trustedPrice. Плашку
@@ -303,17 +359,27 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   const facts = reviewFacts(meta, reviewsSummary)
   // Ответ мёртвой игре — он же прячет «Запустить»: звать в пустой матчмейкинг
   // кнопкой запуска значит спорить с собственным вердиктом
-  const verdict = deadVerdict(meta)
+  const verdict = deadVerdict(meta, locale)
   // При равных весах — по имени: тот же порядок, что у жанров в разметке
   // (gameJsonLd), иначе видимое и размеченное расходились бы на ничьих
   const topTags = Object.entries(meta.tags)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, 8)
     .map(([t]) => t)
-  const traits = gameTraits(meta, data.hook)
+  const traits = gameTraits(meta, data.hook, locale)
   // Главный жанр — путь над названием и в крошках разметки (одно и то же)
   const genreTag = primaryGenre(meta.tags)
-  const genre = genreTag ? { tag: genreTag, title: HUB_GENRES[genreTag].title, path: hubPath(genreTag)! } : null
+  const genre = genreTag ? { tag: genreTag, title: hubTitle(genreTag, locale), path: hubPath(genreTag)! } : null
+  // Описание магазина на языке страницы: на /en только английское
+  // (descriptionFor), русского абзаца там нет вовсе — блок молчит
+  const about = descriptionFor(meta, locale)
+  // Своя страница магазина у игры не из Steam — на языке страницы
+  // (storeUrlFor). Английская подпись — целым шаблоном глоссария (storeLink:
+  // «Open in Epic Games», без метки — «Open store page»); русская — прежней
+  // разметкой, «Открыть в» и имя магазина
+  const storeHref = storeUrlFor(meta, locale)
+  const storeOpen =
+    storeHref && locale === 'en' ? storeLink({ appid, store: meta.store ?? null, storeUrl: storeHref }, locale)?.open : null
   /*
    * Арт героя — срезанный под card: обе его картинки рисуют этот вариант и
    * читают header, header2x и capsule. GameArt — клиентский островок, так что
@@ -456,9 +522,9 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               не говорит больше, чем страница. Главного жанра нет — нет строки.
             */}
             {genre && (
-              <nav aria-label="Жанр игры" className="-mb-2 flex flex-wrap items-center gap-1.5">
+              <nav aria-label={tr(locale, { ru: 'Жанр игры', en: 'Game genre' })} className="-mb-2 flex flex-wrap items-center gap-1.5">
                 <Link href="/games" className="tap tap-tight link-more">
-                  Игры по жанрам
+                  {tr(locale, { ru: 'Игры по жанрам', en: 'Games by genre' })}
                 </Link>
                 <Icon name="arrow" size={14} className="text-faint" />
                 <Link href={genre.path} className="tap tap-tight link-more">
@@ -496,9 +562,16 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   было бы тем же неправдивым утверждением, ради которого
                   PlayersNow и спрашивает возраст замера. Замер свежее шести
                   часов на неделю вперёд не бывает, так что здесь всегда
-                  «играли» и без пульса — и вывод от часов не зависит.
+                  «играли» и без пульса.
+
+                  Поэтому часы — бесконечность, а не now + revalidate: вывод тот
+                  же, но PlayersNow клиентский (язык — из useLocale), и его
+                  пропсы лежат в RSC-части страницы. now + revalidate был бы
+                  там новым числом на каждой перегенерации — и новой записью
+                  ISR без единой видимой перемены. Бесконечность от часов не
+                  зависит, и «сейчас» с ней не наступает никогда.
                 */}
-                <PlayersNow ccu={meta.ccu ?? null} ccuAt={meta.ccuAt} nowSec={now + revalidate} />
+                <PlayersNow ccu={meta.ccu ?? null} ccuAt={meta.ccuAt} nowSec={Number.POSITIVE_INFINITY} />
               </p>
             )}
             {/*
@@ -519,12 +592,14 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   size={56}
                   stroke={4}
                   duration={800}
-                  ariaLabel={`${facts.percent}% из ${facts.total.toLocaleString('ru-RU')} ${plural(facts.total, 'отзыва', 'отзывов', 'отзывов')} — положительные`}
+                  ariaLabel={reviewsLine(facts.percent, facts.total, locale)}
                 />
                 <div className="flex flex-col gap-0.5">
+                  {/* Слово Steam: по-русски — ярлык русского магазина, по-английски —
+                      официальный ярлык как есть (steamScoreLabel) */}
                   {facts.label && (
                     <span className="text-ember-text font-medium">
-                      {SCORE_RU[facts.label] ?? facts.label}
+                      {steamScoreLabel(facts.label, locale)}
                     </span>
                   )}
                   {/* Было «из N отзывов — за»: «за» здесь значило «голосов
@@ -532,8 +607,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                       срезало на полуслове. Со словом Steam процент уже назван
                       дважды (кольцо и шкала), без него — называем сами. */}
                   <span className="tabular-nums text-dim text-xs">
-                    {facts.label ? 'из' : 'положительных из'} {facts.total.toLocaleString('ru-RU')}{' '}
-                    {plural(facts.total, 'отзыва', 'отзывов', 'отзывов')}
+                    <ReviewsTail total={facts.total} labelled={!!facts.label} locale={locale} />
                   </span>
                 </div>
               </div>
@@ -546,7 +620,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             */}
             {verdict && (
               <div role="note" className="panel-lift px-4 py-3 flex flex-col gap-1">
-                <Eyebrow>Сейчас не советуем</Eyebrow>
+                <Eyebrow>{tr(locale, { ru: 'Сейчас не советуем', en: 'Not recommended right now' })}</Eyebrow>
                 <p className="text-sm leading-relaxed">{verdict}</p>
               </div>
             )}
@@ -565,10 +639,10 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                           prefetch={false}
                           className="tap tap-tight underline decoration-1 underline-offset-4 decoration-ink/30 transition-colors hover:text-ink hover:decoration-ink"
                         >
-                          {tagRu(t)}
+                          {tagLabel(t, locale)}
                         </Link>
                       ) : (
-                        tagRu(t)
+                        tagLabel(t, locale)
                       )}
                     </Fragment>
                   )
@@ -603,24 +677,27 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             )}
             {/* Описание у трёх карточек из четырёх английское (каталог берёт
                 его у магазина по-английски, см. isRussianText). Без lang его
-                читали русским голосом — латиницу по-русски. */}
-            {meta.shortDescription && (
+                читали русским голосом — латиницу по-русски. На /en описание
+                только английское (descriptionFor), и lang решает textLangOn:
+                кусок наследует lang="en" страницы. Русское правило — прежнее:
+                всё не русское помечено английским. */}
+            {about && (
               <p
-                lang={isRussianText(meta.shortDescription) ? undefined : 'en'}
+                lang={locale === 'en' ? textLangOn(locale, about) : isRussianText(about) ? undefined : 'en'}
                 className="text-dim leading-relaxed"
               >
-                {meta.shortDescription}
+                {about}
               </p>
             )}
             <div className="flex flex-wrap gap-3 mt-1">
-              {meta.storeUrl ? (
+              {storeHref ? (
                 <a
-                  href={meta.storeUrl}
+                  href={storeHref}
                   target="_blank"
                   rel="noreferrer"
                   className="btn-ember px-6 py-3"
                 >
-                  Открыть в {STORE_LABEL[meta.store ?? ''] ?? 'магазине'}
+                  {storeOpen ?? <>Открыть в {STORE_LABEL[meta.store ?? ''] ?? 'магазине'}</>}
                 </a>
               ) : (
                 <>
@@ -644,7 +721,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                     rel="noreferrer"
                     className={verdict ? 'btn-glass' : 'btn-ember px-6 py-3'}
                   >
-                    Страница в Steam
+                    {tr(locale, { ru: 'Страница в Steam', en: 'Steam page' })}
                   </a>
                   {!verdict && (
                     <OwnedLaunch
@@ -657,14 +734,18 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   )}
                 </>
               )}
+              {/* Поиск — на языке страницы: «обзор» нашёл бы англоязычному
+                  русские ролики */}
               <a
-                href={`https://www.youtube.com/results?search_query=${encodeURIComponent(`${meta.name} обзор`)}`}
+                href={`https://www.youtube.com/results?search_query=${encodeURIComponent(
+                  tr(locale, { ru: `${meta.name} обзор`, en: `${meta.name} review` }),
+                )}`}
                 target="_blank"
                 rel="noreferrer"
                 className="btn-glass"
               >
                 <Icon name="play" size={16} />
-                Обзоры на YouTube
+                {tr(locale, { ru: 'Обзоры на YouTube', en: 'YouTube reviews' })}
               </a>
               {/*
                 «Позвать в эту игру» — комната с ней первой картой
@@ -686,7 +767,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               {seedable(meta) && (
                 <Link href={roomSeedHref(appid)} prefetch={false} className="btn-glass">
                   <Icon name="users" size={16} />
-                  Позвать в эту игру
+                  {tr(locale, { ru: 'Позвать в эту игру', en: 'Invite to this game' })}
                 </Link>
               )}
               {/* Бесплатная игра тоже получает плашку. Условие было «цена больше
@@ -739,14 +820,16 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         */}
         {meta.trailer && (
           <section>
-            <SectionLabel className="mb-4">В движении</SectionLabel>
+            <SectionLabel className="mb-4">{tr(locale, { ru: 'В движении', en: 'In motion' })}</SectionLabel>
             <TrailerPreview trailer={meta.trailer} name={meta.name} className="max-w-3xl" />
           </section>
         )}
 
         {/* pros / cons из реальных отзывов */}
         {/* Сюда доходит только собранное моделью — эвристику отсекает
-            loadGamePage, там же объяснено почему. */}
+            loadGamePage, там же объяснено почему. На /en — только английский
+            слот: нет его — prosCons null, и блока нет вместе с подписью «Summarized
+            by AI…», а не русский блок на английской странице. */}
         {/*
           ХВАЛА И КРИТИКА ОДНОГО ВЕСА.
           Панели стояли парой, а набраны были по-разному: у «любят»
@@ -766,7 +849,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           <section className="grid md:grid-cols-2 gap-4">
             {prosCons.pros.length > 0 && (
               <div className="panel-lift p-6 anim-rise">
-                <SectionLabel className="mb-3">За что любят</SectionLabel>
+                <SectionLabel className="mb-3">{tr(locale, { ru: 'За что любят', en: 'Loved for' })}</SectionLabel>
                 <ul className="space-y-2 text-sm text-ink/90">
                   {prosCons.pros.map((p) => (
                     <li key={p} className="flex gap-2.5">
@@ -779,7 +862,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             )}
             {prosCons.cons.length > 0 && (
               <div className="panel-lift p-6 anim-rise" style={{ animationDelay: '80ms' }}>
-                <SectionLabel className="mb-3">За что ругают</SectionLabel>
+                <SectionLabel className="mb-3">{tr(locale, { ru: 'За что ругают', en: 'Criticized for' })}</SectionLabel>
                 <ul className="space-y-2 text-sm text-ink/90">
                   {prosCons.cons.map((c) => (
                     <li key={c} className="flex gap-2.5">
@@ -793,7 +876,10 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             {/* Ветка «Цитаты из отзывов» ушла вместе с показом эвристики:
                 сюда доходит только собранное моделью. */}
             <p className="md:col-span-2 text-[11px] text-faint">
-              Собрано ИИ из самых полезных отзывов Steam
+              {tr(locale, {
+                ru: 'Собрано ИИ из самых полезных отзывов Steam',
+                en: 'Summarized by AI from the most helpful Steam reviews',
+              })}
             </p>
           </section>
         )}
@@ -802,7 +888,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             фильтр «только крупные» действует лишь в общей ленте */}
         {data.news.length > 0 && (
           <section>
-            <SectionLabel className="mb-4">Что нового</SectionLabel>
+            <SectionLabel className="mb-4">{tr(locale, { ru: 'Что нового', en: "What's new" })}</SectionLabel>
             <GameNews items={data.news} name={meta.name} />
           </section>
         )}
@@ -810,7 +896,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         {/* скриншоты */}
         {meta.screenshots && meta.screenshots.length > 0 && (
           <section>
-            <SectionLabel className="mb-4">Скриншоты</SectionLabel>
+            <SectionLabel className="mb-4">{tr(locale, { ru: 'Скриншоты', en: 'Screenshots' })}</SectionLabel>
             {/* сколько кадров показывать, решает сам блок: это упирается в
                 бюджет видеопамяти слайдера, а не в вёрстку страницы */}
             <GameShots images={meta.screenshots} name={meta.name} />
@@ -827,7 +913,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         {data.similar.length > 0 && (
           <section>
             <SectionLabel className="mb-4">
-              Похожие{data.similarTag ? <> · {tagRu(data.similarTag)}</> : null}
+              {tr(locale, { ru: 'Похожие', en: 'Similar games' })}
+              {data.similarTag ? <> · {tagLabel(data.similarTag, locale)}</> : null}
             </SectionLabel>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-6">
               {data.similar.map((g) => (
@@ -846,10 +933,20 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                     art={trimArt(g.art)}
                     sizes="(min-width: 768px) 33vw, 50vw"
                     /* Чем похожи — у готовых соседей: заголовок блока у них без
-                       тега, и без этой строки «похожие» было бы голословным */
+                       тега, и без этой строки «похожие» было бы голословным.
+                       Строка режется по ширине плитки, и английская не шире
+                       русской: «shared:», а не «in common:» — замер на десяти
+                       парах частых тегов, «in common:» выходил шире «общее:»
+                       на двух из них, «shared:» уже на всех */
                     meta={
                       g.shared && g.shared.length > 0 ? (
-                        <span className="truncate">общее: {g.shared.slice(0, 2).map(tagRu).join(', ')}</span>
+                        <span className="truncate">
+                          {tr(locale, { ru: 'общее: ', en: 'shared: ' })}
+                          {g.shared
+                            .slice(0, 2)
+                            .map((t) => tagLabel(t, locale))
+                            .join(', ')}
+                        </span>
                       ) : undefined
                     }
                   />
@@ -858,11 +955,11 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             </div>
             {/* Под сеткой, внутри её секции: отдельная секция добавила бы ещё
                 один межблочный отступ над кнопкой ниже */}
-            {data.studio && <StudioLinks studio={data.studio} className="mt-6" />}
+            {data.studio && <StudioLinks studio={data.studio} locale={locale} className="mt-6" />}
           </section>
         )}
         {/* Полки нет (у игры нет тегов), а игры студии есть — строка сама по себе */}
-        {data.similar.length === 0 && data.studio && <StudioLinks studio={data.studio} />}
+        {data.similar.length === 0 && data.studio && <StudioLinks studio={data.studio} locale={locale} />}
 
         {/* /quiz, а не /play: страница кэшируется на неделю и пререндерится, то
             есть про сессию тут знать нечего. Гостя /play разворачивал на
@@ -892,7 +989,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               вид парадной кнопки на сайте один, и своя заливка здесь
               разъехалась бы с ним на первой же правке. */}
           <Link href="/quiz" className="btn-ember px-6 py-3">
-            Подобрать игру под настроение <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
+            {tr(locale, { ru: 'Подобрать игру под настроение ', en: 'Find a game for your mood ' })}
+            <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
           </Link>
           {/*
             «Как «X», но…» отсюда. Человек, дочитавший карточку, часто хочет
@@ -910,7 +1008,11 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           */}
           {data.similar.length > 0 && (
             <Link href={quizHref(null, appid)} className="tap link-more">
-              Похожее на «{meta.name}» — под моё настроение
+              {locale === 'en' ? (
+                <>Similar to “{meta.name}”, for your mood</>
+              ) : (
+                <>Похожее на «{meta.name}» — под моё настроение</>
+              )}
               <Icon name="arrow" size={16} />
             </Link>
           )}

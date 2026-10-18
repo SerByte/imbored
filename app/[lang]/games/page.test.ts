@@ -1,12 +1,14 @@
+import type { ResolvingMetadata } from 'next'
 import Link from '@/components/Link'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GameArt } from '@/components/GameArt'
 import { SearchLauncher } from '@/components/SearchLauncher'
 import { TilePending } from '@/components/TilePending'
 import { replaceGameTags, upsertGameMeta, type Db } from '@/lib/db'
-import { flight as flightOf, islandsOf } from '@/lib/testing/flight'
+import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
-import GenrePage from './[tag]/page'
+import GenrePage, { generateMetadata as generateGenreMetadata } from './[tag]/page'
+import { generateMetadata as generateHubMetadata } from './layout'
 import GamesHubPage from './page'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -110,5 +112,82 @@ describe('страница жанра /games/<slug>', () => {
     expect(text).toContain('"className":"lib-badge badge-line tabular-nums","children":1')
     expect(text).toMatch(/90%/)
     expect(text.match(/"loading":"eager"/g)).toHaveLength(3)
+  })
+})
+
+/**
+ * Английские хаб и жанр: /en/games и /en/games/open-world — те же полки и
+ * те же игры, подписи — на языке params. Названия игр — данные, и в
+ * фикстуре они латиницей: кириллица на /en осталась бы только недоведённой
+ * строкой интерфейса.
+ */
+describe('английские хаб и страница жанра', () => {
+  const CYR = /[А-Яа-яЁё]/
+  const en = <T extends object>(p: T) => ({ params: Promise.resolve({ ...p, lang: 'en' }) })
+  const latin = () => db.execute({ sql: "UPDATE games SET name = 'Game ' || appid", args: [] })
+
+  test('хаб: подписи по-английски, полка — подпись тега Steam', async () => {
+    await latin()
+    const page = flight(await GamesHubPage(en({})))
+    const text = textOf(page)
+    for (const s of ['Catalog', 'Games by genre', 'Open World', 'See all', 'Find a game for your mood']) {
+      expect(text, s).toContain(s)
+    }
+    expect(text).not.toMatch(CYR)
+  })
+
+  /*
+   * Шаблон корня layout обязан передать дальше: строка без шаблона обрывала
+   * его, и страницы жанров теряли « · imbored» в title (layout.tsx, докблок).
+   */
+  test('хаб: title и description — у layout, на языке страницы, и шаблон корня идёт дальше', async () => {
+    const root = Promise.resolve({ title: { absolute: 'imbored', template: '%s · imbored' } }) as unknown as ResolvingMetadata
+    const enMeta = await generateHubMetadata(en({}), root)
+    expect(enMeta).toMatchObject({ title: { default: 'Games by genre', template: '%s · imbored' } })
+    expect(JSON.stringify(enMeta)).not.toMatch(CYR)
+    expect(await generateHubMetadata({ params: Promise.resolve({ lang: 'ru' }) }, root)).toMatchObject({
+      title: { default: 'Игры по жанрам', template: '%s · imbored' },
+    })
+  })
+
+  test('жанр: заголовок жанра первым, строки карточек и описание без кириллицы', async () => {
+    await latin()
+    const meta = await generateGenreMetadata(en({ tag: 'open-world' }))
+    // Жанр — первым и с заглавной, как по-русски: внутри фразы
+    // («The best Open-world games…») заглавная читалась бы опечаткой
+    expect(meta.title).toBe('Open-world games — the best on Steam, by reviews')
+    expect(meta.openGraph?.title).toBe('Open-world games — the best on Steam, by reviews')
+    expect(meta.description).toMatch(/^Open-world games: 8 games where this genre is one of the main tags, /)
+    expect(JSON.stringify(meta)).not.toMatch(CYR)
+
+    const page = flight(await GenrePage(en({ tag: 'open-world' })))
+    const text = textOf(page)
+    expect(text).toContain('8 games where “Open World” is one of the main tags')
+    expect(text).toContain('Other genres')
+    expect(text).toMatch(/90% of 10K/)
+    expect(text).not.toMatch(CYR)
+    expect(JSON.stringify(page)).not.toMatch(CYR)
+  })
+
+  /*
+   * Как у карточки игры: alt файловой карточки один на все языки, и /en
+   * ставит свой images — ту же карточку маршрута с английским alt. Русская
+   * страница images не задаёт: карточка, адрес с хешем и alt — от файла.
+   */
+  test('жанр: превью на /en — та же карточка с английским alt, русская — от файла', async () => {
+    const { size, contentType, alt } = await import('./[tag]/opengraph-image')
+    const enMeta = await generateGenreMetadata(en({ tag: 'open-world' }))
+    expect(enMeta.openGraph?.images).toEqual([
+      {
+        url: '/en/games/open-world/opengraph-image',
+        width: size.width,
+        height: size.height,
+        type: contentType,
+        alt: 'Genre — imbored',
+      },
+    ])
+    expect(alt).toBe('Жанр — imbored')
+    const ruMeta = await generateGenreMetadata({ params: Promise.resolve({ tag: 'open-world' }) })
+    expect(ruMeta.openGraph).not.toHaveProperty('images')
   })
 })

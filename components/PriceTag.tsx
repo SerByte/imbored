@@ -1,4 +1,8 @@
+'use client'
+
+import { useLocale } from '@/components/LocaleProvider'
 import type { Discount } from '@/lib/discount'
+import { tr } from '@/lib/i18n'
 import { formatPrice, notSold, priceWhere } from '@/lib/steamregion'
 
 /**
@@ -16,6 +20,17 @@ import { formatPrice, notSold, priceWhere } from '@/lib/steamregion'
  * Регион — тоже с сервера и рядом с ценой (cc): валюта — свойство замера, а
  * не страницы. Карточка, отданная до смены STEAM_STORE_CC, рисует свои
  * доллары долларами, а не долларами со знаком рубля.
+ *
+ * ЯЗЫК — ИЗ КОНТЕКСТА, А НЕ ПРОПОМ, и потому модуль клиентский. Ценник рисуют
+ * восемь файлов, и серверные среди них (страница игры, /compat, полка
+ * желаемого) — тоже: проп locale пришлось бы протянуть через каждый, а
+ * забытый молча оставил бы на /en «бесплатно». useLocale() есть только у
+ * клиентского компонента; серверная страница от этого не меняется — ценник
+ * рендерится и на сервере, а в RSC-часть уезжают те же данные, что и раньше
+ * были в разметке (цена, регион, готовая скидка), без часов. Запись числа —
+ * язык («₽1,999»), валюта — по-прежнему регион cc. Срок скидки (endsLabel)
+ * сервер присылает уже на языке страницы (discountView), здесь его не
+ * пересобирают.
  */
 
 export type PriceTagProps = {
@@ -52,6 +67,7 @@ export function PriceTag({
   showPercent = true,
   className = '',
 }: PriceTagProps) {
+  const locale = useLocale()
   // «Не продаётся» сильнее даже «бесплатно»: бесплатную игру, которую магазин
   // региона не показывает, из него тоже не взять, и «бесплатно» обещало бы
   // человеку то, чего он не получит. Так же решает разметка (offersOf в
@@ -59,9 +75,13 @@ export function PriceTag({
   // размеченное не расходятся. Факт, а не ошибка: тем же тоном, что цена, но
   // без акцента — купить здесь нечего. Без региона сказать «где» нечем, и
   // такой ответ молчит, как цена без валюты
-  if (unsold && cc) return <span className={`text-dim ${className}`}>{notSold(cc)}</span>
+  if (unsold && cc) return <span className={`text-dim ${className}`}>{notSold(cc, locale)}</span>
   if (isFree || priceFinal === 0) {
-    return <span className={`font-bold tabular-nums text-ember-text ${className}`}>бесплатно</span>
+    return (
+      <span className={`font-bold tabular-nums text-ember-text ${className}`}>
+        {tr(locale, { ru: 'бесплатно', en: 'Free' })}
+      </span>
+    )
   }
   // cc === undefined — карточка из вкладки, открытой до этого поля: валюты у
   // её цены не узнать, и она молчит так же, как без региона
@@ -69,7 +89,7 @@ export function PriceTag({
   if (priceFinal === null || priceFinal === undefined) return null
 
   const hero = size === 'hero'
-  const price = formatPrice(discount ? discount.finalCents : priceFinal, cc)
+  const price = formatPrice(discount ? discount.finalCents : priceFinal, cc, { locale })
 
   if (!discount) {
     return <span className={`font-bold tabular-nums text-ember-text ${className}`}>{price}</span>
@@ -88,7 +108,7 @@ export function PriceTag({
       )}
       {/* Старая цена приглушена намеренно: это история, а не второй ценник */}
       <span className="tabular-nums text-faint line-through">
-        {formatPrice(discount.initialCents, cc)}
+        {formatPrice(discount.initialCents, cc, { locale })}
       </span>
       <span className={`font-bold tabular-nums text-ember-text ${hero ? 'text-base' : ''}`}>
         {price}
@@ -132,11 +152,16 @@ export function DiscountCorner({ discount }: { discount: Discount | null | undef
  * цены другие), и число без региона обещало бы ему чужую цену.
  */
 export function PriceWhere({ cc, className = '' }: { cc: string | null | undefined; className?: string }) {
+  const locale = useLocale()
   if (!cc) return null
-  return <span className={`text-xs text-faint ${className}`}>{priceWhere(cc)}</span>
+  return <span className={`text-xs text-faint ${className}`}>{priceWhere(cc, locale)}</span>
 }
 
-/** «до 17 августа» — отдельно, потому что в карточке для неё нет места */
+/**
+ * «до 17 августа» — отдельно, потому что в карточке для неё нет места. Строка
+ * уже на языке страницы («until Aug 17»): её собрал сервер (discountView с
+ * locale), и языка ей здесь не нужно.
+ */
 export function DiscountEnds({
   discount,
   className = '',

@@ -1,6 +1,6 @@
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { replaceGameTags, upsertGameMeta, type Db } from '@/lib/db'
+import { replaceGameTags, setNewsDigest, setNewsDigestEn, upsertGameMeta, upsertNewsItems, type Db } from '@/lib/db'
 import { freshDb } from '@/lib/testing/route'
 import sitemap from './sitemap'
 
@@ -102,5 +102,50 @@ describe('карта сайта и осечка базы', () => {
     errors.mockRestore()
     expect(got).toContain('/whatsnew')
     expect(got).not.toContain('/game/730')
+  })
+})
+
+/**
+ * Патчи — каждый на тех языках, где у страницы своё: пересказ своего языка.
+ * /en-двойник патча без английского пересказа стоит с noindex (docs/i18n.md),
+ * и в карте ему не место — ни адресом, ни hreflang с русской версии.
+ */
+describe('карта сайта и языки патчей', () => {
+  const now = () => Math.floor(Date.now() / 1000)
+  const patch = (gid: string) => ({
+    appid: 730,
+    gid,
+    title: `Обновление ${gid}`,
+    url: `https://store.steampowered.com/news/app/730/view/${gid}`,
+    publishedAt: now() - 86_400,
+    kind: 'patch' as const,
+    scale: 'major' as const,
+    blocks: [{ kind: 'p' as const, runs: [{ text: 'Починили сеть' }] }],
+    bodyHash: `h${gid}`,
+    rank: 9000,
+  })
+
+  test('с одним русским пересказом — только русский адрес и hreflang без en; с обоими — пара', async () => {
+    await upsertNewsItems(db, [patch('1'), patch('2')], now())
+    await setNewsDigest(db, 730, '1', { tldr: 'Починили сеть.', scale: 'major' }, now())
+    await setNewsDigest(db, 730, '2', { tldr: 'Новая карта.', scale: 'major' }, now())
+    await setNewsDigestEn(db, 730, '2', { tldrEn: 'A new map.' }, now())
+    const entries = await sitemap()
+    const news = entries
+      .filter((e) => /\/news\//.test(e.url))
+      .map((e) => ({ path: new URL(e.url).pathname, langs: e.alternates?.languages }))
+
+    expect(news.map((n) => n.path).sort()).toEqual(['/en/game/730/news/2', '/game/730/news/1', '/game/730/news/2'])
+    expect(news.find((n) => n.path === '/game/730/news/1')?.langs).toEqual({
+      ru: 'http://localhost:3000/game/730/news/1',
+      'x-default': 'http://localhost:3000/game/730/news/1',
+    })
+    for (const path of ['/game/730/news/2', '/en/game/730/news/2']) {
+      expect(news.find((n) => n.path === path)?.langs).toEqual({
+        ru: 'http://localhost:3000/game/730/news/2',
+        en: 'http://localhost:3000/en/game/730/news/2',
+        'x-default': 'http://localhost:3000/game/730/news/2',
+      })
+    }
   })
 })

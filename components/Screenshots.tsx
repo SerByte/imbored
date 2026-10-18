@@ -4,6 +4,8 @@ import { m } from 'framer-motion'
 import { MotionMax } from '@/components/motion/MotionMax'
 import { useState } from 'react'
 import { Lightbox } from '@/components/Lightbox'
+import { useLocale } from '@/components/LocaleProvider'
+import { tr } from '@/lib/i18n'
 
 /**
  * Сетка скриншотов с лайтбоксом.
@@ -18,6 +20,7 @@ import { Lightbox } from '@/components/Lightbox'
  * не «открывает модалку», а физически становится полноразмерной картинкой.
  */
 export function Screenshots({ images, name }: { images: string[]; name: string }) {
+  const locale = useLocale()
   const [open, setOpen] = useState<number | null>(null)
 
   // layoutId — фича domMax, её догружает MotionMax
@@ -30,7 +33,10 @@ export function Screenshots({ images, name }: { images: string[]; name: string }
             layoutId={`shot-${i}`}
             onClick={() => setOpen(i)}
             className="game-card block w-full cursor-pointer rounded-(--radius-card)"
-            aria-label={`Скриншот ${i + 1} из ${images.length} — ${name}`}
+            aria-label={tr(locale, {
+              ru: `Скриншот ${i + 1} из ${images.length} — ${name}`,
+              en: `Screenshot ${i + 1} of ${images.length} — ${name}`,
+            })}
           >
             <span className="card-thumb">
               {/* eslint-disable-next-line @next/next/no-img-element */}

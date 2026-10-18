@@ -2,7 +2,7 @@ import type { MetadataRoute } from 'next'
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import { sitemapGames, sitemapNews } from '@/lib/db'
 import { HUB_TAGS, hubPath } from '@/lib/gamehub'
-import { LOCALES, lp } from '@/lib/i18n'
+import { LOCALES, lp, type Locale } from '@/lib/i18n'
 import { newsPath, SITEMAP_NEWS_MAX, SITEMAP_NEWS_WINDOW_SEC } from '@/lib/newspage'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 
@@ -52,8 +52,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
    * alternates страниц (localeAlternates в lib/site.ts): path — русский
    * адрес без префикса.
    */
-  const languages = (path: string) => ({
-    languages: { ru: url(path), en: url(lp('en', path)), 'x-default': url(path) },
+  const languages = (path: string, has: readonly Locale[] = LOCALES) => ({
+    languages: {
+      ...(has.includes('ru') ? { ru: url(path) } : {}),
+      ...(has.includes('en') ? { en: url(lp('en', path)) } : {}),
+      // x-default — русская, пока она в карте; без неё — та версия, что есть
+      'x-default': url(has.includes('ru') ? path : lp(has[0], path)),
+    },
   })
   const localized = (path: string, rest: Omit<Entry, 'url' | 'alternates'>): Entry[] =>
     LOCALES.map((locale) => ({ url: url(lp(locale, path)), alternates: languages(path), ...rest }))
@@ -126,10 +131,28 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
    * сборке упавшая выборка патчей не должна уносить с собой пять тысяч
    * карточек игр. Только крупные, с пересказом, у живых игр и за девяносто
    * дней — что и почему, в lib/newspage и у sitemapNews.
+   *
+   * Пересказ у каждого языка свой, и выборок по одной на язык. /en-двойник
+   * патча своё имеет только с английским пересказом (tldr_en), без него он
+   * стоит с noindex (docs/i18n.md) — в карту идут только такие, и hreflang
+   * русской версии на него не ведёт: ссылка на неиндексируемую версию для
+   * поиска пустой сигнал. Время изменения — своё у каждого языка: пересказы
+   * пишутся в разные дни.
    */
-  let news: Awaited<ReturnType<typeof sitemapNews>> = []
+  const news = new Map<string, { appid: number; gid: string; changedAt: Partial<Record<Locale, number>> }>()
   try {
-    news = await sitemapNews(await getDb(), nowSec() - SITEMAP_NEWS_WINDOW_SEC, SITEMAP_NEWS_MAX)
+    const db = await getDb()
+    const since = nowSec() - SITEMAP_NEWS_WINDOW_SEC
+    const rows = await Promise.all(LOCALES.map((locale) => sitemapNews(db, since, SITEMAP_NEWS_MAX, locale)))
+    // Порядок — русской выборки (свежие сверху), английские без русского — следом
+    LOCALES.forEach((locale, i) => {
+      for (const n of rows[i]) {
+        const key = `${n.appid}:${n.gid}`
+        const entry = news.get(key) ?? { appid: n.appid, gid: n.gid, changedAt: {} }
+        entry.changedAt[locale] = n.changedAt
+        news.set(key, entry)
+      }
+    })
   } catch (err) {
     if (process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) throw err
     console.error('sitemap: патчи недоступны на сборке, отдаём без них —', String(err))
@@ -145,12 +168,18 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       }),
     ),
     // Ниже карточек: патч — повод зайти, а не главное содержание сайта
-    ...news.flatMap((n) =>
-      localized(newsPath(n.appid, n.gid), {
-        lastModified: new Date(n.changedAt * 1000),
-        changeFrequency: 'monthly',
-        priority: 0.5,
-      }),
-    ),
+    ...[...news.values()].flatMap((n) => {
+      const path = newsPath(n.appid, n.gid)
+      const has = LOCALES.filter((locale) => n.changedAt[locale] !== undefined)
+      return has.map(
+        (locale): Entry => ({
+          url: url(lp(locale, path)),
+          alternates: languages(path, has),
+          lastModified: new Date(n.changedAt[locale]! * 1000),
+          changeFrequency: 'monthly',
+          priority: 0.5,
+        }),
+      )
+    }),
   ]
 }
