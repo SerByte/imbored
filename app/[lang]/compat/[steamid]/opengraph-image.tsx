@@ -4,8 +4,13 @@ import { ogFonts, OG_BG, OG_INK } from '@/lib/og'
 import { postersOf, WALL_POSTERS } from '@/lib/ogcard'
 import { getDb } from '@/lib/server'
 import { CompatCardImage } from './share-card'
-import { isLocale } from '@/lib/i18n'
+import { isLocale, toLocale } from '@/lib/i18n'
 
+/**
+ * Подпись константой модуля — языка у неё нет. На /en её заменяет английская:
+ * страница объявляет свой openGraph.images (cardOn в page.tsx), а Next файловую
+ * карточку тогда не подставляет. Русская страница получает эту, как раньше.
+ */
 export const alt = 'Сравнить игровые вкусы — imbored'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
@@ -46,8 +51,11 @@ export default async function Image({ params }: { params: Promise<{ lang: string
   const { lang, steamid } = await params
   // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
   if (!isLocale(lang)) return new Response('Not found', { status: 404 })
+  const locale = toLocale(lang)
+  // Язык карточки — язык адреса: /en/compat/…/opengraph-image рисует
+  // английскую, с именем демо-владельца по-английски (nameOf)
   const invite = /^\d{17}$/.test(steamid)
-    ? await loadCompatInvite(await getDb(), steamid, { top: WALL_POSTERS })
+    ? await loadCompatInvite(await getDb(), steamid, { top: WALL_POSTERS, locale })
     : null
 
   if (!invite) {
@@ -77,7 +85,7 @@ export default async function Image({ params }: { params: Promise<{ lang: string
   const byId = new Map(invite.topGames.map((g) => [g.appid, g]))
   const posters = await postersOf(invite.topGames, (id) => byId.get(id))
 
-  return new ImageResponse(<CompatCardImage invite={invite} posters={posters} />, {
+  return new ImageResponse(<CompatCardImage invite={invite} posters={posters} locale={locale} />, {
     ...size,
     fonts: await ogFonts,
   })
