@@ -13,6 +13,7 @@ import { appBaseUrl, currentSession, getDb, isDemoId, isWriter, nowSec } from '@
 import { Eyebrow } from '@/components/Labels'
 import { Icon } from '@/components/Icon'
 import { withRef } from '@/lib/track'
+import { langOn } from './nick'
 import { COMPAT_SHARE } from './sharecopy'
 
 /** Вкладка и описание — на языке адреса; набор полей прежний: страница личная, её не индексируют */
@@ -112,25 +113,31 @@ export default async function CompatHubPage(props: PageProps<'/[lang]/compat'>) 
               <span id="compat-views">{tr(locale, { ru: 'Сравнили с тобой', en: 'Compared with you' })}</span>
             </Eyebrow>
             <ul className="flex flex-col gap-2">
-              {views.map((v) => (
-                <li key={v.steamid}>
-                  {/* Открыть сравнение в ответ — тот же процент: он симметричен */}
-                  <Link
-                    href={`/compat/${v.steamid}`}
-                    prefetch={false}
-                    className="panel-lift tap flex items-center gap-4 px-4 py-3"
-                  >
-                    <span className="font-display text-display-xs shrink-0 tabular-nums text-ember-text">{v.percent}%</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-bold">{nameOf(v.steamid, v.name, locale)}</span>
-                      <span className="block truncate text-xs text-dim">
-                        {verdict(v.percent, locale)} · {freshness(v.at, now, locale)}
+              {views.map((v) => {
+                const name = nameOf(v.steamid, v.name, locale)
+                return (
+                  <li key={v.steamid}>
+                    {/* Открыть сравнение в ответ — тот же процент: он симметричен */}
+                    <Link
+                      href={`/compat/${v.steamid}`}
+                      prefetch={false}
+                      className="panel-lift tap flex items-center gap-4 px-4 py-3"
+                    >
+                      <span className="font-display text-display-xs shrink-0 tabular-nums text-ember-text">{v.percent}%</span>
+                      <span className="min-w-0 flex-1">
+                        {/* Русский ник на /en — своим lang (./nick.tsx); на русской атрибута нет */}
+                        <span lang={langOn(locale, name)} className="block truncate font-bold">
+                          {name}
+                        </span>
+                        <span className="block truncate text-xs text-dim">
+                          {verdict(v.percent, locale)} · {freshness(v.at, now, locale)}
+                        </span>
                       </span>
-                    </span>
-                    <Icon name="arrow" size={16} className="shrink-0 text-dim" />
-                  </Link>
-                </li>
-              ))}
+                      <Icon name="arrow" size={16} className="shrink-0 text-dim" />
+                    </Link>
+                  </li>
+                )
+              })}
             </ul>
           </section>
         )}

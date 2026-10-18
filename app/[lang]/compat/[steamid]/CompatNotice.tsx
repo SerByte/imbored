@@ -24,7 +24,8 @@ import { CoverWall } from './CoverStrip'
  *
  * Язык — пропом от страницы, а не из next/root-params: страницу с этой шапкой
  * импортирует тест (page.test.ts), а там root-params бросает при загрузке.
- * title и body страница присылает уже на своём языке.
+ * title и body страница присылает уже на своём языке. title — разметкой, а не
+ * строкой: на /en русский ник в нём помечен своим lang (../nick.tsx).
  */
 export function CompatNotice({
   title,
@@ -34,7 +35,7 @@ export function CompatNotice({
   locale,
 }: {
   locale: Locale
-  title: string
+  title: React.ReactNode
   body: string
   /** обложки для фона; нет — пятно Ambient */
   games?: ArtRef[]

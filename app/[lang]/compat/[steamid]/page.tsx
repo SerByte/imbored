@@ -33,6 +33,7 @@ import { logSwallowed } from '@/lib/errlog'
 import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 import { CopyCompatLink } from '../CopyCompatLink'
+import { langOn, withNicks } from '../nick'
 import { CompatNotice } from './CompatNotice'
 import { CoverWall } from './CoverStrip'
 import { Eyebrow, SectionTitle } from '@/components/Labels'
@@ -257,7 +258,9 @@ function CommonRow({ game, locale }: { game: CompatGame; locale: Locale }) {
       {/* min-w-0 обязателен: без него flex-1 не даёт ужаться ниже содержимого
           и truncate не срабатывает вовсе */}
       <span className="flex min-w-0 flex-1 flex-col gap-2">
-        <span className="truncate text-[15px] font-extrabold tracking-[-0.01em]">{game.name}</span>
+        <span lang={langOn(locale, game.name)} className="truncate text-[15px] font-extrabold tracking-[-0.01em]">
+          {game.name}
+        </span>
         <HoursSplit minutesA={game.minutesA} minutesB={game.minutesB} locale={locale} />
       </span>
     </GameLink>
@@ -273,6 +276,31 @@ function CommonRow({ game, locale }: { game: CompatGame; locale: Locale }) {
  * русское — нет. Скринридер читает строку целиком.
  */
 function PickCard({ pick, locale }: { pick: CompatPick; locale: Locale }) {
+  const missing = (
+    <span className="min-w-0 truncate">
+      {withNicks(
+        locale,
+        tr(locale, {
+          ru: `Нет у: ${pick.missingFor.join(', ')}`,
+          en: `Not owned by: ${pick.missingFor.join(', ')}`,
+        }),
+        pick.missingFor,
+      )}
+    </span>
+  )
+  const price = (
+    <span className="flex shrink-0 items-center gap-2">
+      <PriceTag
+        priceFinal={pick.priceFinal ?? null}
+        cc={pick.priceCc ?? null}
+        unsold={pick.unsold}
+        isFree={pick.isFree}
+        discount={pick.discount}
+        showPercent={false}
+      />
+      {pick.store && <span>{STORE_LABEL[pick.store] ?? pick.store}</span>}
+    </span>
+  )
   return (
     <GameLink appid={pick.appid} className="game-card block">
       <GameCardBody
@@ -292,23 +320,8 @@ function PickCard({ pick, locale }: { pick: CompatPick; locale: Locale }) {
             </span>
           ) : (
             <>
-              <span className="min-w-0 truncate">
-                {tr(locale, {
-                  ru: `Нет у: ${pick.missingFor.join(', ')}`,
-                  en: `Not owned by: ${pick.missingFor.join(', ')}`,
-                })}
-              </span>
-              <span className="flex shrink-0 items-center gap-2">
-                <PriceTag
-                  priceFinal={pick.priceFinal ?? null}
-                  cc={pick.priceCc ?? null}
-                  unsold={pick.unsold}
-                  isFree={pick.isFree}
-                  discount={pick.discount}
-                  showPercent={false}
-                />
-                {pick.store && <span>{STORE_LABEL[pick.store] ?? pick.store}</span>}
-              </span>
+              {missing}
+              {price}
             </>
           )
         }
@@ -442,10 +455,14 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
         title={
           state.otherName === null
             ? tr(locale, { ru: 'Этот игрок ещё не подключал библиотеку', en: "This player hasn't connected a library yet" })
-            : tr(locale, {
-                ru: `${state.otherName} ещё не подключал библиотеку`,
-                en: `${state.otherName} hasn't connected a library yet`,
-              })
+            : withNicks(
+                locale,
+                tr(locale, {
+                  ru: `${state.otherName} ещё не подключал библиотеку`,
+                  en: `${state.otherName} hasn't connected a library yet`,
+                }),
+                [state.otherName],
+              )
         }
         body={tr(locale, {
           ru: 'Сравнивать пока не с чем. Можно кинуть в ответ свою ссылку — сравнение соберётся, когда по ней подключат библиотеку.',
@@ -480,10 +497,14 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
                 {!isDemoId(other) && (
                   <>
                     {' '}
-                    {tr(locale, {
-                      ru: `После входа через Steam ${invite.name} увидит у себя, что вы сравнились.`,
-                      en: `Once you sign in with Steam, ${invite.name} will see that you compared.`,
-                    })}
+                    {withNicks(
+                      locale,
+                      tr(locale, {
+                        ru: `После входа через Steam ${invite.name} увидит у себя, что вы сравнились.`,
+                        en: `Once you sign in with Steam, ${invite.name} will see that you compared.`,
+                      }),
+                      [invite.name],
+                    )}
                   </>
                 )}
               </p>
@@ -523,6 +544,20 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
 
   const d = state.data
   const hidden = d.commonTotal - d.commonGames.length
+  const pairHeading = (
+    <SplitHeading className="font-display text-display-lg" delay={0.18}>
+      {`${d.myName} × ${d.otherName}`}
+    </SplitHeading>
+  )
+  /*
+   * «Sergey × Костя» — заголовок из одних ников, и текст его скринридер берёт
+   * из aria-label: разрезать строку там нельзя, а SplitHeading lang не
+   * принимает. Поэтому на /en весь заголовок — 'ru', если русский хоть один
+   * ник: латинский ник русский голос прочтёт так же, как на русской странице,
+   * а русский английским — только по буквам. Слов, кроме ников, в нём нет.
+   * Русская страница обёртки не получает
+   */
+  const pairLang = langOn(locale, d.myName) ?? langOn(locale, d.otherName)
   // Время скрыто у обоих (lib/playtime.ts): счёта часов в строках нет вовсе
   const noHours = d.myTimeHidden && d.otherTimeHidden
 
@@ -558,9 +593,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
 
         <div className="relative mx-auto w-full max-w-6xl px-safe pb-16 pt-40">
           <Eyebrow className="mb-3">{tr(locale, { ru: 'Совместимость', en: 'Compatibility' })}</Eyebrow>
-          <SplitHeading className="font-display text-display-lg" delay={0.18}>
-            {`${d.myName} × ${d.otherName}`}
-          </SplitHeading>
+          {pairLang ? <div lang={pairLang}>{pairHeading}</div> : pairHeading}
           <p className="mt-4 max-w-xl font-display text-display-md text-dim">{verdict(d.percent, locale)}</p>
           {/*
             Процент — главное число страницы, и он стоит крупно, как счёт, а не
@@ -625,7 +658,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
         <m.section {...inView(1)}>
           {d.commonTotal > 0 ? (
             <>
-              <SectionTitle sub={commonTimeLine(d, locale)} className="mb-4">
+              <SectionTitle sub={withNicks(locale, commonTimeLine(d, locale), [d.otherName])} className="mb-4">
                 {tr(locale, { ru: 'Общие игры', en: 'Games in common' })}
               </SectionTitle>
               {/* Легенда заодно подписывает колонки: какое число чьё, иначе
@@ -633,11 +666,11 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
                   нет — подписывать нечего */}
               {!noHours && (
                 <div className="mb-3 flex flex-wrap items-center gap-4 text-[13px] font-semibold text-dim">
-                  <span className="flex items-center gap-1.5">
+                  <span lang={langOn(locale, d.myName)} className="flex items-center gap-1.5">
                     <span aria-hidden className="h-2 w-2 rounded-full bg-ember" />
                     {d.myName}
                   </span>
-                  <span className="flex items-center gap-1.5">
+                  <span lang={langOn(locale, d.otherName)} className="flex items-center gap-1.5">
                     <span aria-hidden className="h-2 w-2 rounded-full bg-info" />
                     {d.otherName}
                   </span>
@@ -715,16 +748,24 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
             {/* «Портрет Демо-игрок» не склонялось: ник — не слово, и падеж
                 ему даёт только приложение «игрока», как в заголовке портрета.
                 По-английски падежа нет, и имя встаёт вперёд: «Sergey's» */}
-            {tr(locale, { ru: `Портрет игрока ${d.otherName}`, en: `${d.otherName}'s player portrait` })}
+            {withNicks(
+              locale,
+              tr(locale, { ru: `Портрет игрока ${d.otherName}`, en: `${d.otherName}'s player portrait` }),
+              [d.otherName],
+            )}
             <Icon name="arrow" size={16} />
           </Link>
           {/* Что осталось после этого экрана — говорится здесь же, а не в политике */}
           {records && (
             <p className="basis-full text-center text-xs text-faint">
-              {tr(locale, {
-                ru: `${d.otherName} увидит у себя, что вы сравнились, и ваш процент.`,
-                en: `${d.otherName} will see that you compared, and your percentage.`,
-              })}
+              {withNicks(
+                locale,
+                tr(locale, {
+                  ru: `${d.otherName} увидит у себя, что вы сравнились, и ваш процент.`,
+                  en: `${d.otherName} will see that you compared, and your percentage.`,
+                }),
+                [d.otherName],
+              )}
             </p>
           )}
         </m.div>
@@ -748,7 +789,9 @@ function InviteHero({
       <div aria-hidden className="grain" />
       <div className="relative mx-auto w-full max-w-2xl px-5 pb-10 pt-32 text-center">
         <Eyebrow className="mb-3">{tr(locale, { ru: 'Совместимость', en: 'Compatibility' })}</Eyebrow>
-        <h1 className="font-display text-display-lg">{inviteTitle(invite.name, locale)}</h1>
+        <h1 className="font-display text-display-lg">
+          {withNicks(locale, inviteTitle(invite.name, locale), [invite.name])}
+        </h1>
         <p className="mt-4 text-sm text-dim">
           {inviteGames(invite.gamesCount, locale)} · {inviteHours(invite, locale)}
         </p>

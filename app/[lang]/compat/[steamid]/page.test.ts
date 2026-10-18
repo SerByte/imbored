@@ -1,16 +1,17 @@
 import type { InStatement } from '@libsql/client'
 import Link from '@/components/Link'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { Ambient } from '@/components/Ambient'
 import { GameArt } from '@/components/GameArt'
 import { TilePending } from '@/components/TilePending'
 import { Magnet } from '@/components/Magnet'
 import { SplitHeading } from '@/components/SplitHeading'
-import { saveLibrarySnapshot, upsertGamesMeta, upsertUser, type Db } from '@/lib/db'
+import { replaceGameTags, saveLibrarySnapshot, upsertGamesMeta, upsertUser, type Db } from '@/lib/db'
+import { rotationSlot } from '@/lib/pool'
 import { roomSeedHref } from '@/lib/presets'
 import { flight, islandsOf, textOf } from '@/lib/testing/flight'
 import { hiddenLibrary, hiddenLibraryMetas } from '@/lib/testing/hiddenlibrary'
-import { freshDb, params, signIn } from '@/lib/testing/route'
+import { freshDb, params, signIn, signOut } from '@/lib/testing/route'
 import type { GameMeta } from '@/lib/types'
 import { CopyCompatLink } from '../CopyCompatLink'
 import CompatPage, { generateMetadata } from './page'
@@ -320,5 +321,118 @@ describe('/compat/[steamid] на /en: ни одной русской строк�
       title: 'Совместимость',
       robots: { index: false },
     })
+  })
+})
+
+/**
+ * Русский ник на /en — своим lang="ru".
+ *
+ * Ник из Steam не переводят, но голос скринридера выбирается по lang, и
+ * английский читает «Костя» по буквам. Аудитория сайта по большей части
+ * русскоязычная, так что это частый случай, а не редкий. Проверка — по
+ * каждому вхождению ника в раскрытой странице: текстом или в пропсах
+ * островка (aria-label заголовка «A × B» — его children). Русская страница
+ * атрибута не получает вовсе: она обязана остаться прежней до байта.
+ */
+describe('/compat/[steamid] на /en: русский ник помечен lang="ru"', () => {
+  const ISLANDS = new Map<unknown, string>([
+    [Link, 'Link'],
+    [GameArt, 'GameArt'],
+    [Magnet, 'Magnet'],
+    [SplitHeading, 'SplitHeading'],
+    [CopyCompatLink, 'CopyCompatLink'],
+    [TilePending, 'TilePending'],
+    [Ambient, 'Ambient'],
+  ])
+  const NICK = 'Костя'
+
+  /** Вхождения ника вне lang="ru": строки целиком, где он стоит без пометки */
+  function unmarked(node: unknown, nick: string, marked = false): string[] {
+    if (typeof node === 'string') return !marked && node.includes(nick) ? [node] : []
+    if (Array.isArray(node)) return node.flatMap((n) => unmarked(n, nick, marked))
+    if (node === null || typeof node !== 'object') return []
+    const props = (node as { props?: Record<string, unknown> }).props
+    const here = marked || props?.lang === 'ru'
+    return Object.values(props ?? node).flatMap((v) => unmarked(v, nick, here))
+  }
+
+  const coop = (appid: number, name: string): GameMeta => ({
+    appid,
+    name,
+    tags: { 'Co-op': 100 },
+    genres: [],
+    categories: [1, 9],
+  })
+  const SHARED = coop(2001, 'Deep Rock Galactic')
+  const MINE = coop(2002, 'Valheim')
+  const THEIRS = coop(2003, 'Raft')
+  const NOBODYS = coop(2004, 'Lethal Company')
+  const played = (g: GameMeta, minutes: number) => ({ appid: g.appid, name: g.name, playtimeForever: minutes, playtime2Weeks: 0 })
+
+  beforeEach(async () => {
+    await upsertGamesMeta(db, [SHARED, MINE, THEIRS, NOBODYS], NOW)
+    // Полка «на будущее» берёт игры из пула каталога — по проекции тегов
+    for (const g of [MINE, THEIRS, NOBODYS]) await replaceGameTags(db, g.appid, [{ tag: 'Co-op', weight: 100 }])
+    await upsertUser(db, { steamid: OWNER, personaName: NICK }, NOW)
+    await upsertUser(db, { steamid: VIEWER, personaName: 'Mira' }, NOW)
+    await saveLibrarySnapshot(db, OWNER, [...hiddenLibrary(12), played(SHARED, 600), played(THEIRS, 90)], NOW)
+    await saveLibrarySnapshot(db, VIEWER, [played(SHARED, 25), played(MINE, 300)], NOW)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  test('посчитанное сравнение: заголовок, легенда, «Not owned by», время, портрет и отметка', async () => {
+    // Каталожное окно пары сдвигается по неделям (rotationSlot), и в каталоге
+    // из трёх игр окно со сдвигом пусто — страница берёт время сама, поэтому
+    // ставим ей неделю без сдвига
+    let now = NOW
+    while (rotationSlot([OWNER, VIEWER].sort().join(':'), now) !== 0) now += 7 * 86_400
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(now * 1000)
+    await signIn(db, VIEWER, { verified: true })
+    const page = flight(await CompatPage(params({ steamid: OWNER, lang: 'en' })), ISLANDS)
+    const text = textOf(page)
+    // Ник правда стоит на всех этих местах — иначе проверка ниже пуста
+    expect(text).toContain(`${NICK}'s player portrait`)
+    expect(text).toContain(`${NICK} will see that you compared, and your percentage.`)
+    expect(text).toContain(`Not owned by: ${NICK}`)
+    expect(text).toContain(`Not owned by: Mira, ${NICK}`)
+    expect(islandsOf(page, 'SplitHeading').map((h) => h.children)).toEqual([`Mira × ${NICK}`])
+    expect(unmarked(page, NICK)).toEqual([])
+    // Ссылка на портрет — inline-flex с gap: фраза с ником обязана остаться
+    // одним её ребёнком, иначе ник отъезжает от «'s» на ширину зазора
+    const portrait = islandsOf(page, 'Link').find((l) => l.href === `/portrait/${OWNER}`)
+    expect((portrait?.children as unknown[])[0]).toMatchObject({ tag: 'span' })
+    // Латинский ник пометки не получает: он и так на языке страницы
+    expect(unmarked(page, 'Mira').length).toBeGreaterThan(0)
+  })
+
+  test('приглашение гостю: заголовок и обещание отметки', async () => {
+    const page = flight(await CompatPage(params({ steamid: OWNER, lang: 'en' })), ISLANDS)
+    expect(textOf(page)).toContain(`${NICK} wants to compare libraries`)
+    expect(textOf(page)).toContain(`Once you sign in with Steam, ${NICK} will see that you compared.`)
+    expect(unmarked(page, NICK)).toEqual([])
+  })
+
+  test('«ещё не подключал библиотеку» с русским ником', async () => {
+    const STRANGER = '76561198000000099'
+    await upsertUser(db, { steamid: STRANGER, personaName: NICK }, NOW)
+    const page = flight(await CompatPage(params({ steamid: STRANGER, lang: 'en' })), ISLANDS)
+    expect(textOf(page)).toContain(`${NICK} hasn't connected a library yet`)
+    expect(unmarked(page, NICK)).toEqual([])
+  })
+
+  test('русская страница — без единого lang: та же разметка, что до перевода', async () => {
+    await signIn(db, VIEWER, { verified: true })
+    const ok = flight(await CompatPage(params({ steamid: OWNER })), ISLANDS)
+    expect(textOf(ok)).toContain(`Портрет игрока ${NICK}`)
+    expect(JSON.stringify(ok)).not.toContain('"lang"')
+    request.reset()
+    signOut()
+    const invite = flight(await CompatPage(params({ steamid: OWNER })), ISLANDS)
+    expect(textOf(invite)).toContain(`${NICK} зовёт сравнить библиотеки`)
+    expect(JSON.stringify(invite)).not.toContain('"lang"')
   })
 })
