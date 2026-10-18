@@ -2,7 +2,7 @@
 
 import { AnimatePresence, m } from 'framer-motion'
 import { MotionMax } from '@/components/motion/MotionMax'
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { GameCardBody } from '@/components/GameCard'
 import { GameLink } from '@/components/GameLink'
@@ -52,7 +52,7 @@ export function LikedShelf({
   total: number
   writer: boolean
 }) {
-  const router = useRouter()
+  const router = useLocaleRouter()
   /*
    * Убранное — множеством, а плитки выводятся из пропа, а не копией в
    * состоянии: router.refresh() приносит полку заново, и шестьдесят первая

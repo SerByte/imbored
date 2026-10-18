@@ -1,6 +1,6 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { lazyIsland } from '@/components/lazyIsland'
 import { StatusLine } from '@/components/StatusLine'
@@ -62,7 +62,7 @@ const ForgetMe = lazyIsland(() => import('@/components/ForgetMe').then((m) => m.
  * показали бы ему его же библиотеку — на его же устройстве.
  */
 export function SignOut({ verified, feedLink = false }: { verified: boolean; feedLink?: boolean }) {
-  const router = useRouter()
+  const router = useLocaleRouter()
   const [busy, setBusy] = useState<'one' | 'all' | null>(null)
   const [confirmAll, setConfirmAll] = useState(false)
   /** «Везде» сделано не до конца: это устройство вышло, и кнопки выхода ему больше ни к чему */

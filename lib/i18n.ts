@@ -19,6 +19,9 @@ export const DEFAULT_LOCALE: Locale = 'ru'
 /** Явный выбор человека в переключателе (components/LocaleSwitch.tsx). Читают его правила «/» в next.config (lib/homelocale.ts). */
 export const LANG_COOKIE = 'lang'
 
+/** Жизнь куки LANG_COOKIE: год — выбор языка не настройка на один заход */
+export const LANG_COOKIE_MAX_AGE_SEC = 31_536_000
+
 /**
  * Первые сегменты адресов, которые живут под app/[lang].
  *

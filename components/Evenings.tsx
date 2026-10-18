@@ -1,7 +1,7 @@
 'use client'
 
 import Link from '@/components/Link'
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useRef, useState, useTransition, type ReactNode } from 'react'
 import { GameCardBody } from '@/components/GameCard'
 import { GameLink } from '@/components/GameLink'
@@ -142,7 +142,7 @@ export function Evenings({
   const [kept, setKept] = useState<ReadonlyMap<string, EveningItem>>(() => new Map())
   const keep = (item: EveningItem) => setKept((m) => new Map(m).set(keyOf(item), item))
   const shelf = keepOnShelf(items, kept)
-  const router = useRouter()
+  const router = useLocaleRouter()
   const [, startTransition] = useTransition()
   const readOnly = !writer || denied
   const missed = failed === null ? undefined : shelf.find((i) => keyOf(i) === failed)

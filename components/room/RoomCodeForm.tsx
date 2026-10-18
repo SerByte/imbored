@@ -1,6 +1,6 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useState } from 'react'
 import { parseRoomCode } from '@/lib/room'
 
@@ -21,7 +21,7 @@ import { parseRoomCode } from '@/lib/room'
  * текстом, звучит не во всех связках скринридера и браузера.
  */
 export function RoomCodeForm({ className = '' }: { className?: string }) {
-  const router = useRouter()
+  const router = useLocaleRouter()
   const [raw, setRaw] = useState('')
   const [bad, setBad] = useState(false)
 

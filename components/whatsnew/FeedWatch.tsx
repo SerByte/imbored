@@ -1,7 +1,7 @@
 'use client'
 
 import { AnimatePresence, m, useReducedMotion } from 'framer-motion'
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useState, useTransition } from 'react'
 import {
   afterProbe,
@@ -46,7 +46,7 @@ export function FeedWatch({
 }) {
   const [head, setHead] = useState<FeedHead | null>(null)
   const [pending, startTransition] = useTransition()
-  const router = useRouter()
+  const router = useLocaleRouter()
   const reduced = useReducedMotion()
 
   useEffect(() => {

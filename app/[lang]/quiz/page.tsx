@@ -1,7 +1,7 @@
 'use client'
 
 import { AnimatePresence, m } from 'framer-motion'
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { ClickSpark } from '@/components/ClickSpark'
@@ -141,7 +141,7 @@ function prefersReducedMotion(): boolean {
 }
 
 function Quiz() {
-  const router = useRouter()
+  const router = useLocaleRouter()
   const search = useSearch()
   const [stepIndex, setStepIndex] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})

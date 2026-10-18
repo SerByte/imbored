@@ -84,6 +84,33 @@ describe('ссылки на языке', () => {
     expect(offenders, 'импортируй Link и useLinkStatus из @/components/Link').toEqual([])
   })
 
+  /**
+   * То же для переходов в коде: router.push('/game/730') на /en уводил на
+   * русскую карточку — поиск в шапке по Enter, лендинг после входа, «Выйти».
+   * useRouter — только через components/useLocaleRouter.ts.
+   */
+  test('useRouter из next/navigation берёт только components/useLocaleRouter.ts', () => {
+    const offenders: string[] = []
+    const stmt = /\bimport\s*\{[^}]*\buseRouter\b[^}]*\}\s*from\s*['"]next\/navigation['"]/
+    let seen = 0
+    for (const dir of ['app', 'components', 'lib']) {
+      for (const file of sources(dir)) {
+        if (file === 'components/useLocaleRouter.ts') continue
+        const code = fs
+          .readFileSync(path.join(ROOT, file), 'utf8')
+          .replace(/\/\*[\s\S]*?\*\//g, '')
+          .replace(/^\s*\/\/.*$/gm, '')
+        if (/\buseLocaleRouter\(\)/.test(code)) seen++
+        if (stmt.test(code)) offenders.push(file)
+      }
+    }
+    expect(seen, 'переходы в коде не найдены — сторож ослеп').toBeGreaterThan(10)
+    expect(offenders, 'бери useLocaleRouter из @/components/useLocaleRouter').toEqual([])
+    const own = fs.readFileSync(path.join(ROOT, 'components', 'useLocaleRouter.ts'), 'utf8')
+    expect(own).toMatch(stmt)
+    expect(own).toMatch(/push: \(href, options\) => router\.push\(lp\(locale, href\), options\)/)
+  })
+
   test('сама ссылка берёт next/link — иначе исключение выше ничего не значит', () => {
     const src = fs.readFileSync(path.join(ROOT, 'components', 'Link.tsx'), 'utf8')
     expect(valueImportsOfNextLink(src).length).toBeGreaterThan(0)

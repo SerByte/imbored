@@ -2,7 +2,8 @@
 
 import dynamic from 'next/dynamic'
 import Link from '@/components/Link'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import {
   type ComponentProps,
   useCallback,
@@ -239,7 +240,7 @@ const serverVisible = () => true
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>()
-  const router = useRouter()
+  const router = useLocaleRouter()
   const roomId = (params.id ?? '').toUpperCase()
 
   /**

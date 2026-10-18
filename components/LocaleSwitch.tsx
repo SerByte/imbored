@@ -3,7 +3,7 @@
 import { usePathname, useSearchParams } from 'next/navigation'
 import { Fragment, Suspense } from 'react'
 import { useLocale } from '@/components/LocaleProvider'
-import { LANG_COOKIE, LOCALES, switchLocaleHref, tr, type Locale } from '@/lib/i18n'
+import { LANG_COOKIE, LANG_COOKIE_MAX_AGE_SEC, LOCALES, switchLocaleHref, tr, type Locale } from '@/lib/i18n'
 
 /**
  * Переключатель «RU / EN»: тот же адрес на другом языке (docs/i18n.md).
@@ -33,13 +33,13 @@ import { LANG_COOKIE, LOCALES, switchLocaleHref, tr, type Locale } from '@/lib/i
 const NAME: Record<Locale, string> = { ru: 'Русский', en: 'English' }
 const SHORT: Record<Locale, string> = { ru: 'RU', en: 'EN' }
 
-/** Год: выбор языка — не настройка на один заход */
-const YEAR_SEC = 31_536_000
-
-/** Запомнить выбор: кука, которую читают правила «/» в next.config. doc — ради теста */
+/**
+ * Запомнить выбор: кука, которую читают правила «/» в next.config. doc — ради теста.
+ * Зовёт и лендинг после входа с английской версии (components/landing/ConnectCard).
+ */
 export function rememberLocale(target: Locale, doc: { cookie: string } = document): void {
   try {
-    doc.cookie = `${LANG_COOKIE}=${target}; Path=/; Max-Age=${YEAR_SEC}; SameSite=Lax`
+    doc.cookie = `${LANG_COOKIE}=${target}; Path=/; Max-Age=${LANG_COOKIE_MAX_AGE_SEC}; SameSite=Lax`
   } catch {
     // куки запрещены — переход всё равно случится, просто без памяти
   }

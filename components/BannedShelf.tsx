@@ -2,7 +2,7 @@
 
 import { AnimatePresence, m } from 'framer-motion'
 import { MotionMax } from '@/components/motion/MotionMax'
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { GameCardBody } from '@/components/GameCard'
 import { GameLink } from '@/components/GameLink'
@@ -63,7 +63,7 @@ type FocusTarget = { appid: number } | { shelf: Shelf } | 'empty'
  * открыта: кнопки гаснут, вместо них строка о входе через Steam.
  */
 export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: boolean }) {
-  const router = useRouter()
+  const router = useLocaleRouter()
   /*
    * Снятое — множеством поверх пропа. Плитка уходит сразу, до ответа, а
    * сервер присылает полку без неё только после router.refresh(): до тех пор

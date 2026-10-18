@@ -1,7 +1,7 @@
 'use client'
 
 import Link from '@/components/Link'
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { bounceTo, steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
@@ -103,7 +103,7 @@ function arrivalQuery(preset: string | null, hint: string | null, game: number |
 }
 
 export default function NewRoomPage() {
-  const router = useRouter()
+  const router = useLocaleRouter()
   const [phase, setPhase] = useState<Phase>('choosing')
   /** что выбрано тапом; до тапа — то, с чем вернулись со входа */
   const [picked, setPicked] = useState<RoomPreset | null>(null)

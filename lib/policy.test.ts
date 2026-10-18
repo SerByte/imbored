@@ -26,10 +26,10 @@ import { describe, expect, test } from 'vitest'
 const PAGE = path.join(__dirname, '..', 'app', '[lang]', 'privacy', 'page.tsx')
 
 /** Отпечаток прозы, действительный для даты ниже. */
-const DIGEST = 'b4bb8757e0865cb5'
+const DIGEST = 'd98e4732ccbd37b3'
 
 /** Та же дата, что и в UPDATED на странице. Дублируется, чтобы тест видел смену. */
-const UPDATED = '12 октября 2026'
+const UPDATED = '18 октября 2026'
 
 /**
  * Видимый текст страницы: строки-ответы, заголовки разделов и текстовые узлы

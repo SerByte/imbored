@@ -1,6 +1,6 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { Icon } from '@/components/Icon'
 import type { LibraryFilter } from '@/lib/forgotten'
@@ -43,7 +43,7 @@ const MIN_TYPED = 2
  *    отправляет как есть: это уже просьба, а не пауза.
  */
 export function LibrarySearch({ filter, q }: { filter: LibraryFilter; q: string }) {
-  const router = useRouter()
+  const router = useLocaleRouter()
   const [value, setValue] = useState(q)
   const [pending, startTransition] = useTransition()
   const timer = useRef<number | undefined>(undefined)

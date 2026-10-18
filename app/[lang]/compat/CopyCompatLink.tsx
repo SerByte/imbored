@@ -1,6 +1,6 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useShareLink } from '@/components/ShareLink'
 import { withRef } from '@/lib/track'
 
@@ -37,7 +37,7 @@ export function CopyCompatLink({
   className?: string
   label?: string
 }) {
-  const router = useRouter()
+  const router = useLocaleRouter()
   const share = useShareLink(
     'compat',
     () => withRef(`${window.location.origin}/compat/${steamid}`, 'compat'),

@@ -2,7 +2,8 @@
 
 import { AnimatePresence, m } from 'framer-motion'
 import Link from '@/components/Link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { Ambient } from '@/components/Ambient'
 import { BlurBand } from '@/components/BlurBand'
@@ -389,7 +390,7 @@ function LaunchRow({
 const launchIntent = (via: LaunchVia): CtxIntent => (via === 'store' ? 'store' : 'launch')
 
 function Player({ say }: { say: (line: string) => void }) {
-  const router = useRouter()
+  const router = useLocaleRouter()
   const search = useSearchParams()
   const roulette = search.get('roulette') === '1'
   const focus: Focus | null = search.get('from') === 'untouched' ? 'untouched' : null

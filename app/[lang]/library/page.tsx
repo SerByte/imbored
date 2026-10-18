@@ -10,6 +10,7 @@ import { WarmCatalog } from '@/components/WarmCatalog'
 import { BannedShelf, type BannedGame } from '@/components/BannedShelf'
 import { DemoBar } from '@/components/DemoBar'
 import { trimArt } from '@/lib/art'
+import { lp, toLocale } from '@/lib/i18n'
 import {
   bannedAppids,
   feedbackStats,
@@ -113,7 +114,9 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
   // Гостя без куки разворачивает proxy.ts настоящим 307 ещё до рендера:
   // отсюда редирект ушёл бы статусом 200 — каркас loading.tsx к этому моменту
   // уже отдан. Здесь остаются протухшая и поддельная кука.
-  if (!session) redirect(bounceTo('/library'))
+  // Лендинг — на языке страницы: с /en/library — на /en?next=…
+  const locale = toLocale((await props.params).lang)
+  if (!session) redirect(lp(locale, bounceTo('/library')))
   const { steamid } = session
   // Видеть оценки, скрытое и вечера — тому же, кто вправе их писать (isWriter):
   // см. докблок чтений ниже
@@ -206,7 +209,7 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
       ? livePlanAppids(db, steamid, nowSec()).catch(() => new Set<number>())
       : new Set<number>(),
   ])
-  if (!snapshot) redirect(bounceTo('/library'))
+  if (!snapshot) redirect(lp(locale, bounceTo('/library')))
 
   const now = nowSec()
   // Сводка, деньги и прогрев считаются по ВСЕЙ библиотеке, а не по выбранной

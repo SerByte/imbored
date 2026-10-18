@@ -1,7 +1,7 @@
 'use client'
 
 import Link from '@/components/Link'
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { GameCardBody } from '@/components/GameCard'
 import { TilePending } from '@/components/TilePending'
@@ -94,7 +94,7 @@ function shelfOf(card: DeckCard): ShelfCard {
 }
 
 export default function ExplorePage() {
-  const router = useRouter()
+  const router = useLocaleRouter()
   const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading')
   /**
    * Код отказа из тела ответа: nolibrary, nocandidates, muted (всё под «Не

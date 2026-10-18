@@ -1,7 +1,7 @@
 'use client'
 
 import Link from '@/components/Link'
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { BlurBand } from '@/components/BlurBand'
 import { DailyCountdown } from '@/components/DailyCountdown'
@@ -169,7 +169,7 @@ async function sendFeedback(
 }
 
 export default function DailyPage() {
-  const router = useRouter()
+  const router = useLocaleRouter()
   const [pick, setPick] = useState<DailyHero | null>(null)
   const [discoveries, setDiscoveries] = useState<StoreCard[]>([])
   const [nowSec, setNowSec] = useState(0)

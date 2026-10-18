@@ -1,7 +1,10 @@
 'use client'
 
 import Link from '@/components/Link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
+import { useLocale } from '@/components/LocaleProvider'
+import { rememberLocale } from '@/components/LocaleSwitch'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { ClickSpark } from '@/components/ClickSpark'
 import { Eyebrow } from '@/components/Labels'
@@ -107,7 +110,8 @@ const ERROR_TEXT: Record<string, string> = {
 }
 
 export function ConnectCard() {
-  const router = useRouter()
+  const router = useLocaleRouter()
+  const locale = useLocale()
   const search = useSearchParams()
   const join = search.get('join')
   const joinTarget = join && /^[A-Z0-9]{6}$/.test(join.toUpperCase()) ? join.toUpperCase() : null
@@ -320,6 +324,9 @@ export function ConnectCard() {
         // библиотеку: квиз нового не начал бы своего, пока тот свежий, и /play
         // показал бы стену прежнего человека
         forgetPrewarm()
+        // Вошёл с английской версии — и «/» дальше ведёт на неё: с сессией
+        // язык браузера главную не меняет (lib/homelocale.ts), решает кука
+        if (locale !== 'ru') rememberLocale(locale)
         await go()
         return
       }

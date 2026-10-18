@@ -1,6 +1,6 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react'
 import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
@@ -66,7 +66,7 @@ export function CatalogSearch({
   seed?: string
   onClose: () => void
 }) {
-  const router = useRouter()
+  const router = useLocaleRouter()
   const index = useCatalogIndex()
   // Потолок длины — как у поля: у подставки maxLength нет
   const [query, setQuery] = useState(seed.slice(0, SEARCH_QUERY_MAX))

@@ -1,12 +1,14 @@
 'use client'
 
 import { useRef, useState, type ReactNode } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { ShareLinkInput, useShareLink } from '@/components/ShareLink'
 import { StatusLine } from '@/components/StatusLine'
 import { bounceTo, steamLoginFor } from '@/lib/destination'
 import { issueReply } from '@/lib/feedlinkreply'
 import { focusAdrift } from '@/lib/focushandoff'
 import { dateLabel } from '@/lib/freshness'
+import { lp } from '@/lib/i18n'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
 type Phase =
@@ -73,6 +75,7 @@ type Confirm = 'issue' | 'found' | 'off'
  * а ?ref= у неё нет по той же причине — это ключ, а не приглашение.
  */
 export function FeedLink({ since, verified }: { since: number | null; verified: boolean }) {
+  const locale = useLocale()
   const [phase, setPhase] = useState<Phase>(since === null ? { kind: 'off' } : { kind: 'on', since })
   const [busy, setBusy] = useState<'issue' | 'off' | null>(null)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
@@ -129,9 +132,10 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
             же 401, а свежий вход гасит старую сессию сам. Демо — через
             главную с возвратом: там и демо, и Steam, а в Steam он не входил.
             Обычный <a>, не Link: /api/auth/steam — роут, а не страница.
+            Поэтому и язык лендингу ставит сам lp().
           */}
           <a
-            href={verified ? steamLoginFor('/whatsnew') : bounceTo('/whatsnew')}
+            href={verified ? steamLoginFor('/whatsnew') : lp(locale, bounceTo('/whatsnew'))}
             className="tap tap-tight underline underline-offset-4"
           >
             войди снова

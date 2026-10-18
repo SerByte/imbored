@@ -7,6 +7,7 @@ import { nameOf } from '@/lib/compatpage'
 import { COMPAT_VIEW_TTL_SEC, listCompatViews } from '@/lib/db'
 import { bounceTo, steamLoginFor } from '@/lib/destination'
 import { freshness } from '@/lib/freshness'
+import { lp, toLocale } from '@/lib/i18n'
 import { appBaseUrl, currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
 import { Eyebrow } from '@/components/Labels'
 import { Icon } from '@/components/Icon'
@@ -36,9 +37,10 @@ export const dynamic = 'force-dynamic'
  * Стеклянной карточки по центру экрана больше нет намеренно: в неё же одеты
  * 404 и экран ошибки, и три совершенно разных экрана выглядели одним.
  */
-export default async function CompatHubPage() {
+export default async function CompatHubPage(props: PageProps<'/[lang]/compat'>) {
   const session = await currentSession()
-  if (!session) redirect(bounceTo('/compat'))
+  // Лендинг — на языке страницы: гость с /en/compat попадает на /en?next=…
+  if (!session) redirect(lp(toLocale((await props.params).lang), bounceTo('/compat')))
   const { steamid } = session
   /*
    * «Сравнили с тобой» — только подтверждённому входу не из демо. Ссылка на

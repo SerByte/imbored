@@ -1,6 +1,6 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { StatusLine } from '@/components/StatusLine'
 import { steamLoginFor } from '@/lib/destination'
@@ -92,7 +92,7 @@ function missText(miss: ForgetMiss | 'unknown', step: 'ask' | 'erase', lost: boo
  * (lib/disabledfocus.test.ts); повтор гасят обработчики — по busy.
  */
 export function ForgetMe() {
-  const router = useRouter()
+  const router = useLocaleRouter()
   const [busy, setBusy] = useState<'ask' | 'erase' | null>(null)
   const [asked, setAsked] = useState<Asked | null>(null)
   const [miss, setMiss] = useState<ReactNode>(null)
