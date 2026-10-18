@@ -66,7 +66,8 @@ describe('«Зашло» у героя снимается тем же нажат
   })
 
   test('/daily: нажатое сердце снимает «Зашло», отказ — строкой под кнопками героя', () => {
-    expect(daily).toContain(flat("liked.has(hero.appid) ? void undoLike('daily', hero, setLiked, setRerollMiss) : like()"))
+    // Язык страницы — в отказ: иначе строка «Не вышло снять…» на /en по-русски
+    expect(daily).toContain(flat("liked.has(hero.appid) ? void undoLike('daily', hero, setLiked, setRerollMiss, locale) : like()"))
     // «Зацепило» при горящем сердце его не снимает: like() молчит на повтор,
     // его зовёт и ответ на вопрос после запуска
     expect(daily).toMatch(/constlike=\(intent\?:CtxIntent\)=>\{forgetLaunch\(hero\.appid\)if\(liked\.has\(hero\.appid\)\)return/)

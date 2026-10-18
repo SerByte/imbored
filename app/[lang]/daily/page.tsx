@@ -813,8 +813,9 @@ export default function DailyPage() {
                   // полка /library (lib/unlike). Отказ — строкой под кнопками,
                   // той же, что у «Не сегодня», и сердце горит снова. Имя
                   // кнопки не меняется — тумблер называет aria-pressed, а
-                  // обратимость видна в подсказке
-                  onClick={() => (liked.has(hero.appid) ? void undoLike('daily', hero, setLiked, setRerollMiss) : like())}
+                  // обратимость видна в подсказке. Язык — в отказ: без него
+                  // строка под кнопками на /en вышла бы русской (unlikeMiss)
+                  onClick={() => (liked.has(hero.appid) ? void undoLike('daily', hero, setLiked, setRerollMiss, locale) : like())}
                   aria-pressed={liked.has(hero.appid)}
                   title={tr(locale, {
                     ru: liked.has(hero.appid) ? 'Зашло — нажми, чтобы снять' : 'Зашло',
