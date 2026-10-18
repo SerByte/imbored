@@ -547,6 +547,40 @@ describe('строка статуса', () => {
       'Ничего не нашлось. Названия здесь — как в Steam, обычно латиницей',
     )
   })
+
+  test('по-английски — те же случаи целыми фразами', () => {
+    expect(searchStatus('ready', '', found(0), 'en')).toBe('')
+    expect(searchStatus('loading', 'port', found(0), 'en')).toBe('Loading the catalog…')
+    expect(searchStatus('failed', '', found(0), 'en')).toBe(
+      "Couldn't load the catalog — check your connection and try again",
+    )
+    expect(searchStatus('ready', 'x', found(1), 'en')).toBe('Found 1 game')
+    expect(searchStatus('ready', 'x', found(3), 'en')).toBe('Found 3 games')
+    expect(searchStatus('ready', 'x', found(21), 'en')).toBe('Found 21 games, showing the first 8')
+    expect(searchStatus('ready', 'a', found(5_816), 'en')).toBe('Found 5,816 games, showing the first 8')
+    expect(searchStatus('ready', 'цшесрук', found(2, 2, 'witcher'), 'en')).toBe('Found 2 games for “witcher”')
+    expect(searchStatus('ready', 'zzz', found(0), 'en')).toBe('Nothing found')
+    expect(searchStatus('ready', 'ведьмак', found(0), 'en')).toBe(
+      'Nothing found. Titles here match Steam, usually in Latin letters',
+    )
+  })
+
+  test('английская строка без кириллицы для латинского запроса', () => {
+    for (const status of [
+      searchStatus('failed', '', found(0), 'en'),
+      searchStatus('loading', 'port', found(0), 'en'),
+      searchStatus('ready', 'portal', found(0), 'en'),
+      searchStatus('ready', 'portal', found(12), 'en'),
+      searchStatus('ready', 'цшесрук', found(2, 2, 'witcher'), 'en'),
+    ]) {
+      expect(status).not.toMatch(/[А-Яа-яЁё]/)
+    }
+  })
+
+  test('без языка — русская строка, как была', () => {
+    expect(searchStatus('ready', 'x', found(21))).toBe(searchStatus('ready', 'x', found(21), 'ru'))
+    expect(searchStatus('ready', 'a', found(5_816))).toBe('Нашлось 5816 игр, вот первые 8')
+  })
 })
 
 /*
