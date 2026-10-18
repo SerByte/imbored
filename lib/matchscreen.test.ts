@@ -177,6 +177,7 @@ describe('не участник на сошедшейся комнате — г�
     expect(storeLink({ appid: 620, store: null, storeUrl: null })).toEqual({
       href: 'https://store.steampowered.com/app/620/',
       where: 'Steam',
+      open: 'Открыть в Steam',
     })
   })
 
@@ -184,6 +185,7 @@ describe('не участник на сошедшейся комнате — г�
     expect(storeLink({ appid: -3, store: 'epic', storeUrl: 'https://store.epicgames.com/x' })).toEqual({
       href: 'https://store.epicgames.com/x',
       where: 'Epic Games',
+      open: 'Открыть в Epic Games',
     })
     // магазин без метки — не выдуманное имя, а просто «в магазине»
     expect(storeLink({ appid: -4, store: 'gog', storeUrl: 'https://gog.com/x' })?.where).toBe('магазине')
