@@ -187,16 +187,29 @@ describe('кэш карточки игры', () => {
 
   test('пререндер — только на продовой сборке: превью и локальная база пустые списки', async () => {
     await seed()
+    const ru = { params: { lang: 'ru' } }
     vi.stubEnv('VERCEL_ENV', undefined)
-    expect(await generateStaticParams()).toEqual([])
+    expect(await generateStaticParams(ru)).toEqual([])
     vi.stubEnv('VERCEL_ENV', 'preview')
-    expect(await generateStaticParams()).toEqual([])
+    expect(await generateStaticParams(ru)).toEqual([])
 
     vi.stubEnv('VERCEL_ENV', 'production')
-    const top = await generateStaticParams()
+    const top = await generateStaticParams(ru)
     expect(top.length).toBeGreaterThan(0)
     expect(top.length).toBeLessThanOrEqual(PRERENDER_TOP)
     expect(top).toContainEqual({ appid: String(APPID) })
+  })
+
+  /**
+   * Next зовёт generateStaticParams страницы на каждый язык корневого layout.
+   * Тот же список на /en удвоил бы пререндер — и записи ISR каждой сборки, —
+   * под которые и подбирали PRERENDER_TOP (lib/gamecache.ts).
+   */
+  test('на продовой сборке пререндерится только русская ветка: PRERENDER_TOP на все языки', async () => {
+    await seed()
+    vi.stubEnv('VERCEL_ENV', 'production')
+    expect((await generateStaticParams({ params: { lang: 'ru' } })).length).toBeGreaterThan(0)
+    expect(await generateStaticParams({ params: { lang: 'en' } })).toEqual([])
   })
 
   test('вывод не зависит от часов: через три дня — та же страница', async () => {

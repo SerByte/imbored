@@ -30,7 +30,7 @@ import {
 } from '@/lib/gamepage'
 import { gameBreadcrumbLd, gameJsonLd, ldScript } from '@/lib/jsonld'
 import { priceRegion, regionCurrency } from '@/lib/steamregion'
-import { lp, toLocale } from '@/lib/i18n'
+import { DEFAULT_LOCALE, lp, toLocale } from '@/lib/i18n'
 import { localeAlternates, ogSite } from '@/lib/site'
 import { plural } from '@/lib/plural'
 import { quizHref, roomSeedHref } from '@/lib/presets'
@@ -88,11 +88,22 @@ export const revalidate = 604_800
  * карточка — запись ISR на каждой сборке, и превью платили за это наравне с
  * продом. Сколько и почему столько — PRERENDER_TOP.
  *
+ * Только русская ветка. Next зовёт эту функцию на каждый язык корневого
+ * layout (generate-static-params.md: child — «once for each set of params
+ * the parent generates»), и одинаковый список удвоил бы пререндер: двести
+ * карточек вместо PRERENDER_TOP, вдвое больше записей ISR на каждой сборке.
+ * Английские карточки пока говорят по-русски, и досоздаются по требованию,
+ * как хвост каталога.
+ *
  * Сборка не должна падать из-за базы: локально TURSO_DATABASE_URL может быть
  * не задан, и тогда предрендерить просто нечего.
  */
-export async function generateStaticParams(): Promise<Array<{ appid: string }>> {
-  if (!prerenderAtBuild()) return []
+export async function generateStaticParams({
+  params,
+}: {
+  params: { lang: string }
+}): Promise<Array<{ appid: string }>> {
+  if (params.lang !== DEFAULT_LOCALE || !prerenderAtBuild()) return []
   try {
     const games = await sitemapGames(await getDb(), PRERENDER_TOP)
     return games.map((g) => ({ appid: String(g.appid) }))
