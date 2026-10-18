@@ -6852,6 +6852,11 @@ export type NewsScale = 'major' | 'hotfix'
  * kind = excluded.kind), и эвристика вернула бы «патч» на следующие же
  * сутки — с прежним пересказом, раз тело то же. scale и пересказ при том же
  * теле опрос не трогает; новое тело — новый пост, и модель решает заново.
+ *
+ * Обратная сторона той же стойкости: ошибочный 'none' сам не уходит. Список
+ * таких постов — в npm run news:report (раздел D) и в плане news:reclass, а
+ * вернуть вердикт модели — news:reclass -- --apply --renone
+ * (scripts/newsreclass.ts).
  */
 export type NewsVerdict = NewsScale | 'none'
 
@@ -7557,7 +7562,8 @@ export async function getUnsummarized(db: Db, limit = 12): Promise<StoredNews[]>
  * пустая, а не текст модели: пересказ поста, который не патч, не должен
  * всплыть строкой патча ни через один запрос, где фильтр scale забудут, —
  * idx_news_app_major, newsIndexable и описание страницы считают его
- * отсутствующим.
+ * отсутствующим. Цена — объяснение модели не сохраняется, и вердикт
+ * проверяют глазами по заголовку (news-report, раздел D).
  */
 export async function setNewsDigest(
   db: Db,

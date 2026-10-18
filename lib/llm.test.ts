@@ -1354,6 +1354,40 @@ describe('отказ сервиса против отказа по записи'
     expect(prompt).toContain('«В бете:»')
   })
 
+  /*
+   * 'none' снимает пост со всех поверхностей патчей, и опрос его не
+   * пересматривает — ошибка в эту сторону дороже. «subject to change» и
+   * «currently exploring» пишут и в настоящих патчноутах («maintenance
+   * duration is subject to change» у хотфикса), и в списке примет «не патча»
+   * им не место; бете — тоже: правки открытой беты остаются патчем с «В бете:».
+   */
+  test('пересказ: оговорки патчноута и бета — не приметы «не патча»', async () => {
+    create.mockResolvedValue({
+      stop_reason: 'end_turn',
+      content: [{ type: 'text', text: JSON.stringify({ tldr: 'Исправлен вылет.', scale: 'hotfix' }) }],
+    })
+    await claudeNewsDigest({
+      ...DIGEST,
+      title: 'Hotfix 1.2.1',
+      body: 'Fixed a crash on load. Maintenance duration is subject to change.',
+    })
+    const prompt = create.mock.calls[0][0].messages[0].content as string
+    const lines = prompt.split('\n')
+    const opener = lines[0]!
+    const noneRule = lines.find((l) => l.startsWith('scale — "none"'))
+    expect(noneRule, 'правило "none" не найдено').toBeDefined()
+    expect(opener).not.toMatch(/бет/i)
+    for (const hedge of ['subject to change', 'currently exploring']) {
+      expect(noneRule, hedge).not.toContain(hedge)
+    }
+    // и названы они прямо — как то, что "none" не делает
+    const released = lines.find((l) => l.includes('хоть одна правка'))
+    expect(released, 'правило про вышедшую правку не найдено').toBeDefined()
+    expect(released).toContain('это не "none"')
+    expect(released).toContain('subject to change')
+    expect(released).toContain('открытой бете')
+  })
+
   test('пересказ патча игры с доменом в имени доезжает: имя игры уходит в проверку', async () => {
     create.mockResolvedValue({
       stop_reason: 'end_turn',
