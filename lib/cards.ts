@@ -73,6 +73,11 @@ export type PickContext = {
    * Язык карточек: на нём «О чём игра», страница магазина у игр не из Steam
    * и всё, что карточка говорит словами. Русский по умолчанию — так
    * контекст собирают все прежние вызывающие.
+   *
+   * TODO(W1.5): три поля карточки на en пока русские — их строят чужие
+   * модули, языка они ещё не берут: session (sessionTrait, lib/gametraits),
+   * signals (explainMatch, lib/recommend) и discount.endsLabel (discountView,
+   * lib/discount — язык уже доходит до buyView, осталось передать дальше).
    */
   locale: Locale
 }
@@ -218,8 +223,20 @@ function shopView(meta: GameMeta | undefined, now: number, locale: Locale) {
  * купленного: на своей игре «−40%» сообщает ровно ничего, кроме того, что ты
  * купил её дороже. Скидка считается на сервере вместе с подписью срока: у
  * клиента свой часовой пояс, и «до 17 августа» разъехалось бы при гидратации.
+ *
+ * locale — язык подписи срока (discount.endsLabel). Его уже передают все пять
+ * карточек, но discountView (lib/discount) своего языка пока не берёт, и
+ * подпись русская на обоих языках. TODO(W1.5): discountView(meta, now,
+ * { urgency, locale }) — правка одной строки здесь, без новых сигнатур.
  */
-function buyView(meta: GameMeta | undefined, source: CandidateSource, now: number, hideUrgency: boolean) {
+function buyView(
+  meta: GameMeta | undefined,
+  source: CandidateSource,
+  now: number,
+  hideUrgency: boolean,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- уйдёт в discountView, см. докблок
+  locale: Locale,
+) {
   const buying = meta !== undefined && source === 'new'
   return {
     discount: buying ? discountView(meta, now, { urgency: !hideUrgency }) : null,
@@ -287,7 +304,7 @@ export function cardView(p: LlmPick, ctx: PickContext, edge: PickEdge | null = n
     // confidenceMultiplier решил, насколько новинке верить
     reviewsPercent: meta?.reviewsPercent ?? null,
     reviewsTotal: meta?.reviewsTotal ?? null,
-    ...buyView(meta, p.source, ctx.now, ctx.hideUrgency),
+    ...buyView(meta, p.source, ctx.now, ctx.hideUrgency, ctx.locale),
     signals: meta ? explainMatch(ctx.profile, meta, ctx.mood, ctx.tagWeight) : null,
     // Своя игра, на которую эта похожа. Причина от модели может её не
     // назвать — тогда /play добавляет строку сам, в «Почему она?»
@@ -352,7 +369,7 @@ export function storeCardView(
     appid: c.appid,
     name: c.name,
     ...shopView(meta, now, locale),
-    discount: buyView(meta, 'new', now, hideUrgency).discount,
+    discount: buyView(meta, 'new', now, hideUrgency, locale).discount,
     russian: locale === 'en' ? null : ruLangLine(meta?.ruLang),
   }
 }
@@ -408,7 +425,7 @@ export function dailyCardView(
     // Своя игра-ориентир: у игры не из Steam своего арта нет, и герой стоит
     // на размытом арте той, на которую она похожа (components/HeroArt)
     via: day.via ?? null,
-    ...buyView(meta, pick.source, now, day.hideUrgency),
+    ...buyView(meta, pick.source, now, day.hideUrgency, locale),
   }
 }
 
@@ -437,7 +454,7 @@ export function exploreCardView(p: LlmPick, ctx: PickContext) {
         : {}),
     priceCc: shop.priceCc,
     unsold: shop.unsold,
-    discount: buyView(meta, p.source, ctx.now, ctx.hideUrgency).discount,
+    discount: buyView(meta, p.source, ctx.now, ctx.hideUrgency, ctx.locale).discount,
     headerImage: shop.headerImage,
     art: shop.art,
     ccu: meta?.ccu ?? null,
@@ -470,14 +487,16 @@ export type ShareView = { share: { text: string; sig: string; lang?: 'en' } }
  * не купленного (buyView), срок распродажи молчит при большом бэклоге.
  * Своя игра — без цены вовсе: её не покупают.
  *
- * opts.locale — язык плитки (подпись срока скидки и всё, что плитка скажет
- * словами); по умолчанию русский.
+ * opts.locale — язык плитки; по умолчанию русский. Сейчас от него зависит
+ * только страница магазина у игр не из Steam (shopView): подпись срока
+ * скидки он получит вместе с discountView, см. TODO(W1.5) у buyView.
  */
 export function shelfCardView(
   meta: GameMeta,
   opts: { now: number; owned: boolean; hideUrgency: boolean; locale?: Locale },
 ) {
-  const shop = shopView(meta, opts.now, opts.locale ?? 'ru')
+  const locale = opts.locale ?? 'ru'
+  const shop = shopView(meta, opts.now, locale)
   const buying = !opts.owned
   return {
     appid: meta.appid,
@@ -489,7 +508,7 @@ export function shelfCardView(
     priceFinal: buying && !shop.isFree ? shop.priceFinal : null,
     priceCc: buying ? shop.priceCc : null,
     unsold: buying && shop.unsold,
-    discount: buyView(meta, buying ? 'new' : 'familiar', opts.now, opts.hideUrgency).discount,
+    discount: buyView(meta, buying ? 'new' : 'familiar', opts.now, opts.hideUrgency, locale).discount,
   }
 }
 
