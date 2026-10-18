@@ -137,7 +137,7 @@ export function outcomeQuestion(
         })
       : tr(locale, {
           ru: `Пока тебя не было: «${ask.name}» — ${played} после нашего совета. Как тебе?`,
-          en: `While you were away: ${played} in “${ask.name}” since we suggested it. How is it?`,
+          en: `While you were away, you played “${ask.name}” for ${played} after we suggested it. How is it?`,
         })
   }
   return ask.bought
@@ -147,7 +147,7 @@ export function outcomeQuestion(
       })
     : tr(locale, {
         ru: `«${ask.name}»: ${played} с тех пор, как мы её предложили. Как тебе?`,
-        en: `“${ask.name}”: ${played} since we suggested it. How is it?`,
+        en: `“${ask.name}”: you've played ${played} since we suggested it. How is it?`,
       })
 }
 

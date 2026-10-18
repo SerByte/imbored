@@ -195,13 +195,13 @@ describe('по-английски', () => {
 
   test('outcomeQuestion: четыре целые фразы, название в “лапках”', () => {
     expect(outcomeQuestion({ name: 'Hades', minutes: 90, bought: false }, 'en')).toBe(
-      '“Hades”: 1 h 30 min since we suggested it. How is it?',
+      "“Hades”: you've played 1 h 30 min since we suggested it. How is it?",
     )
     expect(outcomeQuestion({ name: 'Hades', minutes: 45, bought: true }, 'en')).toBe(
       '“Hades”: you got it and played 45 min. How is it?',
     )
     expect(outcomeQuestion({ name: 'Hades', minutes: 300, bought: false, late: true }, 'en')).toBe(
-      'While you were away: 5 h in “Hades” since we suggested it. How is it?',
+      'While you were away, you played “Hades” for 5 h after we suggested it. How is it?',
     )
     expect(outcomeQuestion({ name: 'Hades', minutes: 45, bought: true, late: true }, 'en')).toBe(
       'While you were away, you got “Hades” and played 45 min. How is it?',
