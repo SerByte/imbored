@@ -1,6 +1,7 @@
 import type { InStatement } from '@libsql/client'
 import Link from '@/components/Link'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { Ambient } from '@/components/Ambient'
 import { GameArt } from '@/components/GameArt'
 import { TilePending } from '@/components/TilePending'
 import { Magnet } from '@/components/Magnet'
@@ -181,5 +182,143 @@ describe('/compat/[steamid]: «Позвать в эту игру» называ�
       // видимый текст прежний, и имя с него начинается
       expect(textOf(l.children).trim()).toBe('Позвать в эту игру')
     }
+  })
+
+  test('на /en — «Invite to this game — “X”»: та же связь имени со ссылкой', async () => {
+    await upsertGamesMeta(db, SHARED, NOW)
+    const owned = SHARED.map((g) => ({ appid: g.appid, name: g.name, playtimeForever: 600, playtime2Weeks: 0 }))
+    await saveLibrarySnapshot(db, OWNER, [...hiddenLibrary(12), ...owned], NOW)
+    await saveLibrarySnapshot(db, VIEWER, owned, NOW)
+    await signIn(db, VIEWER, { verified: true })
+
+    const page = flight(await CompatPage(params({ steamid: OWNER, lang: 'en' })), ISLANDS)
+    const invites = islandsOf(page, 'Link').filter((l) => String(l.href).startsWith('/room/new?'))
+    expect(invites).toHaveLength(SHARED.length)
+    for (const l of invites) {
+      const name = SHARED.find((g) => roomSeedHref(g.appid) === l.href)?.name
+      expect(l['aria-label']).toBe(`Invite to this game — “${name}”`)
+      expect(textOf(l.children).trim()).toBe('Invite to this game')
+    }
+  })
+})
+
+/**
+ * /en/compat/[steamid] целиком: каждая строка страницы — на языке адреса.
+ *
+ * Кириллица на английской странице допустима только в данных: ник владельца
+ * («Владелец») и названия игр фикстуры («Игра 1000») — их не переводят
+ * (docs/i18n.md, «Чего НЕ переводить»). Всё остальное — подписи, кнопки,
+ * aria-label, адреса — обязано быть английским; забытый tr() молча оставил бы
+ * русскую строку, не сломав ни одного теста поведения.
+ */
+describe('/compat/[steamid] на /en: ни одной русской строки вне данных', () => {
+  const ISLANDS = new Map<unknown, string>([
+    [Link, 'Link'],
+    [GameArt, 'GameArt'],
+    [Magnet, 'Magnet'],
+    [SplitHeading, 'SplitHeading'],
+    [CopyCompatLink, 'CopyCompatLink'],
+    [TilePending, 'TilePending'],
+    [Ambient, 'Ambient'],
+  ])
+  /** Раскрытая страница строкой без данных: ников и названий игр */
+  const bare = (page: unknown, data: string[]) =>
+    data.reduce((s, d) => s.split(d).join(''), JSON.stringify(page))
+  const DATA = ['Владелец', ...hiddenLibrary(12).map((g) => g.name)]
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('гость: приглашение по-английски, вход через Steam несёт lang=en', async () => {
+    const page = flight(await CompatPage(params({ steamid: OWNER, lang: 'en' })), ISLANDS)
+    expect(bare(page, DATA)).not.toMatch(CYRILLIC)
+    expect(textOf(page)).toContain('Владелец wants to compare libraries')
+    expect(textOf(page)).toContain('12 games · playtime hidden')
+    // Язык входа — в адресе: Referer браузер может и не прислать
+    expect(JSON.stringify(page)).toContain(`"href":"/api/auth/steam?compat=${OWNER}&lang=en"`)
+  })
+
+  test('гость на русской: вход без lang, текст прежний', async () => {
+    const page = flight(await CompatPage(params({ steamid: OWNER })), ISLANDS)
+    expect(JSON.stringify(page)).toContain(`"href":"/api/auth/steam?compat=${OWNER}"`)
+    expect(textOf(page)).toContain('Владелец зовёт сравнить библиотеки')
+    expect(textOf(page)).toContain('12 игр · время скрыто')
+  })
+
+  test('посчитанное сравнение: подписи, полки и общие игры', async () => {
+    const coop: GameMeta = { appid: 2001, name: 'Deep Rock Galactic', tags: { 'Co-op': 100 }, genres: [], categories: [1, 9] }
+    await upsertGamesMeta(db, [coop], NOW)
+    // У владельца время скрыто целиком (нули у всех игр), у зрителя — 25 минут
+    const owned = { appid: 2001, name: coop.name, playtimeForever: 25, playtime2Weeks: 0 }
+    await saveLibrarySnapshot(db, OWNER, [...hiddenLibrary(12), { ...owned, playtimeForever: 0 }], NOW)
+    await saveLibrarySnapshot(db, VIEWER, [owned], NOW)
+    await upsertUser(db, { steamid: VIEWER, personaName: 'Mira' }, NOW)
+    await signIn(db, VIEWER, { verified: true })
+
+    const page = flight(await CompatPage(params({ steamid: OWNER, lang: 'en' })), ISLANDS)
+    expect(bare(page, DATA)).not.toMatch(CYRILLIC)
+    const text = textOf(page)
+    expect(text).toContain('Mira × Владелец')
+    expect(text).toContain('taste match')
+    expect(text).toContain('Games in common')
+    // Время владельца скрыто: колонка его часов — словом, своих — минутами
+    expect(text).toContain('Deep Rock Galactic25 minhidden')
+    expect(text).toContain("You have 25 minutes in them; Владелец's playtime is hidden.")
+    expect(text).toContain("Владелец's player portrait")
+  })
+
+  test('своя ссылка и «ещё не подключал»', async () => {
+    await signIn(db, OWNER, { verified: true })
+    const self = flight(await CompatPage(params({ steamid: OWNER, lang: 'en' })), ISLANDS)
+    expect(bare(self, DATA)).not.toMatch(CYRILLIC)
+    expect(textOf(self)).toContain('This is your own link')
+    expect(islandsOf(self, 'CopyCompatLink').map((c) => c.label)).toEqual(['My compatibility link'])
+
+    const stranger = flight(await CompatPage(params({ steamid: '76561198000000099', lang: 'en' })), ISLANDS)
+    expect(bare(stranger, DATA)).not.toMatch(CYRILLIC)
+    expect(textOf(stranger)).toContain("This player hasn't connected a library yet")
+  })
+
+  /*
+   * Подпись карточки превью: alt файловой карточки — константа без языка, и
+   * на /en страница ставит свою карточку того же маршрута с английской
+   * подписью. Русская images не объявляет — Next подставляет файловую, как
+   * было.
+   */
+  test('метаданные: английская фраза и карточка с английской подписью, русская — как была', async () => {
+    const en = await generateMetadata(params({ steamid: OWNER, lang: 'en' }))
+    expect(en.title).toBe('Владелец wants to compare libraries')
+    expect(en.description).toBe(
+      "Compare your Steam library with Владелец's: 12 games, playtime hidden. " +
+        'See your taste match, the games you have in common and what to play together.',
+    )
+    expect(en.openGraph).toMatchObject({
+      url: `/en/compat/${OWNER}`,
+      locale: 'en_US',
+      images: [{ url: `/en/compat/${OWNER}/opengraph-image`, width: 1200, height: 630, alt: 'Compare tastes — imbored' }],
+    })
+
+    request.reset()
+    const ru = await generateMetadata(params({ steamid: OWNER }))
+    expect(ru.title).toBe('Владелец зовёт сравнить библиотеки')
+    expect(ru.description).toBe(
+      'Сравни свою библиотеку Steam с библиотекой Владелец: 12 игр, время скрыто. ' +
+        'Процент совпадения вкусов, общие игры и во что вам зайти вместе.',
+    )
+    expect(ru.openGraph).not.toHaveProperty('images')
+  })
+
+  test('метаданные игрока без библиотеки: на /en — та же карточка с английской подписью, русская без своего openGraph', async () => {
+    const STRANGER = '76561198000000099'
+    const en = await generateMetadata(params({ steamid: STRANGER, lang: 'en' }))
+    expect(en.title).toBe('Compatibility')
+    expect(en.openGraph).toMatchObject({
+      url: `/en/compat/${STRANGER}`,
+      siteName: 'imbored',
+      locale: 'en_US',
+      images: [{ url: `/en/compat/${STRANGER}/opengraph-image`, alt: 'Compare tastes — imbored' }],
+    })
+    expect(await generateMetadata(params({ steamid: STRANGER }))).toEqual({
+      title: 'Совместимость',
+      robots: { index: false },
+    })
   })
 })

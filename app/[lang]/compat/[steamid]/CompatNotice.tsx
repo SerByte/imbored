@@ -1,6 +1,7 @@
 import { Ambient } from '@/components/Ambient'
 import { Eyebrow } from '@/components/Labels'
 import type { ArtRef } from '@/lib/compatpage'
+import { tr, type Locale } from '@/lib/i18n'
 import { CoverWall } from './CoverStrip'
 
 /**
@@ -20,13 +21,19 @@ import { CoverWall } from './CoverStrip'
  *
  * Серверный компонент: своей интерактивности у него нет, а кнопки приезжают
  * через children — в том числе клиентские.
+ *
+ * Язык — пропом от страницы, а не из next/root-params: страницу с этой шапкой
+ * импортирует тест (page.test.ts), а там root-params бросает при загрузке.
+ * title и body страница присылает уже на своём языке.
  */
 export function CompatNotice({
   title,
   body,
   games,
   children,
+  locale,
 }: {
+  locale: Locale
   title: string
   body: string
   /** обложки для фона; нет — пятно Ambient */
@@ -46,7 +53,7 @@ export function CompatNotice({
       )}
       <div aria-hidden className="grain" />
       <div className="relative mx-auto w-full max-w-6xl px-safe pb-16 pt-32">
-        <Eyebrow className="mb-3">Совместимость</Eyebrow>
+        <Eyebrow className="mb-3">{tr(locale, { ru: 'Совместимость', en: 'Compatibility' })}</Eyebrow>
         <h1 className="max-w-2xl font-display text-display-md">{title}</h1>
         <p className="mt-4 max-w-xl leading-relaxed text-dim">{body}</p>
         {children && <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">{children}</div>}
