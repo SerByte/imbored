@@ -1,3 +1,4 @@
+import type { ResolvingMetadata } from 'next'
 import Link from '@/components/Link'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GameArt } from '@/components/GameArt'
@@ -135,11 +136,17 @@ describe('английские хаб и страница жанра', () => {
     expect(text).not.toMatch(CYR)
   })
 
-  test('хаб: title и description — у layout, на языке страницы', async () => {
-    expect(await generateHubMetadata(en({}))).toMatchObject({ title: 'Games by genre' })
-    expect(JSON.stringify(await generateHubMetadata(en({})))).not.toMatch(CYR)
-    expect(await generateHubMetadata({ params: Promise.resolve({ lang: 'ru' }) })).toMatchObject({
-      title: 'Игры по жанрам',
+  /*
+   * Шаблон корня layout обязан передать дальше: строка без шаблона обрывала
+   * его, и страницы жанров теряли « · imbored» в title (layout.tsx, докблок).
+   */
+  test('хаб: title и description — у layout, на языке страницы, и шаблон корня идёт дальше', async () => {
+    const root = Promise.resolve({ title: { absolute: 'imbored', template: '%s · imbored' } }) as unknown as ResolvingMetadata
+    const enMeta = await generateHubMetadata(en({}), root)
+    expect(enMeta).toMatchObject({ title: { default: 'Games by genre', template: '%s · imbored' } })
+    expect(JSON.stringify(enMeta)).not.toMatch(CYR)
+    expect(await generateHubMetadata({ params: Promise.resolve({ lang: 'ru' }) }, root)).toMatchObject({
+      title: { default: 'Игры по жанрам', template: '%s · imbored' },
     })
   })
 
