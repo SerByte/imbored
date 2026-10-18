@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { DemoBar } from '../components/DemoBar'
@@ -111,7 +111,7 @@ describe('полоса', () => {
   test('на английском — по-английски, и обе двери ведут на /en', async () => {
     const { LocaleProvider } = await import('@/components/LocaleProvider')
     const out = renderToStaticMarkup(
-      createElement(LocaleProvider, { locale: 'en', children: createElement(DemoBar, { from: '/daily' }) }),
+      createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, createElement(DemoBar, { from: '/daily' })),
     )
     const { steam, link } = demoDoors('/en/daily')
     expect(out).toContain(`href="${steam.replace(/&/g, '&amp;')}"`)

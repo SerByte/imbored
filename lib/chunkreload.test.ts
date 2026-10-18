@@ -1,4 +1,4 @@
-import { createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
+import { createElement, isValidElement, type ComponentProps, type ReactElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { isChunkLoadError } from './clienterr'
@@ -140,7 +140,7 @@ describe('граница ошибок на языке страницы', () => {
     const { LocaleProvider } = await import('@/components/LocaleProvider')
     const en = (error: Error) =>
       renderToStaticMarkup(
-        createElement(LocaleProvider, { locale: 'en', children: createElement(Screen, { error, retry: vi.fn() }) }),
+        createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, createElement(Screen, { error, retry: vi.fn() })),
       )
     const stale = en(turbopackChunk())
     expect(stale).toContain('Something broke')

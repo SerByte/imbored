@@ -1,4 +1,4 @@
-import { createElement, type FunctionComponent } from 'react'
+import { createElement, type ComponentProps, type FunctionComponent } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { reportClientError } from '@/lib/clienterr'
@@ -112,7 +112,7 @@ async function shell() {
 async function shellIn(locale: 'ru' | 'en') {
   const { ReadOnlyNote } = await import('@/components/ReadOnlyNote')
   const { LocaleProvider } = await import('@/components/LocaleProvider')
-  return () => renderToStaticMarkup(createElement(LocaleProvider, { locale, children: createElement(ReadOnlyNote) }))
+  return () => renderToStaticMarkup(createElement(LocaleProvider, { locale } as ComponentProps<typeof LocaleProvider>, createElement(ReadOnlyNote)))
 }
 
 /** Исполнить эффекты первого рендера и дождаться чанка */
