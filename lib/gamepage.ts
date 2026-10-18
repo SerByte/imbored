@@ -479,6 +479,12 @@ const STORE_CLIP_MIN = 40
  * влезают целиком (порядок модели — порядок важности; обрезанный посреди
  * мысли первый хуже целого второго), а минус — первый влезающий и только
  * если плюс встал.
+ *
+ * Исключение — плюсов нет вовсе: модель честно не нашла, за что хвалить
+ * (claudeProsCons такой ответ публикует, а карточка показывает блок минусов
+ * одним). Это не плюс, который не влез, а ответ отзывов — у игры с 25%
+ * «В основном отрицательные» одна жалоба в сниппете и есть правда, и
+ * прятать её значит оставить сниппет без мнения игроков вовсе.
  */
 export function gameDescription({
   meta,
@@ -509,7 +515,8 @@ export function gameDescription({
   }
   const pros = (prosCons?.pros ?? []).map((t) => `Любят: ${point(t)}.`)
   const cons = (prosCons?.cons ?? []).map((t) => `Ругают: ${point(t)}.`)
-  if (pros.some(add)) cons.some(add)
+  const proPlaced = pros.some(add)
+  if (proPlaced || !pros.length) cons.some(add)
   if (meta.shortDescription && isRussianText(meta.shortDescription)) {
     const store = meta.shortDescription.replace(/\s+/g, ' ').trim()
     const text = clip(store, room())

@@ -40,6 +40,7 @@ import {
   pruneNewsForApp,
   releaseLease,
   repairGameJson,
+  resetFlawedDigests,
   liftRoomKick,
   raiseRoomSeat,
   removeRoomMember,
@@ -49,6 +50,7 @@ import {
   setGamesMedia,
   setNewsDigest,
   sitemapNews,
+  TLDR_FLAW_SWEEP_KEY,
   freshlyDigestedPatches,
   STEAM_LEASE,
   upsertNewsItems,
@@ -2339,6 +2341,34 @@ describe('getNewsBlocks', () => {
       args: ['{не json', '1'],
     })
     expect(await getNewsBlocks(db, 730, '1')).toBeNull()
+  })
+})
+
+/*
+ * Уборка битых пересказов читает таблицу страницами по rowid: пересказов на
+ * проде тысячи. Битое — на краях страниц: первая строка, последняя и первая
+ * по обе стороны границы, одинокая на последней странице. Ровно там и
+ * ошибается курсор.
+ */
+describe('resetFlawedDigests', () => {
+  test('битое на любой странице снимается, честное остаётся, повтора нет', async () => {
+    const db = await freshDb()
+    const gids = Array.from({ length: 1001 }, (_, i) => String(i))
+    await upsertNewsItems(db, gids.map((gid) => newsItem({ gid })), NOW)
+    const junk = ['0', '499', '500', '1000']
+    for (const gid of gids) {
+      const tldr = junk.includes(gid) ? 'Новые видеосettings и правки' : 'Починили дым'
+      await setNewsDigest(db, 730, gid, { tldr, scale: 'major' }, NOW)
+    }
+
+    expect(await resetFlawedDigests(db)).toEqual([730])
+    const cleared = await db.execute(
+      'SELECT gid FROM news_items WHERE tldr IS NULL ORDER BY CAST(gid AS INTEGER)',
+    )
+    expect(cleared.rows.map((r) => r.gid)).toEqual(junk)
+    expect(await getCatalogMeta(db, TLDR_FLAW_SWEEP_KEY)).toBe('1')
+    // флаг стоит — второй раз таблицу не читаем вовсе
+    expect(await resetFlawedDigests(db)).toBeNull()
   })
 })
 

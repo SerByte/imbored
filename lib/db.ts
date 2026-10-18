@@ -7549,6 +7549,80 @@ export async function setNewsDigest(
   })
 }
 
+/** Флаг в catalog_meta: уборка resetFlawedDigests уже прошла по этой базе */
+export const TLDR_FLAW_SWEEP_KEY = 'tldr_flaw_sweep_v1'
+
+/** Строк news_items на одно чтение уборки */
+const TLDR_SWEEP_PAGE = 500
+
+/**
+ * Разовая уборка пересказов, записанных до проверки текста модели.
+ *
+ * validateDigest бракует «видеосettings» и «комбатe» только у новых ответов.
+ * Уже лежащие пересказы сами не уходили никогда: попытки (tldr_tries)
+ * сбрасывает лишь новое тело патча (upsertNewsItems), а тело старого патча не
+ * меняется. На выгрузке прода таких 15 из 2 381 — «Ваmai», «механикой
+ * риposte», «Табletop Simulator», — и стояли они на странице патча, в «Что
+ * нового» на карточке, в RSS, в og-картинке и в причинах на /play.
+ *
+ * Сброс, а не скрытие при чтении: страница патча без пересказа — noindex, а
+ * карта сайта (sitemapNews) и IndexNow берут только патчи с tldr. Спрячь его
+ * лишь на странице — и в карте сайта остались бы адреса, которые сами просят
+ * их не индексировать. С tldr = NULL строка уходит отовсюду разом и встаёт в
+ * очередь getUnsummarized заново, с tldr_tries от нуля: лучше пересказ
+ * следующим звеном, чем мусор сейчас, а полтора десятка вызовов суточный
+ * бюджет модели (lib/llmcap) не заметит.
+ *
+ * Масштаб: 'hotfix' здесь мог поставить только сам пересказ (у патча, которому
+ * hotfix сказала эвристика, пересказа не бывает — см. getUnsummarized), а с
+ * ним строка в очередь не вернулась бы никогда. Он сбрасывается в NULL, и
+ * масштаб решит новый пересказ. 'major' остаётся: общая лента (getMajorFeed)
+ * берёт патчи по нему без пересказа, и снимать его значило бы выбросить
+ * крупный патч из ленты до следующего звена.
+ *
+ * Не в migrateDb, хотя флаг тот же по смыслу: проверка — код (modelTextFlaw),
+ * а не SQL, и это постраничное чтение всех пересказов. На холодном старте его
+ * ждал бы первый запрос посетителя, а превью на продовой базе стирало бы
+ * пересказы прода. Зовёт крон пересказов (runDigestSlice), который тут же их
+ * и перепишет. Оборвётся на полпути — флаг не записан, следующий прогон
+ * повторит с начала: уже сброшенное второй раз не найдётся.
+ *
+ * Возвращает игры, у которых пересказ снят: их карточки роут сбрасывает в ISR
+ * (строка под патчем на карточке живёт неделю). null — уборка уже была.
+ */
+export async function resetFlawedDigests(db: Db): Promise<number[] | null> {
+  if (await getCatalogMeta(db, TLDR_FLAW_SWEEP_KEY)) return null
+  const appids = new Set<number>()
+  let after = 0
+  for (;;) {
+    const res = await db.execute({
+      sql: `SELECT rowid AS rid, appid, gid, tldr FROM news_items
+            WHERE rowid > ? AND tldr IS NOT NULL ORDER BY rowid LIMIT ?`,
+      args: [after, TLDR_SWEEP_PAGE],
+    })
+    const rows = res.rows as unknown as Array<{ rid: number; appid: number; gid: string; tldr: string }>
+    const flawed = rows.filter((r) => modelTextFlaw(String(r.tldr)))
+    if (flawed.length) {
+      await db.batch(
+        flawed.map((r) => ({
+          // tldr = ? — строку, которую успели переписать между чтением и
+          // записью (новое тело патча, свежий пересказ), не трогаем
+          sql: `UPDATE news_items SET tldr = NULL, tldr_at = NULL, tldr_tries = 0,
+                  scale = CASE WHEN scale = 'hotfix' THEN NULL ELSE scale END
+                WHERE appid = ? AND gid = ? AND tldr = ?`,
+          args: [r.appid, r.gid, r.tldr],
+        })),
+        'write',
+      )
+      for (const r of flawed) appids.add(Number(r.appid))
+    }
+    if (rows.length < TLDR_SWEEP_PAGE) break
+    after = Number(rows[rows.length - 1].rid)
+  }
+  await setCatalogMeta(db, TLDR_FLAW_SWEEP_KEY, '1')
+  return [...appids]
+}
+
 /** Ретенция на игру. Держим больше, чем берём из фида, иначе вечный цикл
  *  «выкинули — перекачали — снова выкинули» на каждом опросе. */
 export async function pruneNewsForApp(db: Db, appid: number, keep = 30): Promise<void> {
