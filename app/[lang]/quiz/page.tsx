@@ -413,10 +413,12 @@ function Quiz() {
         {stepIndex === 0 && (
           <div className="w-full flex flex-col items-center gap-3 anim-rise">
             <span className="text-xs text-faint">
+              {/* «Similar to», а не «Like»: в начале строки like читается
+                  глаголом, как сердце «Liked it»; глоссарий — Similar to “X” */}
               {focus
                 ? tr(locale, { ru: 'Только нераспакованное — одним тапом:', en: 'Unopened only, in one tap:' })
                 : seed
-                  ? tr(locale, { ru: 'Похожее на выбранную игру — одним тапом:', en: 'Like the game you picked, in one tap:' })
+                  ? tr(locale, { ru: 'Похожее на выбранную игру — одним тапом:', en: 'Similar to the game you picked, in one tap:' })
                   : tr(locale, { ru: 'Одним тапом:', en: 'In one tap:' })}
             </span>
             {/*
