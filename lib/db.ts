@@ -448,6 +448,25 @@ CREATE TABLE IF NOT EXISTS tags (
 );
 `
 
+/**
+ * Пересказ модели без английского слота — карточка, собранная моделью до
+ * английской версии (pros_cons_json без $.en). Одна строка на индекс
+ * idx_games_page_en и на запросы очереди карточек (pageDueSql,
+ * pageEnglishOnlySql): SQLite берёт частичный индекс, только если WHERE
+ * запроса повторяет его предикат почти дословно.
+ *
+ * json_valid перед каждым json_extract — не перестраховка. Предикат
+ * частичного индекса SQLite считает на КАЖДОЙ записи строки, и голый
+ * json_extract на битом блобе бросал бы «malformed JSON»: запись, которая
+ * битую строку и починит (setGameJson), падала бы, а CREATE INDEX на живой
+ * базе с одной такой строкой ронял бы миграцию целиком. Тот же приём, что у
+ * PROS_CONS_NOT_CLAUDE ниже.
+ */
+const PROS_CONS_EN_MISSING = `CASE WHEN json_valid(pros_cons_json)
+                    THEN json_extract(pros_cons_json, '$.source') END = 'claude'
+                  AND CASE WHEN json_valid(pros_cons_json)
+                    THEN json_extract(pros_cons_json, '$.en') END IS NULL`
+
 /** Строка предиката живой игры с префиксом таблицы или без него */
 const alivePool = (p: '' | 'g.') =>
   `${p}alive = 1 AND ${p}superseded_by IS NULL AND ${p}tag_count > 0`
@@ -645,6 +664,14 @@ CREATE INDEX IF NOT EXISTS idx_news_en_digest ON news_items (published_at DESC)
 -- Здесь по той же причине, что и очередь выше: tldr_en — колонка ALTER-цикла.
 CREATE INDEX IF NOT EXISTS idx_news_en_major ON news_items (appid, published_at DESC)
   WHERE kind = 'patch' AND scale = 'major' AND tldr_en <> '';
+
+-- Английская пересборка карточек (pageEnglishOnlySql): пересказы модели без
+-- английского слота, верх каталога первым. Своим индексом, а не фильтром по
+-- idx_games_pool: когда догон пройдёт, таких строк почти не останется, и
+-- поиск их по пулу читал бы весь каталог на каждом звене — ради пустого
+-- ответа. Здесь в индексе только они, а запись слота выводит строку из него.
+CREATE INDEX IF NOT EXISTS idx_games_page_en ON games (reviews_total DESC)
+  WHERE ${ALIVE_POOL} AND ${PROS_CONS_EN_MISSING};
 `
 
 /**
@@ -4359,10 +4386,26 @@ export type PageQueueOpts = {
    * Возвращать в очередь pros/cons модели без английского слота ('claude' без
    * $.en): их пересобирает тот же вызов, что пишет оба языка (lib/pagejob).
    * Срок тот же — redoBefore: карточка, у которой английский раз за разом не
-   * выходит, иначе стояла бы в голове очереди каждое звено.
+   * выходит, иначе стояла бы в голове очереди каждое звено. Выборка даёт им
+   * не больше доли пачки (PAGE_EN_REDO_EVERY), см. claimPageEnrich.
    */
   redoEnglish?: boolean
 }
+
+/**
+ * Какая по счёту карточка пачки может уйти английской пересборке, пока
+ * русской работы хватает на всю пачку: каждая четвёртая — четверть звена.
+ *
+ * Без доли английская пересборка стояла бы с русской в одной очереди по
+ * отзывам, а пересказы модели без слота — это и есть верх каталога (его
+ * первым пересобрала модель, redoHeuristic). Звено карточек с моделью
+ * успевает около восьми (PAGES_LLM_PER_LINK), и все восемь уходили бы
+ * догону, пока он не кончится, — а нетронутые карточки и эвристика под
+ * моделью ждали бы. Ноль доли тоже не выход: догон тогда ждал бы пяти тысяч
+ * нетронутых, и «За что любят» на /en у самых искомых страниц не было бы
+ * месяцами. Четверть — догон идёт, русский не стоит.
+ */
+export const PAGE_EN_REDO_EVERY = 4
 
 /**
  * Кто стоит в очереди обогащения — одно условие на выборку и на счётчик.
@@ -4404,7 +4447,9 @@ export type PageQueueOpts = {
  * до английской версии, несёт только русский, а /en показывает «За что
  * любят» лишь по-английски и без слота молчит. Пересобрать его — тот же один
  * вызов, что пишет оба языка; русский при этом обновляется заодно. Срок —
- * тот же redoBefore, и по тому же доводу, что у эвристики.
+ * тот же redoBefore, и по тому же доводу, что у эвристики. Здесь ветка —
+ * для счётчика: выборка берёт её отдельным запросом и своей долей
+ * (claimPageEnrich), а множество строк у них одно.
  */
 function pageDueSql(
   staleBefore: number,
@@ -4418,8 +4463,7 @@ function pageDueSql(
               OR page_at < ?
               OR (page_tries > 0 AND page_tries < ?)
               OR (? = 1 AND page_at < ? AND json_extract(pros_cons_json, '$.source') = 'reviews')
-              OR (? = 1 AND page_at < ? AND json_extract(pros_cons_json, '$.source') = 'claude'
-                  AND json_extract(pros_cons_json, '$.en') IS NULL)
+              OR (? = 1 AND page_at < ? AND ${PROS_CONS_EN_MISSING})
             )`,
     args: [
       staleBefore,
@@ -4430,6 +4474,117 @@ function pageDueSql(
       opts.redoEnglish ? 1 : 0,
       opts.redoBefore ?? Number.MAX_SAFE_INTEGER,
     ],
+  }
+}
+
+/**
+ * Карточки, которые в очереди ТОЛЬКО ради английского слота: пятая ветка
+ * pageDueSql минус четыре русских. Ни протухшая (page_at < staleBefore), ни
+ * повтор пустого похода (page_tries) сюда не попадают — это русская работа,
+ * и платит за неё общий бюджет, как и до английской версии (lib/pagejob).
+ * Предикат начинается с предиката idx_games_page_en дословно.
+ */
+function pageEnglishOnlySql(
+  staleBefore: number,
+  maxTries: number,
+  redoBefore: number,
+): { where: string; args: number[] } {
+  return {
+    where: `${ALIVE_POOL} AND ${PROS_CONS_EN_MISSING} AND appid > 0
+            AND page_at < ? AND page_at >= ?
+            AND NOT (page_tries > 0 AND page_tries < ?)`,
+    args: [redoBefore, staleBefore, maxTries],
+  }
+}
+
+/**
+ * Чередование пачки: каждая every-я карточка — английская, остальные —
+ * русские; кончился один список — дальше идёт другой. Порядок важен, а не
+ * только состав: звено обходит пачку сверху и останавливается по сроку
+ * (sliceClock в lib/pagejob), и английские в голове пачки съели бы звено
+ * раньше русских.
+ */
+function interleave(ru: number[], en: number[], every: number): number[] {
+  const out: number[] = []
+  let i = 0
+  let j = 0
+  while (i < ru.length || j < en.length) {
+    const enTurn = (out.length + 1) % every === 0
+    if (j < en.length && (enTurn || i >= ru.length)) out.push(en[j++]!)
+    else out.push(ru[i++]!)
+  }
+  return out
+}
+
+/** Пачка очереди карточек и то, какие из неё взяты только ради английского */
+export type PageClaim = {
+  appids: number[]
+  /**
+   * Взятые одной английской пересборкой (redoEnglish): их вызов модели —
+   * догон и платит долей догона (lib/enbackfill). Протухшая или повторная
+   * карточка без слота сюда не входит, даже если английского у неё нет.
+   */
+  englishOnly: ReadonlySet<number>
+}
+
+/**
+ * Игры, которым пора обогатить карточку, с разметкой английской пересборки.
+ *
+ * Русская работа — одним запросом по idx_games_pool, как всегда (см.
+ * claimPageEnrichBatch). Английская — вторым, по idx_games_page_en, и только
+ * когда её просят: не больше четверти пачки (PAGE_EN_REDO_EVERY), пока
+ * русской работы хватает на всю пачку, и все пустые места, когда не хватает.
+ */
+export async function claimPageEnrich(
+  db: Db,
+  staleBefore: number,
+  limit: number,
+  opts: PageQueueOpts & { maxTries?: number } = {},
+): Promise<PageClaim> {
+  const maxTries = opts.maxTries ?? 0
+  /*
+   * ОДИН ЗАПРОС ПО ИНДЕКСУ, и это про цену.
+   *
+   * Двухступенчатый порядок выражался вычислением в ORDER BY —
+   * `(page_at IS NOT NULL AND page_tries = 0), reviews_total DESC`, — а такой
+   * порядок частичному индексу не соответствует. План на живой базе:
+   *
+   *   было:  SEARCH games USING INTEGER PRIMARY KEY + USE TEMP B-TREE FOR ORDER BY
+   *   стало: SCAN games USING INDEX idx_games_pool
+   *
+   * То есть ради двадцати appid читался и сортировался ВЕСЬ каталог: около
+   * шести тысяч строк, которые Turso тарифицирует, на каждое звено цепочки.
+   * Лечилось это двумя запросами, по одному на ступень. Ступеней больше нет, и
+   * порядок — ровно порядок idx_games_pool: SQLite идёт по индексу сверху и
+   * останавливается на LIMIT (сторож плана — lib/pagejob.test.ts).
+   */
+  const due = pageDueSql(staleBefore, maxTries, { ...opts, redoEnglish: false })
+  const res = await db.execute({
+    sql: `SELECT appid FROM games
+          WHERE ${due.where}
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [...due.args, limit],
+  })
+  const ru = (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
+  if (!opts.redoEnglish) return { appids: ru, englishOnly: new Set() }
+
+  // Доля — от полной пачки и вниз: при пачке меньше четырёх английская
+  // пересборка берёт только пустые места, а не единственное
+  const slots = Math.max(Math.floor(limit / PAGE_EN_REDO_EVERY), limit - ru.length)
+  if (slots <= 0) return { appids: ru, englishOnly: new Set() }
+  const en = pageEnglishOnlySql(staleBefore, maxTries, opts.redoBefore ?? Number.MAX_SAFE_INTEGER)
+  const enRes = await db.execute({
+    sql: `SELECT appid FROM games
+          WHERE ${en.where}
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [...en.args, slots],
+  })
+  const english = (enRes.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
+  return {
+    appids: interleave(ru.slice(0, limit - english.length), english, PAGE_EN_REDO_EVERY),
+    englishOnly: new Set(english),
   }
 }
 
@@ -4454,6 +4609,10 @@ function pageDueSql(
  * Модель при этом может лежать, и тогда верх каталога с 'reviews' крутился бы
  * в голове очереди вместо нетронутых. Это решает не выборка, а вызывающий:
  * runPageSlice не поднимает redoHeuristic, пока модель недавно отказала.
+ *
+ * Английская пересборка (redoEnglish) в этот общий порядок не входит: у неё
+ * своя доля пачки и свой запрос, см. claimPageEnrich. Здесь — та же пачка
+ * без разметки, для тех, кому не важно, кто в ней ради английского.
  */
 export async function claimPageEnrichBatch(
   db: Db,
@@ -4461,31 +4620,7 @@ export async function claimPageEnrichBatch(
   limit: number,
   opts: PageQueueOpts & { maxTries?: number } = {},
 ): Promise<number[]> {
-  /*
-   * ОДИН ЗАПРОС ПО ИНДЕКСУ, и это про цену.
-   *
-   * Двухступенчатый порядок выражался вычислением в ORDER BY —
-   * `(page_at IS NOT NULL AND page_tries = 0), reviews_total DESC`, — а такой
-   * порядок частичному индексу не соответствует. План на живой базе:
-   *
-   *   было:  SEARCH games USING INTEGER PRIMARY KEY + USE TEMP B-TREE FOR ORDER BY
-   *   стало: SCAN games USING INDEX idx_games_pool
-   *
-   * То есть ради двадцати appid читался и сортировался ВЕСЬ каталог: около
-   * шести тысяч строк, которые Turso тарифицирует, на каждое звено цепочки.
-   * Лечилось это двумя запросами, по одному на ступень. Ступеней больше нет, и
-   * порядок — ровно порядок idx_games_pool: SQLite идёт по индексу сверху и
-   * останавливается на LIMIT (сторож плана — lib/pagejob.test.ts).
-   */
-  const due = pageDueSql(staleBefore, opts.maxTries ?? 0, opts)
-  const res = await db.execute({
-    sql: `SELECT appid FROM games
-          WHERE ${due.where}
-          ORDER BY reviews_total DESC
-          LIMIT ?`,
-    args: [...due.args, limit],
-  })
-  return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
+  return (await claimPageEnrich(db, staleBefore, limit, opts)).appids
 }
 
 /**

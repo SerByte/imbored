@@ -4,6 +4,7 @@ import {
   bannedAppidsOf,
   catalogSignalsQueue,
   claimNewsPollBatch,
+  claimPageEnrich,
   countNewsPollDue,
   createDb,
   dealsEndedBetween,
@@ -362,6 +363,21 @@ const CASES: Case[] = [
     name: 'индекс поиска по каталогу',
     run: (db) => searchIndexGames(db, 10_000),
     indexes: ['idx_games_pool'],
+    sortFree: true,
+  },
+  // Очередь карточек с английской пересборкой: русская работа — по пулу, как
+  // всегда, а пересказы модели без английского слота — своим частичным
+  // индексом. По пулу их поиск после догона читал бы весь каталог на звено
+  {
+    name: 'очередь карточек с английской пересборкой',
+    run: (db) =>
+      claimPageEnrich(db, NOW - 180 * 86_400, 20, {
+        maxTries: 3,
+        redoHeuristic: true,
+        redoBefore: NOW - 7 * 86_400,
+        redoEnglish: true,
+      }),
+    indexes: ['idx_games_pool', 'idx_games_page_en'],
     sortFree: true,
   },
   // Отсечки по возрасту в запросе нет — см. catalogSignalsQueue: иначе при

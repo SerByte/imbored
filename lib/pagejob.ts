@@ -19,7 +19,7 @@
 import { fetchAppDetails, fetchStoreMedia, mergeMeta } from './catalog'
 import { sliceClock } from './cron'
 import {
-  claimPageEnrichBatch,
+  claimPageEnrich,
   getCatalogMeta,
   getGameMeta,
   getGamePageRows,
@@ -159,12 +159,6 @@ function englishSlot(raw: unknown): ProsConsLists | null {
   return { pros: p, cons: c }
 }
 
-/** Пересказ модели без английского слота — его пересборка и есть догон */
-function lacksEnglish(prosCons: unknown): boolean {
-  const pc = prosCons as { source?: unknown; en?: unknown } | null
-  return pc?.source === 'claude' && !englishSlot(pc.en)
-}
-
 /**
  * Имя игры для промпта, когда appdetails не ответил, а строки с именем нет.
  * Не «Игра 730»: пересказ пишется на двух языках, и русская заглушка
@@ -267,12 +261,21 @@ export async function runPageSlice(
   /*
    * Английский слот у пересказов модели, собранных до английской версии, —
    * та же пересборка, только у карточек 'claude' без $.en (redoEnglish в
-   * claimPageEnrichBatch). Под тем же условием, что и эвристика, и ещё под
-   * долей догона (lib/enbackfill): выбрана — такие карточки не перезабирают,
-   * иначе срез ходил бы за ними в Steam ради модели, звать которую нельзя.
+   * claimPageEnrich, своей долей пачки). Под тем же условием, что и
+   * эвристика, и ещё под долей догона (lib/enbackfill): выбрана — такие
+   * карточки не перезабирают, иначе срез ходил бы за ними в Steam ради
+   * модели, звать которую нельзя.
    */
   const redoEnglish = redoHeuristic && (await enBackfillLeft(db, now))
-  const targets = await claimPageEnrichBatch(db, now - PAGE_MAX_AGE_SEC, limit, {
+  /*
+   * englishOnly — карточки, взятые одной английской пересборкой: только их
+   * вызов модели и есть догон. Протухшая карточка или повтор пустого похода
+   * без английского слота — русская работа, и платит она общим бюджетом, как
+   * до английской версии: иначе при выключенной доле (LLM_EN_BACKFILL_DAILY=0)
+   * или выбранной за день русский пересказ модели не обновлялся бы вовсе, а
+   * page_at уводил бы его ещё на полгода.
+   */
+  const { appids: targets, englishOnly } = await claimPageEnrich(db, now - PAGE_MAX_AGE_SEC, limit, {
     maxTries: PAGE_MAX_TRIES,
     redoHeuristic,
     redoBefore: now - PAGE_REDO_AFTER_SEC,
@@ -287,17 +290,14 @@ export async function runPageSlice(
    */
   /*
    * Заодно с отпечатками — то, что срезу нужно знать о карточке до похода:
-   * имя (промпт модели, если appdetails не ответит) и не догон ли это —
-   * пересказ модели без английского слота (lacksEnglish).
+   * имя (промпт модели, если appdetails не ответит).
    */
-  const прежние = new Map<number, { name: string; lacksEnglish: boolean }>()
+  const прежние = new Map<number, { name: string }>()
   const отпечатки = async (): Promise<Map<number, string> | null> => {
     try {
       const rows = await getGamePageRows(db, targets)
       for (const [appid, row] of rows) {
-        if (!прежние.has(appid)) {
-          прежние.set(appid, { name: row.meta.name, lacksEnglish: lacksEnglish(row.prosCons) })
-        }
+        if (!прежние.has(appid)) прежние.set(appid, { name: row.meta.name })
       }
       return new Map([...rows].map(([appid, row]) => [appid, cardRowPrint(row, now)]))
     } catch (err) {
@@ -518,13 +518,14 @@ export async function runPageSlice(
        */
       const бюджет = opts.deadlineAt - Date.now()
       /*
-       * Карточка с пересказом модели без английского слота — это догон: вызов
-       * ради английского, и платит он долей догона (lib/enbackfill), а не
-       * общим бюджетом напрямую. Доля выбрана — модель не зовём: русский
-       * пересказ модели эвристика всё равно не затрёт (setGameJson), и
-       * карточка вернётся за английским через срок пересборки.
+       * Карточка, взятая одной английской пересборкой (englishOnly), — это
+       * догон: вызов ради английского, и платит он долей догона
+       * (lib/enbackfill), а не общим бюджетом напрямую. Доля выбрана — модель
+       * не зовём: русский пересказ модели эвристика всё равно не затрёт
+       * (setGameJson), и карточка вернётся за английским через срок
+       * пересборки.
        */
-      const догон = прежние.get(appid)?.lacksEnglish === true
+      const догон = englishOnly.has(appid)
       let callModel = useClaude && !claudeDown && !thin && бюджет >= LLM_MIN_BUDGET_MS && !llmCapped
       if (callModel) {
         // Бюджет берётся на каждый вызов: между началом среза и этой карточкой

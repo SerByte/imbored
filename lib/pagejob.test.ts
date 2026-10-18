@@ -1,6 +1,7 @@
 import type { InArgs, InStatement } from '@libsql/client'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
+  claimPageEnrich,
   claimPageEnrichBatch,
   countPageEnrichDue,
   createDb,
@@ -11,6 +12,7 @@ import {
   markPageEnriched,
   markPageMissed,
   migrateDb,
+  PAGE_EN_REDO_EVERY,
   replaceGameTags,
   setGameJson,
   sitemapGames,
@@ -1550,6 +1552,135 @@ describe('карточка по-английски', () => {
     }
     expect(called).toBe(1)
     expect(await getGameJson(db, 20, 'pros_cons_json')).toEqual({ pros: ['Старое'], cons: [], source: 'claude' })
+  })
+
+  test('английская пересборка — не больше четверти пачки, пока русской работы хватает', async () => {
+    // Пересказы модели без слота — верх каталога: в общей очереди по отзывам
+    // они забирали бы всё звено, а нетронутые карточки ждали бы конца догона
+    const db = await freshDb()
+    for (let i = 0; i < 8; i++) await claudeRuOnly(db, 1000 + i, 10_000 - i)
+    for (let i = 0; i < 20; i++) await addGame(db, 2000 + i, 500 - i)
+    const opts = {
+      maxTries: PAGE_MAX_TRIES,
+      redoHeuristic: true,
+      redoBefore: NOW - PAGE_REDO_AFTER_SEC,
+      redoEnglish: true,
+    }
+    const claim = await claimPageEnrich(db, NOW - PAGE_MAX_AGE_SEC, 20, opts)
+    expect(claim.appids).toHaveLength(20)
+    expect([...claim.englishOnly]).toEqual([1000, 1001, 1002, 1003, 1004])
+    expect(20 / PAGE_EN_REDO_EVERY).toBe(5)
+    // каждая четвёртая — английская: звено обходит пачку сверху и может
+    // кончиться на восьмой карточке, и тогда английских в нём две, а не восемь
+    expect(claim.appids.slice(0, 8)).toEqual([2000, 2001, 2002, 1000, 2003, 2004, 2005, 1001])
+    // счётчик видит всю очередь: доля — про пачку, а не про то, кто в ней стоит
+    expect(await countPageEnrichDue(db, NOW - PAGE_MAX_AGE_SEC, PAGE_MAX_TRIES, opts)).toBe(28)
+  })
+
+  test('русской работы меньше пачки — английская занимает пустые места', async () => {
+    const db = await freshDb()
+    for (let i = 0; i < 8; i++) await claudeRuOnly(db, 1000 + i, 10_000 - i)
+    await addGame(db, 2000, 500)
+    const claim = await claimPageEnrich(db, NOW - PAGE_MAX_AGE_SEC, 6, {
+      maxTries: PAGE_MAX_TRIES,
+      redoBefore: NOW - PAGE_REDO_AFTER_SEC,
+      redoEnglish: true,
+    })
+    expect(claim.appids).toEqual([2000, 1000, 1001, 1002, 1003, 1004])
+    expect(claim.englishOnly.size).toBe(5)
+    // пачка меньше доли — английская только в пустые места, единственное
+    // место русской работы она не берёт
+    const one = await claimPageEnrich(db, NOW - PAGE_MAX_AGE_SEC, 1, {
+      redoBefore: NOW - PAGE_REDO_AFTER_SEC,
+      redoEnglish: true,
+    })
+    expect(one).toEqual({ appids: [2000], englishOnly: new Set() })
+  })
+
+  test('выборка с английской пересборкой берёт ровно то, что считает countPageEnrichDue', async () => {
+    const db = await freshDb()
+    const stale = NOW - PAGE_MAX_AGE_SEC
+    let appid = 10
+    for (const pageAt of [null, stale - 1, NOW - 30 * 86_400, NOW])
+      for (const tries of [0, 1, PAGE_MAX_TRIES])
+        for (const pc of [null, 'reviews', 'claude', 'claude-en'] as const) {
+          await addGame(db, appid, 5000 - appid)
+          if (pc)
+            await setGameJson(db, appid, 'pros_cons_json', {
+              pros: ['а'],
+              cons: [],
+              source: pc === 'claude-en' ? 'claude' : pc,
+              ...(pc === 'claude-en' ? { en: { pros: ['a'], cons: [] } } : {}),
+            })
+          await db.execute({ sql: 'UPDATE games SET page_at = ?, page_tries = ? WHERE appid = ?', args: [pageAt, tries, appid] })
+          appid += 10
+        }
+    for (const maxTries of [0, PAGE_MAX_TRIES])
+      for (const redoHeuristic of [false, true]) {
+        const opts = { redoHeuristic, redoBefore: NOW - PAGE_REDO_AFTER_SEC, redoEnglish: true, maxTries }
+        const claim = await claimPageEnrich(db, stale, 1000, opts)
+        expect(claim.appids.length).toBe(await countPageEnrichDue(db, stale, maxTries, opts))
+        expect(new Set(claim.appids).size).toBe(claim.appids.length)
+        // только ради английского — ни протухшие, ни повторы пустого похода
+        const rows = await db.execute({
+          sql: `SELECT appid, page_at, page_tries FROM games WHERE appid IN (SELECT value FROM json_each(?))`,
+          args: [JSON.stringify([...claim.englishOnly])],
+        })
+        for (const r of rows.rows) {
+          expect(Number(r.page_at)).toBeGreaterThanOrEqual(stale)
+          expect(Number(r.page_tries) > 0 && Number(r.page_tries) < maxTries).toBe(false)
+        }
+      }
+  })
+
+  test('английская выборка — по своему частичному индексу, а не проходом по пулу', async () => {
+    const db = await freshDb()
+    const issued: Array<{ sql: string; args: unknown[] }> = []
+    const spy = {
+      execute: (q: InStatement) => {
+        if (typeof q !== 'string') issued.push({ sql: q.sql, args: (q.args ?? []) as unknown[] })
+        return db.execute(q)
+      },
+    } as unknown as Db
+    await claimPageEnrich(spy, NOW - PAGE_MAX_AGE_SEC, 20, {
+      maxTries: PAGE_MAX_TRIES,
+      redoHeuristic: true,
+      redoBefore: NOW - PAGE_REDO_AFTER_SEC,
+      redoEnglish: true,
+    })
+    expect(issued).toHaveLength(2)
+    const plans: string[] = []
+    for (const q of issued) {
+      const plan = await db.execute({ sql: `EXPLAIN QUERY PLAN ${q.sql}`, args: q.args as InArgs })
+      const detail = plan.rows.map((r) => String(r.detail)).join(' | ')
+      expect(detail).not.toContain('TEMP B-TREE')
+      plans.push(detail)
+    }
+    expect(plans[0]).toContain('idx_games_pool')
+    expect(plans[1]).toContain('idx_games_page_en')
+  })
+
+  test('протухший пересказ модели без слота — русская работа: общий бюджет, даже при выключенной доле', async () => {
+    // Раньше любой 'claude' без $.en считался догоном и платил долей: при
+    // LLM_EN_BACKFILL_DAILY=0 протухшая карточка не обновлялась моделью вовсе,
+    // а page_at уводил её «За что любят» ещё на полгода
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await setGameJson(db, 10, 'pros_cons_json', { pros: ['Старое'], cons: [], source: 'claude' })
+    await markPageEnriched(db, 10, NOW - PAGE_MAX_AGE_SEC - 1)
+    vi.stubEnv('LLM_EN_BACKFILL_DAILY', '0')
+    try {
+      const res = await runPageSlice(db, stubs({ prosConsFn: both }))
+      expect(res).toMatchObject({ claimed: 1, viaClaude: 1 })
+    } finally {
+      vi.unstubAllEnvs()
+    }
+    expect(await getGameJson(db, 10, 'pros_cons_json')).toEqual({
+      pros: ['Музыка'],
+      cons: ['Цена'],
+      source: 'claude',
+      en: EN,
+    })
   })
 
   test('английский слот из GetItems не перетирается запасным текстом appdetails', async () => {
