@@ -175,9 +175,13 @@ export function LikedShelf({
           })}
         </h2>
         <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
+          {/* Английский — не калька «пауза снимается»: о паузе после «Not it»
+              на сайте больше нигде не сказано, и сказать надо, что выходит
+              (cooldownOf в lib/recommend). «Your likes» — без числа: под
+              «1 game …» «these» читалось бы ошибкой */}
           {tr(locale, {
             ru: 'По ним он учится твоему вкусу: похожее — выше, пауза после «не то» снимается. Нажал по ошибке или вкус поменялся — убери.',
-            en: 'Picks learn your taste from these: similar games rank higher, and the pause after “Not it” is lifted. Tapped by mistake or changed your mind? Remove it.',
+            en: 'Picks learn your taste from your likes: similar games rank higher, and liking a game you skipped with “Not it” brings it back. Tapped by mistake or changed your mind? Remove it.',
           })}
           {shownTotal > items.length &&
             tr(locale, {
