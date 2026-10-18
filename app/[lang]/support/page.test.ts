@@ -1,5 +1,8 @@
+import { createElement, type ComponentProps, type FunctionComponent } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { prerender } from 'react-dom/static'
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { LocaleProvider } from '@/components/LocaleProvider'
 import SupportPage from './page'
 
 /**
@@ -84,5 +87,47 @@ describe('страница поддержки', () => {
     // Сверка по словам, а не по пробелам: перед тире стоит неразрывный (&nbsp;),
     // чтобы строка на телефоне не начиналась с тире, — как в сцене Money
     expect(out.replace(/\u00a0/g, ' ')).toContain('Рекомендация — это доверие')
+  })
+})
+
+/*
+ * /en/support — та же страница по-английски: язык приходит в params, и
+ * страница читает его use(), поэтому рендер ждёт данных (prerender), а не
+ * отдаёт строку сразу. Обещания те же, что у русской, и проверяются теми же
+ * словами: ни «рублём» без адреса, ни платных перков, принцип — фразой
+ * глоссария, общей со сценой денег на главной.
+ */
+describe('страница поддержки по-английски', () => {
+  async function htmlEn(donate: string | undefined): Promise<string> {
+    vi.stubEnv('NEXT_PUBLIC_DONATE_URL', donate)
+    const params = Promise.resolve({ lang: 'en' })
+    // язык ссылок (components/Link) — из провайдера, как под корневым layout
+    // страница ждёт params необязательным (её зовут и без них), createElement — обязательным
+    const page = createElement(SupportPage as FunctionComponent<{ params: typeof params }>, { params })
+    const { prelude } = await prerender(createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, page))
+    return new Response(prelude).text()
+  }
+
+  test('без адреса доната — честный ответ, как помочь, и ни слова по-русски', async () => {
+    const out = await htmlEn(undefined)
+    expect(out).toContain('How to support us')
+    expect(out).not.toContain('Support with a donation')
+    expect(out).not.toContain('target="_blank"')
+    expect(out).toContain('mailto:hello@imbored.cc')
+    expect(out).toContain('href="/en/quiz"')
+    expect(out.replace(/\u00a0/g, ' ')).toContain(
+      'we don’t sell spots in our picks. A recommendation is trust, and trust isn’t for sale.',
+    )
+    expect(out).not.toMatch(/[А-Яа-яЁё]/)
+  })
+
+  test('с адресом — «Support with a donation» и кнопка ровно туда', async () => {
+    const out = await htmlEn('https://boosty.to/imbored')
+    expect(out).toContain('Support with a donation')
+    expect(out).not.toContain('How to support us')
+    const button = out.match(/<a\b[^>]*>Support the project<\/a>/)?.[0]
+    expect(button, 'кнопки доната нет').toBeDefined()
+    expect(button).toContain('href="https://boosty.to/imbored"')
+    expect(out).not.toMatch(/[А-Яа-яЁё]/)
   })
 })
