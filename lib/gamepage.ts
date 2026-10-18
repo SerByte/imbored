@@ -92,14 +92,6 @@ export type GamePageData = {
 export type CardNews = Pick<FeedItem, 'appid' | 'gid' | 'title' | 'url' | 'publishedAt' | 'kind' | 'scale' | 'tldr' | 'rank'>
 
 /**
- * Пост с английским пересказом. Поле кладёт чтение ленты (lib/db, колонка
- * tldr_en) — до него его нет вовсе, и тогда английская карточка просто
- * остаётся без пересказа. Тип здесь, а не в StoredNews, чтобы модуль
- * компилировался и до того, как чтение научится его отдавать.
- */
-type NewsWithEn = StoredNews & { tldrEn?: string | null }
-
-/**
  * Строка ленты для островка — с пересказом на языке страницы в поле tldr.
  *
  * Одно поле на оба языка, а не tldr и tldrEn рядом: островок рисует tldr как
@@ -109,7 +101,10 @@ type NewsWithEn = StoredNews & { tldrEn?: string | null }
  * английского — нет и блока, а не блок по-русски.
  */
 export function cardNews(item: StoredNews, locale: Locale = 'ru'): CardNews {
-  const tldr = locale === 'en' ? ((item as NewsWithEn).tldrEn ?? undefined) : item.tldr
+  // Английский пересказ кладёт чтение ленты (StoredNews.tldrEn, колонка
+  // tldr_en); нет его (и null из чужих рук) — английская карточка остаётся
+  // без пересказа
+  const tldr = locale === 'en' ? (item.tldrEn ?? undefined) : item.tldr
   return {
     appid: item.appid,
     gid: item.gid,
