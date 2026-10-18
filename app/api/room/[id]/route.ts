@@ -13,6 +13,7 @@ import {
 import { isDemoId } from '@/lib/demoid'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { logSwallowed } from '@/lib/errlog'
+import { storeUrlFor } from '@/lib/gamedesc'
 import { localeFromRequest } from '@/lib/i18n'
 import { parseMood } from '@/lib/mood'
 import { inviteDoor, type InviteDoor } from '@/lib/roominvite'
@@ -243,7 +244,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           headerImage: matchedMeta.headerImage ?? null,
           art: matchedMeta.art ?? null,
           store: matchedMeta.store ?? null,
-          storeUrl: matchedMeta.storeUrl ?? null,
+          // Страница магазина — на языке смотрящего: у пула других магазинов
+          // (appid < 0) в базе русская страница, английская — в наложении
+          // (storeUrlFor, lib/gamedesc). На ru — та же meta.storeUrl
+          storeUrl: storeUrlFor(matchedMeta, locale),
           ownedByMe,
           forCount,
           // Кому из остальных её не хватает — метками ростера и колоды

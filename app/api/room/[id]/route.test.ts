@@ -190,6 +190,26 @@ describe('/api/room/[id]: сматченная игра и владение', ()
     signOut()
     expect(await matched()).toMatchObject({ ownedByMe: null })
   })
+
+  // Игра другого магазина (пул OTHER_STORE_GAMES) доходит до колоды, а в базе
+  // у неё русская страница: «Open in Epic Games» на /en вёл на /ru/ Epic
+  test('игра другого магазина — страница на языке смотрящего', async () => {
+    const ruUrl = 'https://store.epicgames.com/ru/p/fortnite'
+    await hosted()
+    await upsertGameMeta(
+      db,
+      { appid: -101, name: 'Fortnite', tags: { 'Battle Royale': 100 }, genres: [], categories: [1], store: 'epic', storeUrl: ruUrl, isFree: true },
+      nowSec(),
+    )
+    await setRoomMatched(db, ROOM, -101)
+    const on = async (res: Response) =>
+      ((await res.json()) as { matchedGame: { store: string | null; storeUrl: string | null } }).matchedGame
+    expect(await on(await peek())).toMatchObject({ store: 'epic', storeUrl: ruUrl })
+    expect(await on(await peekEn())).toMatchObject({
+      store: 'epic',
+      storeUrl: 'https://store.epicgames.com/en-US/p/fortnite',
+    })
+  })
 })
 
 /**
