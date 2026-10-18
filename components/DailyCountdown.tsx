@@ -1,7 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { dayStartSec } from '@/lib/daily'
+import { tr, type Locale } from '@/lib/i18n'
 
 /**
  * «Следующая через 5 ч 12 мин» — обратный отсчёт до смены игры дня.
@@ -40,32 +42,41 @@ export function untilNextDaily(nowSec: number, clockNow: number): number {
   return Math.max(0, dayStartSec(nowSec) + 86_400 - clockNow)
 }
 
-function left(sec: number): string {
-  if (sec < 60) return 'меньше минуты'
+/** Единицы — по глоссарию: «ч / мин» и «h / min»; число без разрядов — часов меньше суток */
+function left(sec: number, locale: Locale): string {
+  if (sec < 60) return tr(locale, { ru: 'меньше минуты', en: 'under a minute' })
   const h = Math.floor(sec / 3600)
   const m = Math.floor((sec % 3600) / 60)
-  return h > 0 ? `${h} ч ${m} мин` : `${m} мин`
+  return tr(locale, {
+    ru: h > 0 ? `${h} ч ${m} мин` : `${m} мин`,
+    en: h > 0 ? `${h} h ${m} min` : `${m} min`,
+  })
 }
 
-/** Сама строка — отдельно от часов, чтобы её можно было проверить без таймеров */
+/**
+ * Сама строка — отдельно от часов, чтобы её можно было проверить без таймеров.
+ * Язык — из контекста страницы (useLocale): без провайдера — русский.
+ */
 export function CountdownLine({ rest, className = '' }: { rest: number; className?: string }) {
+  const locale = useLocale()
   if (rest <= 0) {
     return (
       <span className={className}>
-        Игра дня сменилась ·{' '}
+        {tr(locale, { ru: 'Игра дня сменилась', en: 'New game of the day' })} ·{' '}
         <button
           type="button"
           onClick={() => window.location.reload()}
           className="tap cursor-pointer font-bold text-ink underline underline-offset-2"
         >
-          Показать
+          {tr(locale, { ru: 'Показать', en: 'Show' })}
         </button>
       </span>
     )
   }
   return (
     <span className={className}>
-      Следующая через <span className="font-bold tabular-nums text-ink">{left(rest)}</span>
+      {tr(locale, { ru: 'Следующая через', en: 'Next one in' })}{' '}
+      <span className="font-bold tabular-nums text-ink">{left(rest, locale)}</span>
     </span>
   )
 }

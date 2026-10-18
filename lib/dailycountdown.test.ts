@@ -1,7 +1,8 @@
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import { CountdownLine, untilNextDaily } from '@/components/DailyCountdown'
+import { LocaleProvider } from '@/components/LocaleProvider'
 import { dayStartSec } from './daily'
 
 /** 23:40 по Москве — за двадцать минут до смены игры дня */
@@ -42,5 +43,29 @@ describe('отсчёт до следующей игры дня', () => {
     // без disabled: кнопка рабочая всегда, а disabled ловит сторож
     // lib/disabledfocus.test.ts
     expect(html).not.toMatch(/\sdisabled/)
+  })
+})
+
+/*
+ * /en/daily: та же строка словами глоссария — «Next one in …» и «New game of
+ * the day». Язык — из контекста страницы (LocaleProvider), пропса нет.
+ */
+describe('отсчёт по-английски', () => {
+  const en = (rest: number) =>
+    renderToStaticMarkup(createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, createElement(CountdownLine, { rest })))
+
+  test('пока не сменилась — «Next one in …», без кириллицы', () => {
+    expect(en(5 * 3600 + 12 * 60)).toContain('Next one in')
+    expect(en(5 * 3600 + 12 * 60)).toContain('5 h 12 min')
+    expect(en(20 * 60)).toContain('20 min')
+    expect(en(30)).toContain('under a minute')
+    for (const rest of [30, 20 * 60, 5 * 3600]) expect(en(rest)).not.toMatch(/[А-Яа-яЁё]/)
+  })
+
+  test('сменилась — «New game of the day» и кнопка «Show»', () => {
+    const html = en(0)
+    expect(html).toContain('New game of the day')
+    expect(html).toMatch(/<button type="button"[^>]*>Show<\/button>/)
+    expect(html).not.toMatch(/[А-Яа-яЁё]/)
   })
 })

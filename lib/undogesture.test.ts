@@ -76,12 +76,17 @@ describe('«Зашло» у героя снимается тем же нажат
   test('имя кнопки не меняется с нажатием, обратимость — в подсказке', () => {
     for (const [file, code, on] of [
       ['app/[lang]/play/page.tsx', play, 'heartOn'],
-      ['app/[lang]/daily/page.tsx', daily, 'liked.has(hero.appid)'],
     ] as const) {
       expect(code, file).toContain(flat('aria-pressed={' + on + '}'))
       expect(code, file).toContain(flat('title={' + on + " ? '" + PRESSED_TITLE + "' : 'Зашло'}"))
       expect(code, file).toContain(flat('<span className="sr-only">Зашло</span>'))
     }
+    // /daily говорит на языке страницы (tr): русская ветка — те же слова
+    const on = 'liked.has(hero.appid)'
+    expect(daily).toContain(flat('aria-pressed={' + on + '}'))
+    expect(daily).toContain(flat('ru: ' + on + " ? '" + PRESSED_TITLE + "' : 'Зашло',"))
+    expect(daily).toContain(flat('en: ' + on + " ? 'Liked it — tap to undo' : 'Liked it',"))
+    expect(daily).toContain(flat(`<span className="sr-only">{tr(locale, { ru: 'Зашло', en: 'Liked it' })}</span>`))
   })
 
   /*
