@@ -1,4 +1,4 @@
-import { createElement, type ReactElement } from 'react'
+import { createElement, type ComponentProps, type ReactElement } from 'react'
 import { renderToStaticMarkup, renderToString } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import { GameNews } from '../components/GameNews'
@@ -27,7 +27,8 @@ import type { Locale } from './i18n'
 const CYR = /[А-Яа-яЁё]/
 const SINCE = 1_760_000_000
 
-const on = (locale: Locale, el: ReactElement) => createElement(LocaleProvider, { locale, children: el })
+const on = (locale: Locale, el: ReactElement) =>
+  createElement(LocaleProvider, { locale } as ComponentProps<typeof LocaleProvider>, el)
 const html = (el: ReactElement) => renderToStaticMarkup(on('en', el))
 
 const row: FeedItem = {
