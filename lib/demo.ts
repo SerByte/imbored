@@ -11,12 +11,17 @@ import type { GameMeta, LibraryGame } from './types'
 const H = 60 // минуты в часе
 const DAY = 86_400
 
+/**
+ * Описание — парой [ru, en]: демо-библиотеку открывают и с /en, а её
+ * карточки не из прогрева Steam, и английского описания им взять больше
+ * неоткуда. Пара в типе не даст завести игру на одном языке.
+ */
 function meta(
   appid: number,
   name: string,
   tags: Record<string, number>,
   categories: number[],
-  shortDescription: string,
+  [shortDescription, shortDescriptionEn]: [ru: string, en: string],
   priceFinal?: number,
 ): GameMeta {
   return {
@@ -26,6 +31,7 @@ function meta(
     genres: [],
     categories,
     shortDescription,
+    shortDescriptionEn,
     headerImage: legacyArtUrl(appid, 'header'),
     // демо-игры давние, у них живы плоские пути — включая широкий арт героя
     art: { header: legacyArtUrl(appid, 'header'), hero: legacyArtUrl(appid, 'hero') },
@@ -40,37 +46,37 @@ const PVP = [1, 36, 49]
 const MIXED = [2, 1, 9, 38, 36]
 
 export const DEMO_METAS: GameMeta[] = [
-  meta(570, 'Dota 2', { MOBA: 5000, Multiplayer: 4200, Competitive: 3800, Strategy: 2900, 'Team-Based': 2500 }, PVP, 'Командная MOBA, где каждая катка — новая история.'),
-  meta(730, 'Counter-Strike 2', { FPS: 6000, Shooter: 5200, Competitive: 4800, Multiplayer: 4500, Tactical: 3000 }, PVP, 'Тактический шутер номер один.'),
-  meta(292030, 'The Witcher 3: Wild Hunt', { RPG: 6500, 'Open World': 6000, 'Story Rich': 5800, Fantasy: 4200, Atmospheric: 3900 }, SP, 'Охотник на чудовищ в огромном открытом мире.', 3999),
-  meta(1145360, 'Hades', { Roguelike: 5200, 'Action Roguelike': 4800, 'Story Rich': 3500, Difficult: 3000, 'Fast-Paced': 2600 }, SP, 'Побег из царства мёртвых, раз за разом.'),
-  meta(413150, 'Stardew Valley', { 'Farming Sim': 6200, Relaxing: 5500, Cozy: 4800, 'Life Sim': 4200, Multiplayer: 3000, Pixel: 2800 }, COOP, 'Своя ферма, город и неспешная жизнь.'),
-  meta(105600, 'Terraria', { Sandbox: 5800, Adventure: 4900, Crafting: 4100, '2D': 3800, Multiplayer: 3600, Exploration: 3300 }, COOP, 'Копай, строй, сражайся — 2D-песочница без границ.'),
-  meta(504230, 'Celeste', { Platformer: 5400, Difficult: 5100, 'Pixel Graphics': 4200, 'Great Soundtrack': 3800, Atmospheric: 3200 }, SP, 'Платформер о подъёме на гору и о себе.', 1999),
-  meta(367520, 'Hollow Knight', { Metroidvania: 6100, 'Souls-like': 4400, Atmospheric: 4900, Difficult: 4300, Exploration: 4000 }, SP, 'Мрачное королевство жуков и стали.', 1499),
-  meta(427520, 'Factorio', { Automation: 6300, 'Base Building': 5200, Strategy: 4400, Sandbox: 3900, Multiplayer: 3100 }, COOP, 'Фабрика должна расти.'),
-  meta(294100, 'RimWorld', { 'Colony Sim': 6000, Strategy: 4800, Sandbox: 4200, Survival: 3800, 'Story Generator': 3500 }, SP, 'Генератор историй о колонии на краю галактики.'),
-  meta(646570, 'Slay the Spire', { 'Card Game': 5700, Roguelike: 5400, 'Deck Building': 5100, Strategy: 4300, 'Turn-Based': 3600 }, SP, 'Карточный рогалик, съевший тысячи вечеров.'),
-  meta(548430, 'Deep Rock Galactic', { 'Co-op': 5900, FPS: 4700, Multiplayer: 4400, Mining: 3800, 'Class-Based': 3200 }, COOP, 'Гномы-шахтёры против пещерных жуков. Rock and Stone!'),
-  meta(892970, 'Valheim', { Survival: 5800, 'Open World': 4900, Crafting: 4500, 'Co-op': 4300, Vikings: 3900 }, COOP, 'Выживание викингов в процедурном чистилище.'),
-  meta(1086940, "Baldur's Gate 3", { RPG: 6600, 'Story Rich': 5900, 'Turn-Based': 4800, Fantasy: 4500, 'Co-op': 3800, 'Choices Matter': 3600 }, MIXED, 'Грандиозная RPG по D&D, где выбор решает всё.', 5999),
-  meta(1245620, 'Elden Ring', { 'Souls-like': 6400, 'Open World': 5800, Difficult: 5200, Fantasy: 4600, Atmospheric: 4300 }, MIXED, 'Междуземье ждёт погасшего.'),
-  meta(1091500, 'Cyberpunk 2077', { 'Open World': 6100, RPG: 5600, 'Story Rich': 5000, Cyberpunk: 4900, Atmospheric: 4000 }, SP, 'Найт-Сити: хром, неон и цена мечты.', 5999),
-  meta(264710, 'Subnautica', { Survival: 5700, 'Open World': 4800, Underwater: 4500, Exploration: 4400, Atmospheric: 4200 }, SP, 'Океан чужой планеты: красиво и страшно.', 2999),
-  meta(753640, 'Outer Wilds', { Exploration: 5900, Mystery: 5200, 'Space': 4800, Atmospheric: 4700, 'Story Rich': 4400 }, SP, 'Солнечная система в петле времени: 22 минуты до сверхновой.', 2499),
-  meta(632470, 'Disco Elysium', { RPG: 6000, 'Story Rich': 5900, Detective: 5100, 'Choices Matter': 4800, Atmospheric: 4300 }, SP, 'Детектив, который забыл всё — даже себя.', 3999),
-  meta(1794680, 'Vampire Survivors', { 'Action Roguelike': 5600, Arcade: 4900, Casual: 4400, 'Pixel Graphics': 3800, Relaxing: 3200 }, SP, 'Полчаса — и «ещё одна катка» до утра.'),
-  meta(588650, 'Dead Cells', { Roguelike: 5500, Metroidvania: 5000, 'Fast-Paced': 4400, Difficult: 4100, Platformer: 3700 }, SP, 'Мёртвая клетка бежит, умирает и снова бежит.'),
-  meta(620, 'Portal 2', { Puzzle: 6200, 'Co-op': 5100, 'Story Rich': 4600, Comedy: 4400, 'Sci-fi': 3900 }, COOP, 'Порталы, GLaDOS и лучший кооп-пазл на свете.'),
+  meta(570, 'Dota 2', { MOBA: 5000, Multiplayer: 4200, Competitive: 3800, Strategy: 2900, 'Team-Based': 2500 }, PVP, ['Командная MOBA, где каждая катка — новая история.', 'A team MOBA where every round is a new story.']),
+  meta(730, 'Counter-Strike 2', { FPS: 6000, Shooter: 5200, Competitive: 4800, Multiplayer: 4500, Tactical: 3000 }, PVP, ['Тактический шутер номер один.', 'The number one tactical shooter.']),
+  meta(292030, 'The Witcher 3: Wild Hunt', { RPG: 6500, 'Open World': 6000, 'Story Rich': 5800, Fantasy: 4200, Atmospheric: 3900 }, SP, ['Охотник на чудовищ в огромном открытом мире.', 'A monster hunter in a huge open world.'], 3999),
+  meta(1145360, 'Hades', { Roguelike: 5200, 'Action Roguelike': 4800, 'Story Rich': 3500, Difficult: 3000, 'Fast-Paced': 2600 }, SP, ['Побег из царства мёртвых, раз за разом.', 'Escaping the underworld, again and again.']),
+  meta(413150, 'Stardew Valley', { 'Farming Sim': 6200, Relaxing: 5500, Cozy: 4800, 'Life Sim': 4200, Multiplayer: 3000, Pixel: 2800 }, COOP, ['Своя ферма, город и неспешная жизнь.', 'Your own farm, a small town and a slower life.']),
+  meta(105600, 'Terraria', { Sandbox: 5800, Adventure: 4900, Crafting: 4100, '2D': 3800, Multiplayer: 3600, Exploration: 3300 }, COOP, ['Копай, строй, сражайся — 2D-песочница без границ.', 'Dig, build, fight: a 2D sandbox without limits.']),
+  meta(504230, 'Celeste', { Platformer: 5400, Difficult: 5100, 'Pixel Graphics': 4200, 'Great Soundtrack': 3800, Atmospheric: 3200 }, SP, ['Платформер о подъёме на гору и о себе.', 'A platformer about climbing a mountain, and yourself.'], 1999),
+  meta(367520, 'Hollow Knight', { Metroidvania: 6100, 'Souls-like': 4400, Atmospheric: 4900, Difficult: 4300, Exploration: 4000 }, SP, ['Мрачное королевство жуков и стали.', 'A dark kingdom of bugs and steel.'], 1499),
+  meta(427520, 'Factorio', { Automation: 6300, 'Base Building': 5200, Strategy: 4400, Sandbox: 3900, Multiplayer: 3100 }, COOP, ['Фабрика должна расти.', 'The factory must grow.']),
+  meta(294100, 'RimWorld', { 'Colony Sim': 6000, Strategy: 4800, Sandbox: 4200, Survival: 3800, 'Story Generator': 3500 }, SP, ['Генератор историй о колонии на краю галактики.', 'A story generator about a colony at the edge of the galaxy.']),
+  meta(646570, 'Slay the Spire', { 'Card Game': 5700, Roguelike: 5400, 'Deck Building': 5100, Strategy: 4300, 'Turn-Based': 3600 }, SP, ['Карточный рогалик, съевший тысячи вечеров.', 'The card roguelike that ate thousands of evenings.']),
+  meta(548430, 'Deep Rock Galactic', { 'Co-op': 5900, FPS: 4700, Multiplayer: 4400, Mining: 3800, 'Class-Based': 3200 }, COOP, ['Гномы-шахтёры против пещерных жуков. Rock and Stone!', 'Dwarf miners versus cave bugs. Rock and Stone!']),
+  meta(892970, 'Valheim', { Survival: 5800, 'Open World': 4900, Crafting: 4500, 'Co-op': 4300, Vikings: 3900 }, COOP, ['Выживание викингов в процедурном чистилище.', 'Viking survival in a procedurally generated purgatory.']),
+  meta(1086940, "Baldur's Gate 3", { RPG: 6600, 'Story Rich': 5900, 'Turn-Based': 4800, Fantasy: 4500, 'Co-op': 3800, 'Choices Matter': 3600 }, MIXED, ['Грандиозная RPG по D&D, где выбор решает всё.', 'A grand D&D RPG where your choices decide everything.'], 5999),
+  meta(1245620, 'Elden Ring', { 'Souls-like': 6400, 'Open World': 5800, Difficult: 5200, Fantasy: 4600, Atmospheric: 4300 }, MIXED, ['Междуземье ждёт погасшего.', 'The Lands Between await the Tarnished.']),
+  meta(1091500, 'Cyberpunk 2077', { 'Open World': 6100, RPG: 5600, 'Story Rich': 5000, Cyberpunk: 4900, Atmospheric: 4000 }, SP, ['Найт-Сити: хром, неон и цена мечты.', 'Night City: chrome, neon and the price of a dream.'], 5999),
+  meta(264710, 'Subnautica', { Survival: 5700, 'Open World': 4800, Underwater: 4500, Exploration: 4400, Atmospheric: 4200 }, SP, ['Океан чужой планеты: красиво и страшно.', 'An alien ocean: beautiful and terrifying.'], 2999),
+  meta(753640, 'Outer Wilds', { Exploration: 5900, Mystery: 5200, 'Space': 4800, Atmospheric: 4700, 'Story Rich': 4400 }, SP, ['Солнечная система в петле времени: 22 минуты до сверхновой.', 'A solar system in a time loop: 22 minutes until the supernova.'], 2499),
+  meta(632470, 'Disco Elysium', { RPG: 6000, 'Story Rich': 5900, Detective: 5100, 'Choices Matter': 4800, Atmospheric: 4300 }, SP, ['Детектив, который забыл всё — даже себя.', 'A detective who forgot everything, even himself.'], 3999),
+  meta(1794680, 'Vampire Survivors', { 'Action Roguelike': 5600, Arcade: 4900, Casual: 4400, 'Pixel Graphics': 3800, Relaxing: 3200 }, SP, ['Полчаса — и «ещё одна катка» до утра.', 'Thirty minutes, then “one more round” until sunrise.']),
+  meta(588650, 'Dead Cells', { Roguelike: 5500, Metroidvania: 5000, 'Fast-Paced': 4400, Difficult: 4100, Platformer: 3700 }, SP, ['Мёртвая клетка бежит, умирает и снова бежит.', 'A dead cell runs, dies and runs again.']),
+  meta(620, 'Portal 2', { Puzzle: 6200, 'Co-op': 5100, 'Story Rich': 4600, Comedy: 4400, 'Sci-fi': 3900 }, COOP, ['Порталы, GLaDOS и лучший кооп-пазл на свете.', 'Portals, GLaDOS and the best co-op puzzler ever made.']),
   // ---- пул «попробуй новое» (не куплены) ----
-  meta(1426210, 'It Takes Two', { 'Co-op': 6500, 'Split Screen': 5200, Adventure: 4800, Platformer: 4200, Story: 3900 }, [1, 9, 38, 39], 'Кооп-приключение строго на двоих.', 3999),
-  meta(814380, 'Sekiro: Shadows Die Twice', { 'Souls-like': 6100, Difficult: 5800, Ninja: 4600, Action: 4400, Atmospheric: 4000 }, SP, 'Стальной клинок, одна жизнь, никакой пощады.', 5999),
-  meta(526870, 'Satisfactory', { Automation: 5900, 'Base Building': 5300, 'Open World': 4600, 'Co-op': 4300, Exploration: 3700 }, COOP, 'Фабрика от первого лица на чужой планете.', 3999),
-  meta(632360, 'Risk of Rain 2', { 'Action Roguelike': 5500, 'Co-op': 4900, 'Third-Person Shooter': 4300, Difficult: 3900, 'Fast-Paced': 3600 }, COOP, 'Рогалик-шутер, где сложность растёт со временем.', 2499),
-  meta(1966720, 'Lethal Company', { 'Co-op': 6000, Horror: 5400, Comedy: 4800, 'Online Co-Op': 4500, Survival: 3800 }, COOP, 'Собирай металлолом, кричи с друзьями.', 999),
-  meta(2379780, 'Balatro', { 'Card Game': 6100, Roguelike: 5500, 'Deck Building': 5000, Casual: 4100, Addictive: 3900 }, SP, 'Покерный рогалик, ломающий мозг и время.', 1499),
-  meta(1623730, 'Palworld', { 'Open World': 5600, Survival: 5100, 'Creature Collector': 4700, 'Co-op': 4400, Crafting: 4000 }, COOP, 'Ловля существ, база и выживание с друзьями.', 2999),
-  meta(2358720, 'Black Myth: Wukong', { 'Souls-like': 5800, 'Action RPG': 5300, Mythology: 4700, Difficult: 4300, Atmospheric: 4100 }, SP, 'Царь обезьян в мире китайской мифологии.', 5999),
+  meta(1426210, 'It Takes Two', { 'Co-op': 6500, 'Split Screen': 5200, Adventure: 4800, Platformer: 4200, Story: 3900 }, [1, 9, 38, 39], ['Кооп-приключение строго на двоих.', 'A co-op adventure strictly for two.'], 3999),
+  meta(814380, 'Sekiro: Shadows Die Twice', { 'Souls-like': 6100, Difficult: 5800, Ninja: 4600, Action: 4400, Atmospheric: 4000 }, SP, ['Стальной клинок, одна жизнь, никакой пощады.', 'A steel blade, one life, no mercy.'], 5999),
+  meta(526870, 'Satisfactory', { Automation: 5900, 'Base Building': 5300, 'Open World': 4600, 'Co-op': 4300, Exploration: 3700 }, COOP, ['Фабрика от первого лица на чужой планете.', 'A first-person factory on an alien planet.'], 3999),
+  meta(632360, 'Risk of Rain 2', { 'Action Roguelike': 5500, 'Co-op': 4900, 'Third-Person Shooter': 4300, Difficult: 3900, 'Fast-Paced': 3600 }, COOP, ['Рогалик-шутер, где сложность растёт со временем.', 'A roguelike shooter where the difficulty climbs over time.'], 2499),
+  meta(1966720, 'Lethal Company', { 'Co-op': 6000, Horror: 5400, Comedy: 4800, 'Online Co-Op': 4500, Survival: 3800 }, COOP, ['Собирай металлолом, кричи с друзьями.', 'Collect scrap, scream with friends.'], 999),
+  meta(2379780, 'Balatro', { 'Card Game': 6100, Roguelike: 5500, 'Deck Building': 5000, Casual: 4100, Addictive: 3900 }, SP, ['Покерный рогалик, ломающий мозг и время.', 'A poker roguelike that breaks your brain and your sense of time.'], 1499),
+  meta(1623730, 'Palworld', { 'Open World': 5600, Survival: 5100, 'Creature Collector': 4700, 'Co-op': 4400, Crafting: 4000 }, COOP, ['Ловля существ, база и выживание с друзьями.', 'Catch creatures, build a base and survive with friends.'], 2999),
+  meta(2358720, 'Black Myth: Wukong', { 'Souls-like': 5800, 'Action RPG': 5300, Mythology: 4700, Difficult: 4300, Atmospheric: 4100 }, SP, ['Царь обезьян в мире китайской мифологии.', 'The Monkey King in a world of Chinese mythology.'], 5999),
 ]
 
 /** Библиотека демо-пользователя: перекошенное время, бэклог и заброшенные — как у живого человека */

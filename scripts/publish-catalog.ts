@@ -27,7 +27,9 @@
  * NULL, а ноль — ответ «русского нет». У него правило строже: локальное число
  * только заполняет облачный NULL, а известный в облаке язык заливка не трогает
  * вовсе (fillUnknownSql в lib/db) — облако его перечитывает, а локальный —
- * снимок дня промоута.
+ * снимок дня промоута. short_description_en — поле обогащения того же рода:
+ * английское описание привозят прогрев и крон карточек, а промоут — своим
+ * основным проходом (он английский); пустое локальное облачное не затирает.
  *
  * Заливка списком колонок затирала эти 126 пустотой. И это хуже, чем звучит:
  * page_at сюда не входит, значит отметка «карточка обогащена» переживала
@@ -73,7 +75,7 @@ const COLS = [
   'median_forever', 'store', 'store_url', 'updated_at', 'art_json', 'release_year',
   'developer', 'publisher', 'reviews_total', 'reviews_percent', 'reviews_30d',
   'ccu', 'ccu_at', 'signals_at', 'tag_count', 'is_multiplayer', 'alive',
-  'dead_reason', 'superseded_by', 'trailer_json', 'ru_lang',
+  'dead_reason', 'superseded_by', 'trailer_json', 'ru_lang', 'short_description_en',
 ] as const
 
 function openLocal(): Client {
@@ -143,8 +145,9 @@ async function main() {
   }
 
   // ---- games ----
-  // Поздние колонки (trailer_json, price_cc, store_hidden, ru_lang) — только если
-  // локальный каталог их знает: заливка его не мигрирует, см. presentCols.
+  // Поздние колонки (trailer_json, price_cc, store_hidden, ru_lang,
+  // short_description_en) — только если локальный каталог их знает: заливка
+  // его не мигрирует, см. presentCols.
   // Без price_cc не едет и цена — вся её группа
   const haveCols = new Set(
     (await local.execute("SELECT name FROM pragma_table_info('games')")).rows.map((r) =>

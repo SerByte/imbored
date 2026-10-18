@@ -42,8 +42,12 @@ const ПО_ОТМЕТКЕ: Readonly<Record<string, string>> = {
  */
 export function buildSetList(cols: readonly string[]): string {
   // Трейлер — такое же поле обогащения: в облаке его привозит крон карточек,
-  // а локальный каталог без доливки медиа приходит с пустотой
-  const ОТ_ОБОГАЩЕНИЯ = new Set(['screenshots_json', 'genres_json', 'trailer_json'])
+  // а локальный каталог без доливки медиа приходит с пустотой. Английское
+  // описание — туда же: в облаке его пишут прогрев и крон карточек (GetItems
+  // по-английски), а каталог, промоутнутый до английской версии, его не знает.
+  // Правила языка, как у short_description, ему не нужно — колонка и так
+  // одного языка
+  const ОТ_ОБОГАЩЕНИЯ = new Set(['screenshots_json', 'genres_json', 'trailer_json', 'short_description_en'])
 
   /*
    * Описание — своя ось, и не про пустоту, а про ЯЗЫК.
@@ -100,7 +104,7 @@ export function buildSetList(cols: readonly string[]): string {
  * SELECT trailer_json «no such column» и уронил всю заливку ради колонки,
  * которую в нём всё равно нечем было заполнить.
  */
-const ПОЗДНИЕ = new Set(['trailer_json', 'price_cc', 'store_hidden', 'ru_lang'])
+const ПОЗДНИЕ = new Set(['trailer_json', 'price_cc', 'store_hidden', 'ru_lang', 'short_description_en'])
 
 /** Колонки замера цены — вся группа отметки price_at, включая её саму */
 const ЦЕНОВЫЕ = new Set(Object.keys(ПО_ОТМЕТКЕ).filter((c) => ПО_ОТМЕТКЕ[c] === 'price_at'))
