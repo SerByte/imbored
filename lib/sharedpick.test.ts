@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { PATCH_SINCE_LEAD } from './comeback'
+import { PATCH_SINCE_LEAD, patchSinceLead } from './comeback'
 import { patchSentence } from './llm'
 import {
   cleanReason,
@@ -216,5 +216,226 @@ describe('pickCopy', () => {
     const reason = 'Слово '.repeat(60).trim()
     const c = pickCopy({ name: 'Hades', reason, kind: 'play' })
     expect(c.description.length).toBeLessThanOrEqual(155)
+  })
+})
+
+/**
+ * Английская причина в «Отправить другу». shareText языка не знает: правила
+ * обоих языков работают разом, и английский текст на публичной /pick не
+ * уносит ни цены, ни чужого последнего запуска — это вопрос приватности.
+ * Фраза о патче собирается тем же patchSentence, что пишет её в причину.
+ */
+describe('shareText: английская причина', () => {
+  const known = 'You already have 40 h in “Hades”.'
+  const recall = "The first ten minutes or so will go to remembering the controls — that's normal."
+
+  test('ценовой хвост шаблона и слова о деньгах выпадают, остальное на месте', () => {
+    const reason = '“Hades” isn\'t in your library, but its tag (Roguelike) matches what you play the most.'
+    const tail = ' 40% off now: 14,99 $ instead of 24,99 $.'
+    expect(shareText(reason + tail, tail)).toBe(reason)
+    for (const money of [
+      "It's $24.99 on Steam.",
+      "It's 1 999 ₽ on Steam.",
+      '40% off right now.',
+      "It's free.",
+      'It is free-to-play, so nothing to lose.',
+      'It is on sale this week.',
+      'Cheaper than usual right now.',
+      'The price is fair for what you get.',
+      'It costs less than a pizza.',
+      'A real bargain.',
+    ]) {
+      expect(shareText(`First. ${money} Last.`, ''), money).toBe('First. Last.')
+    }
+  })
+
+  test('не про деньги — не трогаем: проценты отзывов, «worth», кооператив', () => {
+    for (const keep of [
+      '92% of reviews are positive.',
+      'Worth an hour of your evening.',
+      'Co-op for 2–4 players.',
+      'It has been a hit since launch.',
+    ]) {
+      expect(shareText(keep, ''), keep).toBe(keep)
+    }
+  })
+
+  test('факт о патче шаблона уходит вместе с хвостом пересказа', () => {
+    const tldr = 'Added a new biome. Reworked combat and progression. Brought back four-player co-op.'
+    const fact = patchSentence(tldr, Infinity, 'en')!
+    expect(fact.startsWith(patchSinceLead('en'))).toBe(true)
+    expect(shareText(`${known} ${fact} ${recall}`, '', tldr)).toBe(`${known} ${recall}`)
+    expect(shareText(`${known} ${fact}`, '')).not.toContain('Since you last played')
+    const named = patchSentence('Update 1.5: a new biome and two bosses', Infinity, 'en')!
+    expect(named).toBe(`${patchSinceLead('en')}: a new biome and two bosses.`)
+    expect(shareText(`${known} ${named}`, '', 'Update 1.5: a new biome and two bosses')).toBe(known)
+    // По глоссарию — с названием игры: вводная по-прежнему в самом начале
+    const forGame = patchSentence(tldr, Infinity, 'en', 'Hades')!
+    expect(forGame.startsWith(`${patchSinceLead('en')} for “Hades”: `)).toBe(true)
+    expect(shareText(`${known} ${forGame} ${recall}`, '', tldr)).toBe(`${known} ${recall}`)
+  })
+
+  test('модель пересказала факт своими словами — выпадает и так', () => {
+    for (const fact of [
+      'Go back to “Hades”: since you last played, a major update dropped — new maps.',
+      'Since your last session, a big patch landed with new maps.',
+      'A lot has changed since you played.',
+      'SINCE THEY LAST PLAYED, TWO BIG UPDATES CAME OUT.',
+      // Пересказы, которые прежнее правило пропускало на публичную /pick
+      'A big update dropped since the last time you played: new weapons.',
+      'Since you were last here, a major update came out: new weapons.',
+      'Since you stopped playing, it got a new biome.',
+      'since you were last here, the Labor of Love update added new pets.',
+      'A lot changed in “Terraria” since you dropped it: new pets.',
+      'Since you abandoned “Terraria”, it got a major update.',
+      'It got a major update after you put it down.',
+      'While you were away, “Terraria” got a major update.',
+      "Since you've been away, the devs added a new biome.",
+      'In your absence, the game got a co-op mode.',
+    ]) {
+      expect(shareText(`${known} ${fact} ${recall}`, ''), fact).toBe(`${known} ${recall}`)
+    }
+  })
+
+  test('«last session» без «since» — не факт о патче, остаётся', () => {
+    const plain = 'Your last session ended on a cliffhanger, and the boss is still standing.'
+    expect(shareText(`${known} ${plain}`, '')).toBe(`${known} ${plain}`)
+    for (const keep of [
+      "Since you're new to the genre, this is a gentle start.",
+      'Since you like roguelikes, this one fits.',
+      'It has been a hit since launch.',
+    ]) {
+      expect(shareText(keep, ''), keep).toBe(keep)
+    }
+  })
+
+  test('суммы в любой записи — знак перед числом, код валюты, валюта словом', () => {
+    for (const money of [
+      "It'll set you back 1,999 rubles.",
+      "It's RUB 1,999 right now.",
+      "It's 9.99 USD right now.",
+      "It's ₽999 right now, down from ₽1,999.",
+      'A ₽1,999 purchase, but worth it.',
+      "It's a purchase at 1,999 rubles.",
+      'Down to 999 rubles.',
+      'Only 499 RUB.',
+      'Just ¥1,980 in the store.',
+      'Just ₹499 in the store.',
+      'Only zł 49 now.',
+      'Under ten bucks.',
+      "It's 4 499 ₸ on Steam.",
+    ]) {
+      expect(shareText(`First. ${money} Last.`, ''), money).toBe('First. Last.')
+    }
+  })
+
+  test('скидка без минуса: save, marked down, half off, percent off, cheaper', () => {
+    for (const money of [
+      'Save 40% if you grab it this week.',
+      "Right now it's marked down 40%.",
+      'Half off right now.',
+      '50 percent off this week.',
+      "It's 40% cheaper than usual.",
+      'You can grab it for free this weekend.',
+      "It's free to play.",
+    ]) {
+      expect(shareText(`First. ${money} Last.`, ''), money).toBe('First. Last.')
+    }
+  })
+
+  test('ценовой хвост на /en с ценой знаком впереди — выпадает, даже если роут передал другой хвост', () => {
+    const base = '“Hades” isn\'t in your library, but its tag (Roguelike) matches what you play the most.'
+    const enTail = " It's ₽1,999 on Steam."
+    // хвост не совпал (роут отрезал по русскому) — предложение с суммой всё равно уходит
+    expect(shareText(base + enTail, ' В Steam — 1\u00a0999\u00a0₽.')).toBe(base)
+  })
+
+  test('«free» не о деньгах и слова о деньгах в названиях игр — не трогаем', () => {
+    for (const keep of [
+      "With the whole evening free, “Disco Elysium” is the deep story you've been saving.",
+      "Your evening is free, so sink into “Disco Elysium” — it's closest to what you love.",
+      'Feel free to take it slow.',
+      'A free-roam sandbox with no timers.',
+      'Lots of free time in the open world.',
+      '“Cheap Golf” is short and silly, perfect for tonight.',
+      '“Garage Sale” is a cozy puzzler.',
+      '“Free Fire” is a fast shooter you can play with friends.',
+      '“Cost of Living” is a calm sim for a quiet night.',
+    ]) {
+      expect(shareText(keep, ''), keep).toBe(keep)
+    }
+  })
+
+  test('русские правила на месте и для английского вызова — языки не мешают друг другу', () => {
+    const ru = `У тебя в «Hades» уже 40 ч. ${PATCH_SINCE_LEAD}: новые карты. Зайдёт на вечер.`
+    expect(shareText(ru, '', 'Новые карты')).toBe('У тебя в «Hades» уже 40 ч. Зайдёт на вечер.')
+  })
+
+  /*
+   * Русская причина режется ровно как раньше: английские слова о деньгах к
+   * русскому предложению не применяются. Прежде «free-to-play шутер» и
+   * «Cheap Golf» в русской причине доезжали до ссылки — и доезжают.
+   */
+  test('русская причина с латиницей — прежний текст: ни название игры, ни «free-to-play» не режут её', () => {
+    for (const keep of [
+      '«Cheap Golf» — короткая и смешная, на вечер хватит.',
+      '«Garage Sale» — уютная головоломка.',
+      '«Warframe» — free-to-play шутер, где можно играть с друзьями.',
+      '«Price of Glory» — стратегия. Зайдёт на вечер.',
+      '«The Sale» — детектив. Его ценят за сюжет.',
+      '«Hurry Up» — аркада, где всё решают секунды.',
+    ]) {
+      expect(shareText(keep, ''), keep).toBe(keep)
+    }
+    // а русская цена по-прежнему уходит
+    expect(shareText('«Cheap Golf» — короткая. Стоит 499 ₽.', '')).toBe('«Cheap Golf» — короткая.')
+  })
+
+  test('английская причина с названием кириллицей — английские правила: сумма уходит, имя не мешает', () => {
+    expect(shareText("“Смута” isn't in your library. It's 999 rubles right now.", '')).toBe("“Смута” isn't in your library.")
+    expect(shareText('“Цена свободы” is a story you finish in an evening.', '')).toBe(
+      '“Цена свободы” is a story you finish in an evening.',
+    )
+  })
+})
+
+describe('quoted, pickShareUrl, pickCopy по-английски', () => {
+  test('quoted: “…” снаружи, ‘…’ внутри — без ““', () => {
+    expect(quoted('just text', 'en')).toBe('“just text”')
+    expect(quoted('“Hades” is waiting', 'en')).toBe('“‘Hades’ is waiting”')
+    expect(quoted('«Hades» ждёт', 'ru')).toBe('«„Hades“ ждёт»')
+  })
+
+  test('pickShareUrl: английская ссылка ведёт на /en/pick', () => {
+    expect(pickShareUrl('https://imbored.cc', 'abcdefghjkmn', 'en')).toBe(
+      'https://imbored.cc/en/pick/abcdefghjkmn?ref=pick',
+    )
+    expect(pickShareUrl('https://imbored.cc', 'abcdefghjkmn', 'ru')).toBe(
+      'https://imbored.cc/pick/abcdefghjkmn?ref=pick',
+    )
+  })
+
+  test('pickCopy: глоссарий, без кириллицы', () => {
+    const none = pickCopy(null, 'en')
+    expect(none).toEqual({
+      title: "Tonight's pick — imbored",
+      description: 'imbored picks one game for tonight from your Steam library — and tells you why.',
+      eyebrow: "IMBORED · TONIGHT'S PICK",
+      foot: 'Your turn? One game, picked in a minute — imbored.cc',
+    })
+    const daily = pickCopy({ name: 'Hades', reason: 'Short.', kind: 'daily' }, 'en')
+    expect(daily.title).toBe('“Hades” — my game of the day')
+    expect(daily.eyebrow).toBe('MY GAME OF THE DAY')
+    const play = pickCopy({ name: 'Hades', reason: 'Short.', kind: 'play' }, 'en')
+    expect(play.title).toBe('“Hades” — imbored picked my game for tonight')
+    expect(play.eyebrow).toBe('IMBORED PICKED MY GAME FOR TONIGHT')
+    expect(play.description).toBe('Short.')
+    for (const c of [none, daily, play]) expect(JSON.stringify(c)).not.toMatch(/[А-Яа-яЁё]/)
+  })
+
+  test('без locale — прежний русский текст', () => {
+    expect(pickCopy(null)).toEqual(pickCopy(null, 'ru'))
+    expect(pickCopy(null).foot).toBe('А тебе? Подберёт одну игру за минуту — imbored.cc')
+    expect(pickCopy({ name: 'Hades', reason: 'Коротко.', kind: 'daily' }).eyebrow).toBe('МОЯ ИГРА ДНЯ')
   })
 })
