@@ -327,9 +327,10 @@ const FAIL: Record<Locale, Record<string, FailCard>> = {
     },
     // Не калька «под»: по-английски игры прячет фильтр. И «по ссылке» тут
     // ничего не называет — ссылка под текстом зовётся «Change mood», её и
-    // называем
+    // называем. Заголовок — коротким: длинный на 360 px рвал «Don't suggest»
+    // переносом посередине, русский там в одну строку
     muted: {
-      title: "Everything's filtered out by “Don't suggest”",
+      title: "All hidden by “Don't suggest”",
       text: 'The filter is under “Change mood” below.',
       seedless: true,
     },
