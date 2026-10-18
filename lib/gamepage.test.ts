@@ -6,6 +6,7 @@ import {
   setGameJson,
   upsertGameMeta,
   upsertNeighbors,
+  upsertNewsItems,
   upsertSemantics,
   type Db,
 } from './db'
@@ -136,6 +137,71 @@ describe('loadGamePage', () => {
     expect(page?.reviewsSummary).toBeNull()
     expect(page?.prosCons?.pros).toEqual(['красиво'])
     expect(чтенийИгры).toBe(1)
+  })
+
+  /*
+   * Фильтр после модели появился позже, чем сотни карточек в базе, а
+   * пересобирает их крон раз в полгода. Поэтому битое прячется и при чтении:
+   * «…справедливо'],» на /game/317400 и «неработает» на /game/730 уходят со
+   * страницы и из её сниппета сразу, без похода в модель.
+   */
+  test('битые пункты, уже лежащие в базе, на страницу не идут', async () => {
+    const db = await withDb()
+    await addGame(db, 50)
+    await setGameJson(db, 50, 'pros_cons_json', {
+      pros: ["Сложность хорошо подобрана, справедливо'],", 'Атмосферные уровни'],
+      cons: ['Античит система полностью неэффективна и неработает', 'Короткая кампания'],
+      source: 'claude',
+    })
+    expect((await loadGamePage(50))?.prosCons).toEqual({
+      pros: ['Атмосферные уровни'],
+      cons: ['Короткая кампания'],
+      source: 'claude',
+    })
+  })
+
+  test('плюсы все битые — блока нет, а не одни жалобы', async () => {
+    const db = await withDb()
+    await addGame(db, 60)
+    await setGameJson(db, 60, 'pros_cons_json', {
+      pros: ['Отличный модификация Quake'],
+      cons: ['Короткая кампания'],
+      source: 'claude',
+    })
+    expect((await loadGamePage(60))?.prosCons).toBeNull()
+  })
+
+  /*
+   * На CS2 минус «Разработчики не обновляют игру и забросили её развитие» стоял
+   * над восемью патчами за три недели в «Что нового» той же страницы. Отзыв
+   * мог писаться в затишье, но страница со свежими патчами с собой не спорит.
+   */
+  test('«не обновляют» не спорит со свежими патчами на той же странице', async () => {
+    const db = await withDb()
+    await addGame(db, 730)
+    const prosCons = {
+      pros: ['Точная стрельба'],
+      cons: ['Разработчики не обновляют игру и забросили её развитие', 'Много читеров'],
+      source: 'claude' as const,
+    }
+    await setGameJson(db, 730, 'pros_cons_json', prosCons)
+    // патч полугодовой давности — утверждению не противоречит
+    const nowSec = Math.floor(Date.now() / 1000)
+    const patch = {
+      appid: 730,
+      title: 'Обновление',
+      url: 'https://store.steampowered.com/news/app/730/view/1',
+      kind: 'patch' as const,
+      scale: 'hotfix' as const,
+      blocks: [{ kind: 'p' as const, runs: [{ text: 'правки' }] }],
+      bodyHash: 'h',
+      rank: 0,
+    }
+    await upsertNewsItems(db, [{ ...patch, gid: '1', publishedAt: nowSec - 200 * 86_400 }], nowSec)
+    expect((await loadGamePage(730))?.prosCons?.cons).toEqual(prosCons.cons)
+
+    await upsertNewsItems(db, [{ ...patch, gid: '2', publishedAt: nowSec - 5 * 86_400 }], nowSec)
+    expect((await loadGamePage(730))?.prosCons?.cons).toEqual(['Много читеров'])
   })
 })
 
@@ -642,6 +708,80 @@ describe('gameDescription', () => {
     const name = 'Очень длинное название '.repeat(10).trim()
     const d = gameDescription({ meta: meta(1, { name }), facts, prosCons, verdict: null })
     expect(d.length).toBeLessThanOrEqual(DESCRIPTION_MAX)
+  })
+
+  /*
+   * /game/335300 — «Очень положительные» 84%, а в сниппете одна жалоба: имя в
+   * 40 знаков, первый плюс не влез целиком, и следом встал короткий минус.
+   * Тот же текст — og:description и twitter:description, то есть и превью в
+   * мессенджерах. «Любят» и «Ругают» теперь пара: минус — только при плюсе,
+   * если плюсы у игры вообще есть.
+   */
+  describe('«Любят» и «Ругают» — пара', () => {
+    const DS2 = 'DARK SOULS™ II: Scholar of the First Sin'
+    const DS2_FACTS = { percent: 84, total: 132_477, label: null }
+    const FACTS_LINE = `84% из ${(132_477).toLocaleString('ru-RU')} отзывов — положительные.`
+    const LONG_PRO = 'Огромное количество контента и вариантов прохождения на любой вкус'
+    const PRO = 'Интересная система боевых статов и построения персонажей'
+    const CON = 'Враги часто стоят в засадах и много групповых боёв'
+
+    test('первый плюс не влез — берётся следующий, а не одна жалоба', () => {
+      expect(LONG_PRO).toHaveLength(66)
+      const d = gameDescription({
+        meta: meta(335300, { name: DS2 }),
+        facts: DS2_FACTS,
+        prosCons: { pros: [LONG_PRO, PRO], cons: [CON], source: 'claude' },
+        verdict: null,
+      })
+      expect(d).toBe(`${DS2}: ${FACTS_LINE} Любят: ${PRO}.`)
+      expect(d.length).toBeLessThanOrEqual(DESCRIPTION_MAX)
+    })
+
+    test('ни один плюс не влез — жалоба без плюса в сниппет не идёт', () => {
+      const d = gameDescription({
+        meta: meta(335300, { name: DS2 }),
+        facts: DS2_FACTS,
+        prosCons: { pros: [LONG_PRO], cons: [CON], source: 'claude' },
+        verdict: null,
+      })
+      expect(d).toBe(`${DS2}: ${FACTS_LINE}`)
+    })
+
+    // Пара ломается, только когда плюс был и не влез. Модель, которая честно
+    // не нашла плюсов у провальной игры, — это ответ отзывов, а не перекос
+    test('плюсов нет вовсе (провальная игра) — жалоба встаёт одна', () => {
+      const d = gameDescription({
+        meta: meta(1, { name: 'X' }),
+        facts: { percent: 25, total: 900, label: null },
+        prosCons: { pros: [], cons: [CON], source: 'claude' },
+        verdict: null,
+      })
+      expect(d).toBe(`X: 25% из 900 отзывов — положительные. Ругают: ${CON}.`)
+    })
+
+    test('плюс и минус влезают оба — встают оба; минус — первый, что влез', () => {
+      const d = gameDescription({
+        meta: meta(1, { name: 'X' }),
+        facts: { percent: 81, total: 900, label: null },
+        prosCons: { pros: [PRO], cons: [CON, 'Много групповых боёв'], source: 'claude' },
+        verdict: null,
+      })
+      expect(d).toBe(`X: 81% из 900 отзывов — положительные. Любят: ${PRO}. Ругают: Много групповых боёв.`)
+    })
+
+    // Хвост «DARK SOULS™…» после плюса — не описание, а обрубок имени
+    test('в узкий остаток описание магазина не встаёт обрубком', () => {
+      const d = gameDescription({
+        meta: meta(335300, {
+          name: DS2,
+          shortDescription: `${DS2} — продолжение легендарной серии, в которой каждый шаг даётся с боем.`,
+        }),
+        facts: DS2_FACTS,
+        prosCons: { pros: [PRO], cons: [], source: 'claude' },
+        verdict: null,
+      })
+      expect(d).toBe(`${DS2}: ${FACTS_LINE} Любят: ${PRO}.`)
+    })
   })
 })
 

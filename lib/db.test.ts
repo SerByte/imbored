@@ -40,6 +40,7 @@ import {
   pruneNewsForApp,
   releaseLease,
   repairGameJson,
+  resetFlawedDigests,
   liftRoomKick,
   raiseRoomSeat,
   removeRoomMember,
@@ -49,6 +50,7 @@ import {
   setGamesMedia,
   setNewsDigest,
   sitemapNews,
+  TLDR_FLAW_SWEEP_KEY,
   freshlyDigestedPatches,
   STEAM_LEASE,
   upsertNewsItems,
@@ -1278,6 +1280,21 @@ describe('db', () => {
     expect(await getLovedFor(db, [])).toEqual(new Map())
   })
 
+  // Плитка хаба — та же витрина, что карточка игры: битое, лежащее в базе с
+  // до-фильтровых времён, не показывается и здесь (см. shownProsCons в lib/gamepage)
+  test('«за что любят» пачкой — без битых пунктов', async () => {
+    const db = await freshDb()
+    for (const appid of [620, 621]) await upsertGameMeta(db, { ...META, appid }, NOW)
+    await setGameJson(db, 620, 'pros_cons_json', {
+      pros: ["Сложность хорошо подобрана, справедливо'],", 'Глубокая геймплей механика', 'Атмосфера'],
+      cons: [],
+      source: 'claude',
+    })
+    await setGameJson(db, 621, 'pros_cons_json', { pros: ['Отличный модификация Quake'], cons: [], source: 'claude' })
+    const loved = await getLovedFor(db, [620, 621])
+    expect([...loved.entries()]).toEqual([[620, ['Атмосфера']]])
+  })
+
   test('портрет кэшируется в users и читается', async () => {
     const db = await freshDb()
     await upsertUser(db, { steamid: 'u1', personaName: 'A' }, NOW)
@@ -2445,6 +2462,34 @@ describe('getNewsBlocks', () => {
       args: ['{не json', '1'],
     })
     expect(await getNewsBlocks(db, 730, '1')).toBeNull()
+  })
+})
+
+/*
+ * Уборка битых пересказов читает таблицу страницами по rowid: пересказов на
+ * проде тысячи. Битое — на краях страниц: первая строка, последняя и первая
+ * по обе стороны границы, одинокая на последней странице. Ровно там и
+ * ошибается курсор.
+ */
+describe('resetFlawedDigests', () => {
+  test('битое на любой странице снимается, честное остаётся, повтора нет', async () => {
+    const db = await freshDb()
+    const gids = Array.from({ length: 1001 }, (_, i) => String(i))
+    await upsertNewsItems(db, gids.map((gid) => newsItem({ gid })), NOW)
+    const junk = ['0', '499', '500', '1000']
+    for (const gid of gids) {
+      const tldr = junk.includes(gid) ? 'Новые видеосettings и правки' : 'Починили дым'
+      await setNewsDigest(db, 730, gid, { tldr, scale: 'major' }, NOW)
+    }
+
+    expect(await resetFlawedDigests(db)).toEqual([730])
+    const cleared = await db.execute(
+      'SELECT gid FROM news_items WHERE tldr IS NULL ORDER BY CAST(gid AS INTEGER)',
+    )
+    expect(cleared.rows.map((r) => r.gid)).toEqual(junk)
+    expect(await getCatalogMeta(db, TLDR_FLAW_SWEEP_KEY)).toBe('1')
+    // флаг стоит — второй раз таблицу не читаем вовсе
+    expect(await resetFlawedDigests(db)).toBeNull()
   })
 })
 
