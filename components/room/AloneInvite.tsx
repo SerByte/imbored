@@ -3,10 +3,12 @@
 import { type Ref, useState } from 'react'
 import { Icon } from '@/components/Icon'
 import Link from '@/components/Link'
+import { useLocale } from '@/components/LocaleProvider'
 import { ShareLinkInput, type ShareLink } from '@/components/ShareLink'
 import { FlapCode } from '@/components/FlapCode'
 import { Eyebrow } from '@/components/Labels'
 import { StatusLine } from '@/components/StatusLine'
+import { tr } from '@/lib/i18n'
 import { roomShareUrl } from '@/lib/roomshare'
 
 /**
@@ -50,6 +52,7 @@ export function AloneInvite({
    */
   const [revealed, setRevealed] = useState(false)
   if (share.state === 'manual' && !revealed) setRevealed(true)
+  const locale = useLocale()
 
   return (
     <>
@@ -57,23 +60,30 @@ export function AloneInvite({
         {/* «В комнате только ты», а не «ты тут один»: род того, кто
             смотрит на экран, нам неизвестен — см. MemberRoster */}
         <h2 ref={headRef} tabIndex={-1} className="font-display text-display-sm">
-          В комнате только ты — матчиться не с кем
+          {tr(locale, {
+            ru: 'В комнате только ты — матчиться не с кем',
+            en: "It's just you here — no one to match with",
+          })}
         </h2>
         <p className="text-dim text-sm leading-relaxed max-w-sm">
-          Матч — это договорённость, а договариваться пока не с кем. Твои «играем» уже записаны
-          и никуда не денутся: как только кто-то зайдёт — сравнитесь сразу.
+          {tr(locale, {
+            ru: 'Матч — это договорённость, а договариваться пока не с кем. Твои «играем» уже записаны и никуда не денутся: как только кто-то зайдёт — сравнитесь сразу.',
+            en: "A match is an agreement, and there's no one to agree with yet. Your “I'm in” votes are saved: the moment someone joins, they're compared right away.",
+          })}
         </p>
 
         <div className="flex flex-col items-center gap-2">
           <Eyebrow as="span" tone="faint">
-            код комнаты
+            {tr(locale, { ru: 'код комнаты', en: 'room code' })}
           </Eyebrow>
           <div className="text-5xl sm:text-6xl tracking-[0.06em]">
             <FlapCode code={roomId} />
           </div>
           {/* Код диктуют — значит, тот, кто его слышит, должен знать, куда
               его набрать: поле «Есть код комнаты?» стоит на доске «Пати» */}
-          <span className="text-xs text-faint">Друг вводит его на странице «Пати»</span>
+          <span className="text-xs text-faint">
+            {tr(locale, { ru: 'Друг вводит его на странице «Пати»', en: 'Your friend enters it on the Party page' })}
+          </span>
         </div>
       </div>
 
@@ -83,11 +93,13 @@ export function AloneInvite({
           className="action-tile is-primary"
         >
           <span className="flex items-center gap-2 font-extrabold">
-            {share.label('Позвать своих', { icon: 'link', iconSize: 18 })}
+            {share.label(tr(locale, { ru: 'Позвать своих', en: 'Invite friends' }), { icon: 'link', iconSize: 18 })}
           </span>
           {/* Подпись обязана называть то, что произойдёт: на телефоне это не буфер */}
           <span className="block text-xs opacity-80 mt-0.5">
-            {share.native ? 'Откроется «Поделиться»' : 'Ссылка в буфер — кидай в чат'}
+            {share.native
+              ? tr(locale, { ru: 'Откроется «Поделиться»', en: 'Opens the share sheet' })
+              : tr(locale, { ru: 'Ссылка в буфер — кидай в чат', en: 'Copies the link — drop it in chat' })}
           </span>
         </button>
         {/* Живая область — рядом с кнопкой: внутри она стала бы частью её
@@ -107,19 +119,32 @@ export function AloneInvite({
               ) : (
                 <Icon name="users" size={18} />
               )}
-              {isPublic ? 'Комната на доске' : 'Пустить чужих'}
+              {isPublic
+                ? tr(locale, { ru: 'Комната на доске', en: 'Room is on the board' })
+                : tr(locale, { ru: 'Пустить чужих', en: 'Let others in' })}
             </span>
             <span className="block text-xs text-faint mt-0.5">
               {isPublic
-                ? 'Висишь на «Пати» — могут зайти в любой момент'
-                : 'Появишься на доске «Пати» — подсядут незнакомые'}
+                ? tr(locale, {
+                    ru: 'Висишь на «Пати» — могут зайти в любой момент',
+                    en: "You're on the Party board — anyone can join anytime",
+                  })
+                : tr(locale, {
+                    ru: 'Появишься на доске «Пати» — подсядут незнакомые',
+                    en: "You'll show up on the Party board — strangers can join",
+                  })}
             </span>
           </button>
         ) : (
           <div className="action-tile is-static">
-            <span className="block text-sm font-bold text-dim">Комната не на доске</span>
+            <span className="block text-sm font-bold text-dim">
+              {tr(locale, { ru: 'Комната не на доске', en: "Room isn't on the board" })}
+            </span>
             <span className="block text-xs text-faint mt-0.5">
-              Выложить может только тот, кто её создал
+              {tr(locale, {
+                ru: 'Выложить может только тот, кто её создал',
+                en: 'Only the person who created it can put it there',
+              })}
             </span>
           </div>
         )}
@@ -144,12 +169,15 @@ export function AloneInvite({
       {revealed && (
         <div className="relative flex flex-col gap-1.5">
           <span id="room-link-note" className="text-xs text-faint">
-            Не вышло скопировать. Вот ссылка — забирай:
+            {tr(locale, {
+              ru: 'Не вышло скопировать. Вот ссылка — забирай:',
+              en: "Couldn't copy it. Here's the link — grab it:",
+            })}
           </span>
           <div className="join is-link">
             <ShareLinkInput
-              url={typeof window === 'undefined' ? '' : roomShareUrl(window.location.origin, roomId)}
-              label="Ссылка на комнату"
+              url={typeof window === 'undefined' ? '' : roomShareUrl(window.location.origin, roomId, locale)}
+              label={tr(locale, { ru: 'Ссылка на комнату', en: 'Room link' })}
               describedBy="room-link-note"
             />
           </div>
@@ -161,9 +189,10 @@ export function AloneInvite({
 
 /** Тихая строка «а можно и не тут» — одинаковая во всех режимах ожидания */
 export function RoomEscapeHatch({ className = '' }: { className?: string }) {
+  const locale = useLocale()
   return (
     <Link href="/rooms" className={`tap link-more ${className}`}>
-      Подсесть к другим
+      {tr(locale, { ru: 'Подсесть к другим', en: 'Join another party' })}
       <Icon name="arrow" size={16} />
     </Link>
   )

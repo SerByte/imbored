@@ -1,7 +1,9 @@
 'use client'
 
 import { useState } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { ShareLinkInput, useShareLink } from '@/components/ShareLink'
+import { tr } from '@/lib/i18n'
 import { matchShareCopy, matchShareUrl } from '@/lib/matchshare'
 
 /**
@@ -22,6 +24,9 @@ import { matchShareCopy, matchShareUrl } from '@/lib/matchshare'
  * Стекло, а не вторая белая кнопка: главное здесь по-прежнему «играть в то, о
  * чём договорились» — магазин или запуск выше. Живёт в куске церемонии и
  * импортируется только ею (см. lib/matchshare).
+ *
+ * Адрес и текст — на языке того, кто делится: с /en весть уходит английской
+ * ссылкой, и опоздавший друг читает экран сошедшейся комнаты по-английски.
  */
 export function MatchShare({
   roomId,
@@ -35,21 +40,25 @@ export function MatchShare({
   forCount: number | null
   memberCount: number
 }) {
+  const locale = useLocale()
   const [manual, setManual] = useState<string | null>(null)
-  const urlOf = () => matchShareUrl(window.location.origin, roomId)
-  const { title, text } = matchShareCopy({ name, forCount, memberCount })
+  const urlOf = () => matchShareUrl(window.location.origin, roomId, locale)
+  const { title, text } = matchShareCopy({ name, forCount, memberCount }, locale)
   const share = useShareLink('match', urlOf, title, text, () => setManual(urlOf()))
 
   return (
     <>
       <button type="button" onClick={() => void share.run()} className="btn-glass px-5 py-2.5 text-sm">
-        {share.label('Поделиться', { icon: 'link', manual: 'Скопируй ссылку ниже' })}
+        {share.label(tr(locale, { ru: 'Поделиться', en: 'Share' }), {
+          icon: 'link',
+          manual: tr(locale, { ru: 'Скопируй ссылку ниже', en: 'Copy the link below' }),
+        })}
       </button>
       {/* Живая область — рядом с кнопкой: внутри она стала бы частью её имени */}
       {share.status}
       {manual && (
         <div className="join is-link w-full max-w-sm">
-          <ShareLinkInput url={manual} label="Ссылка на вашу пати" />
+          <ShareLinkInput url={manual} label={tr(locale, { ru: 'Ссылка на вашу пати', en: 'Link to your party' })} />
         </div>
       )}
     </>

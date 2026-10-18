@@ -68,7 +68,8 @@ describe('ссылка с экрана матча', () => {
 
   test('кнопка берёт адрес и текст из этих строителей, а не из адресной строки', () => {
     const src = code('components/room/MatchShare.tsx')
-    expect(src).toMatch(/matchShareUrl\(window\.location\.origin, roomId\)/)
+    // locale — язык того, кто делится: весть с /en уходит английским адресом
+    expect(src).toMatch(/matchShareUrl\(window\.location\.origin, roomId, locale\)/)
     expect(src).toMatch(/matchShareCopy\(/)
     expect(src).not.toMatch(/location\.href/)
   })
@@ -241,7 +242,7 @@ describe('не участник на сошедшейся комнате — г�
   })
 
   test('запасной экран матча отвечает на «где взять» тем же правилом', () => {
-    expect(code('components/room/CeremonyBoundary.tsx')).toMatch(/const link = storeLink\(game\)/)
+    expect(code('components/room/CeremonyBoundary.tsx')).toMatch(/const link = storeLink\(game, locale\)/)
   })
 })
 

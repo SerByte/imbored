@@ -1,7 +1,9 @@
 'use client'
 
 import { useId, useState, useSyncExternalStore } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { StatusLine } from '@/components/StatusLine'
+import { tr, type Locale } from '@/lib/i18n'
 import { createLocalStore, parseFlag } from '@/lib/localstore'
 import { matchNoticeDue, pageNotices } from '@/lib/room'
 
@@ -58,8 +60,15 @@ const noSupport = () => false
  * из-за необязательного сигнала странице нельзя — церемония важнее.
  * tag — код комнаты: повторный показ той же комнаты заменит карточку, а не
  * положит вторую.
+ *
+ * locale — язык страницы комнаты: функция зовётся из эффекта, а не рисуется,
+ * и useLocale ей недоступен. Слово — то же, что в заголовке вкладки
+ * (roomTabTitle): «Сошлись» / «Matched».
  */
-export function announceMatch(args: { name: string; roomId: string; selfCaused: boolean }) {
+export function announceMatch(
+  args: { name: string; roomId: string; selfCaused: boolean },
+  locale: Locale = 'ru',
+) {
   if (typeof window === 'undefined' || !('Notification' in window)) return
   const due = matchNoticeDue({
     enabled: notifyStore.fresh() === true,
@@ -69,7 +78,7 @@ export function announceMatch(args: { name: string; roomId: string; selfCaused: 
   })
   if (!due) return
   try {
-    const n = new Notification(`Сошлись: ${args.name}`, { tag: args.roomId })
+    const n = new Notification(`${tr(locale, { ru: 'Сошлись', en: 'Matched' })}: ${args.name}`, { tag: args.roomId })
     // Нажатие на карточку возвращает в комнату — ради этого она и показана
     n.onclick = () => {
       window.focus()
@@ -91,6 +100,7 @@ export function MatchNotifyToggle() {
    */
   const [miss, setMiss] = useState<'denied' | 'default' | null>(null)
   const noteId = useId()
+  const locale = useLocale()
 
   if (!supported) return null
 
@@ -138,21 +148,30 @@ export function MatchNotifyToggle() {
         aria-describedby={noteId}
         className="btn-glass py-3 text-sm"
       >
-        Сообщить, когда сойдёмся
+        {tr(locale, { ru: 'Сообщить, когда сойдёмся', en: 'Notify me when we match' })}
       </button>
       {/* Честная граница: без сервис-воркера закрытая вкладка ничего не узнает,
           а скрытая спрашивает сервер раз в минуту и не дольше часа
           (hiddenPollDelay в lib/roompoll). Связана с кнопкой: кто идёт по Tab,
           слышит границу вместе с именем, а не включает вслепую */}
       <p id={noteId} className="text-xs text-faint">
-        Сработает, пока вкладка открыта: в фоне проверяем раз в минуту, первый час.
+        {tr(locale, {
+          ru: 'Сработает, пока вкладка открыта: в фоне проверяем раз в минуту, первый час.',
+          en: 'Works while this tab is open: in the background we check once a minute, for the first hour.',
+        })}
       </p>
       <StatusLine
         text={
           miss === 'denied'
-            ? 'Браузер не разрешил уведомления — включить их можно в настройках сайта.'
+            ? tr(locale, {
+                ru: 'Браузер не разрешил уведомления — включить их можно в настройках сайта.',
+                en: 'Your browser blocked notifications — you can turn them on in site settings.',
+              })
             : miss === 'default'
-              ? 'Запрос закрыт без ответа — нажми ещё раз, если передумаешь.'
+              ? tr(locale, {
+                  ru: 'Запрос закрыт без ответа — нажми ещё раз, если передумаешь.',
+                  en: 'The prompt was closed without an answer — tap again if you change your mind.',
+                })
               : null
         }
         className="text-xs text-dim"
