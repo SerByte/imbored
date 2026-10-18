@@ -87,3 +87,24 @@ describe('rssFeed', () => {
     expect(empty).not.toContain('<item>')
   })
 })
+
+describe('язык ленты', () => {
+  const base = {
+    title: "What's new — imbored",
+    link: 'https://imbored.cc/en/whatsnew',
+    description: 'Major patches, in short',
+    builtAt: Date.parse('2026-09-26T12:00:00Z') / 1000,
+    items: [],
+  }
+
+  test('английская лента так и называет себя: <language>en</language>', () => {
+    const feed = rssFeed({ ...base, language: 'en' })
+    expect(feed).toContain('<language>en</language>')
+    expect(feed).not.toContain('<language>ru</language>')
+    expect(feed).not.toMatch(/[А-Яа-яЁё]/)
+  })
+
+  test('без языка — ru, как было', () => {
+    expect(rssFeed(base)).toContain('<language>ru</language>')
+  })
+})

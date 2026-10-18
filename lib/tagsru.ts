@@ -46,8 +46,11 @@ export function tagRu(tag: string): string {
  * для en — сам тег Steam, он и так английский; для ru — tagRu. Пробелы по
  * краям не в счёт в обоих языках. Ключ тега при этом не меняется — это
  * только вывод.
+ *
+ * Язык по умолчанию — русский, как у остальных функций lib/: вызывающий,
+ * который язык ещё не прокидывает, получает ровно tagRu.
  */
-export function tagLabel(tag: string, locale: Locale): string {
+export function tagLabel(tag: string, locale: Locale = 'ru'): string {
   return locale === 'en' ? tag.trim() : tagRu(tag)
 }
 

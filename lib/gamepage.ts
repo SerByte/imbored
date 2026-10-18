@@ -19,19 +19,20 @@ import {
   entryTrait,
   languageTrait,
   lengthTrait,
+  reviewsLine,
   sessionTrait,
   type GameTrait,
 } from './gametraits'
 import { distinctiveTags } from './hook'
+import { tr, type Locale } from './i18n'
 import { looksLikeJunkName } from './junk'
 import { judgeLiveness, type DeadReason } from './liveness'
 import { NEIGHBORS_K } from './neighbors'
-import { plural } from './plural'
 import { isEndless } from './recommend'
 import type { ProsCons } from './reviews'
 import { getDb } from './server'
 import { tagStatsFor } from './tagstats'
-import { tagRu } from './tagsru'
+import { tagLabel } from './tagsru'
 import { rarityOf, rarityScale, tagWeightFrom } from './tagweight'
 import { isRussianText } from './textlang'
 import type { GameMeta } from './types'
@@ -89,7 +90,25 @@ export type GamePageData = {
  */
 export type CardNews = Pick<FeedItem, 'appid' | 'gid' | 'title' | 'url' | 'publishedAt' | 'kind' | 'scale' | 'tldr' | 'rank'>
 
-export function cardNews(item: StoredNews): CardNews {
+/**
+ * Пост с английским пересказом. Поле кладёт чтение ленты (lib/db, колонка
+ * tldr_en) — до него его нет вовсе, и тогда английская карточка просто
+ * остаётся без пересказа. Тип здесь, а не в StoredNews, чтобы модуль
+ * компилировался и до того, как чтение научится его отдавать.
+ */
+type NewsWithEn = StoredNews & { tldrEn?: string | null }
+
+/**
+ * Строка ленты для островка — с пересказом на языке страницы в поле tldr.
+ *
+ * Одно поле на оба языка, а не tldr и tldrEn рядом: островок рисует tldr как
+ * есть, а indexedNewsPath решает по нему же, давать ли ссылку на страницу
+ * патча, — и на /en страница патча идёт в индекс только с английским
+ * пересказом. Русского пересказа на /en нет вовсе (docs/i18n.md, п. 8): нет
+ * английского — нет и блока, а не блок по-русски.
+ */
+export function cardNews(item: StoredNews, locale: Locale = 'ru'): CardNews {
+  const tldr = locale === 'en' ? ((item as NewsWithEn).tldrEn ?? undefined) : item.tldr
   return {
     appid: item.appid,
     gid: item.gid,
@@ -98,7 +117,7 @@ export function cardNews(item: StoredNews): CardNews {
     publishedAt: item.publishedAt,
     kind: item.kind,
     scale: item.scale,
-    ...(item.tldr !== undefined ? { tldr: item.tldr } : {}),
+    ...(tldr !== undefined ? { tldr } : {}),
     rank: item.rank > 0 ? 1 : 0,
   }
 }
@@ -390,15 +409,26 @@ async function pageTagStats(db: Db, nowSec: number): Promise<Map<string, number>
  * доля отзывов в кольце. Повторять его здесь значило бы завести второе число,
  * которое разойдётся с первым после очередного замера.
  */
-const DEAD_VERDICT: Record<DeadReason, string> = {
-  'dead-multiplayer': 'Сетевая игра, в которой почти не осталось людей, — матч, скорее всего, не соберётся.',
-  panned: 'Большинство отзывов отрицательные — игроки её не советуют.',
-  'asset-flip': 'Отзывов почти нет — судить о ней пока не по чему.',
-  'solo-only': 'В неё играют только в одиночку — компанию здесь не собрать.',
+const DEAD_VERDICT: Record<Locale, Record<DeadReason, string>> = {
+  ru: {
+    'dead-multiplayer': 'Сетевая игра, в которой почти не осталось людей, — матч, скорее всего, не соберётся.',
+    panned: 'Большинство отзывов отрицательные — игроки её не советуют.',
+    'asset-flip': 'Отзывов почти нет — судить о ней пока не по чему.',
+    'solo-only': 'В неё играют только в одиночку — компанию здесь не собрать.',
+  },
+  en: {
+    'dead-multiplayer': "Hardly anyone plays this online game anymore — you probably won't find a match.",
+    panned: "Most reviews are negative — players don't recommend it.",
+    'asset-flip': "It has almost no reviews — there's nothing to judge it by yet.",
+    'solo-only': "It's single-player only — no playing it with friends.",
+  },
 }
 
 /** Причина неизвестна, а курация всё равно сняла игру с подбора */
-const DEAD_VERDICT_UNKNOWN = 'Из подбора она снята: по нашим данным, сегодня это не лучший выбор.'
+const DEAD_VERDICT_UNKNOWN: Record<Locale, string> = {
+  ru: 'Из подбора она снята: по нашим данным, сегодня это не лучший выбор.',
+  en: "We've taken it out of our picks: our data says it's not the best choice right now.",
+}
 
 /**
  * Есть ли у страницы свежее число, которым проверяется эта причина. Без него
@@ -421,7 +451,7 @@ const SIGNAL_OF: Record<DeadReason, (m: GameMeta) => boolean> = {
  * заведён. Если свежие числа с курацией спорят — молчим; если согласны, но по
  * другой причине, — называем ту, что видно на странице.
  */
-export function deadVerdict(meta: GameMeta): string | null {
+export function deadVerdict(meta: GameMeta, locale: Locale = 'ru'): string | null {
   if (meta.alive !== false) return null
   const now = judgeLiveness({
     categories: meta.categories,
@@ -430,10 +460,10 @@ export function deadVerdict(meta: GameMeta): string | null {
     reviewsTotal: meta.reviewsTotal,
     reviewsPercent: meta.reviewsPercent,
   })
-  if (!now.alive && now.reason) return DEAD_VERDICT[now.reason]
+  if (!now.alive && now.reason) return DEAD_VERDICT[locale][now.reason]
   const stored = meta.deadReason
-  if (!stored) return DEAD_VERDICT_UNKNOWN
-  return SIGNAL_OF[stored](meta) ? null : DEAD_VERDICT[stored]
+  if (!stored) return DEAD_VERDICT_UNKNOWN[locale]
+  return SIGNAL_OF[stored](meta) ? null : DEAD_VERDICT[locale][stored]
 }
 
 /** Потолок описания — в lib/clip, рядом с обрезкой; отсюда его берут тесты карточки */
@@ -452,6 +482,22 @@ function point(text: string): string {
 }
 
 /**
+ * Описание магазина, годное странице этого языка: русское — русской, нерусское
+ * — английской. Китайское английской странице тоже не годится, но такое
+ * здесь не встречается: нерусское описание каталог берёт у магазина с
+ * language=english.
+ *
+ * Временная замена descriptionFor (lib/gamedesc): когда чтение карточки
+ * начнёт отдавать английское описание отдельным полем, английская ветка
+ * возьмёт его оттуда, а здесь останется вызов.
+ */
+function storeDescription(meta: Pick<GameMeta, 'shortDescription'>, locale: Locale): string | null {
+  const text = meta.shortDescription
+  if (!text) return null
+  return isRussianText(text) === (locale === 'ru') ? text : null
+}
+
+/**
  * meta description карточки игры.
  *
  * Было `имя: 93% положительных отзывов · Action, FPS, Shooter · <первые 120
@@ -465,32 +511,35 @@ function point(text: string): string {
  *   доля положительных и число отзывов — те же, что в кольце на странице;
  *   первый пункт «любят» и первый «ругают»;
  *   описание магазина — только русское и одно оно обрезается по слову.
+ *
+ * locale — язык страницы. На /en те же фразы по-английски, а всё, что
+ * приходит готовым текстом (verdict, prosCons), вызывающий отдаёт на языке
+ * страницы: deadVerdict(meta, locale) и prosCons из loadGamePage(appid,
+ * locale). Описание магазина на /en — только нерусское (storeDescription).
  */
-export function gameDescription({
-  meta,
-  facts,
-  prosCons,
-  verdict,
-}: {
-  meta: GameMeta
-  facts: ReviewFacts | null
-  prosCons: ProsCons | null
-  verdict: string | null
-}): string {
+export function gameDescription(
+  {
+    meta,
+    facts,
+    prosCons,
+    verdict,
+  }: {
+    meta: GameMeta
+    facts: ReviewFacts | null
+    prosCons: ProsCons | null
+    verdict: string | null
+  },
+  locale: Locale = 'ru',
+): string {
   const phrases: Array<{ text: string; clip?: boolean }> = []
   if (verdict) phrases.push({ text: verdict })
-  if (facts) {
-    const total = facts.total.toLocaleString('ru-RU')
-    const noun = plural(facts.total, 'отзыва', 'отзывов', 'отзывов')
-    phrases.push({ text: `${facts.percent}% из ${total} ${noun} — положительные.` })
-  }
+  if (facts) phrases.push({ text: `${reviewsLine(facts.percent, facts.total, locale)}.` })
   const pro = prosCons?.pros[0]
   const con = prosCons?.cons[0]
-  if (pro) phrases.push({ text: `Любят: ${point(pro)}.` })
-  if (con) phrases.push({ text: `Ругают: ${point(con)}.` })
-  if (meta.shortDescription && isRussianText(meta.shortDescription)) {
-    phrases.push({ text: meta.shortDescription.replace(/\s+/g, ' ').trim(), clip: true })
-  }
+  if (pro) phrases.push({ text: tr(locale, { ru: `Любят: ${point(pro)}.`, en: `Loved for: ${point(pro)}.` }) })
+  if (con) phrases.push({ text: tr(locale, { ru: `Ругают: ${point(con)}.`, en: `Criticized for: ${point(con)}.` }) })
+  const store = storeDescription(meta, locale)
+  if (store) phrases.push({ text: store.replace(/\s+/g, ' ').trim(), clip: true })
 
   const head = `${meta.name}:`
   let out = head
@@ -499,7 +548,12 @@ export function gameDescription({
     const text = p.clip ? clip(p.text, room) : p.text.length <= room ? p.text : null
     if (text) out += ` ${text}`
   }
-  if (out === head) out = `${meta.name} — отзывы, теги и патчноуты на русском.`
+  if (out === head) {
+    out = tr(locale, {
+      ru: `${meta.name} — отзывы, теги и патчноуты на русском.`,
+      en: `${meta.name} — reviews, tags and patch notes at a glance.`,
+    })
+  }
   // Длинное название само по себе может не влезть — режем и его, по слову
   return clip(out, DESCRIPTION_MAX) ?? out.slice(0, DESCRIPTION_MAX)
 }
@@ -513,12 +567,15 @@ export { SESSION_MIN_CONFIDENCE, sessionTrait, type GameTrait } from './gametrai
 
 /**
  * «Чем выделяется» — характерные теги игры (distinctiveTags в lib/hook)
- * русскими подписями. Подпись честная: это теги, которые проставили игроки,
- * а не пересказ. null — строки нет.
+ * подписями на языке страницы (tagLabel). Подпись честная: это теги, которые
+ * проставили игроки, а не пересказ. null — строки нет.
  */
-export function hookTrait(hook: readonly string[] | null): GameTrait | null {
+export function hookTrait(hook: readonly string[] | null, locale: Locale = 'ru'): GameTrait | null {
   if (!hook?.length) return null
-  return { label: 'Чем выделяется', value: hook.map(tagRu).join(', ') }
+  return {
+    label: tr(locale, { ru: 'Чем выделяется', en: 'Stands out for' }),
+    value: hook.map((t) => tagLabel(t, locale)).join(', '),
+  }
 }
 
 /**
@@ -544,16 +601,47 @@ export function hookTrait(hook: readonly string[] | null): GameTrait | null {
 export function gameTraits(
   meta: Pick<GameMeta, 'semantics' | 'categories'> & Partial<Pick<GameMeta, 'tags' | 'ruLang'>>,
   hook: readonly string[] | null,
+  locale: Locale = 'ru',
 ): GameTrait[] {
   const tags = meta.tags ?? {}
   return [
-    hookTrait(hook),
-    sessionTrait(meta),
-    entryTrait({ tags, semantics: meta.semantics }),
-    lengthTrait(meta, { endless: isEndless({ tags, categories: meta.categories }) }),
-    characterTrait(meta),
-    languageTrait(meta),
+    hookTrait(hook, locale),
+    sessionTrait(meta, locale),
+    entryTrait({ tags, semantics: meta.semantics }, locale),
+    lengthTrait(meta, { endless: isEndless({ tags, categories: meta.categories }) }, locale),
+    characterTrait(meta, locale),
+    // на /en строки «Русский» нет вовсе — languageTrait вернёт null
+    languageTrait(meta, locale),
   ].filter((t): t is GameTrait => t !== null)
+}
+
+/**
+ * pros/cons из базы — на языке страницы, или null.
+ *
+ * Английские пункты лежат в той же записи, слотом en (их собирает тот же
+ * вызов модели, что и русские). Наружу — только собранное моделью
+ * (source: 'claude', почему — в loadGamePage), и на /en — только английский
+ * слот: нет его — блока нет, а не русский блок на английской странице
+ * (docs/i18n.md, п. 8).
+ *
+ * На ru слот en срезается: русской странице английские пункты не нужны, а
+ * всё, что отдано странице, уезжает в её RSC-часть и в недельный кэш ISR.
+ * Остальная запись — как лежала, в том же порядке полей.
+ */
+export function prosConsOn(stored: unknown, locale: Locale = 'ru'): ProsCons | null {
+  const row = stored as (ProsCons & { en?: unknown }) | null | undefined
+  if (!row || row.source !== 'claude') return null
+  if (locale === 'en') {
+    const en = row.en as { pros?: unknown; cons?: unknown } | null | undefined
+    const list = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+    const pros = list(en?.pros)
+    const cons = list(en?.cons)
+    return pros.length || cons.length ? { pros, cons, source: 'claude' } : null
+  }
+  if (!('en' in row)) return row
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { en, ...ru } = row
+  return ru
 }
 
 /**
@@ -574,8 +662,12 @@ export function gameTraits(
  * Следствие, с которым надо считаться: игры, до которой очередь ещё не дошла,
  * карточка покажет без скриншотов и без pros/cons. Это правильный компромисс —
  * неполная страница дешевле неограниченного счёта.
+ *
+ * locale — язык страницы: от него зависят только тексты модели — pros/cons
+ * (prosConsOn) и пересказы патчей (cardNews). На /en их английские версии;
+ * нет английской — блок пустой (null, пересказа нет), а не русский.
  */
-export async function loadGamePage(appid: number): Promise<GamePageData | null> {
+export async function loadGamePage(appid: number, locale: Locale = 'ru'): Promise<GamePageData | null> {
   const db = await getDb()
 
   // Строка и оба её блоба — одним чтением: см. докблок getGamePageRow.
@@ -622,12 +714,11 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   }
 
   const reviewsSummary = строка.reviewsSummary as GamePageData['reviewsSummary']
-  const stored = строка.prosCons as GamePageData['prosCons']
   // Игры студии — параллельно с полкой, а отсев — после неё: строка не
   // повторяет того, что уже стоит в «Похожих». Лимит на одну больше порога —
   // так studioLine узнаёт корпоративный каталог, не читая его целиком
   const [news, shelf, studioGames] = await Promise.all([
-    getGameNews(db, appid, 8).then((rows) => rows.map(cardNews)),
+    getGameNews(db, appid, 8).then((rows) => rows.map((row) => cardNews(row, locale))),
     similarOf(),
     meta.developer?.trim()
       ? gamesByDeveloper(db, meta.developer, STUDIO_MAX_GAMES + 1)
@@ -653,7 +744,7 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
    * где полезных отзывов слишком мало, чтобы звать модель (lib/pagejob.ts);
    * её не показываем тем более.
    */
-  const prosCons = stored?.source === 'claude' ? stored : null
+  const prosCons = prosConsOn(строка.prosCons, locale)
 
   return { meta, reviewsSummary, prosCons, news, ...shelf, studio }
 }

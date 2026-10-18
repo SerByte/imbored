@@ -6,10 +6,12 @@
  * последних — клиентские, а gamepage тянет за собой базу. Сюда же — отзывы
  * короткой строкой для плитки полки на /play, русский язык (строка карточки
  * и фраза героя) и «Наиграли» карточки. Модуль чистый: из других
- * модулей только правило режима игры (lib/liveness), склонения и порог
- * уверенности.
+ * модулей только правило режима игры (lib/liveness), склонения, порог
+ * уверенности и язык строк (lib/i18n — тоже чистый). Каждая строка — на
+ * языке страницы: последний параметр locale, без него — русский.
  */
 import { entryCost } from './entry'
+import { fmtNumber, pl, tr, type Locale } from './i18n'
 import { playMode } from './liveness'
 import { plural } from './plural'
 import { axisBucket, SEMANTICS_MIN_CONFIDENCE } from './semantics'
@@ -36,12 +38,19 @@ export const SESSION_MIN_CONFIDENCE = SEMANTICS_MIN_CONFIDENCE
  * между соседними подписями по середине в разах (20 и 40 → 30, 40 и 90 →
  * 60), тильда у каждой: заход в 10 и в 25 минут одинаково «~20».
  */
-function sessionWords(minutes: number): string {
-  if (minutes < 30) return '~20 мин'
-  if (minutes < 60) return '~40 мин'
-  if (minutes < 120) return '~1,5 ч'
-  return 'на вечер'
+function sessionWords(minutes: number, locale: Locale): string {
+  if (minutes < 30) return tr(locale, { ru: '~20 мин', en: '~20 min' })
+  if (minutes < 60) return tr(locale, { ru: '~40 мин', en: '~40 min' })
+  if (minutes < 120) return tr(locale, { ru: '~1,5 ч', en: '~1.5 h' })
+  return tr(locale, { ru: 'на вечер', en: SESSION_EVENING_EN })
 }
+
+/**
+ * «На вечер» по-английски (глоссарий docs/i18n.md). Отдельной константой: по
+ * ней sessionPhrase узнаёт вечернюю корзину и строит фразу целиком, а не
+ * склеивает «session all evening».
+ */
+const SESSION_EVENING_EN = 'all evening'
 
 /**
  * «Сессия» или «Матч» — из семантики игры (lib/semantics), без модели.
@@ -56,15 +65,37 @@ function sessionWords(minutes: number): string {
  *
  * null — семантики нет или она недостаточно уверена (SESSION_MIN_CONFIDENCE).
  */
-export function sessionTrait(meta: Pick<GameMeta, 'semantics' | 'categories'>): GameTrait | null {
+export function sessionTrait(
+  meta: Pick<GameMeta, 'semantics' | 'categories'>,
+  locale: Locale = 'ru',
+): GameTrait | null {
   const s = meta.semantics
   if (!s || s.confidence < SESSION_MIN_CONFIDENCE) return null
   const { minutes, bucket, canStopAnytime } = s.session
   const match =
     playMode(meta.categories ?? []) !== 'solo-capable' && !canStopAnytime && bucket !== 'long'
   return match
-    ? { label: 'Матч', value: `~${minutes} мин` }
-    : { label: 'Сессия', value: sessionWords(minutes) }
+    ? { label: tr(locale, { ru: 'Матч', en: 'Match' }), value: tr(locale, { ru: `~${minutes} мин`, en: `~${minutes} min` }) }
+    : { label: tr(locale, { ru: 'Сессия', en: 'Session' }), value: sessionWords(minutes, locale) }
+}
+
+/**
+ * Строка сессии одной фразой — для героя /play и колоды пати, где нет места
+ * на «подпись: значение».
+ *
+ * По-русски это ровно то, что экраны склеивали сами: «сессия ~20 мин»,
+ * «матч ~45 мин», «сессия на вечер». По-английски та же склейка читается
+ * криво («session all evening»), поэтому фраза строится целиком и
+ * множественным числом, как говорят о длине захода: «~20 min sessions»,
+ * «~45 min matches», «all-evening sessions».
+ *
+ * Принимает готовую строку sessionTrait того же языка — она и едет с сервера
+ * в карточке, — а не семантику: клиенту не нужно знать корзины.
+ */
+export function sessionPhrase(trait: GameTrait, locale: Locale = 'ru'): string {
+  if (locale !== 'en') return `${trait.label.toLowerCase()} ${trait.value}`
+  const noun = trait.label.toLowerCase() === 'match' ? 'matches' : 'sessions'
+  return trait.value === SESSION_EVENING_EN ? `all-evening ${noun}` : `${trait.value} ${noun}`
 }
 
 /**
@@ -80,12 +111,31 @@ export function sessionTrait(meta: Pick<GameMeta, 'semantics' | 'categories'>): 
  * карточка говорит об игре как о факте: у Hades по одному тегу Difficult
  * выходило «высокий порог — сначала придётся разобраться».
  */
-export function entryTrait(meta: Pick<GameMeta, 'tags' | 'semantics'>): GameTrait | null {
+export function entryTrait(
+  meta: Pick<GameMeta, 'tags' | 'semantics'>,
+  locale: Locale = 'ru',
+): GameTrait | null {
   const e = entryCost(meta)
   if (!e || e.basis !== 'reviews' || e.hours === null) return null
-  if (e.level === 'low') return { label: 'Вход', value: 'затягивает с первых минут — по отзывам' }
+  const label = tr(locale, { ru: 'Вход', en: 'Ramp-up' })
+  if (e.level === 'low') {
+    return {
+      label,
+      value: tr(locale, {
+        ru: 'затягивает с первых минут — по отзывам',
+        en: 'hooks you from the first minutes — per reviews',
+      }),
+    }
+  }
   const h = Math.max(1, Math.round(e.hours))
-  return { label: 'Вход', value: `раскрывается через ${h} ${plural(h, 'час', 'часа', 'часов')} — по отзывам` }
+  const hours = pl(locale, h, { ru: ['час', 'часа', 'часов'], en: ['hour', 'hours'] })
+  return {
+    label,
+    value: tr(locale, {
+      ru: `раскрывается через ${h} ${hours} — по отзывам`,
+      en: `takes ${h} ${hours} to click — per reviews`,
+    }),
+  }
 }
 
 /**
@@ -97,21 +147,21 @@ export function entryTrait(meta: Pick<GameMeta, 'tags' | 'semantics'>): GameTrai
  * открытые и точные: «меньше часа» — строго меньше, «от 40 ч» — сорок и
  * дальше; «~30 ч» у игры, где хвалившие наиграли сотню, было бы неправдой.
  */
-const PLAYED_STEPS: ReadonlyArray<readonly [belowHours: number, words: string]> = [
-  [1, 'меньше часа'],
-  [1.5, '~1 ч'],
-  [2.5, '~2 ч'],
-  [4, '~3 ч'],
-  [6.5, '~5 ч'],
-  [10, '~8 ч'],
-  [16, '~12 ч'],
-  [25, '~20 ч'],
-  [40, '~30 ч'],
+const PLAYED_STEPS: ReadonlyArray<readonly [belowHours: number, words: { ru: string; en: string }]> = [
+  [1, { ru: 'меньше часа', en: 'under an hour' }],
+  [1.5, { ru: '~1 ч', en: '~1 h' }],
+  [2.5, { ru: '~2 ч', en: '~2 h' }],
+  [4, { ru: '~3 ч', en: '~3 h' }],
+  [6.5, { ru: '~5 ч', en: '~5 h' }],
+  [10, { ru: '~8 ч', en: '~8 h' }],
+  [16, { ru: '~12 ч', en: '~12 h' }],
+  [25, { ru: '~20 ч', en: '~20 h' }],
+  [40, { ru: '~30 ч', en: '~30 h' }],
 ]
 
-function playedWords(minutes: number): string {
+function playedWords(minutes: number, locale: Locale): string {
   const hours = minutes / 60
-  return PLAYED_STEPS.find(([below]) => hours < below)?.[1] ?? 'от 40 ч'
+  return tr(locale, PLAYED_STEPS.find(([below]) => hours < below)?.[1] ?? { ru: 'от 40 ч', en: '40+ h' })
 }
 
 /**
@@ -144,18 +194,37 @@ function playedWords(minutes: number): string {
 export function lengthTrait(
   meta: Pick<GameMeta, 'semantics'>,
   { endless }: { endless: boolean },
+  locale: Locale = 'ru',
 ): GameTrait | null {
   const played = meta.semantics?.played
   if (!played || endless) return null
-  return { label: 'Наиграли', value: `${playedWords(played.posMedianMin)} — те, кто её хвалит` }
+  const words = playedWords(played.posMedianMin, locale)
+  // По-английски чьё это время — тем же смыслом, но фразой, а не через тире:
+  // «~8 h — those who praise it» читается подстрочником
+  return tr(locale, {
+    ru: { label: 'Наиграли', value: `${words} — те, кто её хвалит` },
+    en: { label: 'Playtime', value: `${words} among players who recommend it` },
+  })
 }
 
-/** Слова осей — те же, что у «под настроение» в подборе (moodWordsOf в lib/recommend) */
-const AXIS_WORDS = {
-  challenge: { low: 'спокойная', high: 'с вызовом' },
-  pace: { low: 'неторопливая', high: 'динамичная' },
-  complexity: { low: 'без долгого освоения', high: 'есть что осваивать' },
-} as const
+/**
+ * Слова осей на обоих языках. Таблица одна на карточку и на «под настроение»
+ * подбора (moodWordsOf в lib/recommend берёт её отсюда): карточка и «Почему
+ * она?» обязаны называть одну и ту же сложность одним словом, и две копии
+ * слов разъехались бы при первой правке перевода.
+ */
+export const AXIS_WORDS = {
+  ru: {
+    challenge: { low: 'спокойная', high: 'с вызовом' },
+    pace: { low: 'неторопливая', high: 'динамичная' },
+    complexity: { low: 'без долгого освоения', high: 'есть что осваивать' },
+  },
+  en: {
+    challenge: { low: 'calm', high: 'challenging' },
+    pace: { low: 'unhurried', high: 'fast-paced' },
+    complexity: { low: 'easy to pick up', high: 'plenty to master' },
+  },
+} as const satisfies Record<Locale, Record<'challenge' | 'pace' | 'complexity', { low: string; high: string }>>
 
 /**
  * «Характер» — одна-две оси семантики словами: «спокойная, неторопливая».
@@ -164,16 +233,17 @@ const AXIS_WORDS = {
  * не больше двух, самые далёкие от середины: три слова — уже анкета. Только
  * из уверенной семантики: по тегам оси — приор жанра, а не факт об игре.
  */
-export function characterTrait(meta: Pick<GameMeta, 'semantics'>): GameTrait | null {
+export function characterTrait(meta: Pick<GameMeta, 'semantics'>, locale: Locale = 'ru'): GameTrait | null {
   const s = meta.semantics
   if (!s || s.confidence < SEMANTICS_MIN_CONFIDENCE) return null
-  const words = (Object.keys(AXIS_WORDS) as Array<keyof typeof AXIS_WORDS>)
+  const table = AXIS_WORDS[locale]
+  const words = (Object.keys(table) as Array<keyof typeof table>)
     .map((axis) => ({ axis, x: s.axes[axis], bucket: axisBucket(s.axes[axis]) }))
     .filter((a) => a.bucket !== 'mid')
     .sort((a, b) => Math.abs(b.x - 50) - Math.abs(a.x - 50))
     .slice(0, 2)
-    .map((a) => AXIS_WORDS[a.axis][a.bucket as 'low' | 'high'])
-  return words.length ? { label: 'Характер', value: words.join(', ') } : null
+    .map((a) => table[a.axis][a.bucket as 'low' | 'high'])
+  return words.length ? { label: tr(locale, { ru: 'Характер', en: 'Feel' }), value: words.join(', ') } : null
 }
 
 /** Фразы героя и плитки — по ступени RuLang, см. ruLangLine */
@@ -197,8 +267,13 @@ const RU_LINE: Record<RuLang, string> = {
  * null — не знаем: язык приезжает с кроном карточек, промоутом и доливкой
  * медиа, а до их прохода поля нет. «Без русского» по пустоте было бы
  * выдумкой, причём той, что отговаривает.
+ *
+ * На английской версии — всегда null: «есть ли русская озвучка» — вопрос
+ * русскоязычного читателя, а других языков игры мы не храним, и фразы про
+ * английский честно не собрать.
  */
-export function ruLangLine(ru: RuLang | null | undefined): string | null {
+export function ruLangLine(ru: RuLang | null | undefined, locale: Locale = 'ru'): string | null {
+  if (locale === 'en') return null
   if (ru === null || ru === undefined) return null
   return RU_LINE[ru] ?? null
 }
@@ -221,9 +296,12 @@ const RU_VALUE: Record<RuLang, string> = {
  * издатель, и мы пересказываем их, а не проверяли перевод сами.
  *
  * «Нет» показываем: для решения оно весит не меньше «озвучки». null — не
- * знаем (см. ruLangLine), и строки нет вовсе.
+ * знаем (см. ruLangLine), и строки нет вовсе. На английской версии строки
+ * нет тоже — по той же причине, что у ruLangLine; inLanguage разметки
+ * (lib/jsonld) там тогда не ставится.
  */
-export function languageTrait(meta: Pick<GameMeta, 'ruLang'>): GameTrait | null {
+export function languageTrait(meta: Pick<GameMeta, 'ruLang'>, locale: Locale = 'ru'): GameTrait | null {
+  if (locale === 'en') return null
   const value = meta.ruLang === undefined ? undefined : RU_VALUE[meta.ruLang]
   return value ? { label: 'Русский', value: `${value} — по данным Steam` } : null
 }
@@ -237,13 +315,36 @@ export type ReviewsBrief = { short: string; full: string }
  * отличается только местом в строке. Десятые — только там, где без них
  * число теряет порядок (4,8 тыс., а не 5).
  */
-function compactCount(n: number): string {
-  const tenths = (x: number) => String(Math.round(x * 10) / 10).replace('.', ',')
+function compactCount(n: number, locale: Locale): string {
+  const tenths = (x: number) => {
+    const t = String(Math.round(x * 10) / 10)
+    return locale === 'en' ? t : t.replace('.', ',')
+  }
+  // По-английски — K и M слитно с числом (глоссарий: «тыс. / млн → K / M»)
+  const k = tr(locale, { ru: ' тыс.', en: 'K' })
+  const m = tr(locale, { ru: ' млн', en: 'M' })
   if (n < 1000) return String(n)
-  if (n < 10_000) return `${tenths(n / 1000)} тыс.`
+  if (n < 10_000) return `${tenths(n / 1000)}${k}`
   const thousands = Math.round(n / 1000)
-  if (thousands < 1000) return `${thousands} тыс.`
-  return `${tenths(n / 1_000_000)} млн`
+  if (thousands < 1000) return `${thousands}${k}`
+  return `${tenths(n / 1_000_000)}${m}`
+}
+
+/**
+ * «92% из 48 213 отзывов — положительные» — полная фраза доли отзывов: та
+ * же, что у кольца на карточке игры, в её meta description (gameDescription
+ * в lib/gamepage) и в подсказке плитки. Одна на всех, чтобы склонение и
+ * число не разъехались по экранам.
+ *
+ * percent и total — уже целые (их округляет вызывающий). По-английски —
+ * целым шаблоном на единицу: «1 review is», а не «1 reviews are».
+ */
+export function reviewsLine(percent: number, total: number, locale: Locale = 'ru'): string {
+  const n = fmtNumber(locale, total)
+  return tr(locale, {
+    ru: `${percent}% из ${n} ${plural(total, 'отзыва', 'отзывов', 'отзывов')} — положительные`,
+    en: total === 1 ? `${percent}% of 1 review is positive` : `${percent}% of ${n} reviews are positive`,
+  })
 }
 
 /**
@@ -255,13 +356,42 @@ function compactCount(n: number): string {
 export function reviewsBrief(
   percent: number | null | undefined,
   total: number | null | undefined,
+  locale: Locale = 'ru',
 ): ReviewsBrief | null {
   if (typeof percent !== 'number' || !Number.isFinite(percent)) return null
   if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) return null
   const p = Math.round(Math.min(100, Math.max(0, percent)))
   const n = Math.round(total)
+  const count = compactCount(n, locale)
   return {
-    short: `${p}% из ${compactCount(n)}`,
-    full: `${p}% из ${n.toLocaleString('ru-RU')} ${plural(n, 'отзыва', 'отзывов', 'отзывов')} — положительные`,
+    short: tr(locale, { ru: `${p}% из ${count}`, en: `${p}% of ${count}` }),
+    full: reviewsLine(p, n, locale),
   }
+}
+
+/** Ярлыки отзывов Steam по-русски — как их пишет русский магазин (глоссарий docs/i18n.md) */
+const SCORE_RU: Readonly<Record<string, string>> = {
+  'Overwhelmingly Positive': 'Крайне положительные',
+  'Very Positive': 'Очень положительные',
+  Positive: 'Положительные',
+  'Mostly Positive': 'В основном положительные',
+  Mixed: 'Смешанные',
+  'Mostly Negative': 'В основном отрицательные',
+  Negative: 'Отрицательные',
+  'Very Negative': 'Очень отрицательные',
+  'Overwhelmingly Negative': 'Крайне отрицательные',
+}
+
+/**
+ * Словесная оценка Steam на языке страницы: на ru — русский ярлык магазина,
+ * на en — сам ярлык Steam, он и так английский. Незнакомый ярлык — как есть:
+ * Steam заводит новые редко, и его слово честнее пустого места.
+ *
+ * reviewFacts (lib/gamepage) отдаёт ярлык сырым, а переводит его место
+ * вывода — так же, как подпись тега. Таблица здесь, а не в странице: ярлык
+ * нужен и карточке игры, и её OG-картинке, а модуль клиентобезопасный.
+ */
+export function steamScoreLabel(label: string, locale: Locale = 'ru'): string {
+  if (locale === 'en') return label
+  return Object.hasOwn(SCORE_RU, label) ? SCORE_RU[label] : label
 }

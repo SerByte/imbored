@@ -10,6 +10,7 @@ import {
   type Db,
 } from './db'
 import {
+  cardNews,
   DESCRIPTION_MAX,
   deadVerdict,
   gameDescription,
@@ -19,6 +20,7 @@ import {
   loadGamePage,
   nearGames,
   pickSimilar,
+  prosConsOn,
   reviewFacts,
   SESSION_MIN_CONFIDENCE,
   sessionTrait,
@@ -1063,5 +1065,169 @@ describe('studioLine', () => {
     expect((await loadGamePage(1))?.studio).toBeNull()
     await db.execute('UPDATE games SET alive = 0 WHERE appid = 13')
     expect((await loadGamePage(1))?.studio?.games).toHaveLength(STUDIO_SHOWN)
+  })
+})
+
+/** Ни одной русской буквы: английская строка не должна протекать русским словом */
+const CYRILLIC = /[А-Яа-яЁё]/
+
+describe('английская карточка', () => {
+  const dead = (over: Partial<GameMeta>) =>
+    meta(1, { name: 'Dirty Bomb', alive: false, signalsAt: NOW, categories: [1, 36], ...over })
+
+  test('вердикт мёртвой игре — по-английски, на каждую причину', () => {
+    expect(deadVerdict(dead({ deadReason: 'dead-multiplayer' }), 'en')).toBe(
+      "Hardly anyone plays this online game anymore — you probably won't find a match.",
+    )
+    expect(deadVerdict(dead({ deadReason: 'panned', categories: [2], reviewsPercent: 31, reviewsTotal: 5_000 }), 'en')).toBe(
+      "Most reviews are negative — players don't recommend it.",
+    )
+    expect(deadVerdict(dead({ deadReason: 'asset-flip', categories: [2] }), 'en')).toBe(
+      "It has almost no reviews — there's nothing to judge it by yet.",
+    )
+    expect(deadVerdict(dead({}), 'en')).toBe("We've taken it out of our picks: our data says it's not the best choice right now.")
+    // правило то же: свежие числа спорят с курацией — молчим на обоих языках
+    expect(deadVerdict(dead({ deadReason: 'dead-multiplayer', ccu: 2_400 }), 'en')).toBeNull()
+    expect(deadVerdict(meta(1), 'en')).toBeNull()
+    // без языка — русская фраза, как была
+    expect(deadVerdict(dead({ deadReason: 'dead-multiplayer' }))).toMatch(/почти не осталось людей/)
+  })
+
+  const ENGLISH =
+    'THE NEW FANTASY ACTION RPG. Rise, Tarnished, and be guided by grace to brandish the power of the Elden Ring and become an Elden Lord in the Lands Between.'
+  const RUSSIAN =
+    'Новая фэнтезийная ролевая игра. Восстань, погасший, и отправляйся в путь по Междуземью, чтобы стать повелителем Элдена.'
+  const facts = { percent: 93, total: 700_012, label: null }
+  const prosCons = {
+    pros: ['A huge open world you want to explore!'],
+    cons: ['PC performance.'],
+    source: 'claude' as const,
+  }
+
+  test('meta description — те же фразы по-английски, описание магазина — только нерусское', () => {
+    const d = gameDescription({ meta: meta(1245620, { name: 'ELDEN RING', shortDescription: ENGLISH }), facts, prosCons, verdict: null }, 'en')
+    expect(d.length).toBeLessThanOrEqual(DESCRIPTION_MAX)
+    expect(d.startsWith('ELDEN RING: 93% of 700,012 reviews are positive. Loved for: A huge open world you want to explore.')).toBe(true)
+    expect(d).toContain('Criticized for: PC performance.')
+    expect(d).not.toMatch(CYRILLIC)
+    // русское описание на английскую страницу не идёт
+    const ru = gameDescription({ meta: meta(1, { name: 'ELDEN RING', shortDescription: RUSSIAN }), facts, prosCons: null, verdict: null }, 'en')
+    expect(ru).toBe('ELDEN RING: 93% of 700,012 reviews are positive.')
+    // а английское — идёт, по слову
+    const en = gameDescription({ meta: meta(1, { name: 'ELDEN RING', shortDescription: ENGLISH }), facts: null, prosCons: null, verdict: null }, 'en')
+    expect(en.startsWith('ELDEN RING: THE NEW FANTASY ACTION RPG.')).toBe(true)
+  })
+
+  test('один отзыв — «1 review is», сказать нечего — общая фраза', () => {
+    const one = gameDescription({ meta: meta(1, { name: 'X' }), facts: { percent: 100, total: 1, label: null }, prosCons: null, verdict: null }, 'en')
+    expect(one).toBe('X: 100% of 1 review is positive.')
+    const empty = gameDescription({ meta: meta(1, { name: 'X', shortDescription: RUSSIAN }), facts: null, prosCons: null, verdict: null }, 'en')
+    expect(empty).toBe('X — reviews, tags and patch notes at a glance.')
+  })
+
+  test('вердикт идёт первым и на английском', () => {
+    const verdict = deadVerdict(dead({ deadReason: 'dead-multiplayer' }), 'en')
+    const d = gameDescription({ meta: meta(1, { name: 'Dirty Bomb' }), facts: { percent: 76, total: 90_000, label: null }, prosCons: null, verdict }, 'en')
+    expect(d).toBe("Dirty Bomb: Hardly anyone plays this online game anymore — you probably won't find a match. 76% of 90,000 reviews are positive.")
+  })
+
+  test('«Чем выделяется» — Stands out for, ключами Steam', () => {
+    expect(hookTrait(['Automation', 'Base Building'], 'en')).toEqual({
+      label: 'Stands out for',
+      value: 'Automation, Base Building',
+    })
+    // без языка — русскими подписями, как было
+    expect(hookTrait(['Automation'])).toEqual({ label: 'Чем выделяется', value: tagRu('Automation') })
+  })
+
+  test('строки фактов — все по-английски, строки «Русский» нет', () => {
+    const s: GameSemantics = {
+      v: 1,
+      axes: { challenge: 20, complexity: 50, pace: 50 },
+      session: { bucket: 'short', minutes: 20, canStopAnytime: false },
+      timeToFun: { bucket: 'fast', hours: 0.4 },
+      confidence: 0.8,
+      n: 40,
+      basis: 'tags+reviews',
+    }
+    const traits = gameTraits({ categories: [2], semantics: s, tags: { Automation: 100 }, ruLang: 3 }, ['Automation'], 'en')
+    expect(traits.map((t) => t.label)).toEqual(['Stands out for', 'Session', 'Ramp-up', 'Feel'])
+    expect(JSON.stringify(traits)).not.toMatch(CYRILLIC)
+    // по-русски строка языка на месте
+    expect(gameTraits({ categories: [2], semantics: s, tags: { Automation: 100 }, ruLang: 3 }, ['Automation']).map((t) => t.label)).toContain(
+      'Русский',
+    )
+  })
+})
+
+describe('pros/cons на языке страницы', () => {
+  const both = {
+    pros: ['красиво'],
+    cons: ['дорого'],
+    source: 'claude' as const,
+    en: { pros: ['Gorgeous'], cons: ['Pricey'] },
+  }
+
+  test('на /en — английский слот, на ru — русские пункты без слота', () => {
+    expect(prosConsOn(both, 'en')).toEqual({ pros: ['Gorgeous'], cons: ['Pricey'], source: 'claude' })
+    expect(prosConsOn(both, 'ru')).toEqual({ pros: ['красиво'], cons: ['дорого'], source: 'claude' })
+    expect(prosConsOn(both)).not.toHaveProperty('en')
+  })
+
+  test('нет английского слота — на /en блока нет, а не русский блок', () => {
+    const ru = { pros: ['красиво'], cons: ['дорого'], source: 'claude' as const }
+    expect(prosConsOn(ru, 'en')).toBeNull()
+    expect(prosConsOn({ ...ru, en: null }, 'en')).toBeNull()
+    expect(prosConsOn({ ...ru, en: { pros: [], cons: [] } }, 'en')).toBeNull()
+    // без слота русская запись отдаётся как лежит — тем же объектом
+    expect(prosConsOn(ru)).toBe(ru)
+  })
+
+  test('эвристика не отдаётся ни на одном языке', () => {
+    const heuristic = { pros: ['x'], cons: [], source: 'reviews' as const, en: { pros: ['x'], cons: [] } }
+    expect(prosConsOn(heuristic, 'en')).toBeNull()
+    expect(prosConsOn(heuristic, 'ru')).toBeNull()
+    expect(prosConsOn(null, 'en')).toBeNull()
+  })
+
+  test('loadGamePage(appid, en) читает английский слот из той же записи', async () => {
+    const db = await withDb()
+    await addGame(db, 21)
+    await setGameJson(db, 21, 'pros_cons_json', both)
+    expect((await loadGamePage(21, 'en'))?.prosCons).toEqual({ pros: ['Gorgeous'], cons: ['Pricey'], source: 'claude' })
+    expect((await loadGamePage(21))?.prosCons).toEqual({ pros: ['красиво'], cons: ['дорого'], source: 'claude' })
+    await addGame(db, 22)
+    await setGameJson(db, 22, 'pros_cons_json', { pros: ['красиво'], cons: [], source: 'claude' })
+    expect((await loadGamePage(22, 'en'))?.prosCons).toBeNull()
+  })
+})
+
+describe('пересказ патча на карточке — на языке страницы', () => {
+  const post = {
+    appid: 730,
+    gid: '1',
+    title: 'Release Notes for 9/25/2026',
+    url: 'https://store.steampowered.com/news/app/730/view/1',
+    publishedAt: NOW,
+    kind: 'patch' as const,
+    scale: 'major' as const,
+    blocks: [],
+    bodyHash: 'h',
+    rank: 50,
+    tldr: 'Поправили баланс AWP.',
+  }
+
+  test('на /en — английский пересказ в том же поле tldr', () => {
+    expect(cardNews({ ...post, tldrEn: 'AWP rebalanced.' } as typeof post, 'en').tldr).toBe('AWP rebalanced.')
+  })
+
+  test('нет английского — пересказа нет вовсе, а не русский', () => {
+    const out = cardNews(post, 'en')
+    expect(out).not.toHaveProperty('tldr')
+    expect(cardNews({ ...post, tldrEn: null } as typeof post, 'en')).not.toHaveProperty('tldr')
+    // по-русски — как было
+    expect(cardNews(post).tldr).toBe('Поправили баланс AWP.')
+    expect(cardNews(post)).toEqual(cardNews(post, 'ru'))
+    expect(cardNews(post).rank).toBe(1)
   })
 })

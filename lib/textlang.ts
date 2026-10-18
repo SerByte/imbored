@@ -18,6 +18,7 @@
  * отвечает на него большинство букв.
  */
 
+import type { Locale } from './i18n'
 import { withoutGameName } from './patchtitle'
 
 function letters(text: string): { cyr: number; lat: number } {
@@ -70,7 +71,34 @@ export function textLang(
   gameName?: string | null,
 ): 'en' | undefined {
   if (!text) return undefined
-  const rest = letters(withoutGameName(text, gameName))
-  const { cyr, lat } = rest.cyr + rest.lat > 0 ? rest : letters(text)
+  const { cyr, lat } = lettersWithout(text, gameName)
   return lat > cyr ? 'en' : undefined
+}
+
+/** Буквы текста без названия игры; не осталось ни одной — по целому тексту (см. textLang) */
+function lettersWithout(text: string, gameName?: string | null): { cyr: number; lat: number } {
+  const rest = letters(withoutGameName(text, gameName))
+  return rest.cyr + rest.lat > 0 ? rest : letters(text)
+}
+
+/**
+ * Атрибут lang для куска чужого текста на странице языка page.
+ *
+ * На русской странице — ровно textLang: помечаем латиницу. На английской
+ * всё наоборот: страница объявлена lang="en", латиницу английский голос
+ * читает и так, а чужим теперь стал русский текст — патчноут, который
+ * издатель выпустил по-русски, или русский заголовок поста. Ему — 'ru', когда
+ * кириллица в нём перевешивает, остальному — undefined, кусок наследует
+ * lang="en" страницы. Правило подсчёта то же, что у textLang, и название игры
+ * в него так же не входит.
+ */
+export function textLangOn(
+  page: Locale,
+  text: string | null | undefined,
+  gameName?: string | null,
+): 'en' | 'ru' | undefined {
+  if (page !== 'en') return textLang(text, gameName)
+  if (!text) return undefined
+  const { cyr, lat } = lettersWithout(text, gameName)
+  return cyr > lat ? 'ru' : undefined
 }

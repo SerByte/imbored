@@ -14,8 +14,10 @@
  */
 import { clip, DESCRIPTION_MAX } from './clip'
 import { dateLabel } from './freshness'
+import { fmtDate, lp, tr, type Locale } from './i18n'
 import { stripGameName, withoutGameName } from './patchtitle'
 import { blocksToText, type NewsBlock } from './steamhtml'
+import { isRussianText } from './textlang'
 import { withRef } from './track'
 
 /**
@@ -35,9 +37,12 @@ export function newsPath(appid: number, gid: string): string {
   return `/game/${appid}/news/${encodeURIComponent(gid)}`
 }
 
-/** Адрес патча с меткой воронки — для «Поделиться» (как pickShareUrl у выбора) */
-export function patchShareUrl(origin: string, appid: number, gid: string): string {
-  return withRef(`${origin}${newsPath(appid, gid)}`, 'patch')
+/**
+ * Адрес патча с меткой воронки — для «Поделиться» (как pickShareUrl у выбора).
+ * На языке страницы: с /en делятся английской страницей, а не русской.
+ */
+export function patchShareUrl(origin: string, appid: number, gid: string, locale: Locale = 'ru'): string {
+  return withRef(`${origin}${lp(locale, newsPath(appid, gid))}`, 'patch')
 }
 
 /**
@@ -92,18 +97,31 @@ export function newsHeading(title: string, gameName: string | null | undefined):
  * publishedAt необязателен: без него заголовок прежний. h1, крошки и
  * headline статьи дату не получают — под h1 она и так стоит строкой
  * (NewsDate), а у статьи есть datePublished.
+ *
+ * По-английски — те же правила и «— what changed» (глоссарий docs/i18n.md).
+ * Дата там — в скобках и коротким месяцем, как у остальных дат английской
+ * версии: «Update (Aug 3, 2026)». Не «from Aug 3»: у заголовка из обычных
+ * слов («Improved control options from Aug 3») предлог прилип бы к
+ * последнему слову.
  */
 export function newsPageTitle(
   title: string,
   gameName: string | null | undefined,
   publishedAt?: number,
+  locale: Locale = 'ru',
 ): string {
   const heading = newsHeading(title, gameName)
   const rest = withoutGameName(heading, gameName)
   const spelled = withoutGameName(heading, gameName, { caseSensitive: true }) !== heading
   const named = gameName && !spelled ? `${gameName}: ${heading}` : heading
   const dated = publishedAt !== undefined && !/\d/.test(rest)
-  return `${named}${dated ? ` от ${dateLabel(publishedAt, { year: true })}` : ''} — что изменилось`
+  const date = dated
+    ? tr(locale, {
+        ru: ` от ${dateLabel(publishedAt, { year: true })}`,
+        en: ` (${fmtDate('en', publishedAt, { month: 'short', day: 'numeric', year: 'numeric' })})`,
+      })
+    : ''
+  return `${named}${date}${tr(locale, { ru: ' — что изменилось', en: ' — what changed' })}`
 }
 
 /**
@@ -112,16 +130,24 @@ export function newsPageTitle(
  * Пересказ по правилу крона не длиннее 180 символов — чуть больше, чем
  * показывает выдача, — и обрезается тем же clip, что описание карточки игры:
  * по слову, с многоточием, целым предложением, если влезает.
+ *
+ * locale — язык страницы, и item.tldr вызывающий передаёт на нём (на /en —
+ * английский пересказ). Начало поста на /en идёт, только если оно не
+ * русское: издатель бывает пишет патчноут по-русски, а русский текст в
+ * английском сниппете хуже заголовка.
  */
 export function newsDescription(
   item: { title: string; tldr?: string; blocks: NewsBlock[] },
   gameName: string | null | undefined,
+  locale: Locale = 'ru',
 ): string {
   const tldr = item.tldr?.replace(/\s+/g, ' ').trim()
   if (tldr) return clip(tldr, DESCRIPTION_MAX) ?? tldr.slice(0, DESCRIPTION_MAX)
   const body = blocksToText(item.blocks, 600).replace(/[•\s]+/g, ' ').trim()
-  if (body) return clip(body, DESCRIPTION_MAX) ?? body.slice(0, DESCRIPTION_MAX)
-  const fallback = `${newsPageTitle(item.title, gameName)}.`
+  if (body && !(locale === 'en' && isRussianText(body))) {
+    return clip(body, DESCRIPTION_MAX) ?? body.slice(0, DESCRIPTION_MAX)
+  }
+  const fallback = `${newsPageTitle(item.title, gameName, undefined, locale)}.`
   return clip(fallback, DESCRIPTION_MAX) ?? fallback.slice(0, DESCRIPTION_MAX)
 }
 

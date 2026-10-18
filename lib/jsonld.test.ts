@@ -495,10 +495,130 @@ describe('адреса разметки на языке страницы', () =>
     expect(article.url).toBe('https://imbored.cc/en/game/730/news/5123894512345')
     expect(article.mainEntityOfPage).toBe(article.url)
     expect(article.about?.url).toBe('https://imbored.cc/en/game/730')
-    // язык ТЕКСТА статьи: пересказ хранится по-русски
-    expect(article.inLanguage).toBe('ru')
+    // язык ТЕКСТА статьи: пересказа нет — текст статьи составляют подписи
+    // страницы, а они на /en английские
+    expect(article.inLanguage).toBe('en')
     expect(
       patchBreadcrumbLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE, locale: 'en' }).itemListElement.map((i) => i.item),
     ).toEqual(['https://imbored.cc/en', 'https://imbored.cc/en/game/730', 'https://imbored.cc/en/game/730/news/5123894512345'])
+  })
+})
+
+/**
+ * Язык статьи патча — язык её текста, то есть пересказа. Пока чтение патча не
+ * отдаёт tldr_en, /en получает русский пересказ: назвать его английским —
+ * сказать роботу неправду о description, который он покажет сниппетом.
+ */
+describe('язык статьи патча — язык пересказа', () => {
+  const base = {
+    appid: 730,
+    gid: '5123894512345',
+    title: 'Counter-Strike 2 Update',
+    url: 'https://store.steampowered.com/news/app/730/view/5123894512345',
+    publishedAt: Date.parse('2026-09-25T18:00:00Z') / 1000,
+  }
+  const game = { name: 'Counter-Strike 2' }
+
+  test('русский пересказ на /en — статья русская, description тот же, что на странице', () => {
+    const ld = patchArticleLd({ item: { ...base, tldr: 'Поправили баланс AWP и карту Mirage.' }, game, baseUrl: BASE, locale: 'en' })
+    expect(ld.inLanguage).toBe('ru')
+    expect(ld.description).toBe('Поправили баланс AWP и карту Mirage.')
+  })
+
+  test('английский пересказ на /en — статья английская', () => {
+    const ld = patchArticleLd({ item: { ...base, tldr: 'AWP rebalanced, Mirage reworked.' }, game, baseUrl: BASE, locale: 'en' })
+    expect(ld.inLanguage).toBe('en')
+    expect(ld.description).toBe('AWP rebalanced, Mirage reworked.')
+  })
+
+  test('пустой пересказ на /en — язык страницы', () => {
+    expect(patchArticleLd({ item: { ...base, tldr: '   ' }, game, baseUrl: BASE, locale: 'en' }).inLanguage).toBe('en')
+    expect(patchArticleLd({ item: { ...base, tldr: null }, game, baseUrl: BASE, locale: 'en' }).inLanguage).toBe('en')
+  })
+
+  test('на русской странице — ru при любом пересказе, как было', () => {
+    for (const tldr of ['Поправили баланс AWP.', 'AWP rebalanced.', '1.0.3', null, undefined]) {
+      expect(patchArticleLd({ item: { ...base, tldr }, game, baseUrl: BASE }).inLanguage).toBe('ru')
+    }
+  })
+})
+
+/** Ни одной русской буквы: английская разметка обязана совпадать с английской страницей */
+const CYRILLIC = /[А-Яа-яЁё]/
+
+describe('тексты разметки на языке страницы', () => {
+  const en = (over: Partial<GameMeta> = {}) =>
+    gameJsonLd({ meta: game(over), baseUrl: BASE, locale: 'en', currency: 'USD', now: NOW })
+
+  test('genre на /en — теги ключами Steam, как чипсы, даже когда жанры Steam есть', () => {
+    // жанры у игры русские (appdetails с l=russian) — английской странице они не годятся
+    expect(en({ genres: ['Экшены', 'Бесплатные'] }).genre).toEqual(['FPS', 'Shooter'])
+    expect(en({ genres: [], tags: { 'Souls-like': 100, RPG: 90, 'Dystopian ': 80 } }).genre).toEqual([
+      'Souls-like',
+      'RPG',
+      'Dystopian',
+    ])
+    // на русской — как было: жанры Steam, а без них — русские подписи тегов
+    expect(ld({ genres: ['Экшены'] }).genre).toEqual(['Экшены'])
+  })
+
+  test('описание на /en — только нерусское', () => {
+    expect(en({ shortDescription: 'Соревновательный шутер.' })).not.toHaveProperty('description')
+    expect(en({ shortDescription: 'A competitive shooter.' }).description).toBe('A competitive shooter.')
+    // на русской — как лежит, на любом языке
+    expect(ld({ shortDescription: 'A competitive shooter.' }).description).toBe('A competitive shooter.')
+  })
+
+  test('inLanguage игры на /en не ставится: строки «Русский» там нет', () => {
+    expect(en({ ruLang: 3 })).not.toHaveProperty('inLanguage')
+    expect(ld({ ruLang: 3 }).inLanguage).toBe('ru')
+  })
+
+  test('английская карточка игры — без кириллицы при латинских названиях и тегах', () => {
+    const out = en({ shortDescription: 'A competitive shooter.', genres: ['Экшены'], ruLang: 2 })
+    expect(JSON.stringify(out)).not.toMatch(CYRILLIC)
+  })
+
+  test('крошки: «Games by genre» и жанр, как в строке над названием', () => {
+    const game_ = gameBreadcrumbLd({
+      meta: game(),
+      baseUrl: BASE,
+      locale: 'en',
+      genre: { title: 'First-person shooters', path: '/games/fps' },
+    })
+    expect(game_.itemListElement.map((i) => i.name)).toEqual([
+      'imbored',
+      'Games by genre',
+      'First-person shooters',
+      'Counter-Strike 2',
+    ])
+    const genre = genreBreadcrumbLd({ title: 'Roguelikes', path: '/games/roguelike', baseUrl: BASE, locale: 'en' })
+    expect(genre.itemListElement.map((i) => [i.position, i.name, i.item])).toEqual([
+      [1, 'imbored', 'https://imbored.cc/en'],
+      [2, 'Games by genre', 'https://imbored.cc/en/games'],
+      [3, 'Roguelikes', 'https://imbored.cc/en/games/roguelike'],
+    ])
+    expect(JSON.stringify([game_, genre])).not.toMatch(CYRILLIC)
+    // без языка — русская подпись
+    expect(genreBreadcrumbLd({ title: 'Рогалики', path: '/games/roguelike', baseUrl: BASE }).itemListElement[1].name).toBe(
+      'Игры по жанрам',
+    )
+  })
+
+  test('статья патча на /en — английский пересказ и язык en', () => {
+    const item = {
+      appid: 730,
+      gid: '5123894512345',
+      title: 'Counter-Strike 2: Release Notes for 9/25/2026',
+      url: 'https://store.steampowered.com/news/app/730/view/5123894512345',
+      publishedAt: Date.parse('2026-09-25T18:00:00Z') / 1000,
+      tldr: 'AWP rebalanced and Mirage tweaked.',
+    }
+    const out = patchArticleLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE, locale: 'en' })
+    expect(out.inLanguage).toBe('en')
+    expect(out.description).toBe('AWP rebalanced and Mirage tweaked.')
+    expect(JSON.stringify(out)).not.toMatch(CYRILLIC)
+    // на русской — ru, как было
+    expect(patchArticleLd({ item, game: null, baseUrl: BASE }).inLanguage).toBe('ru')
   })
 })
