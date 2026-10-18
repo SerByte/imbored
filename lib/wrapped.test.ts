@@ -529,6 +529,15 @@ describe('итоги года', () => {
     expect(stale.partial).toBe(true)
     expect(yearEyebrow(stale)).toMatch(/^2026 · с 5 марта 2024/)
     expect(yearEyebrow(autumn)).toBe('2026 · с 23 сентября')
+
+    // По-английски — та же честность словами глоссария
+    expect(yearEyebrow(december, 'en')).toBe('2026 in review')
+    expect(yearEyebrow(autumn, 'en')).toBe('2026 · since September 23')
+    expect(yearEyebrow(stale, 'en')).toBe('2026 · since March 5, 2024')
+    for (const y of [december, autumn, stale]) {
+      expect(yearEyebrow(y, 'en')).not.toMatch(/[А-Яа-яЁё]/)
+      expect(yearEyebrow(y, 'ru')).toBe(yearEyebrow(y))
+    }
   })
 
   test('январь: закрывшийся год без разницы — итоги текущего окна, а не пустота', () => {

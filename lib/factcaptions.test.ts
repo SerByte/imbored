@@ -93,3 +93,42 @@ describe('сколько сыграно — playedFact', () => {
     }
   })
 })
+
+/**
+ * Английские подписи: одна единица — единственное число, всё прочее, включая
+ * ноль, — множественное. Причастие не согласуется: «played» при любом числе.
+ */
+describe('подписи по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('игры, часы и бэклог', () => {
+    expect(gamesCaption(1, 'en')).toBe('game in library')
+    expect(gamesCaption(22, 'en')).toBe('games in library')
+    expect(gamesCaption(0, 'en')).toBe('games in library')
+    expect(hoursCaption(1, 'en')).toBe('hour played')
+    expect(hoursCaption(21, 'en')).toBe('hours played')
+    expect(unplayedCaption(1, 'en')).toBe('barely touched')
+    expect(unplayedCaption(22, 'en')).toBe('barely touched')
+  })
+
+  test('playedFact: минуты меньше получаса, дальше часы', () => {
+    expect(playedFact(1, 'en')).toEqual({ value: 1, caption: 'minute played' })
+    expect(playedFact(20, 'en')).toEqual({ value: 20, caption: 'minutes played' })
+    expect(playedFact(30, 'en')).toEqual({ value: 1, caption: 'hour played' })
+    expect(playedFact(450 * 60, 'en')).toEqual({ value: 450, caption: 'hours played' })
+    expect(playedFact(0, 'en')).toEqual({ value: 0, caption: 'hours played' })
+  })
+
+  test('ни одной русской буквы; явный ru — то же, что без языка', () => {
+    for (const n of [0, 1, 2, 5, 11, 21, 101, 4404]) {
+      for (const caption of [gamesCaption(n, 'en'), hoursCaption(n, 'en'), unplayedCaption(n, 'en')]) {
+        expect(caption, String(n)).not.toMatch(CYRILLIC)
+      }
+      expect(playedFact(n, 'en').caption, String(n)).not.toMatch(CYRILLIC)
+      expect(gamesCaption(n, 'ru')).toBe(gamesCaption(n))
+      expect(hoursCaption(n, 'ru')).toBe(hoursCaption(n))
+      expect(unplayedCaption(n, 'ru')).toBe(unplayedCaption(n))
+      expect(playedFact(n, 'ru')).toEqual(playedFact(n))
+    }
+  })
+})

@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { fmtNumber, type Locale } from './i18n'
 import { BG, DIM, EMBER, INK, PLATE } from './palette'
 
 /**
@@ -57,8 +58,13 @@ export const OG_DIM = DIM
 export const OG_EMBER = EMBER
 export const OG_PLATE = PLATE
 
-export function ogNum(n: number): string {
-  return n.toLocaleString('ru-RU')
+/**
+ * Число на карточке с разрядами её языка: «4 404» на русской, «4,404» на
+ * английской. Язык — тот же, что у текста карточки: число с русскими
+ * пробелами посреди английской фразы читалось бы как два числа.
+ */
+export function ogNum(n: number, locale: Locale = 'ru'): string {
+  return fmtNumber(locale, n)
 }
 
 /** Полупрозрачная версия цвета карточки: satori не понимает ни color-mix, ни #rrggbbaa. */
