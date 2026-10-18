@@ -11,6 +11,7 @@ import {
   markPageMissed,
   migrateDb,
   replaceGameTags,
+  setCatalogMeta,
   setGameJson,
   sitemapGames,
   upsertGameMeta,
@@ -21,6 +22,8 @@ import { LlmUnavailableError } from './llm'
 import {
   CATCHUP_PLAYED,
   CATCHUP_RU_LANG,
+  CATCHUP_RU_SILENT_KEY,
+  CATCHUP_RU_SILENT_SEC,
   MAX_BLOCKED_RUN,
   PAGE_MAX_AGE_SEC,
   PAGE_MAX_TRIES,
@@ -1559,6 +1562,94 @@ describe('догон обогащённых карточек: русский и 
     expect(asked).toHaveLength(1)
     expect(asked[0]).toHaveLength(CATCHUP_RU_LANG)
     expect(asked[0][0]).toBe(1)
+  })
+
+  /**
+   * Промолчавшие (снята с витрины, пустой список языков) остаются с NULL, то
+   * есть в выборке, — и копятся в её голове: ответившие уходят, а они верх
+   * каталога. Без списка промолчавших пачка спрашивала бы их на каждом звене,
+   * а сотня таких заперла бы догон на себе: до игр за ними язык не доехал бы
+   * никогда.
+   */
+  test('сотня промолчавших не запирает очередь: следующая пачка — следующие игры', async () => {
+    const db = await freshDb()
+    const total = CATCHUP_RU_LANG + 3
+    for (let i = 1; i <= total; i++) await addGame(db, i, 10_000 - i)
+    const asked: number[][] = []
+    const langs = async (appids: number[]) => {
+      asked.push([...appids])
+      // о первой сотне Steam молчит, остальным отвечает
+      return new Map(appids.filter((id) => id > CATCHUP_RU_LANG).map((id) => [id, 2 as const]))
+    }
+
+    await catchUp(db, { fetchLangsFn: langs })
+    const second = await catchUp(db, { fetchLangsFn: langs })
+
+    expect(asked[1]).toEqual([CATCHUP_RU_LANG + 1, CATCHUP_RU_LANG + 2, CATCHUP_RU_LANG + 3])
+    expect(second.русский).toBe(3)
+    expect((await getGamesMeta(db, [total])).get(total)?.ruLang).toBe(2)
+    // догонять больше некого: звено в Steam не ходит вовсе
+    await catchUp(db, { fetchLangsFn: langs })
+    expect(asked).toHaveLength(2)
+  })
+
+  test('промолчавших переспрашивает раз в неделю, а не на каждом звене', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await addGame(db, 20, 90)
+    const asked: number[][] = []
+    const langs = async (appids: number[]) => {
+      asked.push([...appids])
+      return new Map<number, 0 | 1 | 2 | 3>()
+    }
+
+    await catchUp(db, { fetchLangsFn: langs })
+    await catchUp(db, { fetchLangsFn: langs, nowSec: LATER + CATCHUP_RU_SILENT_SEC - 1 })
+    expect(asked).toEqual([[10, 20]])
+
+    // неделя от первой записи — список забыт, и Steam спрашивают снова: у
+    // игры список языков может и появиться
+    const res = await catchUp(db, {
+      fetchLangsFn: async (appids: number[]) => {
+        asked.push([...appids])
+        return new Map([[20, 1 as const]])
+      },
+      nowSec: LATER + CATCHUP_RU_SILENT_SEC,
+    })
+    expect(asked[1]).toEqual([10, 20])
+    expect(res.cards).toEqual([20])
+  })
+
+  test('отказ GetItems — не молчание: следующее звено спрашивает тех же', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    const asked: number[][] = []
+
+    await catchUp(db, {
+      fetchLangsFn: async (appids: number[]) => {
+        asked.push([...appids])
+        throw new Error('GetItems: HTTP 429')
+      },
+    })
+    await catchUp(db, {
+      fetchLangsFn: async (appids: number[]) => {
+        asked.push([...appids])
+        return new Map([[10, 3 as const]])
+      },
+    })
+
+    expect(asked).toEqual([[10], [10]])
+    expect((await getGamesMeta(db, [10])).get(10)?.ruLang).toBe(3)
+  })
+
+  test('битая отметка промолчавших — как её нет: догон идёт', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 100)
+    await setCatalogMeta(db, CATCHUP_RU_SILENT_KEY, '{нет')
+
+    const res = await catchUp(db, { fetchLangsFn: async () => new Map([[10, 0 as const]]) })
+
+    expect(res.cards).toEqual([10])
   })
 
   test('«Наиграли» — карточке, разобранной до отсечки: отзывы заново, без модели и очереди', async () => {

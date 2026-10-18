@@ -4068,21 +4068,31 @@ export async function gamesMissingMedia(db: Db, limit: number): Promise<number[]
  * условие одно, и игра уходит из выборки с первым же ответом Steam, ноль
  * («русского нет») тоже ответ.
  *
- * Остаётся в выборке только игра, о языках которой Steam промолчал (снята с
- * витрины, пустой список языков) — она спросится снова, одним местом в пачке.
- * На верхних двухстах таких не нашлось ни одной (замер у ruLangOf в
- * lib/catalog), так что пачку они не забивают.
+ * В выборке остаётся только игра, о языках которой Steam промолчал (снята с
+ * витрины, пустой список языков): NULL у неё так и стоит. Такие копятся в
+ * голове очереди — ответившие из неё уходят, а промолчавшие верх каталога
+ * остаются, — и без skip пачка спрашивала бы их на каждом звене, а наберись
+ * их сотня — только их, и до остальных очередь не дошла бы никогда. Поэтому
+ * догон передаёт тех, о ком Steam промолчал за последнюю неделю
+ * (CATCHUP_RU_SILENT_KEY в lib/pagejob), и пачка берёт следующих. Список
+ * одним параметром, как APPIDS_IN выше.
  *
- * Частичный индекс idx_games_ru_unknown: читается ровно пачка, а когда
- * догонять нечего — ни одной строки. План сторожит lib/queryplan.test.ts.
+ * Частичный индекс idx_games_ru_unknown: читается пачка и пропущенные, а
+ * когда догонять нечего — одни пропущенные, единицы. План сторожит
+ * lib/queryplan.test.ts.
  */
-export async function gamesMissingRuLang(db: Db, limit: number): Promise<number[]> {
+export async function gamesMissingRuLang(
+  db: Db,
+  limit: number,
+  skip: readonly number[] = [],
+): Promise<number[]> {
   const res = await db.execute({
     sql: `SELECT appid FROM games
           WHERE ${ALIVE_POOL} AND ru_lang IS NULL AND appid > 0
+            AND appid NOT IN (SELECT value FROM json_each(?))
           ORDER BY reviews_total DESC
           LIMIT ?`,
-    args: [limit],
+    args: [JSON.stringify(skip), limit],
   })
   return res.rows.map((r) => Number(r.appid))
 }

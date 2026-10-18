@@ -617,6 +617,41 @@ export async function runPageSlice(
 export const CATCHUP_RU_LANG = 100
 
 /**
+ * Игры, о языках которых Steam промолчал на догоне, — ключ catalog_meta,
+ * JSON { at, ids }. Промолчавших пачка следующего звена пропускает
+ * (gamesMissingRuLang, skip): иначе они копились бы в голове очереди и
+ * спрашивались на каждом звене, а сотня таких заперла бы догон на себе
+ * навсегда. Через CATCHUP_RU_SILENT_SEC от первой записи список забывается
+ * целиком, и промолчавшие спрашиваются ещё раз — список языков у игры может
+ * и появиться. Итог, когда догонять больше некого: один GetItems в неделю на
+ * эти единицы, а не на каждом звене.
+ */
+export const CATCHUP_RU_SILENT_KEY = 'catchup_ru_silent'
+
+/** Сколько живёт список промолчавших, с, — см. CATCHUP_RU_SILENT_KEY */
+export const CATCHUP_RU_SILENT_SEC = 7 * 86_400
+
+/**
+ * Потолок списка промолчавших: старшие вытесняются и спрашиваются раньше
+ * срока — лишний вопрос, а не застрявшая очередь. Тысяча appid — ~8 КБ в
+ * одной строке catalog_meta.
+ */
+const CATCHUP_RU_SILENT_MAX = 1000
+
+/** Список промолчавших из отметки; истёк, нет или мусор — пустой, от now */
+function silentOf(raw: string | null, now: number): { at: number; ids: number[] } {
+  try {
+    const v = JSON.parse(raw ?? 'null') as { at?: unknown; ids?: unknown } | null
+    if (v && typeof v.at === 'number' && now - v.at < CATCHUP_RU_SILENT_SEC && Array.isArray(v.ids)) {
+      return { at: v.at, ids: v.ids.filter((x): x is number => Number.isInteger(x)) }
+    }
+  } catch {
+    // битая отметка — то же, что её нет: спросится лишний раз, и только
+  }
+  return { at: now, ids: [] }
+}
+
+/**
  * Сколько игр за звено перечитывают отзывы ради «Наиграли». Каждая — поход в
  * appreviews под тем же пейсером store.steampowered.com, что у карточек среза
  * (1,7 с), то есть пять игр — около десяти секунд звена, карточка-две среза.
@@ -666,7 +701,8 @@ export type CatchUpResult = {
  *     pros/cons здесь не трогаются вовсе: пересобирать карточку целиком ради
  *     одной строки значило бы платить вызов модели за каждую.
  * Обе выборки — по частичным индексам, которые тают с догоном: когда
- * догонять нечего, звено не читает ни строки и в Steam не ходит.
+ * догонять нечего, звено читает одну отметку и единицы игр, о которых Steam
+ * промолчал, — и в Steam не ходит.
  *
  * Поменявшиеся карточки уходят в сброс ISR вместе с карточками среза. Лишних
  * ISR Writes это не добавляет: пометка ничего не рендерит, а запись при
@@ -677,8 +713,9 @@ export type CatchUpResult = {
  * 'steam-api'), отзывы — store.steampowered.com ('steam-store'). Поэтому язык
  * идёт параллельно с отзывами, а отказ одного не останавливает другое. Отказ
  * сети на отзывах обрывает догон «Наиграли» до следующего звена: закрылся
- * Steam — остальные походы были бы теми же отказами. Отметок догону не
- * нужно: всё, что он знает о своей очереди, — в самих строках.
+ * Steam — остальные походы были бы теми же отказами. Очередь догона — в
+ * самих строках; отметка у него одна, список игр, о языках которых Steam
+ * промолчал (CATCHUP_RU_SILENT_KEY), — чтобы они не заперли очередь на себе.
  *
  * Звено зовёт догон ДО среза карточек: после среза он не начался бы
  * никогда, срез съедает звено целиком, пока в его очереди есть работа (тот
@@ -706,20 +743,27 @@ export async function runCardCatchUp(
   const semanticsOf = opts.semanticsFn ?? deriveSemantics
 
   const языки = (async (): Promise<number[]> => {
-    const ids = await gamesMissingRuLang(db, CATCHUP_RU_LANG)
+    const silent = silentOf(await getCatalogMeta(db, CATCHUP_RU_SILENT_KEY), now)
+    const ids = await gamesMissingRuLang(db, CATCHUP_RU_LANG, silent.ids)
     if (!ids.length) return []
     let got: Awaited<ReturnType<typeof fetchStoreLanguages>>
     try {
       got = await langsOf(ids)
     } catch (err) {
       // Лимит или сбой GetItems — не про игры: они остались без языка и
-      // попадут в пачку следующего звена
+      // попадут в пачку следующего звена, в список промолчавших — нет
       logSwallowed('pagejob:catchup-lang', err, { batch: ids.length })
       return []
     }
     const rows = [...got].map(([appid, ruLang]) => ({ appid, ruLang }))
     // Узкий UPDATE: язык был NULL, значит каждая записанная строка — перемена
     await setGamesMedia(db, rows)
+    // Ответ пришёл, а об этих Steam промолчал: на неделю — мимо очереди
+    const quiet = ids.filter((id) => !got.has(id))
+    if (quiet.length) {
+      const list = [...silent.ids, ...quiet].slice(-CATCHUP_RU_SILENT_MAX)
+      await setCatalogMeta(db, CATCHUP_RU_SILENT_KEY, JSON.stringify({ at: silent.at, ids: list }))
+    }
     return rows.map((r) => r.appid)
   })()
   // Исключение языка заберёт await ниже; до него оно не «необработанное»
