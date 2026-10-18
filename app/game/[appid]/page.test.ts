@@ -459,8 +459,13 @@ describe('кегль названия в герое', () => {
     expect(cls).not.toMatch(/\btext-display-lg\b/)
   })
 
-  test('длинное слово на телефоне рвётся внутри, а не уезжает за край', async () => {
+  test('длинное слово — ступенью ниже, а не разрыв посреди слова', async () => {
+    // 34 знака, но «TROUBLESHOOTER:» в display-lg шире колонки: 611 из 556 при
+    // 1440, и с одним лишь разрывом h1 читался «TROUBLESHOOTE / R»
     await upsertGameMeta(db, game(APPID, { name: 'TROUBLESHOOTER: Abandoned Children' }), T0)
-    expect(h1ClassOf(flight(await GamePage(params)))).toContain('[overflow-wrap:anywhere]')
+    const cls = h1ClassOf(flight(await GamePage(params)))
+    expect(cls).toMatch(/\btext-display-md\b/)
+    // разрыв остаётся последним рубежом — для того, что не влезло и так
+    expect(cls).toContain('[overflow-wrap:anywhere]')
   })
 })

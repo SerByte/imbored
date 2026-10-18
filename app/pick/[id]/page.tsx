@@ -106,8 +106,9 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
             </Eyebrow>
             {/* Кегль героя игры, как на /play и /daily, а у длинного имени —
                 ступенью ниже, как на карточке игры: восемь строк display-lg
-                закрывали причину. Одно длинное слово рвётся внутри — крупнее
-                оно на телефоне не помещается. Всё это — lib/titlesize */}
+                закрывали причину. Слово шире колонки — тоже ступенью ниже, а
+                рвётся внутри только то, что не влезло и там. Всё это —
+                lib/titlesize */}
             <h1 className={heroTitleClass(meta.name)}>{meta.name}</h1>
             <blockquote className="mt-5 text-lg leading-relaxed text-ink">{quoted(pick.reason)}</blockquote>
             <p className="mt-3 text-sm text-dim">{sourceLine(pick.source, meta.appid)}</p>
