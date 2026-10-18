@@ -23,7 +23,7 @@ import { describe, expect, test } from 'vitest'
  * app/privacy/page.tsx и подставь сюда новый отпечаток из сообщения об ошибке.
  */
 
-const PAGE = path.join(__dirname, '..', 'app', 'privacy', 'page.tsx')
+const PAGE = path.join(__dirname, '..', 'app', '[lang]', 'privacy', 'page.tsx')
 
 /** Отпечаток прозы, действительный для даты ниже. */
 const DIGEST = 'b4bb8757e0865cb5'

@@ -503,7 +503,7 @@ describe('самоходная анимация в CSS встаёт сама', (
    * квиз, хотя причина в ALLOWED говорила «экраны ожидания». Там теперь
    * .anim-exhale — один выдох при входе.
    */
-  const BREATHING = ['app/play/page.tsx', 'components/WarmupScreen.tsx', 'components/room/RoomWaiting.tsx']
+  const BREATHING = ['app/[lang]/play/page.tsx', 'components/WarmupScreen.tsx', 'components/room/RoomWaiting.tsx']
 
   test('разбор времени видит длительность, задержку, повторы и бесконечность', () => {
     expect(animationSpan([['animation', 'kenburns 20s ease-out both']])).toBe(20_000)

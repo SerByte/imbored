@@ -23,7 +23,7 @@ const ROOT = path.join(__dirname, '..')
 
 /** Экраны, чья первая отрисовка приходит с сервера и обязана быть видимой. */
 const FIRST_PAINT = [
-  { file: path.join('app', 'quiz', 'page.tsx'), what: 'шаг квиза' },
+  { file: path.join('app', '[lang]', 'quiz', 'page.tsx'), what: 'шаг квиза' },
   { file: path.join('components', 'WarmupScreen.tsx'), what: 'подпись экрана прогрева' },
 ]
 
@@ -80,14 +80,14 @@ describe('первая отрисовка не спрятана анимацие
  * переходе или содержимое и честный статус в первом ответе.
  */
 const LOADING_ALLOWED: Record<string, string> = {
-  'app/library/loading.tsx':
+  'app/[lang]/library/loading.tsx':
     'force-dynamic за входом, в robots закрыта: индексировать нечего, а ждать библиотеку из сотен игр долго. ' +
     'Гостя разворачивает proxy.ts до рендера, так что его 307 остаётся честным',
-  'app/compat/[steamid]/loading.tsx':
+  'app/[lang]/compat/[steamid]/loading.tsx':
     'force-dynamic и noindex (метатег и X-Robots-Tag): две библиотеки и расчёт совпадения, каркас держит кадр пришедшему из чата',
-  'app/portrait/[steamid]/loading.tsx':
+  'app/[lang]/portrait/[steamid]/loading.tsx':
     'force-dynamic и noindex (метатег и X-Robots-Tag): самая тяжёлая страница, экран ожидания живёт дольше всего',
-  'app/portrait/[steamid]/year/loading.tsx':
+  'app/[lang]/portrait/[steamid]/year/loading.tsx':
     'force-dynamic и noindex, как портрет: без своего каркаса наследовался бы портретный, и имя прыгало бы при подмене',
 }
 
@@ -102,10 +102,11 @@ function loadingFiles(dir: string): string[] {
 describe('граница загрузки не прячет страницу', () => {
   test('корневого loading.tsx нет: лендинг, /privacy и /support приходят содержимым', () => {
     expect(loadingFiles('app')).not.toContain('app/loading.tsx')
+    expect(loadingFiles('app')).not.toContain('app/[lang]/loading.tsx')
   })
 
   test('у страницы игры нет своего loading.tsx: h1 в первом ответе и настоящий 404', () => {
-    expect(loadingFiles('app').filter((f) => f.startsWith('app/game/'))).toEqual([])
+    expect(loadingFiles('app').filter((f) => f.startsWith('app/[lang]/game/'))).toEqual([])
   })
 
   /**
@@ -115,8 +116,8 @@ describe('граница загрузки не прячет страницу', (
    * Паузу перехода закрывает мерцание нажатой вкладки.
    */
   test('/whatsnew приходит целиком: ни loading.tsx, ни Suspense вокруг ленты', () => {
-    expect(loadingFiles('app').filter((f) => f.startsWith('app/whatsnew/'))).toEqual([])
-    const src = fs.readFileSync(path.join(ROOT, 'app', 'whatsnew', 'page.tsx'), 'utf8')
+    expect(loadingFiles('app').filter((f) => f.startsWith('app/[lang]/whatsnew/'))).toEqual([])
+    const src = fs.readFileSync(path.join(ROOT, 'app', '[lang]', 'whatsnew', 'page.tsx'), 'utf8')
     expect(src).not.toMatch(/<Suspense\b/)
     const tab = src.slice(src.indexOf('function FeedTab'))
     expect(tab, 'вкладка без LinkPending молчит всю паузу перехода').toMatch(/<LinkPending>/)
@@ -159,8 +160,8 @@ describe('граница загрузки не прячет страницу', (
    */
   test('корневой layout и template не оборачивают страницу в Suspense', () => {
     for (const f of ['layout.tsx', 'template.tsx']) {
-      const src = fs.readFileSync(path.join(ROOT, 'app', f), 'utf8')
-      expect(src, `app/${f}`).not.toMatch(/<Suspense\b/)
+      const src = fs.readFileSync(path.join(ROOT, 'app', '[lang]', f), 'utf8')
+      expect(src, `app/[lang]/${f}`).not.toMatch(/<Suspense\b/)
     }
   })
 
@@ -170,7 +171,7 @@ describe('граница загрузки не прячет страницу', (
    * должна ждать ничего.
    */
   test('страница игры отбраковывает мусорный appid до чтения базы', () => {
-    const src = fs.readFileSync(path.join(ROOT, 'app', 'game', '[appid]', 'page.tsx'), 'utf8')
+    const src = fs.readFileSync(path.join(ROOT, 'app', '[lang]', 'game', '[appid]', 'page.tsx'), 'utf8')
     const body = src.slice(src.indexOf('export default async function GamePage'))
     // именно вызов под условием, а не упоминание в комментарии
     const guard = body.search(/\)\s*notFound\(\)/)

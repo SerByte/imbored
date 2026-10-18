@@ -15,6 +15,7 @@ import {
   ogLocale,
   pl,
   preferredLocale,
+  routePaths,
   splitLocale,
   switchLocaleHref,
   toLocale,
@@ -319,4 +320,18 @@ test('fmtDate без своей зоны печатает UTC — как сер�
   const late = Date.UTC(2025, 9, 9, 23, 30) / 1000
   expect(fmtDate('en', late, { day: 'numeric', month: 'long' })).toBe('October 9')
   expect(fmtDate('en', late, { day: 'numeric', month: 'long', timeZone: 'Europe/Moscow' })).toBe('October 10')
+})
+
+describe('routePaths — где лежит кэш ISR', () => {
+  test('адрес раздела — обе копии под [lang]', () => {
+    expect(routePaths('/game/730')).toEqual(['/ru/game/730', '/en/game/730'])
+    expect(routePaths('/portrait/1/card.png')).toEqual(['/ru/portrait/1/card.png', '/en/portrait/1/card.png'])
+    expect(routePaths('/')).toEqual(['/ru', '/en'])
+    expect(routePaths('/en/game/730')).toEqual(['/ru/game/730', '/en/game/730'])
+  })
+
+  test('вне разделов — как есть', () => {
+    expect(routePaths('/sitemap.xml')).toEqual(['/sitemap.xml'])
+    expect(routePaths('/search-index.json')).toEqual(['/search-index.json'])
+  })
 })

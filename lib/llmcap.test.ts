@@ -185,7 +185,7 @@ describe('takeLlmBudget из запроса', () => {
 
   test('подбор и портрет — через долю адреса, напрямую — никто', () => {
     expect(viaIp, 'двери к модели не найдены — сторож ослеп').toEqual(
-      expect.arrayContaining(['app/api/recommend/route.ts', 'app/portrait/[steamid]/page.tsx']),
+      expect.arrayContaining(['app/api/recommend/route.ts', 'app/[lang]/portrait/[steamid]/page.tsx']),
     )
     expect(direct, 'запрос берёт общий бюджет мимо доли адреса').toEqual([])
   })

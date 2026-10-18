@@ -1,4 +1,4 @@
-import { revalidatePath, revalidateTag } from 'next/cache'
+import { revalidateTag } from 'next/cache'
 import { NextResponse } from 'next/server'
 import { countUserRows, forgetCardIds, forgetUser, type Db } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
@@ -7,6 +7,7 @@ import { FORGET_CONFIRM } from '@/lib/forgetreply'
 import { portraitTag } from '@/lib/portraitmodel'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import { readJsonObject } from '@/lib/reqbody'
+import { revalidateSitePath } from '@/lib/revalidate'
 import { clearDeviceCookies, currentSession, getDb, isDemoId, nowSec } from '@/lib/server'
 import { forgetSessionCache } from '@/lib/sessions'
 
@@ -170,7 +171,7 @@ export async function POST(req: Request) {
   // случае догонит сама, через свой час (lib/forget, forgetCardPaths)
   for (const path of cards) {
     try {
-      revalidatePath(path)
+      revalidateSitePath(path)
     } catch {
       // в лог — нет: в тексте ошибки был бы адрес, а в нём SteamID
     }

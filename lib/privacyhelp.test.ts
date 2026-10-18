@@ -87,10 +87,10 @@ describe('каждое место панели даёт ей проверку', 
 
   test('обход находит все пять мест', () => {
     expect(tags().map((t) => t.file).sort()).toEqual([
-      'app/daily/page.tsx',
-      'app/explore/page.tsx',
-      'app/library/page.tsx',
-      'app/play/page.tsx',
+      'app/[lang]/daily/page.tsx',
+      'app/[lang]/explore/page.tsx',
+      'app/[lang]/library/page.tsx',
+      'app/[lang]/play/page.tsx',
       'components/landing/ConnectCard.tsx',
     ])
   })
@@ -107,10 +107,10 @@ describe('каждое место панели даёт ей проверку', 
    * навязывается — у неё своя дверь «Подключить заново».
    */
   test.each([
-    ['app/play/page.tsx', 'readOnly ? undefined : steamLoginFor(`/play?${search}`)'],
-    ['app/daily/page.tsx', "readOnly ? undefined : steamLoginFor('/daily')"],
-    ['app/explore/page.tsx', "readOnly ? undefined : steamLoginFor('/explore')"],
-    ['app/library/page.tsx', "session && isWriter(session) ? steamLoginFor('/library') : undefined"],
+    ['app/[lang]/play/page.tsx', 'readOnly ? undefined : steamLoginFor(`/play?${search}`)'],
+    ['app/[lang]/daily/page.tsx', "readOnly ? undefined : steamLoginFor('/daily')"],
+    ['app/[lang]/explore/page.tsx', "readOnly ? undefined : steamLoginFor('/explore')"],
+    ['app/[lang]/library/page.tsx', "session && isWriter(session) ? steamLoginFor('/library') : undefined"],
   ])('%s: проверка — вход через Steam обратно сюда', (file, expr) => {
     const tag = tags().find((t) => t.file === file)?.tag ?? ''
     expect(tag).toContain(`retryHref={${expr}}`)

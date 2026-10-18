@@ -72,7 +72,7 @@ describe('обещание продукта одно', () => {
     for (const rel of [
       'components/landing/scenes/Money.tsx',
       'lib/destination.ts',
-      'app/play/layout.tsx',
+      'app/[lang]/play/layout.tsx',
       'app/manifest.ts',
     ]) {
       expect(visible(rel), rel).not.toMatch(/пять карточек|Подборк|из бэклога, заброшенного или нового/)

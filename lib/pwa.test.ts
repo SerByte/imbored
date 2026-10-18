@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import manifest from '../app/manifest'
-import { SITE_DESCRIPTION, SITE_TITLE } from './site'
+import { SITE_DESCRIPTION, SITE_TITLE, siteDescription, siteTitle } from './site'
 import { THEME_COLOR } from './themecolor'
 
 /**
@@ -36,9 +36,12 @@ describe('манифест', () => {
   test('имя и описание — те же, что у корня', () => {
     expect(m.description).toBe(SITE_DESCRIPTION)
     expect(m.name).toBe(SITE_TITLE)
-    const layout = fs.readFileSync(path.join(ROOT, 'app', 'layout.tsx'), 'utf8')
-    expect(layout, 'корень должен брать описание из lib/site.ts').toMatch(/description:\s*SITE_DESCRIPTION\b/)
-    expect(layout, 'и имя тоже').toMatch(/default:\s*SITE_TITLE\b/)
+    const layout = fs.readFileSync(path.join(ROOT, 'app', '[lang]', 'layout.tsx'), 'utf8')
+    // Корень берёт их на языке страницы, и русские — те же константы
+    expect(layout, 'корень должен брать описание из lib/site.ts').toMatch(/description:\s*siteDescription\(locale\)/)
+    expect(layout, 'и имя тоже').toMatch(/default:\s*siteTitle\(locale\)/)
+    expect(siteDescription('ru')).toBe(SITE_DESCRIPTION)
+    expect(siteTitle('ru')).toBe(SITE_TITLE)
   })
 
   /**
@@ -51,7 +54,7 @@ describe('манифест', () => {
    */
   test('theme-color — одно значение без media, как у манифеста', () => {
     expect(m.theme_color).toBe(THEME_COLOR)
-    const layout = fs.readFileSync(path.join(ROOT, 'app', 'layout.tsx'), 'utf8')
+    const layout = fs.readFileSync(path.join(ROOT, 'app', '[lang]', 'layout.tsx'), 'utf8')
     const at = layout.indexOf('export const viewport')
     expect(at, 'viewport в корне не найден').toBeGreaterThan(-1)
     const viewport = layout.slice(at, layout.indexOf('\n}\n', at))
@@ -66,7 +69,7 @@ describe('манифест', () => {
   test('ярлыки ведут на существующие страницы', () => {
     expect(m.shortcuts?.map((s) => s.url)).toEqual(['/quiz', '/daily', '/rooms'])
     for (const s of m.shortcuts ?? []) {
-      const page = path.join(ROOT, 'app', ...s.url.split('/').filter(Boolean), 'page.tsx')
+      const page = path.join(ROOT, 'app', '[lang]', ...s.url.split('/').filter(Boolean), 'page.tsx')
       expect(fs.existsSync(page), `${s.url}: нет ${path.relative(ROOT, page)}`).toBe(true)
     }
   })

@@ -259,7 +259,7 @@ describe('нажатие на «Найти игру»', () => {
     expect(rule).toContain('background: var(--bg)')
     expect(rule).toContain('color: var(--danger)')
     // опора строки — ряд значков шапки, а не край экрана за полем px-safe
-    const layout = code(fs.readFileSync(path.join(ROOT, 'app', 'layout.tsx'), 'utf8'))
+    const layout = code(fs.readFileSync(path.join(ROOT, 'app', '[lang]', 'layout.tsx'), 'utf8'))
     const row = layout.slice(0, layout.indexOf('<SearchLauncher />'))
     expect(row.slice(row.lastIndexOf('<div className="'))).toMatch(/^<div className="relative flex /)
   })

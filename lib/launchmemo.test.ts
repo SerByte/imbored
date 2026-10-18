@@ -226,7 +226,7 @@ describe('строка правила', () => {
  */
 describe('/play забывает запуск, когда на героя ответили', () => {
   test('каждая оценка героя, кроме броска кубика, зовёт forgetLaunch', () => {
-    const src = fs.readFileSync(path.join(__dirname, '..', 'app', 'play', 'page.tsx'), 'utf8')
+    const src = fs.readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'play', 'page.tsx'), 'utf8')
     const lines = src.split('\n')
     const rated = lines
       .map((line, i) => ({ line, i }))
@@ -242,7 +242,7 @@ describe('/play забывает запуск, когда на героя отв
     expect(rated.length).toBeGreaterThanOrEqual(4)
     for (const { i } of rated) {
       const handler = lines.slice(Math.max(0, i - 6), i + 3).join('\n')
-      expect(handler, `app/play/page.tsx:${i + 1}`).toContain('forgetLaunch(pick.appid)')
+      expect(handler, `app/[lang]/play/page.tsx:${i + 1}`).toContain('forgetLaunch(pick.appid)')
     }
   })
 })
@@ -257,7 +257,7 @@ describe('/play забывает запуск, когда на героя отв
 describe('/daily запоминает запуск и спрашивает про героя', () => {
   const read = (...p: string[]) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8')
   const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
-  const DAILY = read('app', 'daily', 'page.tsx')
+  const DAILY = read('app', '[lang]', 'daily', 'page.tsx')
   const stopAsk = (src: string) => src.match(/<StopAsk\b[\s\S]*?\/>/)?.[0] ?? ''
 
   test('steam://run героя запоминает запуск, загрузка — нет', () => {
@@ -299,7 +299,7 @@ describe('/daily запоминает запуск и спрашивает пр�
     expect(rated.length).toBeGreaterThanOrEqual(2)
     for (const { i } of rated) {
       const handler = lines.slice(Math.max(0, i - 6), i + 3).join('\n')
-      expect(handler, `app/daily/page.tsx:${i + 1}`).toContain('forgetLaunch(hero.appid)')
+      expect(handler, `app/[lang]/daily/page.tsx:${i + 1}`).toContain('forgetLaunch(hero.appid)')
     }
   })
 
@@ -309,7 +309,7 @@ describe('/daily запоминает запуск и спрашивает пр�
    * документа. На /play это правило было, на /daily оно обязано быть с первого
    * дня.
    */
-  test.each(['app/play/page.tsx', 'app/daily/page.tsx'])(
+  test.each(['app/[lang]/play/page.tsx', 'app/[lang]/daily/page.tsx'])(
     '%s: каждый ответ на «Не зацепило?» отдаёт фокус герою',
     (file) => {
       const handlers = stopAsk(code(read(file))).split(/\bon(?:Reason|Hooked|Close)=/).slice(1)
@@ -318,7 +318,7 @@ describe('/daily запоминает запуск и спрашивает пр�
     },
   )
 
-  test.each(['app/play/page.tsx', 'app/daily/page.tsx'])(
+  test.each(['app/[lang]/play/page.tsx', 'app/[lang]/daily/page.tsx'])(
     '%s: «Как тебе?» ждёт, пока на экране «Не зацепило?»',
     (file) => {
       expect(code(read(file))).toMatch(/<OutcomeAsk\s+paused=\{!!stopDue\}/)
@@ -331,7 +331,7 @@ describe('/daily запоминает запуск и спрашивает пр�
    * /daily рисовала вопрос без него: фокус падал в body, и следующий Tab
    * начинался со ссылки «к содержимому».
    */
-  test.each(['app/play/page.tsx', 'app/daily/page.tsx'])(
+  test.each(['app/[lang]/play/page.tsx', 'app/[lang]/daily/page.tsx'])(
     '%s: ответ на «Как тебе?» отдаёт фокус герою',
     (file) => {
       expect(code(read(file))).toMatch(/<OutcomeAsk\s+paused=\{!!stopDue\}[^>]*\sonDone=\{[^}]*focusHero\b/)

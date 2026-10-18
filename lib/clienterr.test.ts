@@ -324,7 +324,7 @@ describe('проводка', () => {
   })
 
   test('обе границы ошибок показывают код всегда и шлют отчёт без digest', () => {
-    for (const file of ['app/error.tsx', 'app/global-error.tsx']) {
+    for (const file of ['app/[lang]/error.tsx', 'app/global-error.tsx']) {
       const src = read(file)
       expect(src, file).toContain('clientErrorCode(error)')
       expect(src, file).toContain("kind: 'boundary'")

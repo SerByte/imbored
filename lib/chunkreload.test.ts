@@ -86,7 +86,7 @@ function findButton(node: ReactNode, label: RegExp): ReactElement<{ onClick: () 
 
 describe('экраны ошибки и отказ чанка', () => {
   const screens = [
-    ['app/error.tsx', () => import('@/app/error')],
+    ['app/[lang]/error.tsx', () => import('@/app/[lang]/error')],
     ['app/global-error.tsx', () => import('@/app/global-error')],
   ] as const
 

@@ -1,9 +1,10 @@
 import Link from '@/components/Link'
+import type { Locale } from '@/lib/i18n'
 import { navPrefetch } from '@/lib/nav'
 import { LogoMark } from './Logo'
 import { Wordmark } from './Wordmark'
 
-export function Footer() {
+export function Footer({ locale = 'ru' }: { locale?: Locale }) {
   return (
     <footer className="relative mt-auto border-t border-edge">
       <div className="mx-auto max-w-6xl px-safe py-6 flex items-center justify-between gap-4 flex-wrap text-sm">

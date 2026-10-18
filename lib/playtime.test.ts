@@ -91,18 +91,18 @@ describe('строка о скрытом времени', () => {
   })
 
   test('/play и /library показывают строку при скрытом времени', () => {
-    expect(code('app/play/page.tsx')).toMatch(/timeHidden && \(\s*<div[^>]*>\s*<PlaytimeHiddenNote/)
-    expect(code('app/library/page.tsx')).toMatch(/timeHidden && <PlaytimeHiddenNote/)
+    expect(code('app/[lang]/play/page.tsx')).toMatch(/timeHidden && \(\s*<div[^>]*>\s*<PlaytimeHiddenNote/)
+    expect(code('app/[lang]/library/page.tsx')).toMatch(/timeHidden && <PlaytimeHiddenNote/)
   })
 
   // Пилюля квиза и строка ожидания рисуются раньше ответа сервера: признак им
   // приносит устройство. Пишут его выдача и прогрев, гасит выход
   test('признак на устройстве: пишет /play, читают квиз и строка ожидания, гасит выход', () => {
-    const play = code('app/play/page.tsx')
+    const play = code('app/[lang]/play/page.tsx')
     expect(play).toContain('timeHiddenStore.set(deal.playtimeHidden ? true : null)')
     expect(play).toContain('timeHiddenStore.set(p.library.timeHidden ? true : null)')
     expect(play).toMatch(/timeHiddenStore\.fresh\(\)\s*\?\s*'Ищу в твоей библиотеке…'/)
-    expect(code('app/quiz/page.tsx')).toMatch(/timeHidden \? 'Из своей библиотеки' : 'Ни разу не запускал'/)
+    expect(code('app/[lang]/quiz/page.tsx')).toMatch(/timeHidden \? 'Из своей библиотеки' : 'Ни разу не запускал'/)
     expect(code('components/SignOut.tsx')).toContain('timeHiddenStore.set(null)')
   })
 })
@@ -136,9 +136,9 @@ describe('playedShort', () => {
    */
   test('портрет, /compat и плитки /library подписывают часы через неё, а не «{hours} ч»', () => {
     const ROOT = path.join(__dirname, '..')
-    const portrait = fs.readFileSync(path.join(ROOT, 'app/portrait/[steamid]/page.tsx'), 'utf8')
-    const compat = fs.readFileSync(path.join(ROOT, 'app/compat/[steamid]/page.tsx'), 'utf8')
-    const library = fs.readFileSync(path.join(ROOT, 'app/library/page.tsx'), 'utf8')
+    const portrait = fs.readFileSync(path.join(ROOT, 'app/[lang]/portrait/[steamid]/page.tsx'), 'utf8')
+    const compat = fs.readFileSync(path.join(ROOT, 'app/[lang]/compat/[steamid]/page.tsx'), 'utf8')
+    const library = fs.readFileSync(path.join(ROOT, 'app/[lang]/library/page.tsx'), 'utf8')
     expect(portrait).toContain('{playedShort(g.minutes)}')
     expect(portrait).not.toMatch(/g\.hours\.toLocaleString\('ru-RU'\)\} ч/)
     expect(compat).toMatch(/playedShort\(m\)/)

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { routePaths } from '@/lib/i18n'
 import { linksToday, runChain } from '@/lib/chain'
 import { CRON_JOBS, SWEEP_KEY } from '@/lib/cron'
 import { acquireLease, getCatalogMeta, releaseLease, setCatalogMeta, STEAM_LEASE, type Db } from '@/lib/db'
@@ -118,7 +119,7 @@ describe('/api/cron/news', () => {
     vi.mocked(runNewsSlice).mockImplementationOnce(async (...a) => ({ ...(await real(...a)), cards: [730] }))
     expect((await ask()).status).toBe(202)
     await settled()
-    expect(revalidated).toEqual(['/game/730'])
+    expect(revalidated).toEqual(routePaths('/game/730'))
     // В отметку — число, а не список: у новостей это десятки appid на звено
     const mark = JSON.parse((await getCatalogMeta(db, CRON_JOBS.news.lastKey)) ?? '{}') as Record<string, unknown>
     expect(mark).not.toHaveProperty('cards')

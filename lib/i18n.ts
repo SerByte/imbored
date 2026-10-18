@@ -165,6 +165,21 @@ export function switchLocaleHref(pathname: string, target: Locale, search?: stri
 }
 
 /**
+ * Пути маршрута адреса сайта на всех языках: '/game/730' → ['/ru/game/730', '/en/game/730'].
+ *
+ * Для revalidatePath: ISR кладёт страницу в кэш по пути файла маршрута, то
+ * есть по адресу ПОСЛЕ rewrites (docs: revalidatePath, «Using revalidatePath
+ * with rewrites»), — сброс голого '/game/730' не задел бы ни одной из двух
+ * копий. Адрес не из разделов (/sitemap.xml) — как есть: он вне [lang].
+ */
+export function routePaths(path: string): string[] {
+  const { path: bare } = splitLocale(cutPath(path)[0])
+  const first = bare.slice(1).split('/', 1)[0]
+  if (bare !== '/' && !SECTIONS.has(first)) return [path]
+  return LOCALES.map((l) => (bare === '/' ? `/${l}` : `/${l}${bare}`))
+}
+
+/**
  * Язык в адрес запроса к API: '/api/recommend?x=1' → '/api/recommend?x=1&lang=en'.
  *
  * В адресе, а не в куке или заголовке: ответы GET могут кэшироваться, и

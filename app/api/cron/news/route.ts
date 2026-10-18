@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { revalidatePath, revalidateTag } from 'next/cache'
+import { revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
 import { KICK_RESERVE_MS, kickCron, kickFailLine, linksToday, openRun, runChain } from '@/lib/chain'
 import { dayKey } from '@/lib/daily'
@@ -31,6 +31,7 @@ import { llmAvailable } from '@/lib/llm'
 import { llmDailyCap } from '@/lib/llmcap'
 import { runNewsSlice } from '@/lib/newsjob'
 import { sweepRateLimits } from '@/lib/ratelimit'
+import { revalidateSitePath } from '@/lib/revalidate'
 import { appBaseUrl, getDb, nowSec, steamApiKey } from '@/lib/server'
 import { runSteamProbe } from '@/lib/steamprobe'
 import { pruneTelemetry } from '@/lib/telemetry'
@@ -97,7 +98,7 @@ export async function GET(req: Request) {
         // живут в ISR неделю (lib/gamecache). На звено, а не на запуск:
         // сброс ничего не рендерит сам, а отметки всё равно уходят разом,
         // когда after() закончит (withExecuteRevalidates в Next)
-        return resetSliceCards(slice, revalidatePath)
+        return resetSliceCards(slice, revalidateSitePath)
       },
       verdict: ({ result, failed }) => newsLinkVerdict({ failed, result }),
       onEnd: async ({ totals, hardLeftMs }) => {

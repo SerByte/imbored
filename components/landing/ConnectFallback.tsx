@@ -103,6 +103,7 @@ export function ConnectFallback() {
       <div className={`connect-card flex ${CONNECT_CARD_MIN_H} flex-col items-start gap-4`}>
         {/* Без скрипта поле ссылки не работает, поэтому здесь одна дверь —
             вход через Steam, той же белой кнопкой, что у настоящей формы. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- ручка входа, а не страница: правило принимает /api за страницу из-за ловушки app/[lang]/[...missing] */}
         <a
           href="/api/auth/steam"
           aria-describedby={PASSWORD_NOTE_ID}

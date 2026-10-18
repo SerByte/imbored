@@ -24,13 +24,13 @@ const read = (...p: string[]) => fs.readFileSync(path.join(ROOT, ...p), 'utf8')
 const PAGES = [
   {
     title: 'публичный портрет',
-    file: ['app', 'portrait', '[steamid]', 'page.tsx'],
+    file: ['app', '[lang]', 'portrait', '[steamid]', 'page.tsx'],
     key: /\['portrait-model:v\d+', steamid, String\(snapshot\.takenAt\)\]/,
     heavy: ['bannedAppids', 'loadTagStats', 'getLibraryBaselines'],
   },
   {
     title: 'итоги года',
-    file: ['app', 'portrait', '[steamid]', 'year', 'page.tsx'],
+    file: ['app', '[lang]', 'portrait', '[steamid]', 'year', 'page.tsx'],
     key: /\['portrait-year:v\d+', steamid, String\(snapshot\.takenAt\)\]/,
     heavy: ['getLibraryBaselines'],
   },

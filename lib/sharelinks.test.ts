@@ -243,7 +243,7 @@ describe('телеметрия шаринга', () => {
   }
 
   test('/privacy называет, что «Поделиться» считается с тем, чем, и «Скачать карточку»', () => {
-    const policy = fs.readFileSync(path.join(ROOT, 'app', 'privacy', 'page.tsx'), 'utf8').replace(/\s+/g, ' ')
+    const policy = fs.readFileSync(path.join(ROOT, 'app', '[lang]', 'privacy', 'page.tsx'), 'utf8').replace(/\s+/g, ' ')
     const steps = policy.match(/Ещё мы считаем несколько шагов:[^.]*/)?.[0] ?? ''
     expect(steps).toMatch(/«Скачать карточку»/)
     // Только сам список после двоеточия: «пати» есть в абзаце и у приглашения
@@ -286,11 +286,11 @@ describe('телеметрия шаринга', () => {
    * переменную текстом не проверить.
    */
   const SHARERS: Record<string, ShareKind> = {
-    'app/room/[id]/page.tsx': 'room',
-    'app/compat/CopyCompatLink.tsx': 'compat',
-    'app/compat/page.tsx': 'compat',
-    'app/portrait/[steamid]/page.tsx': 'portrait',
-    'app/portrait/[steamid]/year/page.tsx': 'year',
+    'app/[lang]/room/[id]/page.tsx': 'room',
+    'app/[lang]/compat/CopyCompatLink.tsx': 'compat',
+    'app/[lang]/compat/page.tsx': 'compat',
+    'app/[lang]/portrait/[steamid]/page.tsx': 'portrait',
+    'app/[lang]/portrait/[steamid]/year/page.tsx': 'year',
     'components/SharePick.tsx': 'pick',
     'components/PatchShare.tsx': 'patch',
     'components/room/MatchShare.tsx': 'match',

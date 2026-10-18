@@ -34,8 +34,8 @@ const flat = (src: string) => src.replace(/\s+/g, '')
 const PRESSED_TITLE = 'Зашло — нажми, чтобы снять'
 
 describe('«Зашло» у героя снимается тем же нажатием', () => {
-  const play = flat(read('app/play/page.tsx'))
-  const daily = flat(read('app/daily/page.tsx'))
+  const play = flat(read('app/[lang]/play/page.tsx'))
+  const daily = flat(read('app/[lang]/daily/page.tsx'))
 
   test('/play: нажатое сердце снимает «Зашло» через lib/unlike из куска героя, отказ — строкой под героем', () => {
     expect(play).toContain(flat('const heartOn = liked.has(pick.appid)'))
@@ -75,8 +75,8 @@ describe('«Зашло» у героя снимается тем же нажат
 
   test('имя кнопки не меняется с нажатием, обратимость — в подсказке', () => {
     for (const [file, code, on] of [
-      ['app/play/page.tsx', play, 'heartOn'],
-      ['app/daily/page.tsx', daily, 'liked.has(hero.appid)'],
+      ['app/[lang]/play/page.tsx', play, 'heartOn'],
+      ['app/[lang]/daily/page.tsx', daily, 'liked.has(hero.appid)'],
     ] as const) {
       expect(code, file).toContain(flat('aria-pressed={' + on + '}'))
       expect(code, file).toContain(flat('title={' + on + " ? '" + PRESSED_TITLE + "' : 'Зашло'}"))
@@ -110,7 +110,7 @@ describe('«Зашло» у героя снимается тем же нажат
 })
 
 describe('«Мимо» в колоде /explore возвращается', () => {
-  const page = read('app/explore/page.tsx')
+  const page = read('app/[lang]/explore/page.tsx')
   const code = flat(page)
   const deck = read('components/SwipeDeck.tsx')
 

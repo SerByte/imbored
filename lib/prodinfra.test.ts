@@ -31,7 +31,7 @@ describe('регион функций', () => {
 
 describe('404', () => {
   test('полка читает базу только через кэш на сутки', () => {
-    const src = read('app', 'not-found.tsx')
+    const src = read('app', '[lang]', 'not-found.tsx')
     const cacheAt = src.indexOf('unstable_cache(')
     expect(cacheAt, 'unstable_cache в app/not-found.tsx не найден').toBeGreaterThan(-1)
     const cacheEnd = src.indexOf('revalidate:', cacheAt)

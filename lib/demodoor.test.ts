@@ -91,7 +91,7 @@ describe('полоса', () => {
 
 describe('полоса стоит там, где демо в момент ценности', () => {
   test('/play: в герое, поверх кадра, по подсказке о входе', () => {
-    const src = code(read('app/play/page.tsx'))
+    const src = code(read('app/[lang]/play/page.tsx'))
     expect(src).toContain('const demo = useDemoSession()')
     const hero = src.indexOf('media-dark relative min-h-[78vh]')
     const bar = src.indexOf('{demo && <DemoBar from={`/play?${search}`} overlay />}')
@@ -102,7 +102,7 @@ describe('полоса стоит там, где демо в момент цен
   })
 
   test('/daily: в герое, поверх кадра, по подсказке о входе', () => {
-    const src = code(read('app/daily/page.tsx'))
+    const src = code(read('app/[lang]/daily/page.tsx'))
     expect(src).toContain('const demo = useDemoSession()')
     const hero = src.indexOf('media-dark relative flex-1 min-h-[92vh]')
     const bar = src.indexOf('{demo && <DemoBar from="/daily" overlay />}')
@@ -113,7 +113,7 @@ describe('полоса стоит там, где демо в момент цен
   })
 
   test('/library: признак серверный — полоса в потоке героя, из первого HTML', () => {
-    const src = code(read('app/library/page.tsx'))
+    const src = code(read('app/[lang]/library/page.tsx'))
     const hero = src.indexOf('lib-hero')
     const bar = src.indexOf('{isDemoId(steamid) && <DemoBar from="/library" className="mb-6" />}')
     expect(hero).toBeGreaterThan(-1)
@@ -122,7 +122,7 @@ describe('полоса стоит там, где демо в момент цен
   })
 
   test('клиентские страницы ставят полосу только поверх героя', () => {
-    for (const file of ['app/play/page.tsx', 'app/daily/page.tsx']) {
+    for (const file of ['app/[lang]/play/page.tsx', 'app/[lang]/daily/page.tsx']) {
       const tags = [...code(read(file)).matchAll(/<DemoBar\b[^>]*\/>/g)].map((m) => m[0])
       expect(tags.length, file).toBe(1)
       expect(tags[0], `${file}: без overlay полоса сдвинет героя после гидратации`).toMatch(/\boverlay\b/)

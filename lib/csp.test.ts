@@ -109,7 +109,7 @@ describe('CSP', () => {
       expect(allows(img, `https://cdn.akamai.${d}/x.jpg`), `*.${d}`).toBe(true)
     }
     // preconnect в layout — это те хосты, откуда арт идёт на каждой странице
-    const layout = fs.readFileSync(path.join(ROOT, 'app', 'layout.tsx'), 'utf8')
+    const layout = fs.readFileSync(path.join(ROOT, 'app', '[lang]', 'layout.tsx'), 'utf8')
     const warmed = [...layout.matchAll(/rel="(?:preconnect|dns-prefetch)" href="([^"]+)"/g)].map((m) => m[1])
     expect(warmed.length, 'preconnect в app/layout.tsx не найдены — сторож ослеп').toBeGreaterThan(0)
     for (const url of warmed) expect(allows(img, url), url).toBe(true)

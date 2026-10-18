@@ -887,7 +887,7 @@ describe('прогрев под квизом: проводка', () => {
       .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 
   test('квиз греет вошедшему и слушает обе догадки о входе', () => {
-    const src = code('app/quiz/page.tsx')
+    const src = code('app/[lang]/quiz/page.tsx')
     expect(src).toMatch(/if \(!prewarmWanted\(getSessionHint\(\), writerStore\.get\(\)\)\) return/)
     // свежая метка — /play пропустит прогрев, и ответ забрать будет некому
     expect(src).toMatch(/if \(hasFreshWarm\(warmMarkStore\.get\(\), Date\.now\(\)\)\) return/)
@@ -903,7 +903,7 @@ describe('прогрев под квизом: проводка', () => {
   })
 
   test('/play отличает в замере первый круг, сделанный квизом', () => {
-    expect(code('app/play/page.tsx')).toMatch(/onPrewarm: \(\) => \{\s*waitPath = 'prewarm'\s*\}/)
+    expect(code('app/[lang]/play/page.tsx')).toMatch(/onPrewarm: \(\) => \{\s*waitPath = 'prewarm'\s*\}/)
   })
 
   test('смена входа в том же документе забывает ответ квиза', () => {

@@ -282,7 +282,7 @@ describe('экран выгорания', () => {
  * половину состояния — ровно то, что здесь чинили.
  */
 describe('/play применяет новую выдачу одной функцией', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'app', 'play', 'page.tsx'), 'utf8')
+  const src = fs.readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'play', 'page.tsx'), 'utf8')
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
 
   test('поля выдачи пишутся в одном месте', () => {
@@ -310,7 +310,7 @@ describe('/play применяет новую выдачу одной функц
     // Окно — с запасом на проверки между ответом и выдачей (уход со страницы,
     // «Подобрать заново» за время запроса, разбор отказа)
     for (const { i } of calls) {
-      expect(lines.slice(i, i + 14).join('\n'), `app/play/page.tsx:${i + 1}`).toContain('applyDeal(')
+      expect(lines.slice(i, i + 14).join('\n'), `app/[lang]/play/page.tsx:${i + 1}`).toContain('applyDeal(')
     }
   })
 
@@ -328,7 +328,7 @@ describe('/play применяет новую выдачу одной функц
  * вернёт, выглядит безобидно и проходит все тесты поведения.
  */
 describe('/play: пути вокруг выдачи', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'app', 'play', 'page.tsx'), 'utf8')
+  const src = fs.readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'play', 'page.tsx'), 'utf8')
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
   /** Кусок кода от первого from до первого to после него */
   const between = (from: string, to: string) => {

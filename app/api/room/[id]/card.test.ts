@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { routePaths } from '@/lib/i18n'
 import { castRoomVote, createRoom, issueRoomDeck, joinRoom, type Db } from '@/lib/db'
 import { nowSec } from '@/lib/server'
 import { freshDb, params, post, signIn, signInAs } from '@/lib/testing/route'
@@ -58,7 +59,7 @@ describe('матч сбрасывает карточку комнаты', () => 
     await castRoomVote(db, ROOM, DIMA, 570, 1, nowSec())
     const res = await swipe(570, true)
     expect(await res.json()).toEqual({ matched: 570 })
-    expect(revalidated).toEqual([CARD])
+    expect(revalidated).toEqual(routePaths(CARD))
   })
 
   test('голос без матча карточку не трогает', async () => {
@@ -84,7 +85,7 @@ describe('матч сбрасывает карточку комнаты', () => 
     }
     const res = await take(post(`/api/room/${ROOM}/leader`, { appid: 570 }), params({ id: ROOM }))
     expect(await res.json()).toEqual({ matched: 570 })
-    expect(revalidated).toEqual([CARD])
+    expect(revalidated).toEqual(routePaths(CARD))
   })
 
   test('уход последнего несогласного', async () => {
@@ -97,7 +98,7 @@ describe('матч сбрасывает карточку комнаты', () => 
     await signIn(db, third)
     const res = await leave(post(`/api/room/${ROOM}/leave`, {}), params({ id: ROOM }))
     expect(await res.json()).toMatchObject({ removed: true, matched: 620 })
-    expect(revalidated).toEqual([CARD])
+    expect(revalidated).toEqual(routePaths(CARD))
   })
 
   test('уход из уже сошедшейся комнаты — не новый матч, сбрасывать нечего', async () => {

@@ -263,7 +263,7 @@ describe('refreshWishlist', () => {
 
 describe('сторож: полка желаемого не торопит', () => {
   test('в WishlistShelf нет ни DiscountEnds, ни подписи срока', () => {
-    const src = fs.readFileSync(path.join(__dirname, '..', 'app', 'library', 'WishlistShelf.tsx'), 'utf8')
+    const src = fs.readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'library', 'WishlistShelf.tsx'), 'utf8')
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
     expect(code).toContain('wishlistDeals(')
     expect(code).not.toMatch(/DiscountEnds|endsLabel|discountEndsLabel/)

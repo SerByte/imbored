@@ -50,13 +50,14 @@ function objectAt(src: string, at: number): string {
 
 describe('превью в мессенджерах', () => {
   test('у корня есть своя карточка — она достаётся всем, у кого нет своей', () => {
-    expect(fs.existsSync(path.join(ROOT, 'app', 'opengraph-image.tsx'))).toBe(true)
+    expect(fs.existsSync(path.join(ROOT, 'app', '[lang]', 'opengraph-image.tsx'))).toBe(true)
   })
 
   test('корень объявляет имя сервиса и язык', () => {
-    const layout = read('app/layout.tsx')
+    const layout = read('app/[lang]/layout.tsx')
     expect(layout).toMatch(/siteName:\s*'imbored'/)
-    expect(layout).toMatch(/locale:\s*'ru_RU'/)
+    // язык — по сегменту [lang]: ru_RU у русской, en_US у английской
+    expect(layout).toMatch(/locale:\s*ogLocale\(locale\)/)
   })
 
   /**
@@ -69,7 +70,7 @@ describe('превью в мессенджерах', () => {
     const offenders: string[] = []
     for (const [file, src] of appFiles()) {
       if (!/\bopenGraph:\s*\{/.test(src)) continue
-      if (file.endsWith(path.join('app', 'layout.tsx'))) continue // корень и есть источник
+      if (file.endsWith(path.join('app', '[lang]', 'layout.tsx'))) continue // корень и есть источник
       for (const m of src.matchAll(/openGraph:\s*\{([\s\S]{0,220}?)\}/g)) {
         if (!m[1].includes('...OG_SITE')) offenders.push(path.relative(ROOT, file))
       }
@@ -83,7 +84,7 @@ describe('превью в мессенджерах', () => {
    * /privacy или /whatsnew с главной.
    */
   test('корень не раздаёт свой og:url всем подряд', () => {
-    const layout = read('app/layout.tsx')
+    const layout = read('app/[lang]/layout.tsx')
     const at = layout.search(/\bopenGraph:\s*\{/)
     expect(at, 'openGraph в корне не найден').toBeGreaterThan(-1)
     expect(objectAt(layout, at)).not.toMatch(/\burl\b/)
@@ -95,15 +96,15 @@ describe('превью в мессенджерах', () => {
    */
   test('страницы без своей карточки объявляют свой адрес', () => {
     const own: Record<string, string> = {
-      'app/page.tsx': '/',
-      'app/whatsnew/page.tsx': '/whatsnew',
-      'app/games/page.tsx': '/games',
-      'app/privacy/page.tsx': '/privacy',
-      'app/support/page.tsx': '/support',
-      'app/daily/layout.tsx': '/daily',
+      'app/[lang]/page.tsx': '/',
+      'app/[lang]/whatsnew/page.tsx': '/whatsnew',
+      'app/[lang]/games/page.tsx': '/games',
+      'app/[lang]/privacy/page.tsx': '/privacy',
+      'app/[lang]/support/page.tsx': '/support',
+      'app/[lang]/daily/layout.tsx': '/daily',
       // квиз открыт краулеру и идёт в выдачу: canonical сворачивает в него
       // /quiz?from=untouched и прочие хвосты (lib/robots)
-      'app/quiz/layout.tsx': '/quiz',
+      'app/[lang]/quiz/layout.tsx': '/quiz',
     }
     for (const [file, url] of Object.entries(own)) {
       expect(read(file), file).toMatch(new RegExp(`export const generateMetadata = ownAddress\\('${url}'`))
@@ -113,7 +114,7 @@ describe('превью в мессенджерах', () => {
   test('у каждого своего openGraph есть свой url и canonical', () => {
     const offenders: string[] = []
     for (const [file, src] of appFiles()) {
-      if (file.endsWith(path.join('app', 'layout.tsx'))) continue
+      if (file.endsWith(path.join('app', '[lang]', 'layout.tsx'))) continue
       for (const m of src.matchAll(/\bopenGraph:\s*\{/g)) {
         if (!/\burl\b/.test(objectAt(src, m.index))) offenders.push(path.relative(ROOT, file))
       }
@@ -137,7 +138,7 @@ describe('превью в мессенджерах', () => {
       const dir = path.dirname(file)
       const hasFile =
         fs.existsSync(path.join(dir, 'opengraph-image.tsx')) ||
-        fs.existsSync(path.join(ROOT, 'app', 'opengraph-image.tsx'))
+        fs.existsSync(path.join(ROOT, 'app', '[lang]', 'opengraph-image.tsx'))
       if (hasFile && /openGraph:\s*\{[\s\S]{0,300}?images:/.test(src)) {
         offenders.push(path.relative(ROOT, file))
       }

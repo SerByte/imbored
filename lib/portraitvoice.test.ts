@@ -133,7 +133,7 @@ describe('голос портрета', () => {
  */
 test('страница портрета не держит фраз «на ты» мимо голоса', () => {
   const src = fs
-    .readFileSync(path.join(__dirname, '..', 'app', 'portrait', '[steamid]', 'page.tsx'), 'utf8')
+    .readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'portrait', '[steamid]', 'page.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/\/\/[^\n]*/g, '')
   expect(src).toContain('@/lib/portraitvoice')

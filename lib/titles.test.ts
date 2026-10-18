@@ -19,7 +19,7 @@ import { describe, expect, test } from 'vitest'
  * продукта. Поэтому теперь проверка, а не память.
  */
 
-const APP = path.join(__dirname, '..', 'app')
+const APP = path.join(__dirname, '..', 'app', '[lang]')
 
 /**
  * Страницы, которым свой заголовок не нужен, и почему. Список намеренно
@@ -29,6 +29,7 @@ const APP = path.join(__dirname, '..', 'app')
 const EXEMPT: Record<string, string> = {
   'page.tsx': 'лендинг — заголовок сайта здесь и есть правильный',
   'portrait/page.tsx': 'редирект на /portrait/[steamid], своей разметки нет',
+  '[...missing]/page.tsx': 'ловушка 404: notFound() до разметки, заголовок даёт not-found.tsx',
 }
 
 function declaresTitle(file: string): boolean {

@@ -49,7 +49,7 @@ function body(code: string, start: string): string {
   throw new Error(`${start}: нет парной скобки`)
 }
 
-const room = read('app/room/[id]/page.tsx')
+const room = read('app/[lang]/room/[id]/page.tsx')
 
 /**
  * Хост убирает участника вместе со ВСЕМИ его голосами (removeRoomMember), а

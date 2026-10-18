@@ -26,7 +26,7 @@ const WINDOW = ['components/CatalogSearch.tsx', 'lib/catalogsearch.ts', 'lib/cat
 describe('поиск по каталогу — чанком, а не в каждой странице', () => {
   test('обход доходит до кнопки от корневого лэйаута', () => {
     // Без этого сторожа ниже могли бы быть зелёными потому, что обход сломан
-    expect([...reach(path.join(ROOT, 'app', 'layout.tsx')).files].map(rel)).toContain(
+    expect([...reach(path.join(ROOT, 'app', '[lang]', 'layout.tsx')).files].map(rel)).toContain(
       'components/SearchLauncher.tsx',
     )
   })
@@ -38,7 +38,7 @@ describe('поиск по каталогу — чанком, а не в кажд
    * не отличает. Клиентское у неё — эта же кнопка, и она проверена.
    */
   test('окно и его модули статически недостижимы ни из кнопки, ни из лэйаута', () => {
-    for (const entry of [LAUNCHER, path.join(ROOT, 'app', 'layout.tsx')]) {
+    for (const entry of [LAUNCHER, path.join(ROOT, 'app', '[lang]', 'layout.tsx')]) {
       const files = [...reach(entry).files].map(rel)
       expect(
         files.filter((f) => WINDOW.includes(f)),

@@ -154,7 +154,7 @@ describe('живая область стоит раньше своего тек�
   test('скан видит живые области продукта', () => {
     // без этого тесты ниже зеленели бы и тогда, когда поиск сломался
     const files = new Set(all.map((r) => r.at.split(':')[0]))
-    for (const f of ['components/landing/ConnectCard.tsx', 'components/SwipeDeck.tsx', 'app/play/page.tsx']) {
+    for (const f of ['components/landing/ConnectCard.tsx', 'components/SwipeDeck.tsx', 'app/[lang]/play/page.tsx']) {
       expect(files, f).toContain(f)
     }
     expect(all.length).toBeGreaterThan(20)
@@ -210,26 +210,26 @@ const read = (file: string) => strip(fs.readFileSync(path.join(ROOT, file), 'utf
  */
 const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: string[] }> = [
   // голос колоды: отказ возвращает карту в голову, и следующий свайп — повтор
-  { file: 'app/room/[id]/page.tsx', start: 'async function vote(', reset: ['setVoteFailed(false)'] },
-  { file: 'app/room/[id]/page.tsx', start: 'async function join()', reset: ['setJoinError(null)'] },
-  { file: 'app/room/[id]/page.tsx', start: 'async function joinAsDemoFriend()', reset: ['setJoinError(null)'] },
-  { file: 'app/room/[id]/page.tsx', start: 'async function takeLeader()', reset: ['setLeaderMiss(null)'] },
+  { file: 'app/[lang]/room/[id]/page.tsx', start: 'async function vote(', reset: ['setVoteFailed(false)'] },
+  { file: 'app/[lang]/room/[id]/page.tsx', start: 'async function join()', reset: ['setJoinError(null)'] },
+  { file: 'app/[lang]/room/[id]/page.tsx', start: 'async function joinAsDemoFriend()', reset: ['setJoinError(null)'] },
+  { file: 'app/[lang]/room/[id]/page.tsx', start: 'async function takeLeader()', reset: ['setLeaderMiss(null)'] },
   // выход и ✕ хоста, переключатель доски, добор раунда: на моргнувшей связи
   // второй тап — тот же отказ тем же текстом. Строку «войди через Steam»
   // (publicDenied) делят все три кнопки хоста, и гасить её обязана каждая:
   // слияние 35d0535 потеряло сброс у доски, и второй needsteam там молчал
   {
-    file: 'app/room/[id]/page.tsx',
+    file: 'app/[lang]/room/[id]/page.tsx',
     start: 'async function removeMember(',
     reset: ['setLeaveMiss(null)', 'setPublicDenied(false)'],
   },
   {
-    file: 'app/room/[id]/page.tsx',
+    file: 'app/[lang]/room/[id]/page.tsx',
     start: 'async function togglePublic()',
     reset: ['setPublicMiss(null)', 'setPublicDenied(false)'],
   },
-  { file: 'app/room/[id]/page.tsx', start: 'async function unkick()', reset: ['setPublicDenied(false)'] },
-  { file: 'app/room/[id]/page.tsx', start: 'async function pullMore()', reset: ['setPullFailed(false)'] },
+  { file: 'app/[lang]/room/[id]/page.tsx', start: 'async function unkick()', reset: ['setPublicDenied(false)'] },
+  { file: 'app/[lang]/room/[id]/page.tsx', start: 'async function pullMore()', reset: ['setPullFailed(false)'] },
   // повторное нажатие после отказа в разрешении — тот же отказ тем же текстом;
   // браузер помнит отказ, и без await между ними повтор склеился бы со сбросом
   {
@@ -240,21 +240,21 @@ const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: strin
   },
   // переключатели и кнопки под героем — один путь, отказ говорит то место, откуда нажали
   {
-    file: 'app/play/page.tsx',
+    file: 'app/[lang]/play/page.tsx',
     start: 'const reshape = useCallback(',
     reset: ['setHeroMiss(null)', 'setSwitchMiss(null)'],
   },
-  { file: 'app/play/page.tsx', start: 'if (banning) return', reset: ['setBanFailed(null)'] },
+  { file: 'app/[lang]/play/page.tsx', start: 'if (banning) return', reset: ['setBanFailed(null)'] },
   // «Уже прошёл» у строки «Продолжить» — своя строка отказа, по appid
-  { file: 'app/play/page.tsx', start: 'const finishCont = async', reset: ['setContFailed(null)'] },
+  { file: 'app/[lang]/play/page.tsx', start: 'const finishCont = async', reset: ['setContFailed(null)'] },
   // «Обновить выдачу» говорит отказ той же строкой под героем, что и кнопки под ним
-  { file: 'app/play/page.tsx', start: 'onRefresh={async () => {', reset: ['setHeroMiss(null)'] },
-  { file: 'app/daily/page.tsx', start: 'const notToday = async', reset: ['setRerollMiss(null)'] },
-  { file: 'app/explore/page.tsx', start: 'const unlike = async', reset: ['setUnlikeMiss(null)'] },
+  { file: 'app/[lang]/play/page.tsx', start: 'onRefresh={async () => {', reset: ['setHeroMiss(null)'] },
+  { file: 'app/[lang]/daily/page.tsx', start: 'const notToday = async', reset: ['setRerollMiss(null)'] },
+  { file: 'app/[lang]/explore/page.tsx', start: 'const unlike = async', reset: ['setUnlikeMiss(null)'] },
   // «Ещё колоду» под потолком частоты: второй 429 — тот же текст под кнопкой
-  { file: 'app/explore/page.tsx', start: 'const redeal = async', reset: ['setRedealMiss(null)'] },
+  { file: 'app/[lang]/explore/page.tsx', start: 'const redeal = async', reset: ['setRedealMiss(null)'] },
   // «Попробовать снова» на экране отказа: строка экрана гаснет на время попытки
-  { file: 'app/explore/page.tsx', start: 'const retry = async', reset: ['setRetrying(true)'] },
+  { file: 'app/[lang]/explore/page.tsx', start: 'const retry = async', reset: ['setRetrying(true)'] },
   { file: 'components/BannedShelf.tsx', start: 'async function unban(', reset: ['setFailed(null)'] },
   { file: 'components/LikedShelf.tsx', start: 'async function unlike(', reset: ['setFailed(null)'] },
   // второе нажатие «Зашло» у героя /play и /daily: на моргнувшей связи
@@ -344,14 +344,14 @@ describe('строка отказа полок /library — одним узло�
  */
 describe('экран отказа /explore объявляется', () => {
   test('строка статуса стоит первой в каждом return страницы', () => {
-    const code = read('app/explore/page.tsx')
+    const code = read('app/[lang]/explore/page.tsx')
     expect(code, 'status — это StatusLine').toMatch(/const status = \(\s*<StatusLine\b/)
     // return разметки, а не `return () => ac.abort()` эффекта
     const returns = [...code.matchAll(/\breturn \((?=\s*<)/g)]
     // прогрев, отказ, колода; меньше — разбор ослеп или фаз стало меньше
     expect(returns.length).toBeGreaterThanOrEqual(3)
     for (const r of returns) {
-      const at = `app/explore/page.tsx:${code.slice(0, r.index).split('\n').length}`
+      const at = `app/[lang]/explore/page.tsx:${code.slice(0, r.index).split('\n').length}`
       expect(code.slice(r.index), at).toMatch(/^return \(\s*<>\s*\{status\}/)
     }
   })
@@ -363,7 +363,7 @@ describe('экран отказа /explore объявляется', () => {
    * молчал бы, а место в REPEAT оставалось бы верным.
    */
   test('на время повтора строка статуса гаснет', () => {
-    const code = read('app/explore/page.tsx')
+    const code = read('app/[lang]/explore/page.tsx')
     expect(code).toMatch(/const status = \(\s*<StatusLine text=\{phase === 'error' && !retrying \?/)
   })
 })
@@ -379,13 +379,13 @@ describe('экран отказа /explore объявляется', () => {
  * везде, без гонки живой строки с переездом фокуса.
  */
 describe('квиз: номер вопроса звучит', () => {
-  const code = read('app/quiz/page.tsx')
+  const code = read('app/[lang]/quiz/page.tsx')
   const at = code.indexOf('key={step.key}')
   const step = code.slice(at, code.indexOf('</m.div>', at))
 
   test('под ключом шага нет живой области', () => {
     expect(at, 'шаг квиза не найден — сторож ослеп').toBeGreaterThan(-1)
-    expect(regions(step, 'app/quiz/page.tsx').map((r) => r.tag)).toEqual([])
+    expect(regions(step, 'app/[lang]/quiz/page.tsx').map((r) => r.tag)).toEqual([])
   })
 
   test('номер вопроса — в имени заголовка, на который переезжает фокус', () => {
@@ -409,7 +409,7 @@ describe('квиз: номер вопроса звучит', () => {
  * только с прогрева, и строка рождается пустой.
  */
 describe('/daily: отказ объявляет строка, которая стоит с прогрева', () => {
-  const code = read('app/daily/page.tsx')
+  const code = read('app/[lang]/daily/page.tsx')
   const page = code.slice(code.indexOf('export default function DailyPage'))
 
   test('в строке — отказ, а на герое — смена героя', () => {

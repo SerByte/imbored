@@ -99,7 +99,7 @@ describe('отметка удаления — одними словами вез
   const places: Array<[string, string]> = [
     ['подтверждение', MARK_LINE],
     ['главная', source('components/landing/HeroNotice.tsx')],
-    ['/privacy', source('app/privacy/page.tsx')],
+    ['/privacy', source('app/[lang]/privacy/page.tsx')],
   ]
 
   test.each(places)('%s: что остаётся, зачем и на сколько', (_, text) => {
@@ -134,7 +134,7 @@ describe('forgetCardPaths', () => {
         }
       }
     }
-    for (const dir of ['app/portrait', 'app/compat', 'app/pick', 'app/room']) walk(dir)
+    for (const dir of ['app/[lang]/portrait', 'app/[lang]/compat', 'app/[lang]/pick', 'app/[lang]/room']) walk(dir)
     return out
   }
 
@@ -144,7 +144,7 @@ describe('forgetCardPaths', () => {
     const paths = forgetCardPaths(ME, { picks: ['mepick234567'], rooms: ['MYROOM'] })
     for (const file of files) {
       const url = file
-        .replace(/^app/, '')
+        .replace(/^app\/\[lang\]/, '')
         .replace(/\/(?:route|page)\.tsx?$/, '')
         .replace(/\.tsx?$/, '')
         .replace('[steamid]', ME)

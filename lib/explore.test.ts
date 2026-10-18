@@ -115,7 +115,7 @@ describe('exploreSignal: потолок ожидания колоды', () => {
 describe('страница /explore', () => {
   /** Комментарии гасятся пробелами: докблоки цитируют сами правила */
   const page = fs
-    .readFileSync(path.join(__dirname, '..', 'app', 'explore', 'page.tsx'), 'utf8')
+    .readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'explore', 'page.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
     .replace(/(^|[^:])(\/\/[^\n]*)/g, (_, pre: string, c: string) => pre + ' '.repeat(c.length))
 

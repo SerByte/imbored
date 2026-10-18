@@ -49,9 +49,9 @@ describe('подписи под числами портрета', () => {
    */
   test('страница и карточка берут подписи из одного места', () => {
     for (const rel of [
-      'app/portrait/[steamid]/page.tsx',
-      'app/portrait/[steamid]/share-card.tsx',
-      'app/compat/[steamid]/share-card.tsx',
+      'app/[lang]/portrait/[steamid]/page.tsx',
+      'app/[lang]/portrait/[steamid]/share-card.tsx',
+      'app/[lang]/compat/[steamid]/share-card.tsx',
     ]) {
       const src = fs.readFileSync(path.join(ROOT, rel), 'utf8')
       expect(src, `${rel} не подключает lib/factcaptions`).toContain('@/lib/factcaptions')
@@ -84,7 +84,7 @@ describe('сколько сыграно — playedFact', () => {
   })
 
   test('герой и карточка считают часы из минут через неё', () => {
-    for (const rel of ['app/portrait/[steamid]/page.tsx', 'app/portrait/[steamid]/share-card.tsx']) {
+    for (const rel of ['app/[lang]/portrait/[steamid]/page.tsx', 'app/[lang]/portrait/[steamid]/share-card.tsx']) {
       const src = fs.readFileSync(path.join(ROOT, rel), 'utf8')
       expect(src, `${rel}: часы снова готовыми — «0 часов» у библиотеки на 20 минут`).toMatch(
         /playedFact\((wrapped|data)\.totalMinutes\)/,

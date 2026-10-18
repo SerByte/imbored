@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { routePaths } from '@/lib/i18n'
 import { CRON_JOBS, sliceHealth } from '@/lib/cron'
 import { acquireLease, DIGEST_LEASE, getCatalogMeta, type Db } from '@/lib/db'
 import { takeLlmBudget } from '@/lib/llmcap'
@@ -93,7 +94,7 @@ describe('/api/cron/digest', () => {
     })
     expect((await ask()).status).toBe(202)
     await settled()
-    expect(revalidated).toEqual(['/game/730', '/game/570'])
+    expect(revalidated).toEqual(['/game/730', '/game/570'].flatMap(routePaths))
     const mark = await lastMark()
     expect(mark).not.toHaveProperty('cards')
     expect(mark).toMatchObject({ digested: 2, сброшено: 2, итого: { digested: 2, сброшено: 2 } })

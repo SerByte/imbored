@@ -52,7 +52,7 @@ describe('suggestsInstall', () => {
   // Условие жило копией в двух страницах, и новый источник терял ссылку молча
   test('/play и /daily решают по нему, а не своим условием', () => {
     const root = path.join(__dirname, '..')
-    for (const rel of ['app/play/page.tsx', 'app/daily/page.tsx']) {
+    for (const rel of ['app/[lang]/play/page.tsx', 'app/[lang]/daily/page.tsx']) {
       const src = fs.readFileSync(path.join(root, rel), 'utf8')
       expect(src, rel).toMatch(/suggestsInstall\(\w+\.source\) && !\w+\.storeUrl/)
       expect(src, rel).not.toMatch(/source === 'untouched' \|\| \w+\.source === 'comeback'/)

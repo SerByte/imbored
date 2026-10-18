@@ -193,7 +193,7 @@ describe('гость разворачивается до рендера', () => 
     /** Комментарии гасятся: докблоки цитируют сами правила */
     const code = (file: string) =>
       fs
-        .readFileSync(path.join(ROOT, 'app', file, 'page.tsx'), 'utf8')
+        .readFileSync(path.join(ROOT, 'app', '[lang]', file, 'page.tsx'), 'utf8')
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
     const pages = [
@@ -203,8 +203,8 @@ describe('гость разворачивается до рендера', () => 
     ] as const
     for (const [file, call] of pages) {
       const src = code(file)
-      expect(src.match(/router\.push\(bounceTo\([^\n]*/g) ?? [], `app/${file}: разворот push'ем`).toEqual([])
-      expect(src.split(call).length - 1, `app/${file}: оба разворота — заменой`).toBe(2)
+      expect(src.match(/router\.push\(bounceTo\([^\n]*/g) ?? [], `app/[lang]/${file}: разворот push'ем`).toEqual([])
+      expect(src.split(call).length - 1, `app/[lang]/${file}: оба разворота — заменой`).toBe(2)
     }
   })
 
@@ -214,9 +214,9 @@ describe('гость разворачивается до рендера', () => 
    */
   test('страницы-хабы сохраняют свой redirect(bounceTo) на случай мёртвой куки', () => {
     const pages: Record<string, string> = {
-      '/library': path.join('app', 'library', 'page.tsx'),
-      '/compat': path.join('app', 'compat', 'page.tsx'),
-      '/portrait': path.join('app', 'portrait', 'page.tsx'),
+      '/library': path.join('app', '[lang]', 'library', 'page.tsx'),
+      '/compat': path.join('app', '[lang]', 'compat', 'page.tsx'),
+      '/portrait': path.join('app', '[lang]', 'portrait', 'page.tsx'),
     }
     expect(Object.keys(pages).sort()).toEqual([...GUEST_BOUNCE].sort())
     for (const [p, file] of Object.entries(pages)) {
@@ -457,7 +457,7 @@ describe('квиз гостя: сразу на лендинг, и лендинг
       .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 
   test('квиз ведёт гостя на лендинг сам, остальных — в выдачу, как раньше', () => {
-    const quiz = code('app', 'quiz', 'page.tsx')
+    const quiz = code('app', '[lang]', 'quiz', 'page.tsx')
     const go = quiz.slice(quiz.indexOf('const go = useCallback('), quiz.indexOf('function pick('))
     expect(go).toMatch(/const href = playHref\(/)
     // push, а не replace: запись квиза живая, «Назад» с лендинга — к ответам

@@ -49,7 +49,7 @@ function gameArts(src: string): string[] {
 const sizesOf = (tag: string) => tag.match(/\bsizes="([^"]*)"/)?.[1]
 
 describe('герой страницы игры', () => {
-  const page = withoutComments(read('app', 'game', '[appid]', 'page.tsx'))
+  const page = withoutComments(read('app', '[lang]', 'game', '[appid]', 'page.tsx'))
   const heroAt = page.indexOf('<section')
   const hero = page.slice(heroAt, page.indexOf('</section>', heroAt))
   const arts = gameArts(hero)

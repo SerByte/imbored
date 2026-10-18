@@ -134,7 +134,7 @@ describe('LazyMotion', () => {
   })
 
   test('корневой лэйаут не тянет провайдер', () => {
-    const root = [...reach(path.join(ROOT, 'app', 'layout.tsx'))].map(rel)
+    const root = [...reach(path.join(ROOT, 'app', '[lang]', 'layout.tsx'))].map(rel)
     expect(root.length, 'обход графа ничего не нашёл — сторож ослеп').toBeGreaterThan(5)
     expect(root.filter((f) => f.startsWith('components/motion/'))).toEqual([])
     // И сам корень ничего m.* не рисует: провайдера над ним нет

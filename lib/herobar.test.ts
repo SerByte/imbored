@@ -64,7 +64,7 @@ describe('первый экран и нижняя панель', () => {
    * бы — и полоса снова стала бы чужой, а тест выше остался бы зелёным.
    */
   test('число совпадает с отступом под панель в разметке', () => {
-    const layout = fs.readFileSync(path.join(__dirname, '..', 'app', 'layout.tsx'), 'utf8')
+    const layout = fs.readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'layout.tsx'), 'utf8')
     expect(layout, 'в разметке нет отступа под панель — сравнивать не с чем').toContain('52px')
   })
 })

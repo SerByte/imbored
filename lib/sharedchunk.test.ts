@@ -44,12 +44,12 @@ import { code, reach, rel, ROOT } from './testing/importgraph'
  * молча, поэтому сторож обходит всех четверых.
  */
 
-const LAYOUT = path.join(ROOT, 'app', 'layout.tsx')
+const LAYOUT = path.join(ROOT, 'app', '[lang]', 'layout.tsx')
 const files = (entry: string) => [...reach(path.join(ROOT, entry)).files].map(rel)
 const read = (file: string) => code(fs.readFileSync(path.join(ROOT, file), 'utf8'))
 
 /** Всё, что едет в первую загрузку каждого маршрута: лэйаут, корневые границы ошибок и шаблон */
-const SHELL = ['app/layout.tsx', 'app/error.tsx', 'app/global-error.tsx', 'app/template.tsx']
+const SHELL = ['app/[lang]/layout.tsx', 'app/[lang]/error.tsx', 'app/global-error.tsx', 'app/[lang]/template.tsx']
 
 /**
  * Пакеты, которым место в чанке закулисья, а не в первой загрузке. Пакетом
@@ -146,7 +146,7 @@ describe('общий фундамент: лэйаут не везёт того, 
   test('увезённое догружается import() из оболочек, которые стоят в лэйауте', () => {
     expect(read('components/BackstageLazy.tsx')).toMatch(/import\(\s*'\.\/Backstage'\s*\)/)
     expect(read('components/ReadOnlyNote.tsx')).toMatch(/import\(\s*'\.\/ReadOnlyNoteBox'\s*\)/)
-    const markup = read('app/layout.tsx')
+    const markup = read('app/[lang]/layout.tsx')
     expect(markup).toContain('<Backstage />')
     expect(markup).toContain('<ReadOnlyNote />')
   })

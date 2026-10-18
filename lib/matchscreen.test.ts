@@ -194,7 +194,7 @@ describe('не участник на сошедшейся комнате — г�
   })
 
   test('экран берёт ссылку из того же правила и ставит её над абзацем о закрытой комнате', () => {
-    const room = code('app/room/[id]/page.tsx')
+    const room = code('app/[lang]/room/[id]/page.tsx')
     const start = room.indexOf("state.room.status === 'matched' && state.matchedGame && !state.isMember")
     expect(start).toBeGreaterThan(-1)
     const screen = room.slice(start, room.indexOf('<MatchCeremony', start))
@@ -223,7 +223,7 @@ describe('не участник на сошедшейся комнате — г�
    * экрану матча. Экран приглашения открытой комнаты needSteam знал всегда.
    */
   test('свой по ссылке (needSteam) — не «не пускают», а вход через Steam к экрану матча', () => {
-    const room = code('app/room/[id]/page.tsx')
+    const room = code('app/[lang]/room/[id]/page.tsx')
     const start = room.indexOf("state.room.status === 'matched' && state.matchedGame && !state.isMember")
     const screen = room.slice(start, room.indexOf('<MatchCeremony', start))
     const fork = screen.indexOf('state.needSteam ? (')
@@ -265,13 +265,13 @@ describe('церемония: куда это встаёт', () => {
     expect(ceremony).toMatch(/<MatchShare[^>]*roomId=\{roomId\}/)
     expect(ceremony).toMatch(/<MatchShare[^>]*forCount=\{forCount\}/)
     expect(ceremony).toMatch(/<MatchShare[^>]*memberCount=\{memberCount\}/)
-    expect(code('app/room/[id]/page.tsx')).toMatch(/<MatchCeremony[^>]*roomId=\{roomId\}/)
+    expect(code('app/[lang]/room/[id]/page.tsx')).toMatch(/<MatchCeremony[^>]*roomId=\{roomId\}/)
   })
 
   test('новое — в куске церемонии, а не в начальном наборе комнаты', () => {
     // /room/[id] стоит у самого потолка бюджета (bundle-budget.json): MatchShare
     // и MatchOwners импортирует только церемония, которую страница догружает
-    const room = code('app/room/[id]/page.tsx')
+    const room = code('app/[lang]/room/[id]/page.tsx')
     expect(room).not.toMatch(/MatchShare|MatchOwners|lib\/matchshare/)
   })
 })

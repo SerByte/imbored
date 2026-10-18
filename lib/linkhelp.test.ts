@@ -211,7 +211,7 @@ describe('счёт раскрытий', () => {
    * нет, был бы тем самым «считаем больше, чем сказали».
    */
   test('раскрытие названо в /privacy среди считаемых шагов', () => {
-    expect(read('app/privacy/page.tsx').replace(/\s+/g, ' ')).toMatch(
+    expect(read('app/[lang]/privacy/page.tsx').replace(/\s+/g, ' ')).toMatch(
       /Ещё мы считаем несколько шагов:[^.]*раскрытие подсказки «Где взять\?» у поля ссылки/,
     )
   })
@@ -242,7 +242,7 @@ describe('подпись у «Войти через Steam»', () => {
     expect(readsWishlist, 'желаемое больше не читаем — сними его и с подписей у дверей').toBe(true)
     expect(note()).toContain('список желаемого')
     // вторая дверь — приглашение сравниться на /compat
-    expect(code(read('app/compat/[steamid]/page.tsx')).replace(/\s+/g, ' ')).toMatch(
+    expect(code(read('app/[lang]/compat/[steamid]/page.tsx')).replace(/\s+/g, ' ')).toMatch(
       /Прочитаем [^.]*список желаемого/,
     )
     expect(hits(/только\s+список\s+игр/)).toEqual([])

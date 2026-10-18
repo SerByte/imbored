@@ -32,7 +32,7 @@ import { RIBBON_SCORE } from './ribbonlight'
  */
 
 const ROOT = path.join(__dirname, '..')
-const PAGE = path.join(ROOT, 'app', 'page.tsx')
+const PAGE = path.join(ROOT, 'app', '[lang]', 'page.tsx')
 const LANDING = path.join(ROOT, 'components', 'landing')
 const SCENES = path.join(LANDING, 'scenes')
 

@@ -65,11 +65,11 @@ describe('личное владельца — только за isWriter', () =>
   test('обход находит все места, где его читают', () => {
     const found = calls()
     expect([...new Set(found.map((c) => c.file))].sort()).toEqual([
+      'app/[lang]/library/page.tsx',
       'app/api/explore/route.ts',
-      'app/library/page.tsx',
     ])
     // Все шесть чтений /library — иначе сторож ослеп на одном из них
-    expect(found.filter((c) => c.file === 'app/library/page.tsx').map((c) => c.name).sort()).toEqual(
+    expect(found.filter((c) => c.file === 'app/[lang]/library/page.tsx').map((c) => c.name).sort()).toEqual(
       ['countLiked', 'feedbackStats', 'getWishlist', 'listBanned', 'listEvenings', 'listLiked'],
     )
   })
@@ -82,7 +82,7 @@ describe('личное владельца — только за isWriter', () =>
     ).toEqual([])
   })
 
-  test.each(['app/library/page.tsx', 'app/api/explore/route.ts'])('%s: writer — это isWriter сессии', (file) => {
+  test.each(['app/[lang]/library/page.tsx', 'app/api/explore/route.ts'])('%s: writer — это isWriter сессии', (file) => {
     expect(code(read(file))).toMatch(/const writer = (?:session !== null && )?isWriter\(session\)\n/)
   })
 })

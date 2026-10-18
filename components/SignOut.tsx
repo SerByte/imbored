@@ -238,6 +238,7 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
               Выход на всех устройствах и удаление данных — после{' '}
               {/* next=/library: после входа человек возвращается туда, где
                   нажимал, и кнопка «везде» уже на месте */}
+              {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- ручка входа, а не страница: правило принимает /api за страницу из-за ловушки app/[lang]/[...missing] */}
               <a href="/api/auth/steam?next=%2Flibrary" className="tap tap-tight text-ember-text underline decoration-1 underline-offset-2">
                 входа через Steam
               </a>

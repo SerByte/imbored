@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { routePaths } from '@/lib/i18n'
 import {
   countUserRows,
   createRoom,
@@ -269,7 +270,7 @@ describe('/api/forget: удаление', () => {
         `/compat/${ME}/opengraph-image`,
         '/pick/mepick234567/opengraph-image',
         '/room/MYROOM/opengraph-image',
-      ]),
+      ].flatMap(routePaths)),
     )
     // Модель портрета — немедленно, а не «отдать устаревшее и пересобрать»
     expect(revalidated.tags).toEqual([[portraitTag(ME), { expire: 0 }]])

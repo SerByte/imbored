@@ -132,9 +132,9 @@ const HEADINGS: Array<{ file: string; expr: string; count: number }> = [
   { file: 'components/whatsnew/PatchRow.tsx', expr: 'heading', count: 2 },
   { file: 'components/whatsnew/Cover.tsx', expr: 'item.title', count: 1 },
   { file: 'components/GameNews.tsx', expr: 'heading', count: 2 },
-  { file: 'app/game/[appid]/news/[gid]/page.tsx', expr: 'heading', count: 1 },
+  { file: 'app/[lang]/game/[appid]/news/[gid]/page.tsx', expr: 'heading', count: 1 },
   // «Другие патчи» внизу страницы патча
-  { file: 'app/game/[appid]/news/[gid]/page.tsx', expr: 'title', count: 1 },
+  { file: 'app/[lang]/game/[appid]/news/[gid]/page.tsx', expr: 'title', count: 1 },
 ]
 
 describe('заголовок патча несёт свой lang', () => {

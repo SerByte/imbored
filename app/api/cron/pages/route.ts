@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { revalidatePath } from 'next/cache'
 import { after, NextResponse } from 'next/server'
 import { refreshCatalogSignals, type SignalsResult } from '@/lib/catalogsignals'
 import { openRun, runChain } from '@/lib/chain'
@@ -16,6 +15,7 @@ import {
   runPageSlice,
   type PageSliceResult,
 } from '@/lib/pagejob'
+import { revalidateSitePath } from '@/lib/revalidate'
 import { getDb, nowSec } from '@/lib/server'
 
 export const dynamic = 'force-dynamic'
@@ -101,7 +101,7 @@ export async function GET(req: Request) {
           // неделю (lib/gamecache), и без сброса свежие pros/cons и кадры
           // ждали бы её конца. Сверка сигналов карточки не сбрасывает: её
           // шаг — неделя, ровно срок кэша, и он доезжает сам
-          const slice = resetSliceCards(await runPageSlice(db, { deadlineAt }), revalidatePath)
+          const slice = resetSliceCards(await runPageSlice(db, { deadlineAt }), revalidateSitePath)
           const сигналы = await сверка
           return { ...slice, ...(сигналы ? { сигналы } : {}) }
         } finally {
@@ -122,7 +122,7 @@ export async function GET(req: Request) {
        * достанется следующему запуску. Исключение глотает runChain.
        */
       onEnd: async () => {
-        await revalidateEndedDeals(db, revalidatePath, nowSec())
+        await revalidateEndedDeals(db, revalidateSitePath, nowSec())
       },
     }),
   )
