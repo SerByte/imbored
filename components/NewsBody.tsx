@@ -1,6 +1,7 @@
+import { tr, type Locale } from '@/lib/i18n'
 import { blocksToText, stripBbcode, type Inline, type NewsBlock } from '@/lib/steamhtml'
 import { linkLabel } from '@/lib/linklabel'
-import { textLang } from '@/lib/textlang'
+import { textLangOn } from '@/lib/textlang'
 
 /**
  * Рендер тела патчноута. Серверный, без единой строчки JS на клиенте.
@@ -24,6 +25,13 @@ import { textLang } from '@/lib/textlang'
  * подзаголовок «v1.2» или пункт «FPS» по отдельности языка не выдают, а
  * большинство по всему тексту выдаёт. Цена — двуязычный пост целиком
  * читается голосом того языка, которого в нём больше.
+ *
+ * locale — язык страницы, пропсом, а не useLocale(): хуков здесь нет, и
+ * компонент рисуется и серверной страницей патча, и островками ленты
+ * (PatchRow, GameNews) — все трое знают язык сами. На /en чужой стала
+ * кириллица: textLangOn помечает русское тело lang="ru". Показывать ли тело
+ * на /en вообще (оно бывает не английским), решает вызывающий — здесь только
+ * голос.
  */
 
 function Runs({ runs }: { runs: Inline[] }) {
@@ -56,7 +64,15 @@ function Runs({ runs }: { runs: Inline[] }) {
   )
 }
 
-export function NewsBody({ blocks, className = '' }: { blocks: NewsBlock[]; className?: string }) {
+export function NewsBody({
+  blocks,
+  className = '',
+  locale = 'ru',
+}: {
+  blocks: NewsBlock[]
+  className?: string
+  locale?: Locale
+}) {
   if (!blocks.length) return null
   return (
     /*
@@ -67,7 +83,7 @@ export function NewsBody({ blocks, className = '' }: { blocks: NewsBlock[]; clas
       и обрезалась предком, то есть хвост адреса было не прочитать.
     */
     <div
-      lang={textLang(blocksToText(blocks))}
+      lang={textLangOn(locale, blocksToText(blocks))}
       className={`flex flex-col gap-3 text-sm leading-relaxed break-words text-dim ${className}`}
     >
       {blocks.map((b, i) => {
@@ -131,5 +147,26 @@ export function NewsBody({ blocks, className = '' }: { blocks: NewsBlock[]; clas
         )
       })}
     </div>
+  )
+}
+
+/**
+ * Что стоит на /en вместо тела, которое не английское.
+ *
+ * Посты опрашиваются с l=russian (lib/news), и у издателей с переводом тело
+ * приходит русским, а русского на /en нет (docs/i18n.md, п. 8–9): там вместо
+ * тела — честная строка, а сам патч открывается ссылкой «Original on Steam»,
+ * которая у всех трёх мест стоит строкой ниже. Русская ветка — та же фраза о
+ * своём языке; на русской странице тело показывается всегда, и она не
+ * рисуется.
+ */
+export function ForeignBody({ locale }: { locale: Locale }) {
+  return (
+    <p className="text-sm leading-relaxed text-dim">
+      {tr(locale, {
+        ru: 'Текста патча на этом языке у нас нет — оригинал в Steam по ссылке ниже.',
+        en: "We don't have these patch notes in English. The original is on Steam — link below.",
+      })}
+    </p>
   )
 }

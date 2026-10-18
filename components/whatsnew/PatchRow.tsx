@@ -5,7 +5,8 @@ import Link from '@/components/Link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameLink } from '@/components/GameLink'
-import { NewsBody } from '@/components/NewsBody'
+import { useLocale } from '@/components/LocaleProvider'
+import { ForeignBody, NewsBody } from '@/components/NewsBody'
 import { DiscountEnds, PriceTag } from '@/components/PriceTag'
 import type { FeedItem } from '@/lib/db'
 import { artCandidates } from '@/lib/art'
@@ -13,12 +14,13 @@ import type { Discount } from '@/lib/discount'
 import type { NewsBlock } from '@/lib/steamhtml'
 import type { FeedMeta } from '@/lib/whatsnewfeed'
 import { byline } from '@/lib/byline'
+import { fmtNumber, tr } from '@/lib/i18n'
 import { indexedNewsPath, newsPath } from '@/lib/newspage'
 import { changesLabel, freshness } from './format'
 import { useNow } from './Now'
 import { MetaLine } from '@/components/Labels'
 import { stripGameName } from '@/lib/patchtitle'
-import { textLang } from '@/lib/textlang'
+import { textLangOn } from '@/lib/textlang'
 import { Icon } from '@/components/Icon'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -58,6 +60,12 @@ const HOVER_INTENT_MS = 120
  * виден сразу, не из-под раскрытого патча. Своей игре из библиотеки строка
  * цены не нужна, даже на общей вкладке: покупать там нечего (решает страница
  * по owned из resolveWhatsNew).
+ *
+ * item.title и item.tldr приходят уже на языке страницы — их собирает сервер
+ * (rowOn в app/[lang]/whatsnew/page.tsx): на /en заголовок — newsTitleOn,
+ * пересказ — английский или никакого. Здесь по-английски только подписи, а
+ * тело на /en показывается, только если оно английское (признак english
+ * с /api/news): иначе — строка о том, что оригинал в Steam.
  */
 export function PatchRow({
   item,
@@ -90,7 +98,10 @@ export function PatchRow({
   unsold?: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const locale = useLocale()
   const [blocks, setBlocks] = useState<NewsBlock[] | null>(null)
+  /** Тело английское (/api/news); false — на /en вместо тела ссылка на оригинал */
+  const [english, setEnglish] = useState<boolean | null>(null)
   const [failed, setFailed] = useState(false)
   /*
    * Ref, а не состояние: «запрос уже ушёл» не влияет на разметку, зато
@@ -107,8 +118,10 @@ export function PatchRow({
     setFailed(false)
     fetch(`/api/news?appid=${item.appid}&gid=${encodeURIComponent(item.gid)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((d: { blocks?: unknown }) => {
+      .then((d: { blocks?: unknown; english?: unknown }) => {
         if (!Array.isArray(d.blocks)) throw new Error('shape')
+        // Без признака (ответ старого кэша грани) — как раньше: тело показывается
+        setEnglish(typeof d.english === 'boolean' ? d.english : null)
         setBlocks(d.blocks as NewsBlock[])
       })
       .catch(() => {
@@ -137,8 +150,9 @@ export function PatchRow({
   // подпись тикает сама, вне его — как раньше
   const now = useNow(nowSec)
 
-  const name = meta?.name ?? `Игра ${item.appid}`
+  const name = meta?.name ?? tr(locale, { ru: `Игра ${item.appid}`, en: `Game ${item.appid}` })
   const studio = byline(meta?.developer, meta?.releaseYear)
+  const online = meta?.ccu ? fmtNumber(locale, meta.ccu) : null
   // Ровно тот же файл, что грузит GameArt строкой ниже: заливка размывается в
   // кашу, разрешение ей не нужно, а вот второй загрузки hero-арта на каждую
   // строку ленты телефон бы не простил.
@@ -150,10 +164,11 @@ export function PatchRow({
   // Каждый пятый заголовок из Steam начинается именно с него.
   const heading = stripGameName(item.title, name)
   // Заголовок из Steam обычно английский («Patch 0.5.1 Has Been Released»),
-  // а страница — lang="ru": без пометки его читают русским голосом. Пересказ
-  // ниже наш и русский — пометки не получает. Название игры в подсчёт не
-  // входит: «Обновление Counter-Strike 2» — русский заголовок. См. lib/textlang.
-  const headingLang = textLang(heading, name)
+  // а страница — lang="ru": без пометки его читают русским голосом. На /en
+  // наоборот — чужим становится русский (textLangOn). Пересказ ниже наш и на
+  // языке страницы — пометки не получает. Название игры в подсчёт не входит:
+  // «Обновление Counter-Strike 2» — русский заголовок. См. lib/textlang.
+  const headingLang = textLangOn(locale, heading, name)
   // null — страницы нет в поиске (без пересказа, игра вне каталога — это
   // бывает в личной ленте): заголовок тогда просто текст, см. indexedNewsPath
   const href = indexedNewsPath(item)
@@ -221,9 +236,9 @@ export function PatchRow({
           ) : null}
 
           <MetaLine className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span>{freshness(item.publishedAt, now)}</span>
-            {changes > 0 ? <span>{changesLabel(changes)}</span> : null}
-            {meta?.ccu ? <span>{meta.ccu.toLocaleString('ru-RU')} в игре</span> : null}
+            <span>{freshness(item.publishedAt, now, locale)}</span>
+            {changes > 0 ? <span>{changesLabel(changes, locale)}</span> : null}
+            {online ? <span>{tr(locale, { ru: `${online} в игре`, en: `${online} in game` })}</span> : null}
           </MetaLine>
         </span>
 
@@ -251,7 +266,10 @@ export function PatchRow({
           // Видимого текста у кнопки больше нет — только шеврон. Имя — то, что
           // она покажет; игра в нём затем, что в ленте патчи разных игр, а
           // заголовки у них бывают одинаковые («Update»)
-          aria-label={`Что изменилось: ${name}, ${heading}`}
+          aria-label={tr(locale, {
+            ru: `Что изменилось: ${name}, ${heading}`,
+            en: `What changed: ${name}, ${heading}`,
+          })}
           className="mt-1 shrink-0 rounded-full text-dim before:absolute before:inset-0"
         >
           <span
@@ -280,7 +298,10 @@ export function PatchRow({
             // а ритм строки не меняется
             className="-my-1.5 inline-flex items-center gap-1.5 py-1.5 font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
           >
-            Открыть игру
+            {/* Полоска стоит колонкой текста рядом с артом (pl-[108px] на
+                телефоне), и высота строки заложена в containIntrinsicSize выше:
+                английская подпись не длиннее русской */}
+            {tr(locale, { ru: 'Открыть игру', en: 'View game' })}
             <Icon name="arrow" size={16} />
           </GameLink>
         </div>
@@ -306,10 +327,17 @@ export function PatchRow({
                 />
               ) : null}
               {blocks ? (
-                <NewsBody blocks={blocks} />
+                locale === 'en' && english === false && blocks.length ? (
+                  <ForeignBody locale={locale} />
+                ) : (
+                  <NewsBody blocks={blocks} locale={locale} />
+                )
               ) : failed ? (
                 <p className="text-sm leading-relaxed text-dim">
-                  Не удалось загрузить патч. Он открывается по ссылке ниже.
+                  {tr(locale, {
+                    ru: 'Не удалось загрузить патч. Он открывается по ссылке ниже.',
+                    en: "Couldn't load the patch notes. You can open them with the link below.",
+                  })}
                 </p>
               ) : (
                 /* Скелет ровно на высоту абзаца: без него панель раскрывается
@@ -336,13 +364,13 @@ export function PatchRow({
                   prefetch={false}
                   className="tap tap-tight font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
                 >
-                  Отдельной страницей
+                  {tr(locale, { ru: 'Отдельной страницей', en: 'Open as a page' })}
                 </Link>
                 <GameLink
                   appid={item.appid}
                   className="tap tap-tight font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
                 >
-                  Все патчи игры
+                  {tr(locale, { ru: 'Все патчи игры', en: 'All game patches' })}
                 </GameLink>
                 <a
                   href={item.url}
@@ -350,7 +378,7 @@ export function PatchRow({
                   rel="noopener noreferrer"
                   className="tap tap-tight text-dim underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
                 >
-                  Оригинал в Steam
+                  {tr(locale, { ru: 'Оригинал в Steam', en: 'Original on Steam' })}
                 </a>
               </div>
             </div>

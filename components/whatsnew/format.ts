@@ -12,16 +12,14 @@
 export { freshness } from '@/lib/freshness'
 
 /*
- * Склонение берётся из lib/plural — той же копии, что и во всём остальном
- * продукте. Своя жила здесь и делала ровно то же самое: две реализации одной
- * функции расходятся молча, а на склонениях в этом проекте уже обжигались
- * (см. lib/pluraluse.test.ts).
+ * Склонение — через pl() из lib/i18n: русская ветка — та же lib/plural, что и
+ * во всём остальном продукте. Своя копия жила здесь и делала ровно то же
+ * самое: две реализации одной функции расходятся молча, а на склонениях в
+ * этом проекте уже обжигались (см. lib/pluraluse.test.ts).
  */
-import { plural } from '@/lib/plural'
+import { fmtNumber, pl, type Locale } from '@/lib/i18n'
 
-/** «31 правка» / «3 правки» / «12 правок» */
-export function changesLabel(n: number): string {
-  return `${n.toLocaleString('ru-RU')} ${plural(n, 'правка', 'правки', 'правок')}`
+/** «31 правка» / «3 правки» / «12 правок»; «1 change» / «12 changes» */
+export function changesLabel(n: number, locale: Locale = 'ru'): string {
+  return `${fmtNumber(locale, n)} ${pl(locale, n, { ru: ['правка', 'правки', 'правок'], en: ['change', 'changes'] })}`
 }
-
-
