@@ -2,6 +2,8 @@
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from 'react'
 import { Icon, type IconName } from '@/components/Icon'
+import { useLocale } from '@/components/LocaleProvider'
+import { tr } from '@/lib/i18n'
 import { trackShare, type ShareKind } from '@/lib/track'
 
 export type ShareState = 'idle' | 'done' | 'manual'
@@ -91,6 +93,8 @@ export function useShareLink(
   onManual?: () => void,
 ) {
   const [state, setState] = useState<ShareState>('idle')
+  // Отклик и живая область — на языке страницы; подписи в покое приносит место
+  const locale = useLocale()
   const coarse = useSyncExternalStore(subscribeCoarse, readCoarse, () => false)
   const native = coarse && what !== null
   /*
@@ -166,7 +170,7 @@ export function useShareLink(
     if (state === 'done') {
       return (
         <ShareMark icon="check" size={o.iconSize}>
-          Скопировано
+          {tr(locale, { ru: 'Скопировано', en: 'Copied' })}
         </ShareMark>
       )
     }
@@ -186,7 +190,11 @@ export function useShareLink(
    */
   const status = (
     <span role="status" className="sr-only">
-      {state === 'done' ? 'Ссылка скопирована' : state === 'manual' ? 'Скопировать не вышло' : ''}
+      {state === 'done'
+        ? tr(locale, { ru: 'Ссылка скопирована', en: 'Link copied' })
+        : state === 'manual'
+          ? tr(locale, { ru: 'Скопировать не вышло', en: "Couldn't copy the link" })
+          : ''}
     </span>
   )
 
@@ -250,6 +258,7 @@ export function ShareLinkField({
   counted?: boolean
 }) {
   const ref = useRef<HTMLInputElement>(null)
+  const locale = useLocale()
   const share = useShareLink(what, () => url, title, text, () => {
     ref.current?.focus()
     ref.current?.select()
@@ -266,7 +275,11 @@ export function ShareLinkField({
     <div className="join is-link">
       <ShareLinkInput url={url} label={label} inputRef={ref} />
       <button type="button" onClick={press} className="btn-ember is-block whitespace-nowrap px-5">
-        {share.label('Скопировать', { native: 'Отправить', manual: 'Скопируй вручную' })}
+        {/* Кнопка делит пилюлю с полем: английские подписи не длиннее русских */}
+        {share.label(tr(locale, { ru: 'Скопировать', en: 'Copy' }), {
+          native: tr(locale, { ru: 'Отправить', en: 'Share' }),
+          manual: tr(locale, { ru: 'Скопируй вручную', en: 'Copy it manually' }),
+        })}
       </button>
       {share.status}
     </div>

@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
+import { fmtNumber } from '@/lib/i18n'
 
 /** useLayoutEffect на сервере предупреждает — на сервере он нам и не нужен. */
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
@@ -19,6 +21,8 @@ const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayout
  * 3. Разделитель тысяч в ru-RU — неразрывный пробел (2 847). Форматируем ЦЕЛОЕ
  *    число на каждом кадре, поэтому разделитель остаётся на месте сам собой;
  *    крутить его посимвольно нельзя — число будет ездить по горизонтали.
+ *    Запись — на языке страницы (на /en — 2,847): язык из контекста, а не
+ *    пропом, — серверные страницы, которые ставят число, его не передают.
  */
 export function CountNumber({
   value,
@@ -53,7 +57,8 @@ export function CountNumber({
   prefix?: string
   className?: string
 }) {
-  const fmt = (n: number) => `${prefix}${Math.round(n).toLocaleString('ru-RU')}${suffix}`
+  const locale = useLocale()
+  const fmt = (n: number) => `${prefix}${fmtNumber(locale, Math.round(n))}${suffix}`
   const [shown, setShown] = useState(value)
   /** Предыдущее показанное значение — для fromPrevious */
   const prev = useRef(0)
