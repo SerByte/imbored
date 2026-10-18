@@ -164,9 +164,13 @@ describe('FeedLink: ответ на выпуск', () => {
     const at = src.indexOf('if (res.status === 401) {')
     expect(at).toBeGreaterThan(-1)
     const branch = src.slice(at, src.indexOf('if (res.status === 429)', at))
-    expect(branch).toContain("href={verified ? steamLoginFor('/whatsnew') : lp(locale, bounceTo('/whatsnew'))}")
+    // Путь входа — на языке страницы (lp): с /en вход везёт lang=en и возвращает на /en/whatsnew
+    expect(branch).toContain(
+      "href={verified ? steamLoginFor(lp(locale, '/whatsnew')) : lp(locale, bounceTo('/whatsnew'))}",
+    )
     expect(bounceTo('/whatsnew')).toBe('/?next=%2Fwhatsnew')
     expect(steamLoginFor('/whatsnew')).toBe('/api/auth/steam?next=%2Fwhatsnew')
+    expect(steamLoginFor('/en/whatsnew')).toBe('/api/auth/steam?next=%2Fwhatsnew&lang=en')
   })
 
   test('тело читается с копии — отказ потом разберёт isNeedSteam', async () => {

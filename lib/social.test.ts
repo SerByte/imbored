@@ -98,7 +98,6 @@ describe('превью в мессенджерах', () => {
   test('страницы без своей карточки объявляют свой адрес', () => {
     const own: Record<string, string> = {
       'app/[lang]/page.tsx': '/',
-      'app/[lang]/whatsnew/page.tsx': '/whatsnew',
       'app/[lang]/games/page.tsx': '/games',
       'app/[lang]/privacy/page.tsx': '/privacy',
       'app/[lang]/support/page.tsx': '/support',
@@ -110,6 +109,11 @@ describe('превью в мессенджерах', () => {
     for (const [file, url] of Object.entries(own)) {
       expect(read(file), file).toMatch(new RegExp(`export const generateMetadata = ownAddress\\('${url}'`))
     }
+    // /whatsnew зовёт ownAddress из функции: заголовок, описание и адрес RSS у
+    // него на языке страницы, а own у ownAddress один на все языки
+    expect(read('app/[lang]/whatsnew/page.tsx')).toMatch(
+      /export async function generateMetadata\([\s\S]*?return ownAddress\('\/whatsnew', \{/,
+    )
   })
 
   test('у каждого своего openGraph есть свой url и canonical', () => {
