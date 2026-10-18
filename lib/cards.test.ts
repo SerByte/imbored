@@ -15,7 +15,7 @@ import { createDb, setNewsDigest, upsertNewsItems } from './db'
 import { NEUTRAL_MOOD } from './mood'
 import { topTags } from './recommend'
 import { HERO_SLIDES } from './shots'
-import type { GameMeta, LibraryGame } from './types'
+import type { GameMeta, GameSemantics, LibraryGame } from './types'
 
 /**
  * Карточка выдачи — один контракт на /play, «Игру дня» и колоду
@@ -301,6 +301,53 @@ describe('карточки по-английски', () => {
       about: RU,
       russian: 'русские субтитры',
     })
+  })
+
+  /*
+   * Поля, которые строят чужие модули: длина сессии (sessionTrait),
+   * настроение словами (explainMatch → moodWordsOf) и срок распродажи
+   * (discountView → endsLabel). Язык карточки обязан доехать до каждого.
+   */
+  test('сессия, настроение словами и срок скидки — на языке карточки у всех пяти', () => {
+    const semantics: GameSemantics = {
+      v: 1,
+      axes: { challenge: 20, complexity: 50, pace: 20 },
+      session: { bucket: 'medium', minutes: 40, canStopAnytime: false },
+      timeToFun: { bucket: null, hours: null },
+      confidence: 0.8,
+      n: 80,
+      basis: 'tags+reviews',
+    }
+    const g = latin(20, { semantics, discountEndsAt: NOW + 2 * 86_400 })
+    const pick = { appid: 20, name: 'Game 20', source: 'new' as const, reason: 'Because you like puzzles.' }
+    const day = { reason: pick.reason, sharedTags: [], hoursPlayed: null, hideUrgency: false }
+    const shelf = { now: NOW, owned: false, hideUrgency: false }
+
+    const en = pickContext(set([g], []), undefined, undefined, 'en')
+    const card = cardView(pick, en)
+    expect(card.session).toEqual({ label: 'Session', value: '~40 min' })
+    expect(card.signals?.moodWords).toEqual(['calm', 'unhurried', 'an hour at a time'])
+    expect(card.discount?.endsLabel).toBe('2 days left')
+    const plate = exploreCardView(pick, en)
+    expect(plate.session).toEqual({ label: 'Session', value: '~40 min' })
+    expect(plate.discount?.endsLabel).toBe('2 days left')
+    expect(storeCardView(pick, g, NOW, false, 'en').discount?.endsLabel).toBe('2 days left')
+    expect(dailyCardView(pick, g, NOW, day, 'en').discount?.endsLabel).toBe('2 days left')
+    expect(shelfCardView(g, { ...shelf, locale: 'en' }).discount?.endsLabel).toBe('2 days left')
+    expect(
+      CYRILLIC.test(JSON.stringify([card.session, card.signals, card.discount, plate.session, plate.discount])),
+    ).toBe(false)
+
+    // Без языка — прежние русские строки
+    const ru = pickContext(set([g], []))
+    const ruCard = cardView(pick, ru)
+    expect(ruCard.session).toEqual({ label: 'Сессия', value: '~40 мин' })
+    expect(ruCard.signals?.moodWords).toEqual(['спокойная', 'неторопливая', 'заход на час'])
+    expect(ruCard.discount?.endsLabel).toBe('осталось 2 дня')
+    expect(exploreCardView(pick, ru).session).toEqual({ label: 'Сессия', value: '~40 мин' })
+    expect(storeCardView(pick, g, NOW, false).discount?.endsLabel).toBe('осталось 2 дня')
+    expect(dailyCardView(pick, g, NOW, day).discount?.endsLabel).toBe('осталось 2 дня')
+    expect(shelfCardView(g, shelf).discount?.endsLabel).toBe('осталось 2 дня')
   })
 
   test('плитка полки принимает язык и прежнюю форму без него', () => {

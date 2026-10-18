@@ -1,7 +1,16 @@
 import { createClient } from '@libsql/client'
 import { describe, expect, test } from 'vitest'
 import { loadCompat, loadCompatInvite, loadInviteHead, nameOf } from './compatpage'
-import { migrateDb, saveLibrarySnapshot, updateGamePrices, upsertGamesMeta, upsertUser, type Db } from './db'
+import {
+  migrateDb,
+  replaceGameTags,
+  saveLibrarySnapshot,
+  updateGamePrices,
+  upsertGamesMeta,
+  upsertUser,
+  type Db,
+} from './db'
+import { rotationSlot } from './pool'
 import { hiddenLibrary, hiddenLibraryMetas } from './testing/hiddenlibrary'
 import { roundsOf } from './testing/rounds'
 import type { LibraryGame } from './types'
@@ -225,6 +234,38 @@ describe('совместимость по-английски', () => {
     for (const p of [...state.data.playNow, ...state.data.playLater]) {
       for (const n of p.missingFor) expect(['Player 0032', 'Demo friend']).toContain(n)
     }
+  })
+
+  /*
+   * Полка «на будущее» несёт скидку вместе с подписью срока (discountView), и
+   * подпись — строка для человека: на /en «2 days left», а не «осталось 2 дня».
+   */
+  test('срок скидки на полке «на будущее» — на языке страницы', async () => {
+    const db = await freshDb()
+    await seedLatin(db)
+    // Delta есть только у OPEN: у пары она — покупка, со скидкой и сроком. На
+    // полку она приходит из каталога по общему тегу пары (fetchDiscoveryPool)
+    const DELTA = 2003
+    await replaceGameTags(db, DELTA, [{ tag: 'Co-op', weight: 100 }])
+    // Каталожное окно пары сдвигается по неделям (rotationSlot), и в каталоге
+    // из одной игры окно со сдвигом пусто — берём неделю без сдвига
+    let now = NOW
+    while (rotationSlot([OPEN, DEMO_FRIEND].sort().join(':'), now) !== 0) now += 7 * 86_400
+    await updateGamePrices(
+      db,
+      [{ appid: DELTA, priceFinal: 749, priceInitial: 1499, discountPercent: 50, discountEndsAt: now + 2 * 86_400 }],
+      now,
+    )
+    const delta = async (locale?: 'en') => {
+      const state = await loadCompat(db, { other: DEMO_FRIEND, me: OPEN, now, locale })
+      if (state.kind !== 'ok') throw new Error(state.kind)
+      return [...state.data.playNow, ...state.data.playLater].find((p) => p.appid === DELTA)
+    }
+    const en = await delta('en')
+    expect(en?.discount?.endsLabel).toBe('2 days left')
+    expect(JSON.stringify(en)).not.toMatch(CYRILLIC)
+    // без языка — прежняя русская подпись
+    expect((await delta())?.discount?.endsLabel).toBe('осталось 2 дня')
   })
 
   test('без профиля: демо-ник на языке страницы, пустой — null', async () => {

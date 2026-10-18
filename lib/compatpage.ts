@@ -367,6 +367,9 @@ export async function loadCompat(
     metaOf,
     extraPool,
     limit: DECK_SIZE,
+    // Язык подписи закреплённой карты (pinnedReason). Закреплённой у пары нет,
+    // но колода одна на комнату и сравнение, и язык идёт в неё одинаково
+    locale,
   })
 
   /*
@@ -415,8 +418,9 @@ export async function loadCompat(
       ...(регион ? { priceCc: регион } : {}),
       ...(нетВРегионе ? { unsold: true } : {}),
       // Скидка нужна только там, где кому-то придётся покупать: у общей игры
-      // цена в разговоре не участвует, у бесплатной — тем более
-      discount: meta && !c.ownedByAll && !бесплатная ? discountView(meta, now) : null,
+      // цена в разговоре не участвует, у бесплатной — тем более. Срок
+      // распродажи (endsLabel) — на языке страницы: «2 days left» на /en
+      discount: meta && !c.ownedByAll && !бесплатная ? discountView(meta, now, { locale }) : null,
       tags: c.tags,
       ...(c.store ? { store: c.store } : {}),
     }

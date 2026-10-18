@@ -71,13 +71,10 @@ export type PickContext = {
   patchOf: (appid: number) => string | null
   /**
    * Язык карточек: на нём «О чём игра», страница магазина у игр не из Steam
-   * и всё, что карточка говорит словами. Русский по умолчанию — так
-   * контекст собирают все прежние вызывающие.
-   *
-   * TODO(W1.5): три поля карточки на en пока русские — их строят чужие
-   * модули, языка они ещё не берут: session (sessionTrait, lib/gametraits),
-   * signals (explainMatch, lib/recommend) и discount.endsLabel (discountView,
-   * lib/discount — язык уже доходит до buyView, осталось передать дальше).
+   * и всё, что карточка говорит словами, — длина сессии (sessionTrait),
+   * настроение словами (explainMatch → moodWords) и срок распродажи
+   * (discountView → endsLabel). Русский по умолчанию — так контекст собирают
+   * все прежние вызывающие.
    */
   locale: Locale
 }
@@ -224,22 +221,20 @@ function shopView(meta: GameMeta | undefined, now: number, locale: Locale) {
  * купил её дороже. Скидка считается на сервере вместе с подписью срока: у
  * клиента свой часовой пояс, и «до 17 августа» разъехалось бы при гидратации.
  *
- * locale — язык подписи срока (discount.endsLabel). Его уже передают все пять
- * карточек, но discountView (lib/discount) своего языка пока не берёт, и
- * подпись русская на обоих языках. TODO(W1.5): discountView(meta, now,
- * { urgency, locale }) — правка одной строки здесь, без новых сигнатур.
+ * locale — язык подписи срока (discount.endsLabel: «осталось 2 дня» / «2 days
+ * left»). Его передают все пять карточек: подпись уезжает клиенту готовой
+ * строкой, и язык решает тот, кто её считает, — язык запроса.
  */
 function buyView(
   meta: GameMeta | undefined,
   source: CandidateSource,
   now: number,
   hideUrgency: boolean,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- уйдёт в discountView, см. докблок
   locale: Locale,
 ) {
   const buying = meta !== undefined && source === 'new'
   return {
-    discount: buying ? discountView(meta, now, { urgency: !hideUrgency }) : null,
+    discount: buying ? discountView(meta, now, { urgency: !hideUrgency, locale }) : null,
     refund: buying ? refundEligible(meta, now) : false,
   }
 }
@@ -288,8 +283,8 @@ export function cardView(p: LlmPick, ctx: PickContext, edge: PickEdge | null = n
     tags: topTags(meta),
     hoursPlayed: ctx.hoursOf(p.appid),
     // «Сессия ~20 мин» / «Матч ~15 мин» — из семантики, только уверенной
-    // (sessionTrait): та же строка, что на карточке игры
-    session: meta ? sessionTrait(meta) : null,
+    // (sessionTrait): та же строка, что на карточке игры, на языке карточки
+    session: meta ? sessionTrait(meta, ctx.locale) : null,
     // Цена входа (lib/entry) — только у того, что человек ещё не осваивал:
     // у своей наигранной про вход говорит причина, а не отдельная строка
     entry: meta && showsEntry(p.source) ? entryCost(meta) : null,
@@ -297,15 +292,18 @@ export function cardView(p: LlmPick, ctx: PickContext, edge: PickEdge | null = n
     // у своей и у покупки: сюжетная игра без русского — другой вечер, а на
     // полке покупок это довод «за» или «против». Готовой фразой, а не
     // ступенью: клиенту /play таблица подписей в бандле ни к чему. null —
-    // не знаем, и строки нет. На /en строки нет вовсе: «есть ли русский» —
-    // вопрос русскоязычного вечера, английскому он ничего не говорит
-    russian: ctx.locale === 'en' ? null : ruLangLine(meta?.ruLang),
+    // не знаем, и строки нет. На /en строки нет вовсе (ruLangLine даёт null):
+    // «есть ли русский» — вопрос русскоязычного вечера, английскому он
+    // ничего не говорит
+    russian: ruLangLine(meta?.ruLang, ctx.locale),
     // «92% из 48 тыс.» на плитке полки покупок: те же числа, по которым
     // confidenceMultiplier решил, насколько новинке верить
     reviewsPercent: meta?.reviewsPercent ?? null,
     reviewsTotal: meta?.reviewsTotal ?? null,
     ...buyView(meta, p.source, ctx.now, ctx.hideUrgency, ctx.locale),
-    signals: meta ? explainMatch(ctx.profile, meta, ctx.mood, ctx.tagWeight) : null,
+    // Совпадение со вкусом: процент, теги (ключами — подписывает клиент) и
+    // настроение словами из семантики — на языке карточки
+    signals: meta ? explainMatch(ctx.profile, meta, ctx.mood, ctx.tagWeight, ctx.locale) : null,
     // Своя игра, на которую эта похожа. Причина от модели может её не
     // назвать — тогда /play добавляет строку сам, в «Почему она?»
     via: ctx.anchorOf(p.appid),
@@ -370,7 +368,7 @@ export function storeCardView(
     name: c.name,
     ...shopView(meta, now, locale),
     discount: buyView(meta, 'new', now, hideUrgency, locale).discount,
-    russian: locale === 'en' ? null : ruLangLine(meta?.ruLang),
+    russian: ruLangLine(meta?.ruLang, locale),
   }
 }
 
@@ -414,7 +412,7 @@ export function dailyCardView(
     ccu: meta?.ccu ?? null,
     ccuAt: meta?.ccuAt ?? null,
     // Та же фраза о русском, что у героя /play (cardView); null — не знаем
-    russian: locale === 'en' ? null : ruLangLine(meta?.ruLang),
+    russian: ruLangLine(meta?.ruLang, locale),
     tags: topTags(meta),
     // Чипсы совпавших тегов помечаются на экране, и метка обязана считаться
     // там же, где лежит профиль вкуса, — то есть в отборе; здесь она из
@@ -459,7 +457,7 @@ export function exploreCardView(p: LlmPick, ctx: PickContext) {
     art: shop.art,
     ccu: meta?.ccu ?? null,
     ccuAt: meta?.ccuAt ?? null,
-    session: meta ? sessionTrait(meta) : null,
+    session: meta ? sessionTrait(meta, ctx.locale) : null,
     tags: topTags(meta),
     ...(shop.store ? { store: shop.store } : {}),
     ...(shop.storeUrl ? { storeUrl: shop.storeUrl } : {}),
@@ -487,9 +485,8 @@ export type ShareView = { share: { text: string; sig: string; lang?: 'en' } }
  * не купленного (buyView), срок распродажи молчит при большом бэклоге.
  * Своя игра — без цены вовсе: её не покупают.
  *
- * opts.locale — язык плитки; по умолчанию русский. Сейчас от него зависит
- * только страница магазина у игр не из Steam (shopView): подпись срока
- * скидки он получит вместе с discountView, см. TODO(W1.5) у buyView.
+ * opts.locale — язык плитки; по умолчанию русский. От него зависят страница
+ * магазина у игр не из Steam (shopView) и подпись срока скидки (buyView).
  */
 export function shelfCardView(
   meta: GameMeta,
