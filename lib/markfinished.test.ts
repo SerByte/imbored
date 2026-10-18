@@ -1,8 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { createElement } from 'react'
+import { createElement, type ComponentProps, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
+import { LocaleProvider } from '../components/LocaleProvider'
 import { FinishedNote, MarkFinished } from '../components/MarkFinished'
 import { quizHref } from './presets'
 
@@ -170,5 +171,43 @@ describe('«Уже прошёл» вне выдачи', () => {
     // и ответ «как тебе?»: снятый со спрашиваемых, он уходил бы с первым же пересчётом
     const answer = evenings.slice(evenings.indexOf('async function answer('), evenings.indexOf('return (\n'))
     expect(answer).toMatch(/keep\(item\)/)
+  })
+})
+
+/**
+ * На /en кнопка, подсказка и строка «Пройдено» — по-английски: язык островок
+ * берёт из контекста (useLocale), пропов у него не прибавилось — страница
+ * игры и «Твои вечера» зовут его как раньше. Отказ — та же строка, что
+ * DONE_MISS у героя /play.
+ */
+describe('«Уже прошёл» на /en', () => {
+  const en = (el: ReactElement) =>
+    renderToStaticMarkup(createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, el))
+
+  test('кнопка и подсказка — английские, игра в имени после видимых слов', () => {
+    const out = en(
+      createElement(MarkFinished, {
+        appid: 367520,
+        name: 'Hollow Knight',
+        from: 'library',
+        onDenied: () => {},
+        className: 'btn-glass',
+      }),
+    )
+    expect(out).toContain('class="btn-glass">Already finished<span class="sr-only"> “Hollow Knight”</span></button>')
+    expect(out).toContain('title="Don&#x27;t suggest it again. You can bring it back from the “Finished” shelf in your library"')
+    expect(out).not.toMatch(/[а-яё]/i)
+  })
+
+  test('строка «Пройдено» и дорога дальше — английские, ссылка на /en', () => {
+    const href = `/en${quizHref(null, 367520)}`.replace(/&/g, '&amp;')
+    const out = en(createElement(FinishedNote, { appid: 367520, name: 'Hollow Knight', follow: true }))
+    expect(out).toContain('Finished — won&#x27;t suggest it again · ')
+    expect(out).toContain(`href="${href}">Next: more like “Hollow Knight”</a>`)
+    expect(out).not.toMatch(/[а-яё]/i)
+  })
+
+  test('отказ по-английски — слово в слово DONE_MISS героя /play', () => {
+    expect(CODE).toContain("en: `Couldn't mark “${name}” as finished — try again.`")
   })
 })

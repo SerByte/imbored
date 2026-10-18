@@ -182,3 +182,28 @@ describe('WishlistShelf: протухшее перечитывается', () =>
     expect(html).toContain(`1${NB}399${NB}₽`)
   })
 })
+
+/**
+ * На /en полка говорит по-английски: заголовок, ссылка на весь список и
+ * подпись региона цен (byPrices) — язык приходит пропом от страницы.
+ * Ценник рисует общий PriceTag, его текст здесь не проверяется.
+ */
+describe('WishlistShelf на /en', () => {
+  test('подписи полки — английские, регион цен назван честно', async () => {
+    await upsertGamesMeta(db, [game(1086940, "Baldur's Gate 3")], NOW)
+    const el = await WishlistShelf({
+      steamid: ME,
+      sid: SID,
+      row: { takenAt: NOW - 60, closed: false, appids: [1086940] },
+      owned: new Set(),
+      now: NOW,
+      locale: 'en',
+    })
+    const html = el && isValidElement(el) ? renderToStaticMarkup(el as ReactElement) : ''
+    expect(html).toContain('>Wishlist<')
+    expect(html).toContain('Wishlist price drops')
+    expect(html).toContain('Full list on Steam')
+    expect(html).toContain('Games on your wishlist that are on sale right now, at Russian Steam prices.')
+    expect(html).not.toMatch(/Список желаемого|Из желаемого|Весь список|по ценам/)
+  })
+})

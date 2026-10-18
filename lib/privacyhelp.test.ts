@@ -110,7 +110,7 @@ describe('каждое место панели даёт ей проверку', 
     ['app/[lang]/play/page.tsx', 'readOnly ? undefined : steamLoginFor(lp(locale, `/play?${search}`))'],
     ['app/[lang]/daily/page.tsx', "readOnly ? undefined : steamLoginFor(lp(locale, '/daily'))"],
     ['app/[lang]/explore/page.tsx', "readOnly ? undefined : steamLoginFor(lp(locale, '/explore'))"],
-    ['app/[lang]/library/page.tsx', "session && isWriter(session) ? steamLoginFor('/library') : undefined"],
+    ['app/[lang]/library/page.tsx', "session && isWriter(session) ? steamLoginFor(lp(locale, '/library')) : undefined"],
   ])('%s: проверка — вход через Steam обратно сюда', (file, expr) => {
     const tag = tags().find((t) => t.file === file)?.tag ?? ''
     expect(tag).toContain(`retryHref={${expr}}`)

@@ -17,9 +17,10 @@ import {
   type Db,
 } from '@/lib/db'
 import { feedTokenHash, newFeedToken } from '@/lib/feedlink'
+import { OTHER_STORE_GAMES } from '@/lib/otherstores'
 import { nowSec } from '@/lib/server'
 import { freshDb, signInAs, STEAMID_OF, type SessionKind } from '@/lib/testing/route'
-import LibraryPage from './page'
+import LibraryPage, { generateMetadata } from './page'
 import { WishlistShelf } from './WishlistShelf'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -393,5 +394,88 @@ describe('/library: выход везде знает про RSS-ссылку', (
   // Выхода везде у демо и у сессии по ссылке нет — и ссылку им незачем читать
   test.each<SessionKind>(['demo', 'claimed'])('%s — без выхода везде ссылка не читается', async (kind) => {
     expect(await signOutProps(kind, true)).toEqual([{ verified: false, feedLink: false }])
+  })
+})
+
+/**
+ * Английская библиотека (/en/library): страница собирает текст на сервере —
+ * подписи, сводку вечеров, их даты и минуты, — и всё это едет в разметку и в
+ * пропсы островков на языке страницы. Кириллица остаётся только в названиях
+ * игр: их не переводят (docs/i18n.md).
+ */
+describe('/library на /en', () => {
+  const en = () =>
+    LibraryPage({
+      params: Promise.resolve({ lang: 'en' }),
+      searchParams: Promise.resolve({}),
+    } as PageProps<'/[lang]/library'>)
+
+  test('текст и пропсы полок — по-английски, кириллица только в названиях игр', async () => {
+    await seed(await signInAs(db, 'openid'))
+    const tree = await en()
+    const names = new Set(Object.values(NAMES))
+    const all = strings(tree)
+    expect(all.filter((s) => /[а-яё]/i.test(s) && !names.has(s))).toEqual([])
+
+    const text = all.join(' ')
+    expect(text).toContain('How we see your library')
+    expect(text).toContain('Picks land')
+    expect(text).toContain('“Liked it” vs')
+    // Вечера: дата и минуты собраны сервером на языке страницы
+    const [evenings] = propsOf(tree, Evenings)
+    const [item] = evenings.items as Array<{ date: string; played: string }>
+    expect(item.date).toMatch(/^[A-Z][a-z]+ \d{1,2}$/)
+    expect(item.played).toBe('not checked yet')
+    // Полка желаемого берёт язык пропом: getLocale() у неё в тесте не работает
+    expect(propsOf(tree, WishlistShelf)[0].locale).toBe('en')
+  })
+
+  /*
+   * Вечер с игрой другого магазина (пул, appid < 0): /play на /en ведёт в
+   * английский магазин (storeCardView → storeUrlFor), и «Store page» на
+   * полке вечеров обязана вести туда же, а не на русскую страницу из записи
+   * пула. Русская полка — прежний адрес записи.
+   */
+  test('вечер с игрой другого магазина ведёт в магазин на языке страницы', async () => {
+    const FORTNITE = OTHER_STORE_GAMES.find((g) => g.appid === -101)!
+    const steamid = await signInAs(db, 'openid')
+    await seed(steamid)
+    await upsertGamesMeta(db, [FORTNITE], nowSec())
+    await recordOutcome(db, { steamid, appid: FORTNITE.appid, source: null, launched: true }, nowSec() - 30)
+    const storeOf = async (lang?: string) => {
+      const tree = await LibraryPage({
+        params: Promise.resolve(lang ? { lang } : {}),
+        searchParams: Promise.resolve({}),
+      } as PageProps<'/[lang]/library'>)
+      const [evenings] = propsOf(tree, Evenings)
+      const items = evenings.items as Array<{ appid: number; storeUrl: string | null }>
+      return items.find((i) => i.appid === FORTNITE.appid)?.storeUrl
+    }
+    expect(await storeOf('en')).toBe('https://store.epicgames.com/en-US/p/fortnite')
+    expect(await storeOf()).toBe('https://store.epicgames.com/ru/p/fortnite')
+  })
+
+  test('сессия по ссылке: строка о входе ведёт обратно на английскую библиотеку', async () => {
+    await seed(await signInAs(db, 'claimed'))
+    const lines = propsOf(await en(), NeedSteam)
+    expect(lines).toEqual([expect.objectContaining({ from: '/en/library', why: 'see' })])
+    const html = renderToStaticMarkup(NeedSteam(lines[0] as Parameters<typeof NeedSteam>[0]))
+    expect(html).toContain('href="/api/auth/steam?next=%2Flibrary&amp;lang=en"')
+  })
+
+  test('вкладка — на языке страницы, русская — прежняя', async () => {
+    const meta = (lang?: string) =>
+      generateMetadata({
+        params: Promise.resolve(lang ? { lang } : {}),
+        searchParams: Promise.resolve({}),
+      } as PageProps<'/[lang]/library'>)
+    expect(await meta('en')).toEqual({
+      title: 'Library',
+      description: "Your whole Steam library on one wall: what's abandoned, what's never been launched and what it all cost.",
+    })
+    expect(await meta()).toEqual({
+      title: 'Библиотека',
+      description: 'Вся твоя Steam-библиотека одной стеной: что заброшено, что ни разу не запускалось и сколько это стоило.',
+    })
   })
 })

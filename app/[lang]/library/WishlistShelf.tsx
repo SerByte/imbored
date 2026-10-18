@@ -7,6 +7,7 @@ import { trimArt } from '@/lib/art'
 import { PRICE_MAX_AGE_SEC, refreshDealsWithin } from '@/lib/deals'
 import { getGamesMetaLite, type WishlistRow } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
+import { tr, type Locale } from '@/lib/i18n'
 import { getDb } from '@/lib/server'
 import { byPrices } from '@/lib/steamregion'
 import {
@@ -27,6 +28,12 @@ type ShelfProps = {
   row: WishlistRow | null
   owned: ReadonlySet<number>
   now: number
+  /**
+   * Язык страницы. Пропом, а не getLocale(): у полки свой тест настоящим
+   * рендером (WishlistShelf.test.ts), а next/root-params вне сборки бросает
+   * при импорте. Без языка — русский, как раньше.
+   */
+  locale?: Locale
 }
 
 /**
@@ -59,15 +66,15 @@ export async function WishlistShelf(props: ShelfProps) {
     return null
   }
   if (!deals.length) return null
-  const { steamid } = props
+  const { steamid, locale = 'ru' } = props
   const cc = deals[0].priceCc
 
   return (
     <section aria-labelledby="shelf-wishlist" className="mb-12">
-      <Eyebrow className="mb-2">Список желаемого</Eyebrow>
+      <Eyebrow className="mb-2">{tr(locale, { ru: 'Список желаемого', en: 'Wishlist' })}</Eyebrow>
       <div className="flex items-baseline justify-between gap-4 flex-wrap">
         <h2 id="shelf-wishlist" className="font-display text-display-sm">
-          Из желаемого подешевело
+          {tr(locale, { ru: 'Из желаемого подешевело', en: 'Wishlist price drops' })}
         </h2>
         <a
           href={`https://store.steampowered.com/wishlist/profiles/${steamid}/`}
@@ -75,11 +82,14 @@ export async function WishlistShelf(props: ShelfProps) {
           rel="noreferrer"
           className="tap link-more shrink-0"
         >
-          Весь список — в Steam <Icon name="arrow" size={14} />
+          {tr(locale, { ru: 'Весь список — в Steam', en: 'Full list on Steam' })} <Icon name="arrow" size={14} />
         </a>
       </div>
       <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
-        Игры из твоего списка желаемого, на которые сейчас скидка, — {byPrices(cc)}.
+        {tr(locale, {
+          ru: `Игры из твоего списка желаемого, на которые сейчас скидка, — ${byPrices(cc)}.`,
+          en: `Games on your wishlist that are on sale right now, ${byPrices(cc, locale)}.`,
+        })}
       </p>
       {/* Та же лестница колонок, что у «Запечатанного», с шестью на широком:
           двенадцать плиток — два ряда */}

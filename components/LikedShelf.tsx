@@ -2,6 +2,7 @@
 
 import { AnimatePresence, m } from 'framer-motion'
 import { MotionMax } from '@/components/motion/MotionMax'
+import { useLocale } from '@/components/LocaleProvider'
 import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { GameCardBody } from '@/components/GameCard'
@@ -10,7 +11,7 @@ import { NeedSteam } from '@/components/NeedSteam'
 import { StatusLine } from '@/components/StatusLine'
 import type { GameArtUrls } from '@/lib/art'
 import { Eyebrow } from '@/components/Labels'
-import { plural } from '@/lib/plural'
+import { lp, pl, tr } from '@/lib/i18n'
 import { sendUnlike } from '@/lib/unlike'
 
 export type LikedGame = {
@@ -53,6 +54,7 @@ export function LikedShelf({
   writer: boolean
 }) {
   const router = useLocaleRouter()
+  const locale = useLocale()
   /*
    * Убранное — множеством, а плитки выводятся из пропа, а не копией в
    * состоянии: router.refresh() приносит полку заново, и шестьдесят первая
@@ -131,7 +133,14 @@ export function LikedShelf({
   const missed = failed === null ? undefined : items.find((g) => g.appid === failed)
   const miss = (
     <StatusLine
-      text={missed ? `Не вышло — «${missed.name}» осталась в «зашло». Попробуй ещё раз.` : null}
+      text={
+        missed
+          ? tr(locale, {
+              ru: `Не вышло — «${missed.name}» осталась в «зашло». Попробуй ещё раз.`,
+              en: `Didn't work — “${missed.name}” is still marked “Liked it”. Try again.`,
+            })
+          : null
+      }
       className="sr-only"
     />
   )
@@ -143,7 +152,10 @@ export function LikedShelf({
         {miss}
         <section className="mb-12">
           <p ref={emptyLine} tabIndex={-1} className="text-dim text-sm">
-            Оценок «зашло» больше нет — подбор будет судить по библиотеке и новым ответам.
+            {tr(locale, {
+              ru: 'Оценок «зашло» больше нет — подбор будет судить по библиотеке и новым ответам.',
+              en: 'No more “Liked it” ratings — picks will go by your library and your new answers.',
+            })}
           </p>
         </section>
       </>
@@ -154,17 +166,30 @@ export function LikedShelf({
     <>
       {miss}
       <section aria-labelledby="shelf-liked" className="mb-12">
-        <Eyebrow className="mb-2">Зашло</Eyebrow>
+        <Eyebrow className="mb-2">{tr(locale, { ru: 'Зашло', en: 'Liked it' })}</Eyebrow>
         <h2 id="shelf-liked" ref={heading} tabIndex={-1} className="font-display text-display-sm">
           <span className="tabular-nums text-ember-text">{shownTotal}</span>{' '}
-          {plural(shownTotal, 'игру', 'игры', 'игр')} подбор помнит как «зашло»
+          {pl(locale, shownTotal, {
+            ru: ['игру подбор помнит как «зашло»', 'игры подбор помнит как «зашло»', 'игр подбор помнит как «зашло»'],
+            en: ['game you marked “Liked it”', 'games you marked “Liked it”'],
+          })}
         </h2>
         <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
-          По ним он учится твоему вкусу: похожее — выше, пауза после «не то» снимается. Нажал по
-          ошибке или вкус поменялся — убери.
-          {shownTotal > items.length && ' Здесь — самые свежие; уберёшь лишнее — подтянутся следующие.'}
+          {/* Английский — не калька «пауза снимается»: о паузе после «Not it»
+              на сайте больше нигде не сказано, и сказать надо, что выходит
+              (cooldownOf в lib/recommend). «Your likes» — без числа: под
+              «1 game …» «these» читалось бы ошибкой */}
+          {tr(locale, {
+            ru: 'По ним он учится твоему вкусу: похожее — выше, пауза после «не то» снимается. Нажал по ошибке или вкус поменялся — убери.',
+            en: 'Picks learn your taste from your likes: similar games rank higher, and liking a game you skipped with “Not it” brings it back. Tapped by mistake or changed your mind? Remove it.',
+          })}
+          {shownTotal > items.length &&
+            tr(locale, {
+              ru: ' Здесь — самые свежие; уберёшь лишнее — подтянутся следующие.',
+              en: ' These are the latest; remove some and older ones will show up.',
+            })}
         </p>
-        {readOnly && <NeedSteam from="/library" className="mb-4" />}
+        {readOnly && <NeedSteam from={lp(locale, '/library')} className="mb-4" />}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
           {/* layout — фича domMax, её догружает MotionMax */}
           <MotionMax>
@@ -195,16 +220,19 @@ export function LikedShelf({
                         else buttons.current.delete(g.appid)
                       }}
                       onClick={() => unlike(g.appid)}
-                      aria-label={`Убрать «${g.name}» из «зашло»`}
+                      aria-label={tr(locale, {
+                        ru: `Убрать «${g.name}» из «зашло»`,
+                        en: `Remove “${g.name}” from “Liked it”`,
+                      })}
                       className="pill mt-3 self-start"
                     >
-                      Убрать
+                      {tr(locale, { ru: 'Убрать', en: 'Remove' })}
                     </button>
                   )}
                   {/* Для глаза: скринридеру отказ уже сказала строка полки (miss) */}
                   {failed === g.appid && (
                     <p aria-hidden className="px-3 pb-3 text-[11px] text-danger">
-                      Не вышло — попробуй ещё раз
+                      {tr(locale, { ru: 'Не вышло — попробуй ещё раз', en: "Didn't work — try again" })}
                     </p>
                   )}
                 </m.div>
