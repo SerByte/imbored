@@ -1,10 +1,12 @@
 import { DEMO_METAS, demoLibrary, demoLibrary2 } from './demo'
 import { filterActual } from './actual'
 import { heuristicPicks } from './llm'
+import { playContextOf } from './liveness'
 import {
   buildAnchorFinder,
   buildTagProfile,
   mixHeroPool,
+  ownFirst,
   PICK_COUNT,
   scoreCandidates,
   splitBySource,
@@ -30,7 +32,9 @@ import type { Mood } from './types'
  * ПОЧЕМУ КОНВЕЙЕР ЦЕЛИКОМ, А НЕ scoreCandidates. splitBySource и mixHeroPool
  * пропускать нельзя: потолок покупок в пятёрке (MAX_NEW_PICKS) обеспечивается
  * именно там, а не в скоринге. Без этих двух шагов обещание «покупок здесь не
- * больше двух» было бы напечатано и не обеспечено.
+ * больше двух» было бы напечатано и не обеспечено. Второе обещание той же
+ * строки — «своё идёт первым» — держит ownFirst после подбора, тот же, что
+ * у /api/recommend.
  *
  * ЧЕГО В ЭТИХ ДАННЫХ НЕТ И БЫТЬ НЕ ДОЛЖНО:
  *
@@ -170,10 +174,18 @@ export function landingDemo(nowSec: number): LandingDemo {
       nowSec,
       limit: 12,
     })
-    // Контекст живости — 'solo' | 'party', а не значение mood.social
-    const fresh = filterActual(scored, metas, mood.social === 'friends' ? 'party' : 'solo')
+    // Контекст живости — тем же правилом, что у /play (playContextOf): «Один»
+    // на главной обязан отсеять то же, что отсеет выдача после входа
+    const fresh = filterActual(scored, metas, playContextOf(mood))
     const { own, discovery } = splitBySource(fresh)
-    const chosen = heuristicPicks(mixHeroPool(own, discovery), metaOf, PICK_COUNT, nowSec, profile, reasonOpts)
+    // ownFirst — тот же, что у /api/recommend: «своё идёт первым» напечатано
+    // под этой пятёркой, и держать его должен тот же шаг, что и в продукте.
+    // На демо-данных он почти всегда холостой (скидок в DEMO_METAS нет, и
+    // покупка своё по скору не обгоняет), но без него обещание держалось бы
+    // на совпадении данных, а не на конвейере
+    const chosen = ownFirst(
+      heuristicPicks(mixHeroPool(own, discovery), metaOf, PICK_COUNT, nowSec, profile, reasonOpts),
+    )
 
     picks[key] = chosen.map((p, i) => ({
       appid: p.appid,

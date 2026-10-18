@@ -17,8 +17,11 @@ import { tagRu } from './tagsru'
  *
  * Второе, что здесь закреплено, — обещания, которые страница печатает словами:
  * «своё идёт первым» и «покупок не больше двух». Оба обеспечиваются
- * конвейером (splitBySource → mixHeroPool), а не разметкой, и оба ломаются
- * тихо, если из конвейера выпадет шаг.
+ * конвейером (splitBySource → mixHeroPool → ownFirst), а не разметкой, и оба
+ * ломаются тихо, если из конвейера выпадет шаг. Порядок держит ownFirst — тот
+ * же, что у /api/recommend: демо-данные без скидок его не проверят (покупка
+ * здесь своё не обгоняет), поэтому настоящая проверка порядка живёт у маршрута
+ * (app/api/recommend/route.test.ts).
  */
 
 const NOW = 1_780_000_000
@@ -53,6 +56,22 @@ describe('демо-выдача главной', () => {
   test('первой стоит игра из библиотеки, а не покупка', () => {
     for (const key of MOOD_KEYS) {
       expect(demo.picks[key][0].badge, key).not.toBe(BOUGHT)
+    }
+  })
+
+  /*
+   * «Своё идёт первым» — про всю пятёрку, а не только про первую карточку.
+   * Прежняя проверка одной первой проходила на демо-данных сама собой: скидок
+   * в DEMO_METAS нет, и покупка здесь не обгоняла своё по скору никогда, — а
+   * на проде героем трижды из трёх стояла покупка со скидкой. Теперь порядок
+   * держит ownFirst (lib/recommend), общий с /api/recommend.
+   */
+  test('ни одна своя не стоит после покупки', () => {
+    for (const key of MOOD_KEYS) {
+      const firstBought = demo.picks[key].findIndex((c) => c.badge === BOUGHT)
+      if (firstBought < 0) continue
+      const after = demo.picks[key].slice(firstBought).filter((c) => c.badge !== BOUGHT)
+      expect(after.map((c) => c.name), key).toEqual([])
     }
   })
 
