@@ -1,3 +1,4 @@
+import type { Locale } from './i18n'
 import type { OwnAnchor } from './recommend'
 import { CANDIDATE_SOURCES, type ScoredCandidate } from './types'
 
@@ -215,6 +216,18 @@ export function dayStartSec(nowSec: number, tz: string = DAILY_TZ): number {
 export type DailyChosen = ReturnType<typeof publicPick>
 
 /**
+ * Английская основа причины рядом с русской — для /en.
+ *
+ * Запись дня одна на steamid, а заходят с обоих языков: причина, записанная
+ * только по-русски, на /en была бы русской фразой посреди английской
+ * страницы. Поэтому отбор пишет основу на обоих языках сразу, а GET берёт
+ * свою (dailyReasonBase). Поле необязательно: записи до английской версии
+ * его не несут, и на /en такую запись маршрут пересчитывает, а не
+ * показывает по-русски.
+ */
+export type DailyReasonEn = { reasonBase: string; reasonPatched?: string }
+
+/**
  * Своя игра на магазинный день — «Сегодня хочу из своего». Раз в три дня
  * героем становится игра из магазина (pickDailyPool), и человеку, который
  * сегодня покупать ничего не собирался, раньше оставалось только уйти в
@@ -228,6 +241,8 @@ export type DailyAlternate = {
   reasonBase: string
   /** Та же причина с крупным патчем после последнего запуска: см. DailySelection */
   reasonPatched?: string
+  /** Та же основа по-английски — см. DailyReasonEn */
+  en?: DailyReasonEn
   sharedTags: string[]
   /**
    * Своя игра, на которую эта похожа. Её арт — фон героя у игры не из Steam,
@@ -266,6 +281,8 @@ export type DailySelection = {
    * writer-сессии. Какую из двух отдать, решает GET (dailyReasonBase).
    */
   reasonPatched?: string
+  /** Обе основы по-английски — см. DailyReasonEn; нет поля — записано до /en */
+  en?: DailyReasonEn
   sharedTags: string[]
   via: OwnAnchor | null
   hideUrgency: boolean
@@ -295,7 +312,7 @@ function parseAnchor(raw: unknown): OwnAnchor | null {
 
 function parseAlternate(raw: unknown): DailyAlternate | null {
   if (!raw || typeof raw !== 'object') return null
-  const { pick, hoursPlayed, reasonBase, reasonPatched, sharedTags, via } = raw as Record<string, unknown>
+  const { pick, hoursPlayed, reasonBase, reasonPatched, en, sharedTags, via } = raw as Record<string, unknown>
   const chosen = parseChosen(pick)
   if (!chosen) return null
   if (hoursPlayed !== null && typeof hoursPlayed !== 'number') return null
@@ -305,6 +322,7 @@ function parseAlternate(raw: unknown): DailyAlternate | null {
     hoursPlayed,
     reasonBase,
     ...patchedField(reasonPatched),
+    ...enField(en),
     sharedTags,
     via: parseAnchor(via),
   }
@@ -316,13 +334,44 @@ function patchedField(raw: unknown): { reasonPatched?: string } {
 }
 
 /**
+ * Английская основа необязательна, как и причина с патчем: битая или пустая
+ * — поля нет, и /en пересчитает запись, а не покажет её по-русски. Запись
+ * при этом живёт: русская часть у неё целая.
+ */
+function enField(raw: unknown): { en?: DailyReasonEn } {
+  if (!raw || typeof raw !== 'object') return {}
+  const { reasonBase, reasonPatched } = raw as Record<string, unknown>
+  if (typeof reasonBase !== 'string' || !reasonBase) return {}
+  return { en: { reasonBase, ...patchedField(reasonPatched) } }
+}
+
+/**
  * Какую основу причины отдать сессии: с патчем — только writer-сессии (см.
  * DailySelection.reasonPatched), остальным и записям без поля — прежнюю.
+ *
+ * locale — язык основы. Без него — русская, как и раньше, и ответ всегда
+ * строка. 'en' — английская из DailyReasonEn тем же правилом про патч; null —
+ * записи по-английски нет (сделана до английской версии или битая), и
+ * маршрут обязан пересчитать выбор, а не отдать русскую причину на /en.
  */
 export function dailyReasonBase(
-  sel: Pick<DailyAlternate, 'reasonBase' | 'reasonPatched'>,
+  sel: Pick<DailyAlternate, 'reasonBase' | 'reasonPatched' | 'en'>,
   writer: boolean,
-): string {
+): string
+export function dailyReasonBase(
+  sel: Pick<DailyAlternate, 'reasonBase' | 'reasonPatched' | 'en'>,
+  writer: boolean,
+  locale: Locale,
+): string | null
+export function dailyReasonBase(
+  sel: Pick<DailyAlternate, 'reasonBase' | 'reasonPatched' | 'en'>,
+  writer: boolean,
+  locale: Locale = 'ru',
+): string | null {
+  if (locale === 'en') {
+    if (!sel.en) return null
+    return writer && sel.en.reasonPatched ? sel.en.reasonPatched : sel.en.reasonBase
+  }
   return writer && sel.reasonPatched ? sel.reasonPatched : sel.reasonBase
 }
 
@@ -337,7 +386,7 @@ export function dailyReasonBase(
  */
 export function parseDailySelection(raw: unknown): DailySelection | null {
   if (!raw || typeof raw !== 'object') return null
-  const { pick, shelf, hoursPlayed, reasonBase, reasonPatched, sharedTags, via, hideUrgency, alt } =
+  const { pick, shelf, hoursPlayed, reasonBase, reasonPatched, en, sharedTags, via, hideUrgency, alt } =
     raw as Record<string, unknown>
   const parsedPick = parseChosen(pick)
   if (!parsedPick) return null
@@ -358,6 +407,7 @@ export function parseDailySelection(raw: unknown): DailySelection | null {
     hoursPlayed,
     reasonBase,
     ...patchedField(reasonPatched),
+    ...enField(en),
     sharedTags,
     via: parseAnchor(via),
     hideUrgency,

@@ -19,16 +19,20 @@ import {
   getGameRanks,
   getGamesMeta,
   getUnsummarized,
+  getUnsummarizedEn,
   pruneNewsForApp,
   setNewsDigest,
+  setNewsDigestEn,
   upsertNewsItems,
   type Db,
+  type NewsScale,
   type PollOutcome,
   type PollStatus,
   type PollTarget,
   type StoredNews,
 } from './db'
 import { sliceClock } from './cron'
+import { takeEnBackfillBudget } from './enbackfill'
 import { logSwallowed } from './errlog'
 import { claudeNewsDigest, isPersistentOutage, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
 import { takeLlmBudget } from './llmcap'
@@ -57,6 +61,57 @@ const BLOCK_RETRY_SEC = 1800
 
 /** Игра активно патчится, если постила за последние две недели */
 const HOT_WINDOW = 14 * DAY
+
+/**
+ * Что пересказ получает: пост и язык его оригинала. mode — договор с
+ * claudeNewsDigest (lib/llm): 'both' (по умолчанию) — русский пересказ и
+ * английский тем же вызовом, 'en' — только английский, когда русский уже
+ * лежит в базе (догон, см. runDigestSlice).
+ */
+export type DigestArgs = {
+  gameName: string
+  title: string
+  body: string
+  lang: 'ru' | 'en'
+  budgetMs?: number
+  mode?: 'both' | 'en'
+}
+
+/**
+ * Что пересказ отдаёт. В режиме 'both' — tldr, а tldrEn рядом: строка —
+ * английский вышел, null — модель ответила, а английский не вышел (попытка
+ * засчитывается), нет поля — прежний договор, английского не просили. В
+ * режиме 'en' — tldrEn без tldr. titleEn — английский заголовок поста, чей
+ * оригинал не английский; null — заголовок и так английский.
+ *
+ * Поля необязательны нарочно: так тип принимает и нынешний claudeNewsDigest,
+ * и заглушки тестов в старой форме { tldr, scale }.
+ */
+export type DigestOutcome = {
+  tldr?: string
+  tldrEn?: string | null
+  titleEn?: string | null
+  scale: NewsScale
+}
+
+export type DigestFn = (args: DigestArgs) => Promise<DigestOutcome | null>
+
+/**
+ * Дверь к модели по договору DigestFn. Приведение через unknown — потому что
+ * сигнатура claudeNewsDigest с режимом живёт в lib/llm, а этот срез обязан
+ * собираться и до, и после неё: договор (режим и поля ответа) зафиксирован
+ * между модулями, и формы ответа ниже проверяются в рантайме, а не
+ * принимаются на веру.
+ */
+const defaultDigest: DigestFn = (args) =>
+  (claudeNewsDigest as unknown as DigestFn)(args)
+
+/**
+ * Имя игры для промпта, когда строки игры в базе нет. Не «Игра 730»:
+ * пересказ теперь пишется на двух языках, и русская заглушка доезжала бы в
+ * английский текст. App N — так же называет заглушки прогрев (lib/catalog).
+ */
+const neutralName = (appid: number) => `App ${appid}`
 
 export type SliceResult = {
   polled: number
@@ -171,7 +226,7 @@ export async function runNewsSlice(
     digestLimit?: number
     /** подменяется в тестах: иначе прогон уходит и в сеть, и в лимитер темпа */
     fetchNews?: typeof fetchGameNews
-    digestFn?: typeof claudeNewsDigest
+    digestFn?: DigestFn
     onProgress?: (line: string) => void
   },
 ): Promise<SliceResult> {
@@ -326,7 +381,10 @@ export async function runNewsSlice(
 
   // Пересказ теперь живёт отдельным кроном (/api/cron/digest) и своим
   // бюджетом. Здесь он остаётся только если его явно попросили — так ходит
-  // scripts/sync-news.ts, где дедлайна нет и делить нечего.
+  // scripts/sync-news.ts, где дедлайна нет и делить нечего. Английский догон
+  // старых пересказов сюда не входит: у него своя доля бюджета, и ходит он из
+  // крона пересказов или по --en-backfill, а новые записи и так получают оба
+  // языка одним вызовом.
   let digested = 0
   if (digestLimit > 0) {
     const d = await runDigestSlice(db, {
@@ -335,6 +393,7 @@ export async function runNewsSlice(
       limit: digestLimit,
       ...(opts.digestFn ? { digestFn: opts.digestFn } : {}),
       onProgress: log,
+      english: false,
     })
     digested = d.digested
     cards.push(...d.cards)
@@ -374,6 +433,18 @@ export type DigestResult = {
   llm?: 'down'
   /** HTTP-статус отказа; null — до сервиса не дошли (сеть, таймаут) */
   llmStatus?: number | null
+  /**
+   * Сколько из digested — английский догон (getUnsummarizedEn). Есть, только
+   * если срез дошёл до догона: русская очередь была пуста на входе или
+   * выбрана в этом же срезе до дна.
+   */
+  english?: number
+  /**
+   * Доля догона на сегодня выбрана (lib/enbackfill). Это не 'capped': модель
+   * у подбора и пересказов новых патчей есть, а догон просто ждёт завтра —
+   * health тут краснеть не за что.
+   */
+  enCapped?: true
 }
 
 /**
@@ -385,6 +456,18 @@ export type DigestResult = {
  * час. Никакая настройка долей это не чинит: фазы просто не должны стоять в
  * одной очереди за одним таймером. У пересказа своя задача, свой крон, свой
  * бюджет и своя аренда (DIGEST_LEASE), потому что в Steam он не ходит вовсе.
+ *
+ * Пересказ пишет оба языка одним вызовом (режим 'both'): русский, английский
+ * и английский заголовок не английского поста. Английский догон — для того,
+ * что пересказано до английской версии или чей английский не вышел, — идёт,
+ * только когда русская очередь пуста: на входе в срез или выбрана в нём до
+ * дна (тогда догону достаётся остаток пачки). Русский — язык сайта по
+ * умолчанию, и новый патч не ждёт за старым переводом. Догон берёт тело из
+ * базы (getUnsummarizedEn), в Steam не ходит и платит своей долей суточного
+ * бюджета (lib/enbackfill), чтобы не выбрать его за утро.
+ *
+ * english: false — без догона (так зовёт runNewsSlice); englishOnly — только
+ * догон, русскую очередь не трогать (scripts/sync-news.ts --en-backfill).
  */
 export async function runDigestSlice(
   db: Db,
@@ -392,13 +475,15 @@ export async function runDigestSlice(
     deadlineAt: number
     nowSec?: number
     limit?: number
-    digestFn?: typeof claudeNewsDigest
+    digestFn?: DigestFn
     onProgress?: (line: string) => void
+    english?: boolean
+    englishOnly?: boolean
   },
 ): Promise<DigestResult> {
   const now = opts.nowSec ?? Math.floor(Date.now() / 1000)
   const limit = opts.limit ?? 12
-  const digest = opts.digestFn ?? claudeNewsDigest
+  const digest = opts.digestFn ?? defaultDigest
   const log = opts.onProgress ?? (() => {})
 
   // Нет ключа — не ходим в очередь вовсе. Иначе каждая запись впустую тратит
@@ -409,8 +494,11 @@ export async function runDigestSlice(
     return { digested: 0, cards: [], hasMore: false, stopped: 'unavailable' }
   }
 
-  const pending = await getUnsummarized(db, limit)
-  if (!pending.length) return { digested: 0, cards: [], hasMore: false, stopped: 'done' }
+  const pending = opts.englishOnly ? [] : await getUnsummarized(db, limit)
+  if (!pending.length) {
+    if (opts.english === false) return { digested: 0, cards: [], hasMore: false, stopped: 'done' }
+    return runEnglishBackfill(db, { deadlineAt: opts.deadlineAt, now, limit, digest, log })
+  }
 
   const metas = await getGamesMeta(
     db,
@@ -420,6 +508,13 @@ export async function runDigestSlice(
   let digested = 0
   const cards = new Set<number>()
   let stopped: DigestResult['stopped'] = 'done'
+  /*
+   * Ответила ли модель хоть раз без английского ключа вовсе — прежним
+   * договором claudeNewsDigest, до английской версии. Тогда догон в этом
+   * срезе не начинаем: режим 'en' она не знает, и первый же его вызов был бы
+   * оплачен впустую (runEnglishBackfill на нём и встанет).
+   */
+  let legacyModel = false
 
   for (const item of pending) {
     /*
@@ -441,45 +536,210 @@ export async function runDigestSlice(
       return { digested, cards: [...cards], hasMore: false, stopped: 'capped' }
     }
     const text = blocksToText(item.blocks)
-    let res: Awaited<ReturnType<typeof digest>>
+    let res: DigestOutcome | null
     try {
+      // Режим не называем: 'both' — режим договора по умолчанию, и вызов
+      // остаётся ровно тем, каким был до английской версии
       res = await digest({
-        gameName: metas.get(item.appid)?.name ?? `Игра ${item.appid}`,
+        gameName: metas.get(item.appid)?.name ?? neutralName(item.appid),
         title: item.title,
         body: text,
         lang: detectLang(text),
         budgetMs: бюджет,
       })
     } catch (e) {
-      // Сервис недоступен (пустой баланс, отозванный ключ, квота) — это не
-      // про эту запись. Останавливаем фазу, НЕ засчитывая попытку: иначе
-      // неоплаченный счёт за три прогона крона выбросил бы сотни патчей из
-      // очереди пересказа навсегда.
-      if (e instanceof LlmUnavailableError) {
-        log(`  пересказы недоступны (${e.status ?? '—'}), попытки не засчитаны`)
-        // В кроне onProgress не слушает никто: без этой строки статус отказа
-        // терялся целиком
-        logSwallowed('newsjob:digest', e, { status: e.status ?? 'net' })
-        // В отметку — только отказ, который сам не пройдёт (баланс, ключ,
-        // модель): мигание 429/5xx/таймаута срез переживёт через час
-        return {
-          digested,
-          cards: [...cards],
-          hasMore: false,
-          stopped: 'unavailable',
-          ...(isPersistentOutage(e.status) ? { llm: 'down' as const, llmStatus: e.status } : {}),
-        }
-      }
+      const down = digestDown(e, log)
+      if (down) return { digested, cards: [...cards], hasMore: false, ...down }
       throw e
     }
-    await setNewsDigest(db, item.appid, item.gid, res, now)
-    if (res) {
+    // Ответ без русского — отказ записи, как и null: так решает договор (спам
+    // и битый русский — null), а пересказ без tldr сломал бы очередь
+    const tldr = res?.tldr
+    await setNewsDigest(
+      db,
+      item.appid,
+      item.gid,
+      res && tldr
+        ? {
+            tldr,
+            scale: res.scale,
+            ...(res.tldrEn !== undefined ? { tldrEn: res.tldrEn, titleEn: res.titleEn ?? null } : {}),
+          }
+        : null,
+      now,
+    )
+    if (res && tldr) {
       digested++
       cards.add(item.appid)
+      if (res.tldrEn === undefined) legacyModel = true
     }
   }
 
   // Взяли полную пачку — значит в очереди почти наверняка ещё есть. Случай
   // «модель отвалилась» сюда не доходит: он возвращается выше по return.
-  return { digested, cards: [...cards], hasMore: pending.length === limit, stopped }
+  const ru: DigestResult = { digested, cards: [...cards], hasMore: pending.length === limit, stopped }
+  /*
+   * Русская очередь выбрана до дна — остаток звена уходит догону, в этом же
+   * срезе. Иначе догон не шёл бы почти никогда: крон пересказов приходит раз
+   * в час вместе с опросом, и почти каждый час приносит хоть один новый патч
+   * или повтор упавшего. Неполная пачка давала hasMore: false, цепочка
+   * (digestLinkVerdict) кончалась на 'done', и до догона очередь не доходила
+   * — его выбирал только ручной --en-backfill. Порядок прежний: русский
+   * первым, догону — только то, что от него осталось, и не больше остатка
+   * пачки, чтобы звено не вышло за свои сорок восемь секунд.
+   *
+   * Записи, пересказанные выше, догон в этом срезе не берёт: если английский
+   * у них не вышел, только что спрашивать модель о том же ещё раз — потратить
+   * вторую из трёх попыток за ту же минуту. Они дождутся следующего звена.
+   */
+  if (stopped !== 'done' || ru.hasMore || opts.english === false || legacyModel) return ru
+  const en = await runEnglishBackfill(db, {
+    deadlineAt: opts.deadlineAt,
+    now,
+    limit: limit - pending.length,
+    digest,
+    log,
+    skip: new Set(pending.map((p) => newsKey(p.appid, p.gid))),
+  })
+  return mergeDigest(ru, en)
+}
+
+const newsKey = (appid: number, gid: string) => `${appid}:${gid}`
+
+/**
+ * Итог среза, в котором за русской очередью шёл догон: числа складываются,
+ * а остановка, «есть ли ещё» и отказ модели — от догона, он шёл последним.
+ * english — только если догон что-то делал (см. DigestResult.english).
+ */
+function mergeDigest(ru: DigestResult, en: DigestResult): DigestResult {
+  return {
+    ...en,
+    digested: ru.digested + en.digested,
+    cards: [...new Set([...ru.cards, ...en.cards])],
+  }
+}
+
+/**
+ * Сервис модели отказал (пустой баланс, отозванный ключ, квота) — это не про
+ * запись. Фаза останавливается, НЕ засчитывая попытку: иначе неоплаченный
+ * счёт за три прогона крона выбросил бы сотни патчей из очереди навсегда.
+ * null — это не отказ сервиса, и исключение летит дальше.
+ */
+function digestDown(
+  e: unknown,
+  log: (line: string) => void,
+): Pick<DigestResult, 'stopped' | 'llm' | 'llmStatus'> | null {
+  if (!(e instanceof LlmUnavailableError)) return null
+  log(`  пересказы недоступны (${e.status ?? '—'}), попытки не засчитаны`)
+  // В кроне onProgress не слушает никто: без этой строки статус отказа
+  // терялся целиком
+  logSwallowed('newsjob:digest', e, { status: e.status ?? 'net' })
+  // В отметку — только отказ, который сам не пройдёт (баланс, ключ, модель):
+  // мигание 429/5xx/таймаута срез переживёт через час
+  return {
+    stopped: 'unavailable',
+    ...(isPersistentOutage(e.status) ? { llm: 'down' as const, llmStatus: e.status } : {}),
+  }
+}
+
+/**
+ * Английский догон: пересказ по-английски для патчей, у которых русский уже
+ * есть (см. runDigestSlice). Тело — из базы, режим 'en': русский пересказ и
+ * масштаб модель не переписывает, их решил основной пересказ.
+ *
+ * Доля бюджета берётся на каждый вызов (takeEnBackfillBudget): выбрана —
+ * догон молча ждёт завтра (enCapped, а не 'capped': модель у остальной
+ * работы есть). Выбран общий бюджет — это 'capped', как у русской фазы.
+ *
+ * Ответ без tldrEn вовсе — модель английского не знает (прежний договор
+ * claudeNewsDigest): догон встаёт, ничего не записав и не засчитав. Иначе
+ * каждая запись очереди за три прогона ушла бы из неё навсегда — из-за
+ * версии кода, а не из-за самой записи.
+ */
+async function runEnglishBackfill(
+  db: Db,
+  o: {
+    deadlineAt: number
+    now: number
+    limit: number
+    digest: DigestFn
+    log: (line: string) => void
+    /** Записи, которых догон не берёт: их только что пересказал этот же срез */
+    skip?: ReadonlySet<string>
+  },
+): Promise<DigestResult> {
+  const skip = o.skip ?? new Set<string>()
+  // Пропуск — свежие записи, а очередь идёт от свежих: читаем с запасом на них
+  const pending = (await getUnsummarizedEn(db, o.limit + skip.size))
+    .filter((p) => !skip.has(newsKey(p.appid, p.gid)))
+    .slice(0, o.limit)
+  if (!pending.length) return { digested: 0, cards: [], hasMore: false, stopped: 'done' }
+  const metas = await getGamesMeta(
+    db,
+    pending.map((p) => p.appid),
+  )
+
+  let digested = 0
+  const cards = new Set<number>()
+  let stopped: DigestResult['stopped'] = 'done'
+  const result = (extra: Partial<DigestResult> = {}): DigestResult => ({
+    digested,
+    cards: [...cards],
+    hasMore: false,
+    stopped,
+    english: digested,
+    ...extra,
+  })
+
+  for (const item of pending) {
+    const бюджет = o.deadlineAt - Date.now()
+    if (бюджет < LLM_MIN_BUDGET_MS) {
+      stopped = 'budget'
+      break
+    }
+    const take = await takeEnBackfillBudget(db, o.now)
+    if (take === 'share') {
+      o.log('  доля английского догона на сегодня выбрана, попытки не засчитаны')
+      return result({ enCapped: true })
+    }
+    if (take === 'capped') {
+      o.log('  суточный бюджет модели выбран, попытки не засчитаны')
+      return result({ stopped: 'capped' })
+    }
+    const text = blocksToText(item.blocks)
+    let res: DigestOutcome | null
+    try {
+      res = await o.digest({
+        gameName: metas.get(item.appid)?.name ?? neutralName(item.appid),
+        title: item.title,
+        body: text,
+        lang: detectLang(text),
+        budgetMs: бюджет,
+        mode: 'en',
+      })
+    } catch (e) {
+      const down = digestDown(e, o.log)
+      if (down) return result(down)
+      throw e
+    }
+    if (res && res.tldrEn === undefined) {
+      o.log('  модель не отдаёт английский пересказ — догон остановлен, попытки не засчитаны')
+      return result()
+    }
+    const tldrEn = res?.tldrEn?.trim()
+    await setNewsDigestEn(
+      db,
+      item.appid,
+      item.gid,
+      tldrEn ? { tldrEn, titleEn: res?.titleEn ?? null } : null,
+      o.now,
+    )
+    if (tldrEn) {
+      digested++
+      cards.add(item.appid)
+    }
+  }
+
+  // Полная пачка без остановки — в очереди догона почти наверняка есть ещё
+  return result({ hasMore: stopped === 'done' && pending.length === o.limit })
 }

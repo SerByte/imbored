@@ -2,6 +2,7 @@ import { parseStoreAssets, type StoreAssets } from './art'
 import { hasCyrillic } from './cyrillic'
 import { getGamesMeta, getStaleAppids, upsertGamesMeta, type Db } from './db'
 import { logSwallowed } from './errlog'
+import { isEnglishText } from './gamedesc'
 import { pace } from './pace'
 import { META_CC, priceRegion, regionCurrency } from './steamregion'
 import {
@@ -323,8 +324,30 @@ export function parseStoreItems(json: unknown, tagNames: Map<number, string>): G
  * медиа: это то, что нужно карточке и не нужно прогреву (см.
  * STORE_MEDIA_DATA_REQUEST). ruLang 0 — тоже находка: Steam ответил, что
  * русского нет.
+ *
+ * shortDescriptionEn — описание из того же ответа (GetItems ходит
+ * по-английски), когда его просили (fetchStoreMedia с description) и оно
+ * правда английское: у части игр в английском поле магазина лежит текст на
+ * языке студии, и на /en он был бы такой же чужой, как русский.
  */
-export type StoreMedia = { screenshots?: string[]; trailer?: Trailer; ruLang?: RuLang }
+export type StoreMedia = {
+  screenshots?: string[]
+  trailer?: Trailer
+  ruLang?: RuLang
+  shortDescriptionEn?: string
+}
+
+/**
+ * Английское ли описание — тем же правилом, каким /en его показывает
+ * (isEnglishText в lib/gamedesc): ни одной русской буквы, латиница — почти
+ * все буквы, и не немецкий с испанским. Одно правило на запись и на показ:
+ * иначе в слот ложилось бы то, что /en потом прячет, а скрипт доливки
+ * (backfill-descriptions --lang=en) считал бы такую игру готовой и не чинил.
+ */
+export function englishDescription(text: string | null | undefined): string | undefined {
+  const t = text?.trim()
+  return t && isEnglishText(t) ? t : undefined
+}
 
 function mediaOf(it: StoreItem): StoreMedia {
   const out: StoreMedia = {}
@@ -349,7 +372,13 @@ export function parseStoreMedia(json: unknown): Map<number, StoreMedia> {
     const appid = it?.appid ?? it?.id
     if (!appid || !it.visible) continue
     const media = mediaOf(it)
-    if (media.screenshots || media.trailer || media.ruLang !== undefined) out.set(appid, media)
+    // Описание — не в mediaOf: тот же разбор кладёт медиа и в прогрев
+    // (parseStoreItems), а там описание и так своё поле меты
+    const en = englishDescription(it.basic_info?.short_description)
+    if (en) media.shortDescriptionEn = en
+    if (media.screenshots || media.trailer || media.ruLang !== undefined || media.shortDescriptionEn) {
+      out.set(appid, media)
+    }
   }
   return out
 }
@@ -364,7 +393,10 @@ export function parseStoreMedia(json: unknown): Map<number, StoreMedia> {
  * ответ, а не пустота, и он побеждает, как любое свежее знание.
  */
 export function mergeMeta(existing: GameMeta | null | undefined, fresh: GameMeta): GameMeta {
-  if (!existing) return fresh
+  // Английское описание свежей записи — её собственное поле или, если его нет,
+  // само описание, когда оно английское (см. докблок ниже про язык)
+  const freshEn = fresh.shortDescriptionEn ?? englishDescription(fresh.shortDescription)
+  if (!existing) return freshEn && !fresh.shortDescriptionEn ? { ...fresh, shortDescriptionEn: freshEn } : fresh
   const out: GameMeta = { ...existing, ...fresh }
   if (!Object.keys(fresh.tags).length) out.tags = existing.tags
   if (!fresh.genres.length) out.genres = existing.genres
@@ -388,10 +420,17 @@ export function mergeMeta(existing: GameMeta | null | undefined, fresh: GameMeta
    *
    * Правило то же, что у заливки и у SQL апсерта (lib/cyrillic): русское не
    * заменяется нерусским, в том числе пустым. Всё остальное едет как прежде.
+   *
+   * Английское при этом больше не выбрасывается: оно ложится в свой слот,
+   * shortDescriptionEn, — им говорит /en (descriptionFor в lib/gamedesc).
+   * Прогрев ходит в GetItems по-английски раз в две недели, и это самый
+   * частый и дешёвый источник английского описания, который у нас есть.
+   * Нет английского в свежей записи — прежний слот переезжает спредом.
    */
   if (hasCyrillic(existing.shortDescription) && !hasCyrillic(fresh.shortDescription)) {
     out.shortDescription = existing.shortDescription
   }
+  if (freshEn) out.shortDescriptionEn = freshEn
   /*
    * Замер без цены (priceAt есть, priceFinal нет — fetchStoreItems в регионе
    * цен, когда блока покупки не пришло) гасит скидку нулём, а цену спред
@@ -652,18 +691,28 @@ const MEDIA_MS_PER_APP = 300
 /**
  * Кадры, трейлеры и языки для пачки игр — без тегов, арта и цены. Для тех,
  * кто пишет их узким UPDATE (setGamesMedia), не трогая остальной строки.
+ *
+ * description — ещё и английское описание тем же запросом (include_basic_info:
+ * ответ GetItems и так английский, см. STORE_LANGUAGE). Просит его крон
+ * карточек: он пишет медиа узким UPDATE до карточек, и английское описание
+ * /en получает тем же походом, без второго запроса. Флаг, а не часть
+ * STORE_MEDIA_DATA_REQUEST: доливке медиа по всему каталогу описание не
+ * нужно, а у неё каждый лишний блок — на двести игр пачки.
  */
 export async function fetchStoreMedia(
   appids: number[],
-  opts: { fetchFn?: typeof fetch } = {},
+  opts: { fetchFn?: typeof fetch; description?: boolean } = {},
 ): Promise<Map<number, StoreMedia>> {
   const positive = appids.filter((id) => id > 0)
   const out = new Map<number, StoreMedia>()
   if (!positive.length) return out
   const { fetchFn = fetch } = opts
+  const dataRequest = opts.description
+    ? { ...STORE_MEDIA_DATA_REQUEST, ...STORE_DESCRIPTION_DATA_REQUEST }
+    : STORE_MEDIA_DATA_REQUEST
   for (let i = 0; i < positive.length; i += STORE_ITEMS_BATCH) {
     const chunk = positive.slice(i, i + STORE_ITEMS_BATCH)
-    const json = await callStoreItems(chunk, STORE_MEDIA_DATA_REQUEST, fetchFn, MEDIA_MS_PER_APP)
+    const json = await callStoreItems(chunk, dataRequest, fetchFn, MEDIA_MS_PER_APP)
     for (const [appid, media] of parseStoreMedia(json)) out.set(appid, media)
   }
   return out

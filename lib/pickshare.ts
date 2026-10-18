@@ -1,4 +1,5 @@
 import { createHmac, randomInt, timingSafeEqual } from 'node:crypto'
+import type { Locale } from './i18n'
 
 /**
  * Подпись выбора, которым можно поделиться (/pick/<id>), и непрозрачный id.
@@ -16,17 +17,33 @@ import { createHmac, randomInt, timingSafeEqual } from 'node:crypto'
  *
  * Отдельный модуль по той же причине, что lib/roomkey: node:crypto не едет в
  * клиентскую сборку. Секрет приходит аргументом.
+ *
+ * Язык текста — тоже в подписи (lang). Страница выбора говорит на языке
+ * ссылки, и подпись английского текста не должна годиться русской ссылке, и
+ * наоборот. Русский — без пометки в сообщении: так выглядели все подписи до
+ * английской версии, и уже выданные (героям в открытых вкладках) проходят
+ * как русские. Английский — свой префикс сообщения, а не хвост: хвост
+ * совпал бы с русским текстом, который сам кончается тем же хвостом.
  */
 
-export type PickShareFields = { steamid: string; appid: number; source: string; text: string }
+export type PickShareFields = {
+  steamid: string
+  appid: number
+  source: string
+  text: string
+  /** Язык текста; нет поля — русский, как у подписей до английской версии */
+  lang?: Locale
+}
 
 const SIG_LEN = 22
 
+function sigMessage(v: PickShareFields): string {
+  const head = v.lang === 'en' ? 'pick:v1~en' : 'pick:v1'
+  return `${head}:${v.steamid}:${v.appid}:${v.source}:${v.text}`
+}
+
 export function pickShareSig(secret: string, v: PickShareFields): string {
-  return createHmac('sha256', secret)
-    .update(`pick:v1:${v.steamid}:${v.appid}:${v.source}:${v.text}`)
-    .digest('base64url')
-    .slice(0, SIG_LEN)
+  return createHmac('sha256', secret).update(sigMessage(v)).digest('base64url').slice(0, SIG_LEN)
 }
 
 /** Сравнение за постоянное время; мусор вместо подписи — false, а не исключение */
@@ -56,12 +73,17 @@ export function newPickId(): string {
  * нему. Отдаётся только героям (/play, /daily): открытия героем не
  * становятся, и делиться ими нечем. Текст приходит уже без денег
  * (lib/sharedpick shareText).
+ *
+ * lang — на английском герое: подпись покрывает язык, и клиент возвращает
+ * его в /api/pick вместе с текстом. У русского поля нет — ответ тот же, что
+ * до английской версии, и /api/pick без lang проверяет русскую подпись.
  */
 export function shareView(
   secret: string,
   v: PickShareFields,
-): { share?: { text: string; sig: string } } {
+): { share?: { text: string; sig: string; lang?: 'en' } } {
   // Пустой текст (всё объяснение было про цену, см. shareText) — кнопки нет
   if (!v.text.trim()) return {}
-  return { share: { text: v.text, sig: pickShareSig(secret, v) } }
+  const sig = pickShareSig(secret, v)
+  return { share: v.lang === 'en' ? { text: v.text, sig, lang: 'en' } : { text: v.text, sig } }
 }

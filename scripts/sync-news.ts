@@ -6,6 +6,7 @@
  *   npm run news:sync                           пока очередь не кончится
  *   npm run news:sync -- --enroll-only          только пополнить очередь
  *   npm run news:sync -- --digest-only          только пересказы, без Steam
+ *   npm run news:sync -- --en-backfill          только английский догон старых пересказов
  *
  * Крон на Vercel делает ровно то же самое (lib/newsjob.ts), но у него потолок
  * в 300 секунд на вызов, звенья по 48 (lib/chain). Массовый первый обход
@@ -29,7 +30,7 @@ import {
   STEAM_LEASE,
   topCatalogAppids,
 } from '../lib/db'
-import { runNewsSlice } from '../lib/newsjob'
+import { runDigestSlice, runNewsSlice } from '../lib/newsjob'
 import { plural } from '../lib/plural'
 import { withLease } from './lease'
 import { openCloud } from './opendb'
@@ -80,10 +81,69 @@ async function main() {
   const dryRun = flag('dry-run')
   const enrollOnly = flag('enroll-only')
   const digestOnly = flag('digest-only')
+  const enBackfill = flag('en-backfill')
   const maxGames = Number(arg('limit') ?? Number.POSITIVE_INFINITY)
 
   const db = await openDb({ readOnly: dryRun })
   const now = Math.floor(Date.now() / 1000)
+
+  /*
+   * Английский догон: пересказ по-английски у патчей, пересказанных до
+   * английской версии, — по телу из базы, без Steam (runDigestSlice с
+   * englishOnly). Тот же срез, что у крона пересказов, и под той же арендой:
+   * разобрали бы одни и те же записи дважды. Платит долей догона
+   * (LLM_EN_BACKFILL_DAILY, lib/enbackfill) — она общая с кроном, и ручной
+   * прогон её не обходит: поднять долю на день можно самой переменной.
+   */
+  if (enBackfill) {
+    if (dryRun) {
+      console.log('--dry-run с --en-backfill: догон не запускаем, ничего не пишем')
+      return
+    }
+    const holder = `local:${randomUUID()}`
+    const LEASE_TTL = 300
+    if (!(await acquireLease(db, DIGEST_LEASE, holder, LEASE_TTL, now))) {
+      console.log(
+        `очередь пересказов занята: её разбирает крон либо прерванный прогон,\n` +
+          `не успевший отдать аренду. Она истекает сама, ждать не больше ${LEASE_TTL} с.`,
+      )
+      return
+    }
+    const onSignal = () => {
+      void releaseLease(db, DIGEST_LEASE, holder).finally(() => {
+        console.log('\nаренда отдана, выходим')
+        process.exit(130)
+      })
+    }
+    process.once('SIGINT', onSignal)
+    process.once('SIGTERM', onSignal)
+
+    let english = 0
+    try {
+      for (;;) {
+        const res = await runDigestSlice(db, {
+          deadlineAt: Date.now() + 10 * 60_000,
+          nowSec: Math.floor(Date.now() / 1000),
+          limit: 25,
+          englishOnly: true,
+          onProgress: (line) => console.log(line),
+        })
+        english += res.english ?? 0
+        console.log(`английских пересказов: ${english}`)
+        if (!res.hasMore || res.enCapped || res.stopped !== 'done') {
+          if (res.enCapped) console.log('доля догона на сегодня выбрана (LLM_EN_BACKFILL_DAILY)')
+          if (res.stopped === 'capped') console.log('суточный бюджет модели выбран (LLM_DAILY_CAP)')
+          if (res.stopped === 'unavailable') console.log('модель недоступна: нет ключа или сервис отказал')
+          break
+        }
+        await acquireLease(db, DIGEST_LEASE, holder, LEASE_TTL, Math.floor(Date.now() / 1000))
+      }
+    } finally {
+      await releaseLease(db, DIGEST_LEASE, holder)
+    }
+    console.log(`\nготово. по-английски пересказано ${english}`)
+    return
+  }
 
   // Разбор накопившейся очереди пересказов, не трогая Steam.
   //

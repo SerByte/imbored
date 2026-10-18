@@ -423,3 +423,61 @@ describe('yesterdayLine', () => {
     })
   })
 })
+
+/**
+ * Английская основа причины рядом с русской: запись дня одна на steamid, а
+ * заходят с обоих языков. Нет английской — на /en запись пересчитывается, а
+ * не показывается по-русски (dailyReasonBase → null).
+ */
+describe('запись дня по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+  const base = {
+    pick: { appid: 620, name: 'Portal 2', source: 'untouched' },
+    shelf: [],
+    hoursPlayed: null,
+    reasonBase: 'Причина.',
+    sharedTags: ['Puzzle'],
+    hideUrgency: false,
+  }
+  const en = { reasonBase: 'Bought it and never opened it: a night of puzzles.' }
+  const patchedEn = 'You have 12 h in “Dota 2”. Since you last played, a major update came out for Dota 2: a new mode.'
+  const alt = {
+    pick: { appid: 570, name: 'Dota 2', source: 'comeback' },
+    hoursPlayed: 12,
+    reasonBase: 'Своя.',
+    sharedTags: [],
+    en: { reasonBase: 'Yours.', reasonPatched: patchedEn },
+  }
+
+  test('английская основа читается у героя и у запасной своей', () => {
+    const sel = parseDailySelection({ ...base, en, alt })!
+    expect(sel.en).toEqual(en)
+    expect(sel.alt?.en).toEqual(alt.en)
+    expect(dailyReasonBase(sel, true, 'en')).toBe(en.reasonBase)
+    expect(dailyReasonBase(sel.alt!, true, 'en')).toBe(patchedEn)
+    expect(dailyReasonBase(sel.alt!, false, 'en')).toBe('Yours.')
+    for (const text of [dailyReasonBase(sel, true, 'en'), dailyReasonBase(sel.alt!, false, 'en')]) {
+      expect(CYRILLIC.test(text!)).toBe(false)
+    }
+    // русская ветка — прежняя, английское поле её не трогает
+    expect(dailyReasonBase(sel, true)).toBe('Причина.')
+    expect(dailyReasonBase(sel, true, 'ru')).toBe('Причина.')
+  })
+
+  test('записи до английской версии — на /en причины нет, а не русская', () => {
+    const sel = parseDailySelection(base)!
+    expect(sel).not.toHaveProperty('en')
+    expect(dailyReasonBase(sel, true, 'en')).toBeNull()
+  })
+
+  test('битая английская основа — поля нет, запись живёт', () => {
+    for (const bad of [7, 'текст', { reasonBase: 7 }, { reasonBase: '' }, null]) {
+      const sel = parseDailySelection({ ...base, en: bad })
+      expect(sel, JSON.stringify(bad)).toEqual({ ...base, via: null, alt: null })
+    }
+    // причина с патчем битая — основа остаётся, патча нет
+    expect(parseDailySelection({ ...base, en: { reasonBase: 'Night of puzzles.', reasonPatched: 7 } })?.en).toEqual({
+      reasonBase: 'Night of puzzles.',
+    })
+  })
+})

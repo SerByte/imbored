@@ -80,3 +80,35 @@ describe('shareView', () => {
     expect(shareView(SECRET, { ...BASE, text: '  ' })).toEqual({})
   })
 })
+
+/**
+ * Язык — в подписи. Страница выбора говорит на языке ссылки, и подпись
+ * одного языка другому не годится. Русские подписи, выданные до английской
+ * версии, проходят как русские: сообщение у них то же.
+ */
+describe('подпись по языку', () => {
+  const EN: PickShareFields = {
+    ...BASE,
+    text: 'Bought it and never opened it: a night of puzzles.',
+    lang: 'en',
+  }
+
+  test('русская подпись без lang и с lang: ru — одна и та же', () => {
+    expect(pickShareSig(SECRET, { ...BASE, lang: 'ru' })).toBe(pickShareSig(SECRET, BASE))
+    expect(pickShareOk(SECRET, { ...BASE, lang: 'ru' }, pickShareSig(SECRET, BASE))).toBe(true)
+  })
+
+  test('подпись английского текста русской ссылке не годится, и наоборот', () => {
+    const sig = pickShareSig(SECRET, EN)
+    expect(pickShareOk(SECRET, EN, sig)).toBe(true)
+    expect(pickShareOk(SECRET, { ...EN, lang: undefined }, sig)).toBe(false)
+    expect(pickShareOk(SECRET, { ...BASE, lang: 'en' }, pickShareSig(SECRET, BASE))).toBe(false)
+  })
+
+  test('shareView английского героя несёт lang, русского — прежнюю форму', () => {
+    const { share } = shareView(SECRET, EN)
+    expect(share).toEqual({ text: EN.text, sig: pickShareSig(SECRET, EN), lang: 'en' })
+    expect(/[А-Яа-яЁё]/.test(share!.text)).toBe(false)
+    expect(Object.keys(shareView(SECRET, BASE).share!)).toEqual(['text', 'sig'])
+  })
+})

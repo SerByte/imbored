@@ -17,7 +17,20 @@ export type GameMeta = {
   genres: string[]
   /** id категорий Steam (1 Multi-player, 2 Single-player, 9 Co-op, 38 Online Co-op...) */
   categories: number[]
+  /**
+   * Описание магазина — на языке сайта, если его довезли: русское кладут
+   * крон карточек (appdetails с l=russian) и доливка описаний, а до них здесь
+   * английский текст прогрева. Русское английским не затирается (lib/cyrillic).
+   */
   shortDescription?: string
+  /**
+   * То же описание по-английски — для /en (descriptionFor в lib/gamedesc).
+   * Своя колонка, а не замена shortDescription: у того своё правило «русское
+   * не заменяется нерусским», и английский текст ему как раз чужой. Пишут
+   * прогрев и крон карточек (GetItems ходит по-английски), промоут и доливка
+   * catalog:descriptions --lang=en. Нет поля — английского не знаем.
+   */
+  shortDescriptionEn?: string
   /** Обложка 460×215; оставлена для совместимости, дублирует art.header */
   headerImage?: string
   /** Резолвленные ссылки на арт всех размеров */
