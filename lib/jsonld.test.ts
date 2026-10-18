@@ -53,6 +53,28 @@ describe('gameJsonLd', () => {
     expect(ld()).not.toHaveProperty('inLanguage')
   })
 
+  test('русское название магазина — alternateName, а name остаётся английским', () => {
+    // Карточка показывает его вторым рядом под заголовком — разметка
+    // называет то же самое и по тому же правилу (pageNameRu)
+    const witcher = (nameRu: string | null | undefined) =>
+      gameJsonLd({
+        meta: game({ appid: 292030, name: 'The Witcher 3: Wild Hunt' }),
+        nameRu,
+        baseUrl: BASE,
+        currency: 'USD',
+        now: NOW,
+      })
+    expect(witcher('Ведьмак 3: Дикая Охота')).toMatchObject({
+      name: 'The Witcher 3: Wild Hunt',
+      alternateName: 'Ведьмак 3: Дикая Охота',
+    })
+    expect(witcher(null)).not.toHaveProperty('alternateName')
+    expect(witcher(undefined)).not.toHaveProperty('alternateName')
+    expect(witcher('  ')).not.toHaveProperty('alternateName')
+    // повтор заголовка ничего не называет
+    expect(witcher('The Witcher 3: Wild Hunt')).not.toHaveProperty('alternateName')
+  })
+
   test('минимальная карточка — это VideoGame с адресом страницы', () => {
     const out = ld()
     expect(out['@context']).toBe('https://schema.org')

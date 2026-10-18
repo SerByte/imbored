@@ -293,9 +293,12 @@ describe('db', () => {
     test('запись без трейлера — прогрев, appdetails — привезённый не стирает', async () => {
       const db = await freshDb()
       await upsertGameMeta(db, { ...META, trailer: TRAILER }, NOW)
-      await upsertGameMeta(db, { ...META, name: 'Portal 2 (новое имя)' }, NOW + 1)
+      // Имя здесь — свидетель того, что остальная строка обновилась. Латиницей:
+      // русское к латинскому апсерт кладёт вторым названием (см. «два
+      // названия игры»), и name остался бы прежним по другой причине
+      await upsertGameMeta(db, { ...META, name: 'Portal 2 (renamed)' }, NOW + 1)
       const after = await getGameMeta(db, 620)
-      expect(after?.name).toBe('Portal 2 (новое имя)')
+      expect(after?.name).toBe('Portal 2 (renamed)')
       expect(after?.trailer).toEqual(TRAILER)
     })
 
@@ -386,9 +389,10 @@ describe('db', () => {
     test('запись без языка — прогрев, appdetails без звёздочки — известный не стирает', async () => {
       const db = await freshDb()
       await upsertGameMeta(db, { ...META, ruLang: 3 }, NOW)
-      await upsertGameMeta(db, { ...META, name: 'Portal 2 (новое имя)' }, NOW + 1)
+      // Имя латиницей — по той же причине, что у трейлера выше
+      await upsertGameMeta(db, { ...META, name: 'Portal 2 (renamed)' }, NOW + 1)
       const after = await getGameMeta(db, 620)
-      expect(after?.name).toBe('Portal 2 (новое имя)')
+      expect(after?.name).toBe('Portal 2 (renamed)')
       expect(after?.ruLang).toBe(3)
       // а свежий ответ Steam побеждает, ноль в том числе
       await upsertGameMeta(db, { ...META, ruLang: 0 }, NOW + 2)
@@ -558,6 +562,123 @@ describe('db', () => {
     await upsertGameMeta(db, { ...META, appid: 621, shortDescription: 'Old English' }, NOW)
     await upsertGameMeta(db, { ...META, appid: 621, shortDescription: 'New English' }, NOW + 10)
     expect((await getGameMeta(db, 621))?.shortDescription).toBe('New English')
+  })
+
+  /*
+   * Названий у игры два: английское из магазина (name — его пишут прогрев,
+   * посев и заливка: GetItems по-английски) и русское (name_ru — его
+   * приносит обогащение карточки: appdetails с l=russian). Прежде русское
+   * ложилось в name поверх английского, и «witcher 3» в «Найти игру»
+   * отвечал «Ничего не нашлось» на «Ведьмак 3: Дикая Охота» — одну из
+   * тридцати самых популярных игр каталога, а с ней ещё шесть десятков.
+   */
+  describe('два названия игры', () => {
+    const WITCHER = { ...META, appid: 292030, name: 'The Witcher 3: Wild Hunt' }
+    const RU = 'Ведьмак 3: Дикая Охота'
+    const namesOf = async (db: Db, appid: number) => {
+      const r = await db.execute({ sql: 'SELECT name, name_ru FROM games WHERE appid = ?', args: [appid] })
+      return { ...(r.rows[0] as unknown as { name: string; name_ru: string | null }) }
+    }
+
+    test('русское из appdetails не затирает английское, а ложится вторым названием', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, WITCHER, NOW)
+      await upsertGameMeta(db, { ...WITCHER, name: RU }, NOW + 10)
+      expect(await namesOf(db, 292030)).toEqual({ name: WITCHER.name, name_ru: RU })
+      expect((await getGameMeta(db, 292030))?.name).toBe(WITCHER.name)
+
+      // Прогрев через две недели — английское английским, русское остаётся
+      await upsertGameMeta(db, WITCHER, NOW + 20)
+      expect(await namesOf(db, 292030)).toEqual({ name: WITCHER.name, name_ru: RU })
+    })
+
+    test('строка, где русское уже затёрло английское, лечится первой английской записью', async () => {
+      // Так выглядит прод до этой правки: в name — русское от карточки
+      const db = await freshDb()
+      await upsertGameMeta(db, WITCHER, NOW)
+      await db.execute({ sql: 'UPDATE games SET name = ? WHERE appid = ?', args: [RU, 292030] })
+
+      await upsertGameMeta(db, WITCHER, NOW + 10)
+      expect(await namesOf(db, 292030)).toEqual({ name: WITCHER.name, name_ru: RU })
+    })
+
+    test('русское название магазина — само название, а не второе', async () => {
+      const db = await freshDb()
+      // Английского у игры нет вовсе: магазин и по-английски зовёт её по-русски
+      await upsertGameMeta(db, { ...META, appid: 873190, name: 'ЕСТЬ ДВА СТУЛА' }, NOW)
+      await upsertGameMeta(db, { ...META, appid: 873190, name: 'ЕСТЬ ДВА СТУЛА' }, NOW + 10)
+      expect(await namesOf(db, 873190)).toEqual({ name: 'ЕСТЬ ДВА СТУЛА', name_ru: null })
+      // Переименовали в магазине — русское русским едет
+      await upsertGameMeta(db, { ...META, appid: 873190, name: 'ЕСТЬ ДВА СТУЛА: Опять' }, NOW + 20)
+      expect(await namesOf(db, 873190)).toEqual({ name: 'ЕСТЬ ДВА СТУЛА: Опять', name_ru: null })
+
+      // Заглушка «App N» — не название: русское её заменяет, а не встаёт вторым
+      await upsertGameMeta(db, { ...META, appid: 42, name: 'App 42' }, NOW)
+      await upsertGameMeta(db, { ...META, appid: 42, name: RU }, NOW + 10)
+      expect(await namesOf(db, 42)).toEqual({ name: RU, name_ru: null })
+    })
+
+    /*
+     * Снять второе название может только ответ магазина на l=russian (крон
+     * карточек): латинское от него значит «русского у игры в Steam больше
+     * нет». Латинское от прогрева — просто английское, и прежде, кроме него,
+     * писателей не было: устаревшее русское жило в индексе поиска навсегда.
+     */
+    test('ответ на l=russian без русского снимает второе название, прогрев — нет', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, WITCHER, NOW)
+      await upsertGameMeta(db, { ...WITCHER, name: RU }, NOW + 10)
+
+      await upsertGameMeta(db, WITCHER, NOW + 20)
+      expect(await namesOf(db, 292030)).toEqual({ name: WITCHER.name, name_ru: RU })
+
+      await upsertGameMeta(db, WITCHER, NOW + 30, { ruStore: true })
+      expect(await namesOf(db, 292030)).toEqual({ name: WITCHER.name, name_ru: null })
+    })
+
+    test('ответ на l=russian с русским раскладывает его как обычно', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, WITCHER, NOW)
+      await upsertGameMeta(db, { ...WITCHER, name: RU }, NOW + 10, { ruStore: true })
+      expect(await namesOf(db, 292030)).toEqual({ name: WITCHER.name, name_ru: RU })
+
+      // Русское у игры без английского — по-прежнему само название
+      await upsertGameMeta(db, { ...META, appid: 873190, name: 'ЕСТЬ ДВА СТУЛА' }, NOW, { ruStore: true })
+      expect(await namesOf(db, 873190)).toEqual({ name: 'ЕСТЬ ДВА СТУЛА', name_ru: null })
+    })
+
+    test('строка до правки: русское в name уходит не вторым, а вовсе, если магазин его не знает', async () => {
+      // Прод до правки: в name — русское от прежней карточки. Теперь магазин
+      // на l=russian отвечает английским — русского у игры больше нет
+      const db = await freshDb()
+      await upsertGameMeta(db, WITCHER, NOW)
+      await db.execute({ sql: 'UPDATE games SET name = ? WHERE appid = ?', args: [RU, 292030] })
+
+      await upsertGameMeta(db, WITCHER, NOW + 10, { ruStore: true })
+      expect(await namesOf(db, 292030)).toEqual({ name: WITCHER.name, name_ru: null })
+    })
+
+    test('заглушка «App N» в ответе на l=russian второе название не снимает', async () => {
+      // parseAppDetails ставит её, когда имени в ответе нет: это не «русского нет»
+      const db = await freshDb()
+      await upsertGameMeta(db, WITCHER, NOW)
+      await upsertGameMeta(db, { ...WITCHER, name: RU }, NOW + 10)
+      await upsertGameMeta(db, { ...WITCHER, name: 'App 292030' }, NOW + 20, { ruStore: true })
+      expect((await namesOf(db, 292030)).name_ru).toBe(RU)
+    })
+
+    test('индекс поиска везёт оба названия', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, { ...WITCHER, reviewsTotal: 900 }, NOW)
+      await upsertGameMeta(db, { ...WITCHER, name: RU, reviewsTotal: 900 }, NOW + 10)
+      await upsertGameMeta(db, { ...META, reviewsTotal: 100 }, NOW)
+      await db.execute('UPDATE games SET alive = 1, tag_count = 3, superseded_by = NULL')
+
+      expect(await searchIndexGames(db, 10)).toEqual([
+        { appid: 292030, name: WITCHER.name, nameRu: RU },
+        { appid: 620, name: 'Portal 2' },
+      ])
+    })
   })
 
   test('цена и скидка переживают роундтрип — их и теряли в этом месте', async () => {
@@ -4663,14 +4784,116 @@ describe('версия схемы', () => {
     expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
   })
 
+  /**
+   * Прод в первый холодный старт со вторым названием игры: версия 9, строки
+   * games живут, колонки нет. Без неё апсерт каталога падал бы на SET
+   * name_ru, а индекс поиска — на SELECT.
+   */
+  test('прод на v9 получает name_ru, и каталог пишется и читается как был', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, { ...META, appid: 292030, name: 'The Witcher 3: Wild Hunt' }, NOW)
+    await db.execute('ALTER TABLE games DROP COLUMN name_ru')
+    await db.execute("UPDATE catalog_meta SET value = '9' WHERE key = 'schema_v'")
+    await migrateDb(db)
+
+    expect((await columnsOf(db)).has('games.name_ru')).toBe(true)
+    await upsertGameMeta(db, { ...META, appid: 292030, name: 'Ведьмак 3: Дикая Охота' }, NOW + 10)
+    expect(await searchIndexGames(db, 10)).toEqual([
+      { appid: 292030, name: 'The Witcher 3: Wild Hunt', nameRu: 'Ведьмак 3: Дикая Охота' },
+    ])
+    expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
+  })
+
+  /*
+   * Две ветки подняли версию до одного числа, каждая со своими колонками
+   * (восьмой круг: name_ru здесь, reviews_* в fix/w8-prices-reviews), и git
+   * слил одинаковые строки молча. Первая уехала на прод отдельным деплоем и
+   * записала эту версию — вторая по одной версии решила бы, что всё доведено,
+   * и её ALTER не выполнились бы никогда. Решает отметка состава колонок.
+   */
+  describe('та же версия от другой сборки', () => {
+    const SIBLING = 'games.reviews_all_total'
+
+    /** Прод после деплоя соседней ветки: версия та же, колонки name_ru нет */
+    async function siblingDb(marker: string | null): Promise<Db> {
+      const db = await freshDb()
+      await upsertGameMeta(db, { ...META, appid: 292030, name: 'The Witcher 3: Wild Hunt' }, NOW)
+      await db.execute('ALTER TABLE games DROP COLUMN name_ru')
+      await setCatalogMeta(db, 'schema_v', String(CURRENT_SCHEMA_V))
+      if (marker == null) await db.execute("DELETE FROM catalog_meta WHERE key = 'schema_cols'")
+      else await setCatalogMeta(db, 'schema_cols', marker)
+      return db
+    }
+
+    test('сборка без отметки записала ту же версию — name_ru всё равно доезжает', async () => {
+      const db = await siblingDb(null)
+      const { spy, calls } = recording(db)
+      await migrateDb(spy)
+
+      // ровно одна недостающая, а не перебор всех: состав узнаётся одним чтением
+      expect(calls.filter(isAlter).map((c) => c.sql)).toEqual(['ALTER TABLE games ADD COLUMN name_ru TEXT'])
+      await upsertGameMeta(db, { ...META, appid: 292030, name: 'Ведьмак 3: Дикая Охота' }, NOW + 10)
+      expect(await searchIndexGames(db, 10)).toEqual([
+        { appid: 292030, name: 'The Witcher 3: Wild Hunt', nameRu: 'Ведьмак 3: Дикая Охота' },
+      ])
+      expect(String(await getCatalogMeta(db, 'schema_cols')).split(',')).toContain('games.name_ru')
+      // и второй старт уже ничего не доводит
+      const again = recording(db)
+      await migrateDb(again.spy)
+      expect(again.calls.map((c) => c.kind)).toEqual(['multiple', 'multiple', 'execute', 'multiple'])
+    })
+
+    test('отметка соседа без name_ru: колонка доезжает, его колонка из отметки не пропадает', async () => {
+      const db = await siblingDb(SIBLING)
+      await migrateDb(db)
+
+      expect((await columnsOf(db)).has('games.name_ru')).toBe(true)
+      const marker = String(await getCatalogMeta(db, 'schema_cols')).split(',')
+      expect(marker).toContain('games.name_ru')
+      // Сузь её эта сборка — сосед на следующем деплое перепроверял бы схему
+      // зря, а сборка после него не узнала бы, что колонку уже добавляли
+      expect(marker).toContain(SIBLING)
+    })
+
+    test('версию выше своей сборка не опускает', async () => {
+      // Прод уже на следующей версии (откат деплоя или ветка с номером выше),
+      // а колонки этой сборки в отметке нет: доводит её, а версию оставляет
+      const db = await siblingDb(SIBLING)
+      await setCatalogMeta(db, 'schema_v', String(CURRENT_SCHEMA_V + 1))
+      await migrateDb(db)
+
+      expect((await columnsOf(db)).has('games.name_ru')).toBe(true)
+      expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V + 1))
+    })
+
+    test('превью на такой базе колонку добавляет, а отметку не пишет', async () => {
+      // Отметку, как и версию, ставит только прод после мержа — см. migrateDb
+      const db = await siblingDb(SIBLING)
+      await migrateDb(db, { VERCEL_ENV: 'preview' })
+
+      expect((await columnsOf(db)).has('games.name_ru')).toBe(true)
+      expect(await getCatalogMeta(db, 'schema_cols')).toBe(SIBLING)
+    })
+
+    test('предпросмотр говорит, что доведёт, хотя версия та же', async () => {
+      const db = await siblingDb(SIBLING)
+      expect(await pendingMigrations(db, {})).toEqual([
+        'новая колонка: games.name_ru',
+        `отметка колонок схемы: v${CURRENT_SCHEMA_V} записана без колонок этой сборки`,
+      ])
+      await migrateDb(db, {})
+      expect(await pendingMigrations(db, {})).toEqual([])
+    })
+  })
+
   test('новая колонка без новой версии схемы не проскочит', () => {
     // На живой базе версия уже записана, и колонка, добавленная без подъёма
     // CURRENT_SCHEMA_V, туда не доедет никогда, а все остальные тесты гоняют
     // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
     // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
     expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
-      version: 9,
-      columns: 40,
+      version: 10,
+      columns: 41,
     })
   })
 })
@@ -4999,11 +5222,14 @@ describe('предпросмотр миграции', () => {
     // окажется в catalog_meta, а в предпросмотре его не будет
     const db = createClient({ url: ':memory:' })
     await migrateDb(db, {}, { seedContent: true })
-    const keys = (await db.execute("SELECT key FROM catalog_meta WHERE key != 'schema_v'")).rows.map(
+    // Версия и отметка состава колонок — не разовые шаги: их предпросмотр
+    // называет своими строками («версия схемы», «отметка колонок схемы»)
+    const SCHEMA_KEYS = "('schema_v', 'schema_cols')"
+    const keys = (await db.execute(`SELECT key FROM catalog_meta WHERE key NOT IN ${SCHEMA_KEYS}`)).rows.map(
       (r) => String(r.key),
     )
     expect(keys.length).toBeGreaterThan(0)
-    await db.execute("DELETE FROM catalog_meta WHERE key != 'schema_v'")
+    await db.execute(`DELETE FROM catalog_meta WHERE key NOT IN ${SCHEMA_KEYS}`)
     const pending = await pendingMigrations(db, {}, { seedContent: true })
     for (const key of keys) {
       expect(pending.some((p) => p.startsWith(`${key}: `)), key).toBe(true)

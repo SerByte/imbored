@@ -57,6 +57,7 @@ describe('cardRowPrint', () => {
     meta: { appid: 10, name: 'Игра', tags: { Action: 100 }, genres: [], categories: [], ...meta },
     reviewsSummary: { scoreDesc: 'Very Positive', totalPositive: 900, totalNegative: 100 },
     prosCons: null,
+    nameRu: null,
     ...rest,
   })
 
@@ -96,6 +97,13 @@ describe('cardRowPrint', () => {
     expect(cardRowPrint(row({}, { reviewsSummary: { scoreDesc: 'Very Positive', totalPositive: 950, totalNegative: 100 } }), NOW)).not.toBe(base)
     expect(cardRowPrint(row({}, { prosCons: { pros: ['красиво'], cons: [], source: 'claude' } }), NOW)).not.toBe(base)
     expect(cardRowPrint(row({ screenshots: ['a.jpg'] }), NOW)).not.toBe(base)
+  })
+
+  test('русское название — тоже: оно стоит вторым рядом под заголовком', () => {
+    // Крон карточек кладёт его и снимает (ruStoreNameRuSql в lib/db), а
+    // строка name при этом может не поменяться вовсе — сброс решает отпечаток
+    const base = cardRowPrint(row(), NOW)
+    expect(cardRowPrint(row({}, { nameRu: 'Ведьмак 3: Дикая Охота' }), NOW)).not.toBe(base)
   })
 })
 

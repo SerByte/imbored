@@ -341,6 +341,27 @@ describe('микроразметка говорит не больше стран
     expect(jsonLdOf(page)[0]).not.toHaveProperty('inLanguage')
   })
 
+  test('русское название — вторым рядом под заголовком и alternateName; нет его — ни того, ни другого', async () => {
+    // Заголовок — английское название магазина (nameSql в lib/db). До правила
+    // двух названий крон карточек клал русское прямо в name, и у верха
+    // каталога оно стояло в H1 и <title>; теперь оно второе, но со страницы
+    // не пропадает
+    await upsertGameMeta(db, game(APPID, { name: 'The Witcher 3: Wild Hunt' }), T0)
+    let page = flight(await GamePage(params))
+    expect(textOf(page)).not.toContain('Ведьмак')
+    expect(jsonLdOf(page)[0]).not.toHaveProperty('alternateName')
+
+    // Карточка (appdetails с l=russian) принесла русское — апсерт кладёт его вторым
+    await upsertGameMeta(db, game(APPID, { name: 'Ведьмак 3: Дикая Охота' }), T0 + 10)
+    page = flight(await GamePage(params))
+    expect(textOf(page)).toContain('Ведьмак 3: Дикая Охота')
+    expect(jsonLdOf(page)[0]).toMatchObject({
+      name: 'The Witcher 3: Wild Hunt',
+      alternateName: 'Ведьмак 3: Дикая Охота',
+    })
+    expect((await generateMetadata(params)).title).toBe('The Witcher 3: Wild Hunt — стоит ли играть')
+  })
+
   test('русский неизвестен — ни строки, ни разметки', async () => {
     // Так у большинства карточек, пока крон или доливка медиа не принесли язык
     await upsertGameMeta(db, game(APPID), T0)

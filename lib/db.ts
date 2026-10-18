@@ -769,6 +769,13 @@ const REPAIR_TAGS_KEY = 'repair_tags_v1'
 /** Ключ в catalog_meta: до какой версии схемы доведена база. */
 const SCHEMA_V_KEY = 'schema_v'
 
+/**
+ * Ключ в catalog_meta: какие колонки из ADDED_COLUMNS в базе уже точно есть —
+ * «таблица.колонка» через запятую. Страховка версии от двух веток с одним
+ * номером, см. schemaUpgradeNeeded.
+ */
+const SCHEMA_COLS_KEY = 'schema_cols'
+
 /** Ключ разового досева кураторского пула других магазинов (см. migrateDb). */
 const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
 
@@ -789,10 +796,16 @@ const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
  * :memory: версии нет, и миграция там идёт целиком. Об этом напомнит сторож
  * «новая колонка без новой версии схемы» в lib/db.test.ts.
  *
+ * Колонки страхует ещё и отметка их состава (SCHEMA_COLS_KEY): две ветки,
+ * поднявшие версию до одного и того же числа, git сливает молча, и без неё
+ * вторая на проде прочла бы «уже доведено». Разбор — у schemaUpgradeNeeded.
+ * Шаг под upgrade, который не колонка (CHECK у feedback), отметка не видит —
+ * для него версия по-прежнему единственный сигнал.
+ *
  * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
  * выполняются на каждом старте, по одному обращению на блок.
  */
-export const CURRENT_SCHEMA_V = 9
+export const CURRENT_SCHEMA_V = 10
 
 /**
  * Колонки, добавленные после первых версий схемы.
@@ -886,7 +899,51 @@ export const ADDED_COLUMNS = [
   // промоут и доливка медиа, прогрев его не просит (lib/catalog). Пустое не
   // затирает известное — COALESCE в апсерте и в setGamesMedia
   ['games', 'ru_lang INTEGER'],
+  // Русское название магазина, когда оно у игры своё: «Ведьмак 3: Дикая
+  // Охота» при «The Witcher 3: Wild Hunt» в name. Приносит его обогащение
+  // карточки (appdetails с l=russian), раскладывает апсерт (nameSql и
+  // nameRuSql), ищет по нему «Найти игру». NULL — второго названия нет или
+  // карточку ещё не обогащали
+  ['games', 'name_ru TEXT'],
 ] as const
+
+/** «таблица.колонка» каждой из ADDED_COLUMNS — тем же видом, что у presentAddedColumns */
+const ADDED_COLUMN_NAMES: readonly string[] = ADDED_COLUMNS.map(
+  ([table, col]) => `${table}.${col.split(' ')[0]}`,
+)
+
+/** Отметка состава колонок из флагов миграций; нет её — пустое множество */
+function knownAddedColumns(flags: Map<string, string>): Set<string> {
+  return new Set((flags.get(SCHEMA_COLS_KEY) ?? '').split(',').filter(Boolean))
+}
+
+/**
+ * Доводить ли схему: записанная версия ниже CURRENT_SCHEMA_V — или в
+ * отметке состава нет хоть одной колонки этой сборки.
+ *
+ * ЗАЧЕМ ВТОРОЕ УСЛОВИЕ. Версия — голое число, общее для всех веток. Так и
+ * вышло в восьмом круге: fix/w8-search (name_ru) и fix/w8-prices-reviews
+ * (reviews_all_*, reviews_ru_*, reviews_recent_*) подняли 9 → 10 каждая со
+ * своими колонками, и git сливает одинаковые строки «= 10» без конфликта.
+ * Уедь они на прод разными деплоями — первый запишет 10, второй прочтёт «уже
+ * доведено», и его ALTER не выполнятся никогда: апсерт каталога, прогрев и
+ * индекс поиска падали бы на «no such column». Порядок мержей и деплоев
+ * ветка не выбирает, поэтому решать по одному числу нельзя.
+ *
+ * Отметка перечисляет сами колонки, и сборка с колонкой вне её доводит схему
+ * при любой версии. Пишется она там же, где версия, — последней и только
+ * когда всё прошло (конец migrateDb), — и объединением с прежней: сборка без
+ * чужой колонки (откат, параллельная ветка) отметку не сужает, а версию по
+ * той же причине не опускает. Отметки нет у баз, доведённых до неё: такая
+ * база один раз пройдёт ALTER-цикл — одно чтение pragma_table_info и ALTER
+ * только для действительно недостающих — и получит её.
+ */
+function schemaUpgradeNeeded(flags: Map<string, string>): boolean {
+  // «не меньше», а не «меньше»: мусор вместо числа тоже означает «доводить»
+  if (!(Number(flags.get(SCHEMA_V_KEY) ?? 0) >= CURRENT_SCHEMA_V)) return true
+  const known = knownAddedColumns(flags)
+  return ADDED_COLUMN_NAMES.some((name) => !known.has(name))
+}
 
 /**
  * Разовые шаги migrateDb под своим флагом в catalog_meta — и что каждый из
@@ -913,7 +970,7 @@ const ONE_OFF_STEPS = {
  * на каждом старте ради ответа, который почти всегда «уже сделано».
  */
 async function readMigrationFlags(db: Db): Promise<Map<string, string>> {
-  const keys = [SCHEMA_V_KEY, ...Object.keys(ONE_OFF_STEPS)]
+  const keys = [SCHEMA_V_KEY, SCHEMA_COLS_KEY, ...Object.keys(ONE_OFF_STEPS)]
   const res = await db.execute({
     sql: `SELECT key, value FROM catalog_meta WHERE key IN (${placeholders(keys.length)})`,
     args: keys,
@@ -1062,8 +1119,8 @@ export async function migrateDb(
   await db.executeMultiple(SCHEMA_NEWS)
 
   const flags = await readMigrationFlags(db)
-  // «не меньше», а не «меньше»: мусор вместо числа тоже означает «доводить»
-  const upgrade = !(Number(flags.get(SCHEMA_V_KEY) ?? 0) >= CURRENT_SCHEMA_V)
+  // по версии и по отметке состава колонок — почему по двум, см. schemaUpgradeNeeded
+  const upgrade = schemaUpgradeNeeded(flags)
   const allowed = destructiveMigrationsAllowed(env)
 
   // Пересборка feedback — сразу за ALTER-циклом (ей нужен полный набор
@@ -1207,9 +1264,17 @@ export async function migrateDb(
     if (rebuilt && allowed) {
       // Последней: версия пишется, только когда всё выше прошло. Оборвись
       // миграция на полпути — следующий старт повторит её целиком.
+      //
+      // С ней, тем же запросом, — отметка состава колонок. Обе не ниже
+      // прежних: прежние могла записать сборка с колонкой, которой здесь нет,
+      // и ни опустить версию, ни потерять ту колонку из отметки нельзя
+      // (schemaUpgradeNeeded)
+      const stored = Number(flags.get(SCHEMA_V_KEY))
+      const version = Math.max(Number.isFinite(stored) ? stored : 0, CURRENT_SCHEMA_V)
+      const cols = [...new Set([...knownAddedColumns(flags), ...ADDED_COLUMN_NAMES])].sort()
       await db.execute({
-        sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
-        args: [SCHEMA_V_KEY, String(CURRENT_SCHEMA_V)],
+        sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?), (?, ?)',
+        args: [SCHEMA_V_KEY, String(version), SCHEMA_COLS_KEY, cols.join(',')],
       })
     } else if (rebuilt) {
       // Превью на продовой базе, и пересобирать нечего, — версию всё равно
@@ -1261,10 +1326,11 @@ export async function migrateDb(
  * того и здесь нет; сторожит это тест «после migrateDb ждать нечего».
  *
  * Только чтение: sqlite_master, колонки (pragma_table_info) и флаги в
- * catalog_meta. Не видно двух вещей, которых не видит и сама migrateDb:
- * индекса со сменённым определением под прежним именем (ПРАВИЛО ДЛЯ
- * ИНДЕКСОВ у SCHEMA_CATALOG) и колонки, добавленной без подъёма версии
- * (сторож «новая колонка без новой версии схемы» в lib/db.test.ts).
+ * catalog_meta. Не видно того, чего не видит и сама migrateDb: индекса со
+ * сменённым определением под прежним именем (ПРАВИЛО ДЛЯ ИНДЕКСОВ у
+ * SCHEMA_CATALOG). Колонку, добавленную без подъёма версии, видно по отметке
+ * состава (schemaUpgradeNeeded) — если базу уже доводила сборка, которая её
+ * пишет.
  */
 export async function pendingMigrations(
   db: Db,
@@ -1298,9 +1364,9 @@ export async function pendingMigrations(
     ? await readMigrationFlags(db)
     : new Map<string, string>()
 
-  // То же сравнение, что в migrateDb: мусор вместо числа тоже значит «доводить»
+  // То же условие, что в migrateDb: по версии и по отметке состава колонок
   const v = flags.get(SCHEMA_V_KEY)
-  if (!(Number(v ?? 0) >= CURRENT_SCHEMA_V)) {
+  if (schemaUpgradeNeeded(flags)) {
     const have = await presentAddedColumns(db)
     if (!have) {
       pending.push('ALTER TABLE: все колонки из ADDED_COLUMNS, которых нет (состав не узнать)')
@@ -1318,7 +1384,12 @@ export async function pendingMigrations(
       pending.push('пересборка feedback под новый CHECK: DROP и RENAME таблицы')
     }
     if (allowed) {
-      pending.push(`версия схемы: ${v == null ? 'не записана' : `v${v}`} → v${CURRENT_SCHEMA_V}`)
+      pending.push(
+        Number(v ?? 0) >= CURRENT_SCHEMA_V
+          ? // версию записала сборка без колонок этой — см. schemaUpgradeNeeded
+            `отметка колонок схемы: v${v} записана без колонок этой сборки`
+          : `версия схемы: ${v == null ? 'не записана' : `v${v}`} → v${CURRENT_SCHEMA_V}`,
+      )
     }
   }
 
@@ -3038,6 +3109,102 @@ export function keepRussianSql(col: string): string {
   )
 }
 
+/*
+ * НАЗВАНИЕ: два у одной игры, и у каждого своя колонка.
+ *
+ * name — английское название магазина: его приносят прогрев, посев и
+ * заливка (GetItems по-английски, STORE_LANGUAGE в lib/catalog), и на нём
+ * стоят эвристики junk.ts и editions.ts. name_ru — русское, если оно у игры
+ * своё: его приносит обогащение карточки (appdetails с l=russian, lib/pagejob).
+ *
+ * Писатели при этом шлют одно поле, name, — то, что сказал их источник, — и
+ * прежде правило было «последний победил»: карточка клала «Ведьмак 3: Дикая
+ * Охота» поверх «The Witcher 3: Wild Hunt», прогрев через две недели —
+ * обратно, и так по кругу. На проде к октябрю 2026 русским стояло ~70
+ * названий верха каталога, и «Найти игру» не находила «witcher 3», «hogwarts
+ * legacy», «ghost of tsushima» — индекс знал только то, что лежало в name.
+ *
+ * Теперь их раскладывает апсерт, и по тому же доводу, что у описаний: SQL
+ * помнит у всех писателей, а слияние в JS — только у тех, кто его зовёт.
+ * Различаем по букве (lib/cyrillic): русское к латинскому — латинское
+ * остаётся, русское встаёт вторым; латинское к русскому — то же самое, но
+ * русское в name было от прежней карточки, и оно уходит во второе. Так
+ * строки, испорченные до этой правки, лечатся первой же английской записью —
+ * прогревом или заливкой каталога, — без отдельного прохода по Steam.
+ *
+ * Русское к русскому — обычная замена: у игры нет английского названия
+ * вовсе («ЕСТЬ ДВА СТУЛА», «Скуф на рыбалке» — магазин и по-английски зовёт
+ * их так), и это переименование. Заглушка «App N» (ensureMeta,
+ * parseAppDetails) — не название: русское её заменяет, а не встаёт вторым.
+ *
+ * Плата — редкий случай, который отсюда не отличить: игру с латинским
+ * названием магазин переименовал в русское. Название тогда останется
+ * прежним, а новое встанет вторым — найти её можно по обоим.
+ *
+ * В SET выражения видят строку ДО обновления, поэтому оба правила решают по
+ * прежнему games.name, сколько бы колонок ни писалось рядом.
+ *
+ * Латинское к латинскому второе название не трогает: от прогрева и заливки
+ * оно значит «английское», а не «русского нет». Снять его может только
+ * писатель, спрашивавший магазин по-русски, — ruStoreNameRuSql ниже.
+ */
+const cyrillicName = (col: string) => `COALESCE(${col}, '') GLOB ${CYRILLIC_GLOB}`
+
+/** Русское пришло к настоящему латинскому названию (не заглушке «App N») */
+const RU_OVER_LATIN =
+  `${cyrillicName('excluded.name')} AND NOT ${cyrillicName('games.name')}` +
+  ` AND games.name IS NOT ('App ' || games.appid)`
+
+/** Латинское пришло к русскому — русское в name от прежней карточки */
+const LATIN_OVER_RU = `${cyrillicName('games.name')} AND NOT ${cyrillicName('excluded.name')}`
+
+/** games.name: английское название не заменяется русским (см. НАЗВАНИЕ выше) */
+export function nameSql(): string {
+  return `CASE WHEN ${RU_OVER_LATIN} THEN games.name ELSE excluded.name END`
+}
+
+/**
+ * games.name_ru: русское название, вытесненное из name или не пущенное туда;
+ * иначе прежнее. Писатель самой колонки не шлёт — она выводится из name.
+ */
+export function nameRuSql(): string {
+  return (
+    `CASE WHEN ${RU_OVER_LATIN} THEN excluded.name` +
+    ` WHEN ${LATIN_OVER_RU} THEN games.name ELSE games.name_ru END`
+  )
+}
+
+/**
+ * games.name_ru у писателя, который спрашивал магазин ПО-РУССКИ, — у крона
+ * карточек (appdetails с l=russian, lib/pagejob). Остальные приносят
+ * английское название, и латинское от них о русском не говорит ничего —
+ * отсюда «иначе прежнее» в nameRuSql. А у этого латинское значит ровно
+ * «русского названия у игры в Steam нет»: локализованное он получил бы
+ * вместо него.
+ *
+ * Без этого правила снять второе название не мог никто. Steam убрал игре
+ * русское — карточка приносит английское, латинское к латинскому, и
+ * прежнее name_ru оставалось навсегда: «Найти игру» находила игру по
+ * названию, которого у неё больше нет, и показывала его вторым рядом.
+ *
+ * Заглушка «App N» (parseAppDetails, когда имени в ответе нет) — не ответ
+ * про название, и второе она не снимает. Русское — по общим правилам.
+ */
+function ruStoreNameRuSql(): string {
+  const latinAnswer = `NOT ${cyrillicName('excluded.name')} AND excluded.name IS NOT ('App ' || excluded.appid)`
+  return `CASE WHEN ${latinAnswer} THEN NULL ELSE ${nameRuSql()} END`
+}
+
+/** Откуда у записи название — см. upsertGameMeta */
+export type GameNameSource = {
+  /**
+   * meta.name — ответ магазина на l=russian (крон карточек): латинское тогда
+   * снимает второе название (ruStoreNameRuSql). Другим писателям не ставить:
+   * их латинское — просто английское, и русского оно не отменяет.
+   */
+  ruStore?: boolean
+}
+
 /**
  * Замер с отметкой времени (цена — price_at, онлайн — ccu_at): едет, только
  * если он не старше того, что уже лежит. Без отметки считается самым старым.
@@ -3049,7 +3216,12 @@ export function newerMeasureSql(col: string, stamp: string): string {
   return `CASE WHEN COALESCE(excluded.${stamp}, 0) >= COALESCE(games.${stamp}, 0) THEN excluded.${col} ELSE games.${col} END`
 }
 
-function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflict = 'update') {
+function gameMetaStatement(
+  meta: GameMeta,
+  nowSec: number,
+  onConflict: OnConflict = 'update',
+  source: GameNameSource = {},
+) {
   return {
     sql:
       onConflict === 'keep'
@@ -3057,7 +3229,10 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
           ON CONFLICT(appid) DO NOTHING`
         : `${GAME_INSERT}
           ON CONFLICT(appid) DO UPDATE SET
-            name = excluded.name,
+            -- английское и русское название — по своим колонкам, см. nameSql;
+            -- снять русское может только ответ на l=russian (ruStoreNameRuSql)
+            name = ${nameSql()},
+            name_ru = ${source.ruStore ? ruStoreNameRuSql() : nameRuSql()},
             tags_json = excluded.tags_json,
             -- скриншоты, жанры и русское описание берегутся от пустого и от
             -- английского — см. keepFilledSql и keepRussianSql выше
@@ -3147,8 +3322,13 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
   }
 }
 
-export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Promise<void> {
-  await db.execute(gameMetaStatement(meta, nowSec))
+export async function upsertGameMeta(
+  db: Db,
+  meta: GameMeta,
+  nowSec: number,
+  source: GameNameSource = {},
+): Promise<void> {
+  await db.execute(gameMetaStatement(meta, nowSec, 'update', source))
 }
 
 /**
@@ -3574,7 +3754,8 @@ export async function getGameMeta(db: Db, appid: number): Promise<GameMeta | nul
  *
  * Семантика игры (длина сессии на карточке) приезжает тем же чтением —
  * SEMANTICS_JOIN по первичному ключу, одна строка game_semantics, а не
- * второй поход в базу на каждый рендер.
+ * второй поход в базу на каждый рендер. Русское название (name_ru) — тоже:
+ * SELECT * его и так везёт, а GameMeta его не носит (см. GamePageRow).
  */
 export async function getGamePageRow(db: Db, appid: number): Promise<GamePageRow | null> {
   const res = await db.execute({
@@ -3585,7 +3766,19 @@ export async function getGamePageRow(db: Db, appid: number): Promise<GamePageRow
   return row ? pageRowOf(row) : null
 }
 
-export type GamePageRow = { meta: GameMeta; reviewsSummary: unknown; prosCons: unknown }
+export type GamePageRow = {
+  meta: GameMeta
+  reviewsSummary: unknown
+  prosCons: unknown
+  /**
+   * Русское название магазина, когда оно у игры своё (games.name_ru, см.
+   * nameSql); null — его нет. Не поле GameMeta: мету пишут все писатели
+   * каталога, а name_ru выводит апсерт, и лишнее поле в записи только
+   * обещало бы, что его можно прислать. Читает его карточка — вторым рядом
+   * под английским заголовком и alternateName в разметке.
+   */
+  nameRu: string | null
+}
 
 function pageRowOf(row: GameRow & Record<string, unknown>): GamePageRow {
   const разобрать = (v: unknown): unknown => {
@@ -3600,6 +3793,7 @@ function pageRowOf(row: GameRow & Record<string, unknown>): GamePageRow {
     meta: rowToMeta(row),
     reviewsSummary: разобрать(row.reviews_summary_json),
     prosCons: разобрать(row.pros_cons_json),
+    nameRu: typeof row.name_ru === 'string' && row.name_ru ? row.name_ru : null,
   }
 }
 
@@ -4433,22 +4627,27 @@ export async function topCatalogGames(db: Db, limit: number): Promise<SimilarGam
  * Читает частичный idx_games_pool по порядку и обрывается на LIMIT — весь
  * живой каталог, раз в сутки (ISR маршрута). Сторож плана —
  * lib/queryplan.test.ts.
+ *
+ * nameRu — русское название магазина, когда оно у игры своё (name_ru, см.
+ * nameSql): по нему «ведьмак 3» находит «The Witcher 3: Wild Hunt». Нет —
+ * поля нет вовсе, а не null: таких строк — почти все шесть тысяч.
  */
 export async function searchIndexGames(
   db: Db,
   limit: number,
-): Promise<Array<{ appid: number; name: string }>> {
+): Promise<Array<{ appid: number; name: string; nameRu?: string }>> {
   const res = await db.execute({
-    sql: `SELECT appid, name FROM games
+    sql: `SELECT appid, name, name_ru FROM games
           WHERE ${ALIVE_POOL} AND appid > 0
           ORDER BY reviews_total DESC
           LIMIT ?`,
     args: [limit],
   })
-  return (res.rows as unknown as Array<{ appid: number; name: string }>).map((r) => ({
-    appid: Number(r.appid),
-    name: String(r.name),
-  }))
+  return (res.rows as unknown as Array<{ appid: number; name: string; name_ru: string | null }>).map((r) => {
+    const row: { appid: number; name: string; nameRu?: string } = { appid: Number(r.appid), name: String(r.name) }
+    if (r.name_ru) row.nameRu = String(r.name_ru)
+    return row
+  })
 }
 
 /**

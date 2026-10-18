@@ -119,6 +119,8 @@ export function cardRowPrint(row: GamePageRow, nowSec: number): string {
     until: discountTrustedUntil(row.meta, nowSec),
     reviewsSummary: row.reviewsSummary,
     prosCons: row.prosCons,
+    // второй ряд под заголовком: снятое или новое русское название — другая страница
+    nameRu: row.nameRu,
   })
 }
 

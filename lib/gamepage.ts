@@ -38,6 +38,13 @@ import type { GameMeta } from './types'
 
 export type GamePageData = {
   meta: GameMeta
+  /**
+   * Русское название магазина, когда оно у игры своё (GamePageRow.nameRu);
+   * null — его нет. Заголовок карточки — английское название магазина, а
+   * это — второй ряд под ним и alternateName в разметке: по нему игру ищут
+   * в русской выдаче («ведьмак 3 стоит ли играть»).
+   */
+  nameRu: string | null
   reviewsSummary: {
     scoreDesc: string
     totalPositive: number
@@ -613,6 +620,7 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   if (appid < 0) {
     return {
       meta,
+      nameRu: строка.nameRu,
       reviewsSummary: null,
       prosCons: null,
       news: [],
@@ -655,5 +663,5 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
    */
   const prosCons = stored?.source === 'claude' ? stored : null
 
-  return { meta, reviewsSummary, prosCons, news, ...shelf, studio }
+  return { meta, nameRu: строка.nameRu, reviewsSummary, prosCons, news, ...shelf, studio }
 }
