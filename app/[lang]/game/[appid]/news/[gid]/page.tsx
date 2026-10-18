@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation'
 import { GameArt } from '@/components/GameArt'
 import { Icon } from '@/components/Icon'
 import { Eyebrow, SectionLabel } from '@/components/Labels'
-import { NewsBody } from '@/components/NewsBody'
+import { ForeignBody, NewsBody } from '@/components/NewsBody'
 import { NewsDate, ScaleBadge } from '@/components/NewsMeta'
 import { PatchShare } from '@/components/PatchShare'
 import { getGamePatchHeads } from '@/lib/db'
@@ -14,17 +14,24 @@ import {
   newsIndexable,
   newsPageTitle,
   newsPath,
+  newsTitleOn,
 } from '@/lib/newspage'
 import { patchArticleLd, patchBreadcrumbLd, ldScript } from '@/lib/jsonld'
 import { appBaseUrl, getDb } from '@/lib/server'
-import { lp, toLocale } from '@/lib/i18n'
+import { lp, toLocale, tr } from '@/lib/i18n'
 import { localeAlternates, ogSite } from '@/lib/site'
-import { textLang } from '@/lib/textlang'
-import { loadPatch } from './load'
+import { textLangOn } from '@/lib/textlang'
+import { loadPatch, patchHeading } from './load'
 
 /**
- * Страница одного патча: русский пересказ, тело поста и ссылка на оригинал.
+ * Страница одного патча: пересказ, тело поста и ссылка на оригинал.
  * Зачем свой адрес и что из этого идёт в поиск — в lib/newspage.
+ *
+ * На /en — те же блоки по-английски: пересказ и тело loadPatch отдаёт уже на
+ * языке страницы (английского нет — нет и блока), заголовок поста —
+ * newsTitleOn (titleEn, английский заголовок или «{Game} update»). В индекс
+ * /en идёт только с английским пересказом: newsIndexable судит item.tldr
+ * своего языка.
  *
  * Сутки на ISR — свой срок, а не срок карточки игры (у той неделя и сброс из
  * кронов, lib/gamecache): пост меняет только крон новостей, и редко — тело
@@ -46,24 +53,40 @@ export async function generateStaticParams(): Promise<Array<{ appid: string; gid
 
 type Params = { params: Promise<{ appid: string; gid: string; lang?: string }> }
 
+/**
+ * Карточка патча на /en — та же opengraph-image.tsx рядом, но с английской
+ * подписью. alt файловой карточки — статический экспорт, один на все языки
+ * (next-metadata-image-loader), и на /en og:image:alt был бы русским.
+ *
+ * Свой images этого же уровня Next ставит вместо файловой карточки
+ * (resolve-metadata, mergeStaticMetadata: файл — только пока у openGraph
+ * уровня нет ключа images), а twitter берёт картинку из openGraph сам.
+ * Русская страница своего images не задаёт и получает файловую карточку как
+ * была: адрес с хешем, размеры и alt — оттуда. Размеры и тип — копия size и
+ * contentType карточки, а не импорт: модуль карточки тянет next/og и шрифты в
+ * рендер страницы. Что они совпадают — сторож в page.test.ts.
+ */
+const EN_CARD = { width: 1200, height: 630, type: 'image/png', alt: 'What changed in this patch — imbored' }
+
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { appid, gid, lang } = await params
   const locale = toLocale(lang)
-  const page = await loadPatch(appid, gid)
+  const page = await loadPatch(appid, gid, locale)
   if (!page) return {}
   const { item, game } = page
 
   // С датой, если заголовок патчи игры не различает: у CS2 все они —
   // «Обновление Counter-Strike 2» (см. newsPageTitle)
-  const title = newsPageTitle(item.title, game?.name, item.publishedAt)
-  const description = newsDescription(item, game?.name)
+  const title = newsPageTitle(newsTitleOn(item, game?.name, locale), game?.name, item.publishedAt, locale)
+  const description = newsDescription(item, game?.name, locale)
   const canonical = newsPath(item.appid, item.gid)
   /*
-   * Картинки здесь нет намеренно: у патча своя карточка (opengraph-image.tsx
-   * рядом), и Next подставляет её сам — но только пока у openGraph этого
-   * уровня нет своего ключа images. Раньше здесь передавалась картинка
-   * родителя, и патч разворачивался в чате карточкой игры — «СТОИТ ЛИ
-   * ИГРАТЬ» вместо того, что изменилось.
+   * Картинки у русской страницы здесь нет намеренно: у патча своя карточка
+   * (opengraph-image.tsx рядом), и Next подставляет её сам — но только пока
+   * у openGraph этого уровня нет своего ключа images. Раньше здесь
+   * передавалась картинка родителя, и патч разворачивался в чате карточкой
+   * игры — «СТОИТ ЛИ ИГРАТЬ» вместо того, что изменилось. На /en images есть,
+   * но это та же карточка, только с английским alt (EN_CARD выше).
    */
 
   return {
@@ -80,6 +103,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
       title,
       description,
       publishedTime: new Date(item.publishedAt * 1000).toISOString(),
+      ...(locale === 'en' ? { images: [{ url: `${lp(locale, canonical)}/opengraph-image`, ...EN_CARD }] } : {}),
     },
     twitter: { card: 'summary_large_image', title, description },
   }
@@ -97,7 +121,7 @@ export default async function PatchPage({ params }: Params) {
    * страницей нет границы Suspense — ни loading.tsx, ни своей. Каркас сюда
    * не добавлять, см. lib/firstpaint.test.ts.
    */
-  const page = await loadPatch(rawAppid, rawGid)
+  const page = await loadPatch(rawAppid, rawGid, locale)
   if (!page) notFound()
   const { item, game } = page
 
@@ -105,9 +129,27 @@ export default async function PatchPage({ params }: Params) {
     .filter((h) => h.gid !== item.gid)
     .slice(0, OTHERS)
   const gameHref = `/game/${item.appid}`
-  const heading = newsHeading(item.title, game?.name)
+  // Заголовок поста на языке страницы: русский заголовок издателя на /en не
+  // показывается — его место занимает titleEn или «{Game} update» (newsTitleOn)
+  const titleOn = newsTitleOn(item, game?.name, locale)
+  // Общий «{Game} update» в h1 не режется до голого «Update» (patchHeading)
+  const heading = patchHeading(item, game?.name, locale)
 
   const baseUrl = appBaseUrl()
+  /*
+   * Заголовок разметки — тот же, что в h1. patchArticleLd и patchBreadcrumbLd
+   * строят его сами через newsHeading и общий «{Game} update» режут до
+   * «Update» (lib/jsonld) — поэтому он ставится отсюда. На русской странице
+   * patchHeading и есть newsHeading, и разметка та же байт в байт: ключ
+   * перезаписывается на своём месте.
+   */
+  const article = { ...patchArticleLd({ item, game, baseUrl, locale }), headline: heading }
+  const crumbs = patchBreadcrumbLd({ item, game, baseUrl, locale })
+  const lastCrumb = crumbs.itemListElement.length - 1
+  const breadcrumb = {
+    ...crumbs,
+    itemListElement: crumbs.itemListElement.map((step, i) => (i === lastCrumb ? { ...step, name: heading } : step)),
+  }
 
   return (
     <div className="relative flex-1 overflow-x-clip">
@@ -115,12 +157,7 @@ export default async function PatchPage({ params }: Params) {
           как в h1, «Коротко», кадр, ссылка назад на игру, оригинал */}
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{
-          __html: ldScript([
-            patchArticleLd({ item, game, baseUrl, locale }),
-            patchBreadcrumbLd({ item, game, baseUrl, locale }),
-          ]),
-        }}
+        dangerouslySetInnerHTML={{ __html: ldScript([article, breadcrumb]) }}
       />
       {/*
         Свет игры за шапкой патча — тот же приём и тот же лёгкий файл, что
@@ -150,19 +187,20 @@ export default async function PatchPage({ params }: Params) {
               {game.name}
             </Link>
           )}
-          <Eyebrow as="p">Что изменилось</Eyebrow>
+          <Eyebrow as="p">{tr(locale, { ru: 'Что изменилось', en: 'What changed' })}</Eyebrow>
           {/* Заголовок и тело — текст издателя, обычно английский, а
               страница — lang="ru". Без пометки скринридер читал бы латиницу
-              русским голосом (WCAG 3.1.2), см. lib/textlang. Тело помечает
-              NewsBody сам; пересказ «Коротко» наш и русский — без пометки.
+              русским голосом (WCAG 3.1.2), см. lib/textlang; на /en чужим
+              становится русский. Тело помечает NewsBody сам; пересказ
+              «Коротко» наш и на языке страницы — без пометки.
               Название игры в подсчёт не входит: «Обновление Counter-Strike 2»
               — русский заголовок с именем собственным, а не английский. */}
-          <h1 lang={textLang(heading, game?.name)} className="font-display text-display-md">
+          <h1 lang={textLangOn(locale, heading, game?.name)} className="font-display text-display-md">
             {heading}
           </h1>
           <div className="flex flex-wrap items-center gap-3">
-            <NewsDate at={item.publishedAt} />
-            <ScaleBadge scale={item.scale} />
+            <NewsDate at={item.publishedAt} locale={locale} />
+            <ScaleBadge scale={item.scale} locale={locale} />
           </div>
         </header>
 
@@ -171,14 +209,16 @@ export default async function PatchPage({ params }: Params) {
             ниже — текст издателя без изменений. */}
         {item.tldr && (
           <section className="panel-lift flex flex-col gap-2 p-5 md:p-6">
-            <SectionLabel as="h2">Коротко</SectionLabel>
+            <SectionLabel as="h2">{tr(locale, { ru: 'Коротко', en: 'In short' })}</SectionLabel>
             <p className="leading-relaxed text-ink/90">{item.tldr}</p>
-            <p className="text-[11px] text-faint">Пересказ собран ИИ по тексту патча</p>
+            <p className="text-[11px] text-faint">
+              {tr(locale, { ru: 'Пересказ собран ИИ по тексту патча', en: 'Summarized by AI from the patch notes' })}
+            </p>
           </section>
         )}
 
         <section className="flex flex-col gap-4">
-          <SectionLabel as="h2">Патч целиком</SectionLabel>
+          <SectionLabel as="h2">{tr(locale, { ru: 'Патч целиком', en: 'Full patch notes' })}</SectionLabel>
           {item.imageUrl && (
             // Кадр поста из RSS Steam, как в ленте (PatchRow, Cover). Не
             // next/image по той же причине, что в NewsBody: пришлось бы
@@ -192,7 +232,11 @@ export default async function PatchPage({ params }: Params) {
             />
           )}
           {item.blocks.length > 0 ? (
-            <NewsBody blocks={item.blocks} />
+            <NewsBody blocks={item.blocks} locale={locale} />
+          ) : locale === 'en' ? (
+            // На /en пустое тело — почти всегда не английское (loadPatch его
+            // не отдаёт): та же строка, что в раскрытой строке ленты
+            <ForeignBody locale={locale} />
           ) : (
             <p className="text-sm leading-relaxed text-dim">
               Текста патча у нас нет — он открывается в Steam по ссылке ниже.
@@ -206,14 +250,14 @@ export default async function PatchPage({ params }: Params) {
               href={gameHref}
               className="tap tap-tight font-semibold underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
             >
-              Всё об игре
+              {tr(locale, { ru: 'Всё об игре', en: 'About the game' })}
             </Link>
           )}
           {/* Пересказ есть только у нас — отсюда им и делятся (с меткой ref) */}
           <PatchShare
             appid={item.appid}
             gid={item.gid}
-            title={newsPageTitle(item.title, game?.name, item.publishedAt)}
+            title={newsPageTitle(titleOn, game?.name, item.publishedAt, locale)}
           />
           <a
             href={item.url}
@@ -221,7 +265,7 @@ export default async function PatchPage({ params }: Params) {
             rel="noopener noreferrer"
             className="tap tap-tight text-dim underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
           >
-            Оригинал в Steam
+            {tr(locale, { ru: 'Оригинал в Steam', en: 'Original on Steam' })}
           </a>
         </div>
 
@@ -235,36 +279,45 @@ export default async function PatchPage({ params }: Params) {
           а над общей лентой сам зовёт подключить Steam. «Крупные» — потому что
           лента берёт только их; «твоих игр», а не «всех»: у ленты потолок
           библиотеки (LIBRARY_CAP).
+
+          Английская фраза — своя целиком, а не перевод кусков вокруг ссылки:
+          в ней ссылка — подлежащее («What's new has…»), в русской — заголовок
+          перед тире.
         */}
         <p className="text-sm leading-relaxed text-dim">
-          А что изменилось в твоих играх?{' '}
+          {tr(locale, { ru: 'А что изменилось в твоих играх?', en: 'What changed in your games?' })}{' '}
           <Link
             href="/whatsnew"
             className="tap tap-tight font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
           >
-            Что нового
+            {tr(locale, { ru: 'Что нового', en: "What's new" })}
           </Link>{' '}
-          — крупные патчи твоей библиотеки одной лентой.
+          {tr(locale, {
+            ru: '— крупные патчи твоей библиотеки одной лентой.',
+            en: 'has the major patches from your library in one feed.',
+          })}
         </p>
 
         {others.length > 0 && (
           <section>
             <SectionLabel as="h2" className="mb-2">
-              {game ? `Другие патчи ${game.name}` : 'Другие патчи'}
+              {game
+                ? tr(locale, { ru: `Другие патчи ${game.name}`, en: `More ${game.name} patches` })
+                : tr(locale, { ru: 'Другие патчи', en: 'More patches' })}
             </SectionLabel>
             <ul className="flex flex-col">
               {others.map((o) => {
-                const title = newsHeading(o.title, game?.name)
+                const title = newsHeading(newsTitleOn(o, game?.name, locale), game?.name)
                 return (
                   <li key={o.gid} className="border-b border-rule last:border-b-0">
                     <Link
                       href={newsPath(item.appid, o.gid)}
                       className="flex items-baseline justify-between gap-4 py-3 text-sm transition-opacity hover:opacity-70"
                     >
-                      <span lang={textLang(title, game?.name)} className="min-w-0 truncate">
+                      <span lang={textLangOn(locale, title, game?.name)} className="min-w-0 truncate">
                         {title}
                       </span>
-                      <NewsDate at={o.publishedAt} className="shrink-0" />
+                      <NewsDate at={o.publishedAt} locale={locale} className="shrink-0" />
                     </Link>
                   </li>
                 )

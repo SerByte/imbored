@@ -9,6 +9,8 @@ import { Stage } from '@/components/whatsnew/Stage'
 import {
   issueFeedLink,
   saveLibrarySnapshot,
+  setNewsDigest,
+  setNewsDigestEn,
   upsertGameMeta,
   upsertNewsItems,
   type Db,
@@ -234,5 +236,55 @@ describe('/whatsnew: RSS по секретной ссылке', () => {
     const { tree, rss } = await page(null)
     expect(rss).toEqual([])
     expect(textOf(tree)).not.toContain('секретной ссылке')
+  })
+})
+
+/**
+ * /en/whatsnew: строки уезжают в островки уже на языке страницы (rowOn) —
+ * заголовок по newsTitleOn, пересказ только английский; вход через Steam
+ * везёт lang=en и возвращает на английскую ленту.
+ */
+describe('/en/whatsnew', () => {
+  const pageEn = async () =>
+    flight(
+      await WhatsNewPage({
+        params: Promise.resolve({ lang: 'en' }),
+        searchParams: Promise.resolve({ feed: 'popular' }),
+      } as PageProps<'/[lang]/whatsnew'>),
+      ISLANDS,
+    )
+
+  test('строки ленты: английский заголовок вместо русского, без русского пересказа', async () => {
+    await seed([patch(570, 1, 900_000), patch(730, 2, 20_000), patch(440, 3, 300_000)], [])
+    await setNewsDigest(db, 440, '4400', { tldr: 'Коротко по-русски.', scale: 'major' }, NOW)
+    await setNewsDigestEn(db, 440, '4400', { tldrEn: 'In short, in English.' }, NOW)
+    await setNewsDigest(db, 730, '7300', { tldr: 'Только по-русски.', scale: 'major' }, NOW)
+    const tree = await pageEn()
+    const byApp = new Map(islandsOf(tree, 'PatchRow').map((p) => [(p.item as { appid: number }).appid, p.item]))
+    expect(byApp.get(440)).toMatchObject({ title: 'Игра 440 update', tldr: 'In short, in English.' })
+    expect(byApp.get(730)).toMatchObject({ title: 'Игра 730 update' })
+    expect(byApp.get(730)).not.toHaveProperty('tldr')
+    expect(byApp.get(730)).not.toHaveProperty('tldrEn')
+    // Вкладок нет у гостя без своих патчей — подпись общей ленты по-английски
+    expect(textOf(tree)).toContain('In popular games')
+    expect(textOf(tree)).toContain('Only major patches.')
+  })
+
+  test('русская лента того же поста — с русским заголовком и пересказом', async () => {
+    await seed([patch(570, 1, 900_000), patch(730, 2, 20_000)], [])
+    await setNewsDigest(db, 730, '7300', { tldr: 'Только по-русски.', scale: 'major' }, NOW)
+    const { byApp } = await rows('popular')
+    expect(byApp.get(730)?.item).toMatchObject({ title: 'Обновление 730', tldr: 'Только по-русски.' })
+  })
+
+  test('сессия по ссылке на профиль: вход через Steam везёт язык страницы', async () => {
+    await upsertGameMeta(db, game(570), NOW)
+    await upsertNewsItems(db, [patch(570, 1, 900_000), patch(440, 2, 300_000)], NOW)
+    signOut()
+    await signInAs(db, 'claimed')
+    const tree = await pageEn()
+    expect(JSON.stringify(tree)).toContain('"/api/auth/steam?next=%2Fwhatsnew&lang=en"')
+    expect(textOf(tree)).toContain('needs a Steam sign-in')
+    expect(textOf(tree)).toContain('Sign in with Steam')
   })
 })

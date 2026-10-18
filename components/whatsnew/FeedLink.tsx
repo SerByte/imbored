@@ -8,7 +8,7 @@ import { bounceTo, steamLoginFor } from '@/lib/destination'
 import { issueReply } from '@/lib/feedlinkreply'
 import { focusAdrift } from '@/lib/focushandoff'
 import { dateLabel } from '@/lib/freshness'
-import { lp } from '@/lib/i18n'
+import { lp, tr } from '@/lib/i18n'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
 type Phase =
@@ -73,6 +73,13 @@ type Confirm = 'issue' | 'found' | 'off'
  * Буфер — общий useShareLink, но с what = null: без панели «Поделиться» и без
  * шага share_click. Эту ссылку не отправляют людям, её кладут в свой ридер;
  * а ?ref= у неё нет по той же причине — это ключ, а не приглашение.
+ *
+ * ЯЗЫК. Ключ один на обе версии, а лента у каждой своя: сервер отдаёт путь
+ * без языка (feedPath), и строка ставит его сама (lp) — с /en человек кладёт
+ * в ридер /en/whatsnew/feed/<ключ>, английскую ленту. Вход через Steam —
+ * steamLoginFor с путём на языке страницы: он везёт lang и возвращает сюда
+ * же. Кнопки стоят в ряд, и английские подписи не длиннее русских; «Copy» в
+ * пилюле с полем держит whitespace-nowrap.
  */
 export function FeedLink({ since, verified }: { since: number | null; verified: boolean }) {
   const locale = useLocale()
@@ -109,11 +116,22 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
       // Права кончились, пока страница была открыта: остальные кнопки записи
       // на других островках узнают это из того же хранилища
       writerStore.set(false)
-      return (
+      // Вход вернёт сюда же, к ссылке, а не на квиз (steamLoginFor)
+      const href = steamLoginFor(lp(locale, '/whatsnew'))
+      // Английская фраза — своя целиком: ссылка в ней — цель («To get this
+      // link, sign in with Steam»), а в русской — призыв после тире
+      return locale === 'en' ? (
+        <>
+          To get this link,{' '}
+          <a href={href} className="tap tap-tight underline underline-offset-4">
+            sign in with Steam
+          </a>
+          .
+        </>
+      ) : (
         <>
           Ссылку выпускает вошедший через Steam —{' '}
-          {/* Вход вернёт сюда же, к ссылке, а не на квиз (steamLoginFor) */}
-          <a href={steamLoginFor('/whatsnew')} className="tap tap-tight underline underline-offset-4">
+          <a href={href} className="tap tap-tight underline underline-offset-4">
             войди
           </a>
           .
@@ -123,7 +141,7 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
     if (res.status === 401) {
       return (
         <>
-          Вход закончился —{' '}
+          {tr(locale, { ru: 'Вход закончился —', en: 'Your session ended —' })}{' '}
           {/*
             Вход вернёт сюда же, к ссылке, а не на квиз. Вошедшему через Steam
             — сразу Steam: 401 бывает и после «Выйти на всех устройствах» с
@@ -132,13 +150,14 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
             же 401, а свежий вход гасит старую сессию сам. Демо — через
             главную с возвратом: там и демо, и Steam, а в Steam он не входил.
             Обычный <a>, не Link: /api/auth/steam — роут, а не страница.
-            Поэтому и язык лендингу ставит сам lp().
+            Поэтому и язык лендингу ставит сам lp(), а входу — путь на языке
+            страницы.
           */}
           <a
-            href={verified ? steamLoginFor('/whatsnew') : lp(locale, bounceTo('/whatsnew'))}
+            href={verified ? steamLoginFor(lp(locale, '/whatsnew')) : lp(locale, bounceTo('/whatsnew'))}
             className="tap tap-tight underline underline-offset-4"
           >
-            войди снова
+            {tr(locale, { ru: 'войди снова', en: 'sign in again' })}
           </a>
           .
         </>
@@ -146,9 +165,9 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
     }
     if (res.status === 429) {
       const min = Math.max(1, Math.ceil(Number(res.headers.get('Retry-After') ?? 60) / 60))
-      return `Слишком часто — попробуй через ${min} мин.`
+      return tr(locale, { ru: `Слишком часто — попробуй через ${min} мин.`, en: `Too many tries — try again in ${min} min.` })
     }
-    return res.ok ? null : 'Не получилось — нажми ещё раз.'
+    return res.ok ? null : tr(locale, { ru: 'Не получилось — нажми ещё раз.', en: "Didn't work — try again." })
   }
 
   /** replace — человек подтвердил, что старая ссылка погаснет */
@@ -179,10 +198,16 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
         return
       }
       if (reply.kind !== 'shown') throw new Error('без пути')
-      setPhase({ kind: 'shown', url: `${window.location.origin}${reply.path}` })
-      setSaid('Ссылка готова — она в поле выше и показывается один раз.')
+      // Путь — без языка (feedPath): у /en своя, английская лента
+      setPhase({ kind: 'shown', url: `${window.location.origin}${lp(locale, reply.path)}` })
+      setSaid(
+        tr(locale, {
+          ru: 'Ссылка готова — она в поле выше и показывается один раз.',
+          en: "Your link is ready. It's in the field above and is shown only once.",
+        }),
+      )
     } catch {
-      setMiss('Не получилось — нажми ещё раз.')
+      setMiss(tr(locale, { ru: 'Не получилось — нажми ещё раз.', en: "Didn't work — try again." }))
     } finally {
       setBusy(null)
     }
@@ -201,14 +226,14 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
         return
       }
       setPhase({ kind: 'off' })
-      setSaid('Ссылка отключена.')
+      setSaid(tr(locale, { ru: 'Ссылка отключена.', en: 'Link turned off.' }))
       // «Отключить» уходит вместе со ссылкой — фокус с неё не должен упасть
       // в body: встаёт на главную кнопку, которая теперь «Получить ссылку»
       requestAnimationFrame(() => {
         if (focusAdrift(document, homeRef.current)) primaryRef.current?.focus()
       })
     } catch {
-      setMiss('Не получилось — нажми ещё раз.')
+      setMiss(tr(locale, { ru: 'Не получилось — нажми ещё раз.', en: "Didn't work — try again." }))
     } finally {
       setBusy(null)
     }
@@ -249,38 +274,52 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
 
   const primaryLabel =
     busy === 'issue'
-      ? 'Выпускаю…'
+      ? tr(locale, { ru: 'Выпускаю…', en: 'Issuing…' })
       : phase.kind === 'off'
-        ? 'Получить ссылку'
+        ? tr(locale, { ru: 'Получить ссылку', en: 'Get the link' })
         : asking
-          ? 'Да, выпустить новую'
-          : 'Выпустить новую'
+          ? tr(locale, { ru: 'Да, выпустить новую', en: 'Yes, issue a new one' })
+          : tr(locale, { ru: 'Выпустить новую', en: 'Issue a new one' })
 
   return (
     <section ref={homeRef} aria-labelledby="feedlink-title" className="flex flex-col gap-3 border-t border-rule pt-8">
       <h2 id="feedlink-title" className="font-display text-display-xs">
-        RSS по секретной ссылке
+        {tr(locale, { ru: 'RSS по секретной ссылке', en: 'RSS via a private link' })}
       </h2>
       <p className="max-w-2xl text-sm leading-relaxed text-dim">
         {phase.kind === 'off'
           ? verified
-            ? 'Патчи твоих игр — в ридер или телеграм-бот, без захода сюда. Ссылка личная: кто её знает, видит, какие игры у тебя есть, — не публикуй её.'
-            : 'Патчи игр демо-библиотеки — в ридер или телеграм-бот.'
+            ? tr(locale, {
+                ru: 'Патчи твоих игр — в ридер или телеграм-бот, без захода сюда. Ссылка личная: кто её знает, видит, какие игры у тебя есть, — не публикуй её.',
+                en: "Your games' patches in a reader or a Telegram bot, without coming here. The link is personal: anyone who has it can see which games you own, so don't post it.",
+              })
+            : tr(locale, {
+                ru: 'Патчи игр демо-библиотеки — в ридер или телеграм-бот.',
+                en: "Patches for the demo library's games, in a reader or a Telegram bot.",
+              })
           : phase.kind === 'shown'
-            ? 'Ссылка показывается один раз — сохрани её в ридере. Потеряешь — выпусти новую, старая перестанет работать.'
-            : // dateLabel с годом кончается на «г.» — точка после него была бы второй
-              `Ссылка выдана ${dateLabel(phase.since, { year: true })} — показать её снова нельзя: храним только отпечаток. Потерял — выпусти новую, старая перестанет работать.`}
+            ? tr(locale, {
+                ru: 'Ссылка показывается один раз — сохрани её в ридере. Потеряешь — выпусти новую, старая перестанет работать.',
+                en: 'The link is shown only once, so save it in your reader. Lost it? Issue a new one, and the old one will stop working.',
+              })
+            : tr(locale, {
+                // dateLabel с годом кончается на «г.» — точка после него была бы второй
+                ru: `Ссылка выдана ${dateLabel(phase.since, { year: true })} — показать её снова нельзя: храним только отпечаток. Потерял — выпусти новую, старая перестанет работать.`,
+                en: `Link issued on ${dateLabel(phase.since, { year: true, locale })}. We can't show it again: we only keep its fingerprint. Lost it? Issue a new one, and the old one will stop working.`,
+              })}
       </p>
       {/* Срок демо-ссылки — при любой фазе: и до выпуска, и когда её кладут в ридер (докблок) */}
       {verified ? null : (
         <p className="max-w-2xl text-sm leading-relaxed text-dim">
-          Ссылка живёт, пока жив демо-профиль: она перестанет работать через неделю-другую без заходов на
-          сайт. Лента своих игр — после{' '}
+          {tr(locale, {
+            ru: 'Ссылка живёт, пока жив демо-профиль: она перестанет работать через неделю-другую без заходов на сайт. Лента своих игр — после',
+            en: 'The link lives as long as the demo profile does: it stops working after a week or two without visits. For a feed of your own games,',
+          })}{' '}
           <a
-            href={steamLoginFor('/whatsnew')}
+            href={steamLoginFor(lp(locale, '/whatsnew'))}
             className="tap tap-tight font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
           >
-            входа через Steam
+            {tr(locale, { ru: 'входа через Steam', en: 'sign in with Steam' })}
           </a>
           .
         </p>
@@ -288,13 +327,19 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
 
       {phase.kind === 'shown' ? (
         <div className="join is-link max-w-2xl">
-          <ShareLinkInput url={phase.url} label="Секретная ссылка на RSS-ленту" inputRef={fieldRef} />
+          <ShareLinkInput
+            url={phase.url}
+            label={tr(locale, { ru: 'Секретная ссылка на RSS-ленту', en: 'Private RSS feed link' })}
+            inputRef={fieldRef}
+          />
           <button
             type="button"
             onClick={() => void share.run()}
             className="btn-ember is-block whitespace-nowrap px-5"
           >
-            {share.label('Скопировать', { manual: 'Скопируй вручную' })}
+            {share.label(tr(locale, { ru: 'Скопировать', en: 'Copy' }), {
+              manual: tr(locale, { ru: 'Скопируй вручную', en: 'Copy it manually' }),
+            })}
           </button>
         </div>
       ) : null}
@@ -322,7 +367,11 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
             aria-disabled={busy !== null}
             className="tap tap-tight cursor-pointer text-dim transition-colors hover:text-ink aria-disabled:opacity-40"
           >
-            {busy === 'off' ? 'Отключаю…' : confirm === 'off' ? 'Да, отключить' : 'Отключить'}
+            {busy === 'off'
+              ? tr(locale, { ru: 'Отключаю…', en: 'Turning off…' })
+              : confirm === 'off'
+                ? tr(locale, { ru: 'Да, отключить', en: 'Yes, turn off' })
+                : tr(locale, { ru: 'Отключить', en: 'Turn off' })}
           </button>
         ) : null}
         {confirm !== null ? (
@@ -332,7 +381,7 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
             aria-disabled={busy !== null}
             className="tap tap-tight cursor-pointer text-dim transition-colors hover:text-ink aria-disabled:opacity-40"
           >
-            Отмена
+            {tr(locale, { ru: 'Отмена', en: 'Cancel' })}
           </button>
         ) : null}
       </div>
@@ -341,11 +390,17 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
       <StatusLine
         text={
           confirm === 'found'
-            ? 'Ссылка уже есть — выпущена раньше. Новая заменит её: старая перестанет работать, ридер придётся настроить заново.'
+            ? tr(locale, {
+                ru: 'Ссылка уже есть — выпущена раньше. Новая заменит её: старая перестанет работать, ридер придётся настроить заново.',
+                en: "You already have a link, issued earlier. A new one replaces it: the old one stops working, and you'll need to set up your reader again.",
+              })
             : confirm === 'issue'
-              ? 'Старая ссылка перестанет работать — ридер придётся настроить заново.'
+              ? tr(locale, {
+                  ru: 'Старая ссылка перестанет работать — ридер придётся настроить заново.',
+                  en: "The old link will stop working, and you'll need to set up your reader again.",
+                })
               : confirm === 'off'
-                ? 'Ридер перестанет получать ленту.'
+                ? tr(locale, { ru: 'Ридер перестанет получать ленту.', en: 'Your reader will stop getting the feed.' })
                 : null
         }
         className="text-sm text-ink"
@@ -354,7 +409,12 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
       <StatusLine text={said} className="sr-only" />
 
       {verified && phase.kind !== 'off' ? (
-        <p className="text-xs text-faint">Отключается и кнопкой «Выйти на всех устройствах».</p>
+        <p className="text-xs text-faint">
+          {tr(locale, {
+            ru: 'Отключается и кнопкой «Выйти на всех устройствах».',
+            en: '“Sign out everywhere” turns it off too.',
+          })}
+        </p>
       ) : null}
     </section>
   )

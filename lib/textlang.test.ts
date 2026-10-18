@@ -147,6 +147,15 @@ describe('NewsBody помечает язык тела', () => {
     ]
     expect(html(blocks)).not.toContain('lang=')
   })
+
+  // На /en чужим становится русское тело: голос страницы английский
+  test('на /en: русское тело — lang="ru", английское — без атрибута', () => {
+    const en = (blocks: NewsBlock[]) => renderToStaticMarkup(NewsBody({ blocks, locale: 'en' }))
+    expect(en([{ kind: 'p', runs: [{ text: 'Исправлен вылет на Vertigo при загрузке карты' }] }])).toMatch(
+      /^<div lang="ru" class="/,
+    )
+    expect(en([{ kind: 'p', runs: [{ text: 'Fixed a crash on Vertigo' }] }])).not.toContain('lang=')
+  })
 })
 
 const ROOT = path.join(__dirname, '..')
@@ -186,21 +195,24 @@ describe('заголовок патча несёт свой lang', () => {
         /\slang=\{/,
       )
     }
-    expect(src, `${file}: lang считается правилом lib/textlang`).toContain('textLang(')
+    // textLangOn — правило lib/textlang с языком страницы: на /en чужой — русский
+    expect(src, `${file}: lang считается правилом lib/textlang`).toContain('textLangOn(locale, ')
   })
 
   /**
-   * Язык заголовка считается без названия игры (второй аргумент textLang):
-   * иначе «Обновление Counter-Strike 2» уходит английским голосом. Вызов с
-   * одним аргументом здесь — вернувшийся дефект, а не стиль.
+   * Язык заголовка считается без названия игры (третий аргумент textLangOn,
+   * после языка страницы): иначе «Обновление Counter-Strike 2» уходит
+   * английским голосом. Вызов без него здесь — вернувшийся дефект, а не стиль.
    */
-  test.each([...new Set(HEADINGS.map((h) => h.file))])('%s: textLang знает название игры', (file) => {
-    const calls = [...code(file).matchAll(/textLang\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)].map((m) => m[1])
-    expect(calls.length, `${file}: вызов textLang не найден`).toBeGreaterThan(0)
-    for (const args of calls) expect(args, `${file}: textLang(${args}) без названия игры`).toContain(',')
+  test.each([...new Set(HEADINGS.map((h) => h.file))])('%s: textLangOn знает название игры', (file) => {
+    const calls = [...code(file).matchAll(/textLangOn\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)].map((m) => m[1])
+    expect(calls.length, `${file}: вызов textLangOn не найден`).toBeGreaterThan(0)
+    for (const args of calls) {
+      expect(args.split(',').length, `${file}: textLangOn(${args}) без названия игры`).toBeGreaterThanOrEqual(3)
+    }
   })
 
   test('тело патча идёт через NewsBody, а он ставит lang сам', () => {
-    expect(code('components/NewsBody.tsx')).toMatch(/lang=\{textLang\(blocksToText\(blocks\)\)\}/)
+    expect(code('components/NewsBody.tsx')).toMatch(/lang=\{textLangOn\(locale, blocksToText\(blocks\)\)\}/)
   })
 })

@@ -1,7 +1,9 @@
 'use client'
 
 import { useState } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { ShareLinkInput, useShareLink } from '@/components/ShareLink'
+import { tr } from '@/lib/i18n'
 import { patchShareUrl } from '@/lib/newspage'
 
 /**
@@ -16,13 +18,23 @@ import { patchShareUrl } from '@/lib/newspage'
  * Поле появляется, только если скопировать не вышло ни одним способом
  * (буфер закрыт настройками, webview мессенджера): тогда адрес виден и
  * выделяется руками.
+ *
+ * С /en делятся английской страницей (patchShareUrl с языком), и текст
+ * системной панели — английский: «коротко по-русски» там было бы неправдой.
  */
 const LINK = 'underline decoration-1 underline-offset-4'
 
 export function PatchShare({ appid, gid, title }: { appid: number; gid: string; title: string }) {
+  const locale = useLocale()
   const [manual, setManual] = useState<string | null>(null)
-  const urlOf = () => patchShareUrl(window.location.origin, appid, gid)
-  const share = useShareLink('patch', urlOf, title, 'Что изменилось — коротко по-русски', () => setManual(urlOf()))
+  const urlOf = () => patchShareUrl(window.location.origin, appid, gid, locale)
+  const share = useShareLink(
+    'patch',
+    urlOf,
+    title,
+    tr(locale, { ru: 'Что изменилось — коротко по-русски', en: 'What changed, in short' }),
+    () => setManual(urlOf()),
+  )
 
   return (
     <>
@@ -34,14 +46,14 @@ export function PatchShare({ appid, gid, title }: { appid: number; gid: string; 
         onClick={() => void share.run()}
         className="tap tap-tight font-semibold transition-opacity hover:opacity-70"
       >
-        {share.label(<span className={LINK}>Поделиться</span>, {
-          manual: <span className={LINK}>Скопируй адрес ниже</span>,
+        {share.label(<span className={LINK}>{tr(locale, { ru: 'Поделиться', en: 'Share' })}</span>, {
+          manual: <span className={LINK}>{tr(locale, { ru: 'Скопируй адрес ниже', en: 'Copy the link below' })}</span>,
         })}
       </button>
       {share.status}
       {manual && (
         <div className="join is-link w-full">
-          <ShareLinkInput url={manual} label="Адрес этой страницы" />
+          <ShareLinkInput url={manual} label={tr(locale, { ru: 'Адрес этой страницы', en: 'Link to this page' })} />
         </div>
       )}
     </>

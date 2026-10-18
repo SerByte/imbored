@@ -1,13 +1,21 @@
 import { ImageResponse } from 'next/og'
 import { clip } from '@/lib/clip'
 import { dateLabel } from '@/lib/freshness'
-import { newsHeading } from '@/lib/newspage'
 import { ogFonts, ogGlow, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { ArtBackdrop, ogArt } from '@/lib/ogcard'
 import { CANVAS_WIDE } from '@/lib/ogwall'
-import { loadPatch } from './load'
-import { isLocale } from '@/lib/i18n'
+import { loadPatch, patchHeading } from './load'
+import { isLocale, tr } from '@/lib/i18n'
 
+/*
+ * alt — статический экспорт: Next читает его у модуля один раз на все языки
+ * (next-metadata-image-loader), и по языку его не развести. generateImageMetadata
+ * дал бы свой alt каждому языку, но ценой адреса: /opengraph-image/<id> вместо
+ * /opengraph-image, то есть другой og:image у русской страницы и мёртвые
+ * старые превью. Поэтому здесь — русская подпись, а английскую на /en ставит
+ * сама страница: свой openGraph.images того же уровня с адресом этой же
+ * карточки (EN_CARD в page.tsx).
+ */
 export const alt = 'Что изменилось в патче — imbored'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
@@ -18,7 +26,8 @@ export const contentType = 'image/png'
  * До неё ссылка на патч разворачивалась карточкой игры — «СТОИТ ЛИ ИГРАТЬ»
  * и доля отзывов, — то есть по превью нельзя было понять, что прислали
  * новость, а не игру. Здесь то, ради чего у патча есть адрес: заголовок и
- * русский пересказ, на арте игры.
+ * пересказ, на арте игры. На языке адреса: loadPatch с языком отдаёт пересказ
+ * своего языка (на /en — английский или никакого), заголовок — newsTitleOn.
  *
  * Сутки кэша, как у страницы. Пустой generateStaticParams регистрирует
  * сегмент (без него revalidate мёртв, см. app/room/[id]/opengraph-image.tsx):
@@ -43,18 +52,26 @@ export default async function Image({ params }: { params: Promise<{ lang: string
   const { lang, appid, gid } = await params
   // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
   if (!isLocale(lang)) return new Response('Not found', { status: 404 })
-  const page = await loadPatch(appid, gid)
+  const locale = lang
+  const page = await loadPatch(appid, gid, locale)
   const item = page?.item ?? null
   const game = page?.game ?? null
   // Арт не дотянулся (чужой CDN, таймаут) — тёмная карточка со свечением
   const art = item && game ? await ogArt({ appid: item.appid, art: game.art, headerImage: game.headerImage }) : null
 
-  const heading = item ? newsHeading(item.title, game?.name) : 'Что изменилось в играх'
+  // Тот же заголовок, что в h1 страницы: общий «{Game} update» — целиком
+  const heading = item
+    ? patchHeading(item, game?.name, locale)
+    : tr(locale, { ru: 'Что изменилось в играх', en: 'What changed in games' })
   const tldr = item?.tldr?.trim() ? (clip(item.tldr.trim(), 150) ?? item.tldr.trim().slice(0, 150)) : null
-  const eyebrow = game ? `ЧТО ИЗМЕНИЛОСЬ · ${game.name.toUpperCase().slice(0, 36)}` : 'ЧТО ИЗМЕНИЛОСЬ'
+  const eyebrowWord = tr(locale, { ru: 'ЧТО ИЗМЕНИЛОСЬ', en: 'WHAT CHANGED' })
+  const eyebrow = game ? `${eyebrowWord} · ${game.name.toUpperCase().slice(0, 36)}` : eyebrowWord
+  // Дата — dateLabel, то есть UTC: карточка и страница печатают один день
+  const kind =
+    item?.scale === 'hotfix' ? tr(locale, { ru: 'Хотфикс', en: 'Hotfix' }) : tr(locale, { ru: 'Патч', en: 'Patch' })
   const foot = item
-    ? `${item.scale === 'hotfix' ? 'Хотфикс' : 'Патч'} · ${dateLabel(item.publishedAt, { year: true })}`
-    : 'Пересказы патчей по-русски'
+    ? `${kind} · ${dateLabel(item.publishedAt, { year: true, locale })}`
+    : tr(locale, { ru: 'Пересказы патчей по-русски', en: 'Patch notes, in short' })
 
   return new ImageResponse(
     (

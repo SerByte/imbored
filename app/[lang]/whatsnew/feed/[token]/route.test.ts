@@ -5,6 +5,7 @@ import {
   issueFeedLink,
   saveLibrarySnapshot,
   setNewsDigest,
+  setNewsDigestEn,
   upsertGameMeta,
   upsertNewsItems,
   upsertUser,
@@ -197,6 +198,66 @@ describe('/whatsnew/feed/[token]: язык', () => {
     const res = await GET(new Request(`http://localhost/_x/whatsnew/feed/${key}`), params({ lang: '_x', token: key }))
     expect(res.status).toBe(404)
     expect((await poll(key)).status).toBe(200)
+  })
+})
+
+/**
+ * Английская лента по тому же ключу: /en/whatsnew/feed/<ключ> (строка FeedLink
+ * на /en ставит язык сама). Канал, заголовки записей и адреса — английские;
+ * русского пересказа и русского тела на /en нет (docs/i18n.md, п. 8–9).
+ */
+describe('/en/whatsnew/feed/[token]: английская лента', () => {
+  const pollEn = (token: string) =>
+    GET(new Request(`http://localhost/en/whatsnew/feed/${token}`), params({ lang: 'en', token }))
+
+  beforeEach(async () => {
+    // Названия игр — английские, как в каталоге: кириллица в ленте тогда — только наша
+    await upsertGameMeta(db, { ...game(620), name: 'Portal 2' }, NOW)
+  })
+
+  test('канал по-английски, язык en, адреса — английские страницы', async () => {
+    const res = await pollEn(key)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toContain('private')
+    const xml = await res.text()
+    expect(xml).toContain("<title>What&apos;s new in your games — imbored</title>")
+    expect(xml).toContain('<description>Major patches for games in your library, in short.</description>')
+    expect(xml).toContain('<language>en</language>')
+    expect(xml).toContain('<link>http://localhost:3000/en/whatsnew</link>')
+    expect(xml).toContain('/en/game/620/news/6200')
+  })
+
+  test('английский пересказ — описание; русский заголовок без перевода — «{Game} update»', async () => {
+    await setNewsDigest(db, 620, '6200', { tldr: 'Коротко: починили всё.', scale: 'major' }, NOW)
+    await setNewsDigestEn(db, 620, '6200', { tldrEn: 'In short: fixed everything.' }, NOW)
+    const xml = await (await pollEn(key)).text()
+    expect(xml).toContain('<description>In short: fixed everything.</description>')
+    expect(xml).toMatch(/<title>Portal 2: Update \([A-Z][a-z]{2} \d{1,2}, \d{4}\) — what changed<\/title>/)
+    expect(xml).not.toMatch(/[А-Яа-яЁё]/)
+  })
+
+  test('без английского пересказа русское тело не едет — описание из заголовка', async () => {
+    const xml = await (await pollEn(key)).text()
+    expect(xml.match(/<item>/g)).toHaveLength(1)
+    expect(xml).not.toContain('Починили всё в 620')
+    expect(xml).not.toMatch(/[А-Яа-яЁё]/)
+  })
+
+  test('демо-ключ — лента демо-библиотеки, по-английски', async () => {
+    const demo = await signInAs(db, 'demo')
+    const demoKey = newFeedToken()
+    await issueFeedLink(db, { steamid: demo, sid: 'sid-demo', tokenHash: feedTokenHash(demoKey), nowSec: NOW, replace: true })
+    signOut()
+    const xml = await (await pollEn(demoKey)).text()
+    expect(xml).toContain("<title>What&apos;s new in the demo library&apos;s games — imbored</title>")
+    expect(xml).not.toContain('your library')
+  })
+
+  test('русская лента по тому же ключу — прежняя', async () => {
+    const xml = await (await poll(key)).text()
+    expect(xml).toContain('<language>ru</language>')
+    expect(xml).toContain('<link>http://localhost:3000/whatsnew</link>')
+    expect(xml).toContain('Починили всё в 620')
   })
 })
 

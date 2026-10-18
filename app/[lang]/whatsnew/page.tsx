@@ -1,3 +1,4 @@
+import type { Metadata, ResolvingMetadata } from 'next'
 import Link from '@/components/Link'
 import { Icon } from '@/components/Icon'
 import { LinkPending } from '@/components/LinkPending'
@@ -13,11 +14,14 @@ import {
   getGamesMetaLite,
   getLatestSnapshot,
   withoutBody,
+  type FeedItem,
+  type StoredNews,
 } from '@/lib/db'
 import { steamLoginFor } from '@/lib/destination'
 import { discountView, trustedPrice } from '@/lib/discount'
+import { lp, pl, toLocale, tr, type Locale } from '@/lib/i18n'
 import { HERO_WINDOW_SEC, splitFeed } from '@/lib/newsfeed'
-import { plural } from '@/lib/plural'
+import { newsTitleOn } from '@/lib/newspage'
 import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { ownAddress } from '@/lib/site'
 import { countChanges } from '@/lib/steamhtml'
@@ -26,21 +30,60 @@ import { feedMeta, resolveWhatsNew } from '@/lib/whatsnewfeed'
 
 export const dynamic = 'force-dynamic'
 
-// ?feed=popular — та же лента, что видит гость на /whatsnew, и отдельной
-// страницей она не является: canonical у обеих один
-export const generateMetadata = ownAddress('/whatsnew', {
-  title: 'Что нового',
-  description: 'Крупные обновления игр: что изменилось в твоей библиотеке и в популярных играх.',
-  // <link rel="alternate" type="application/rss+xml"> — по нему ридеры и
-  // браузерные расширения находят ленту сами (app/whatsnew/feed.xml)
-  alternates: { types: { 'application/rss+xml': '/whatsnew/feed.xml' } },
-})
+/*
+ * ?feed=popular — та же лента, что видит гость на /whatsnew, и отдельной
+ * страницей она не является: canonical у обеих один.
+ *
+ * Функция, а не ownAddress(…) константой, как у соседей: заголовок, описание
+ * и адрес RSS-ленты — на языке страницы, а own у ownAddress один на все
+ * языки. Адрес и картинку по-прежнему решает ownAddress.
+ */
+export async function generateMetadata(
+  props: PageProps<'/[lang]/whatsnew'>,
+  parent: ResolvingMetadata,
+): Promise<Metadata> {
+  const locale = toLocale((await props.params).lang)
+  return ownAddress('/whatsnew', {
+    title: tr(locale, { ru: 'Что нового', en: "What's new" }),
+    description: tr(locale, {
+      ru: 'Крупные обновления игр: что изменилось в твоей библиотеке и в популярных играх.',
+      en: 'Major game updates: what changed in your library and in popular games.',
+    }),
+    // <link rel="alternate" type="application/rss+xml"> — по нему ридеры и
+    // браузерные расширения находят ленту сами (app/whatsnew/feed.xml); у
+    // /en — своя, английская
+    alternates: { types: { 'application/rss+xml': lp(locale, '/whatsnew/feed.xml') } },
+  })(props, parent)
+}
 
 /*
  * LIBRARY_CAP, FEED_LIMIT и FEED_RANK_FLOOR переехали в lib/whatsnewfeed:
  * теми же числами обязан пользоваться /api/whatsnew/head, иначе плашка
  * «N новых» считает по одному набору игр, а страница рисует по другому.
  */
+
+/**
+ * Строка ленты для островка — с заголовком и пересказом на языке страницы в
+ * полях title и tldr, как cardNews у карточки игры (lib/gamepage).
+ *
+ * Здесь, на сервере, а не в островках: PatchRow и Cover рисуют title и tldr
+ * как есть, а indexedNewsPath судит по tldr, давать ли ссылку на страницу
+ * патча, — на /en она идёт в индекс только с английским пересказом. Правило
+ * заголовка (newsTitleOn: titleEn → английский заголовок → «{Game} update») и
+ * его словари в бандл ленты так не едут. Русского пересказа на /en нет вовсе
+ * (docs/i18n.md, п. 8): нет английского — нет и строки пересказа. Русская
+ * строка — withoutBody как была.
+ */
+function rowOn(item: StoredNews, gameName: string | undefined, locale: Locale): FeedItem {
+  const row = withoutBody(item)
+  if (locale !== 'en') return row
+  const en: FeedItem = { ...row, title: newsTitleOn(item, gameName, locale) }
+  delete en.tldr
+  delete en.tldrEn
+  delete en.titleEn
+  if (item.tldrEn) en.tldr = item.tldrEn
+  return en
+}
 
 /**
  * Лента обновлений.
@@ -67,8 +110,13 @@ export const generateMetadata = ownAddress('/whatsnew', {
  * (FeedTab → LinkPending), а старая страница стоит до прихода новой — без
  * белого кадра между двумя тёмными экранами, из-за которого у ветки и был
  * свой фолбэк.
+ *
+ * Язык — из params (у страницы есть тест, а next/root-params в vitest бросает
+ * при импорте): тексты строк ленты собирает rowOn, срок скидки — discountView
+ * здесь же, клиенту уезжают готовые строки.
  */
 export default async function WhatsNewPage(props: PageProps<'/[lang]/whatsnew'>) {
+  const locale = toLocale((await props.params).lang)
   const wantsPopular = (await props.searchParams).feed === 'popular'
   const session = await currentSession()
   const steamid = session?.steamid ?? null
@@ -111,7 +159,8 @@ export default async function WhatsNewPage(props: PageProps<'/[lang]/whatsnew'>)
    * него нет (components/SignOut), и ссылку его выход не трогает.
    *
    * «Войти через Steam» — со steamLoginFor: после входа человек обязан
-   * вернуться сюда, к ссылке, ради которой входил, а не попасть на квиз.
+   * вернуться сюда, к ссылке, ради которой входил, а не попасть на квиз. Путь
+   * — на языке страницы: с /en вход везёт lang=en и возвращает на /en/whatsnew.
    */
   const writer = session !== null && isWriter(session)
   const feedLink = writer ? await getFeedLink(db, session.steamid) : null
@@ -119,13 +168,15 @@ export default async function WhatsNewPage(props: PageProps<'/[lang]/whatsnew'>)
     <FeedLink since={feedLink?.createdAt ?? null} verified={session.verified} />
   ) : (
     <p className="border-t border-rule pt-8 text-sm text-dim">
-      Получать патчи своих игр в ридер по секретной ссылке может вошедший через Steam: ссылка
-      на профиль не доказывает, что профиль твой.{' '}
+      {tr(locale, {
+        ru: 'Получать патчи своих игр в ридер по секретной ссылке может вошедший через Steam: ссылка на профиль не доказывает, что профиль твой.',
+        en: "The private RSS link for your games' patches needs a Steam sign-in: a profile link doesn't prove the profile is yours.",
+      })}{' '}
       <a
-        href={steamLoginFor('/whatsnew')}
+        href={steamLoginFor(lp(locale, '/whatsnew'))}
         className="tap tap-tight font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
       >
-        Войти через Steam
+        {tr(locale, { ru: 'Войти через Steam', en: 'Sign in with Steam' })}
       </a>
     </p>
   )
@@ -143,12 +194,16 @@ export default async function WhatsNewPage(props: PageProps<'/[lang]/whatsnew'>)
         <span aria-hidden className="mb-2 grid size-16 place-items-center rounded-full bg-ink/10 text-dim">
           <Icon name="news" size={28} />
         </span>
-        <h1 className="font-display text-display-md">Что нового</h1>
+        <h1 className="font-display text-display-md">{tr(locale, { ru: 'Что нового', en: "What's new" })}</h1>
         <p className="max-w-sm text-sm leading-relaxed text-dim">
-          Пока пусто. Обновления подтягиваются по расписанию — загляни попозже.
+          {tr(locale, {
+            ru: 'Пока пусто. Обновления подтягиваются по расписанию — загляни попозже.',
+            en: 'Nothing here yet. Updates come in on a schedule — check back later.',
+          })}
         </p>
         <Link href="/quiz" className="btn-ember mt-2 px-6 py-3">
-          А пока подобрать игру <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
+          {tr(locale, { ru: 'А пока подобрать игру', en: 'Find a game in the meantime' })}{' '}
+          <Icon name="arrow" className="ml-1.5 inline-block align-[-0.125em]" />
         </Link>
         {rss ? <div className="mt-12 w-full max-w-2xl text-left">{rss}</div> : null}
       </div>
@@ -160,6 +215,8 @@ export default async function WhatsNewPage(props: PageProps<'/[lang]/whatsnew'>)
   // достаёт хвост. Порядок тот же, что у /api/whatsnew/head.
   const keys = items.map((i) => `${i.appid}:${i.gid}`)
   const tailAt = items[items.length - 1]!.publishedAt
+  const yourGames = tr(locale, { ru: 'В твоих играх', en: 'In your games' })
+  const popularGames = tr(locale, { ru: 'В популярных играх', en: 'In popular games' })
 
   return (
     <div className="whatsnew min-h-screen">
@@ -193,7 +250,7 @@ export default async function WhatsNewPage(props: PageProps<'/[lang]/whatsnew'>)
         }
       >
         <Cover
-          item={withoutBody(hero)}
+          item={rowOn(hero, heroMeta?.name, locale)}
           // вариант hero: обложка рисует арт во весь экран — см. feedMeta
           meta={feedMeta(heroMeta, 'hero')}
           nowSec={now}
@@ -201,10 +258,18 @@ export default async function WhatsNewPage(props: PageProps<'/[lang]/whatsnew'>)
           // Переключатель лежит экраном ниже, а после клика человек оказывается
           // наверху новой обложки — подпись здесь единственное, что говорит ему,
           // куда он попал
-          label={hasMine ? (showPopular ? 'в популярных играх' : 'в твоих играх') : undefined}
+          label={
+            hasMine
+              ? showPopular
+                ? tr(locale, { ru: 'в популярных играх', en: 'in popular games' })
+                : tr(locale, { ru: 'в твоих играх', en: 'in your games' })
+              : undefined
+          }
         />
 
         <div className="mx-auto w-full max-w-6xl px-5 pb-24">
+          {/* Вкладки и подпись — одна строка на одной базовой линии: английские
+              подписи не длиннее русских, и строка не переносится раньше */}
           <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-b border-rule py-6">
             {hasMine ? (
               /*
@@ -216,39 +281,45 @@ export default async function WhatsNewPage(props: PageProps<'/[lang]/whatsnew'>)
                * а здесь происходит полноценная навигация.
                */
               <nav
-                aria-label="Какую ленту показывать"
+                aria-label={tr(locale, { ru: 'Какую ленту показывать', en: 'Which feed to show' })}
                 className="flex flex-wrap items-baseline gap-x-6 gap-y-1"
               >
                 <FeedTab href="/whatsnew" active={!showPopular}>
-                  В твоих играх
+                  {yourGames}
                 </FeedTab>
                 <FeedTab href="/whatsnew?feed=popular" active={showPopular}>
-                  В популярных играх
+                  {popularGames}
                 </FeedTab>
               </nav>
             ) : (
               <h2 className="font-display text-display-xs">
-                В популярных играх
+                {popularGames}
               </h2>
             )}
 
             <p className="text-sm text-dim">
               {hasMine ? (
                 showPopular ? (
-                  'Крупные патчи в играх, где сейчас больше всего народу.'
+                  tr(locale, {
+                    ru: 'Крупные патчи в играх, где сейчас больше всего народу.',
+                    en: "Major patches in today's most-played games.",
+                  })
                 ) : (
-                  'Только крупные патчи. Мелкие правки — на странице игры.'
+                  tr(locale, {
+                    ru: 'Только крупные патчи. Мелкие правки — на странице игры.',
+                    en: 'Only major patches. Smaller changes are on game pages.',
+                  })
                 )
               ) : (
                 <>
-                  Только крупные патчи.{' '}
+                  {tr(locale, { ru: 'Только крупные патчи.', en: 'Only major patches.' })}{' '}
                   <Link
                     href="/"
                     className="tap tap-tight font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
                   >
-                    Подключи Steam
+                    {tr(locale, { ru: 'Подключи Steam', en: 'Connect Steam' })}
                   </Link>{' '}
-                  — и лента станет про твои игры.
+                  {tr(locale, { ru: '— и лента станет про твои игры.', en: 'to make the feed about your games.' })}
                 </>
               )}
             </p>
@@ -265,12 +336,12 @@ export default async function WhatsNewPage(props: PageProps<'/[lang]/whatsnew'>)
             return (
               <PatchRow
                 key={`${item.appid}:${item.gid}`}
-                item={withoutBody(item)}
+                item={rowOn(item, meta?.name, locale)}
                 meta={feedMeta(meta)}
                 nowSec={now}
                 changes={countChanges(item.blocks)}
                 discovery={buying}
-                discount={buying && meta ? discountView(meta, now) : null}
+                discount={buying && meta ? discountView(meta, now, { locale }) : null}
                 price={buying && meta ? trustedPrice(meta, now) : null}
                 priceCc={buying ? (meta?.priceCc ?? null) : null}
                 unsold={buying && meta?.storeHidden === true}
@@ -288,12 +359,10 @@ export default async function WhatsNewPage(props: PageProps<'/[lang]/whatsnew'>)
               */}
               <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-b border-rule pt-10 pb-6">
                 <h2 className="font-display text-display-xs">
-                  Ещё в популярных играх
+                  {tr(locale, { ru: 'Ещё в популярных играх', en: 'More in popular games' })}
                 </h2>
                 <p className="text-sm text-dim">
-                  В твоих играх за три месяца — {mineCount}{' '}
-                  {plural(mineCount, 'обновление', 'обновления', 'обновлений')}. Дальше — то, что
-                  патчат прямо сейчас.
+                  {topupLine(mineCount, locale)}
                 </p>
               </div>
 
@@ -306,12 +375,12 @@ export default async function WhatsNewPage(props: PageProps<'/[lang]/whatsnew'>)
                 return (
                   <PatchRow
                     key={`${item.appid}:${item.gid}`}
-                    item={withoutBody(item)}
+                    item={rowOn(item, meta?.name, locale)}
                     meta={feedMeta(meta)}
                     nowSec={now}
                     changes={countChanges(item.blocks)}
                     discovery={buying}
-                    discount={buying && meta ? discountView(meta, now) : null}
+                    discount={buying && meta ? discountView(meta, now, { locale }) : null}
                     price={buying && meta ? trustedPrice(meta, now) : null}
                     priceCc={buying ? (meta?.priceCc ?? null) : null}
                     unsold={buying && meta?.storeHidden === true}
@@ -326,6 +395,21 @@ export default async function WhatsNewPage(props: PageProps<'/[lang]/whatsnew'>)
       </Stage>
     </div>
   )
+}
+
+/**
+ * Подпись над добивкой: сколько было в твоих играх и что ниже. Целой фразой
+ * на каждый язык — число стоит в них на разных местах.
+ */
+function topupLine(mineCount: number, locale: Locale): string {
+  const updates = `${mineCount} ${pl(locale, mineCount, {
+    ru: ['обновление', 'обновления', 'обновлений'],
+    en: ['update', 'updates'],
+  })}`
+  return tr(locale, {
+    ru: `В твоих играх за три месяца — ${updates}. Дальше — то, что патчат прямо сейчас.`,
+    en: `${updates} in your games over the last three months. Below is what's being patched right now.`,
+  })
 }
 
 /**
