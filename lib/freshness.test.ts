@@ -142,3 +142,70 @@ describe('dateLabel', () => {
     }
   })
 })
+
+/** Кириллица в английской подписи — недопереведённый кусок */
+const CYRILLIC = /[А-Яа-яЁё]/
+
+/**
+ * Английская версия: те же границы, свои слова. Русский по умолчанию держат
+ * тесты выше — без языка функции отвечают ровно как раньше.
+ */
+describe('по-английски', () => {
+  test('freshness: единица без цифры — с артиклем, дальше числом', () => {
+    const en = (days: number, secs = 0) => freshness(ago(days, secs), NOW, 'en')
+    expect(en(0, 3600)).toBe('today')
+    expect(en(1)).toBe('yesterday')
+    expect(en(2)).toBe('2 days ago')
+    expect(en(7)).toBe('a week ago')
+    expect(en(21)).toBe('3 weeks ago')
+    expect(en(35)).toBe('a month ago')
+    expect(en(60)).toBe('2 months ago')
+    expect(en(364)).toBe('12 months ago')
+    expect(en(400)).toBe('a year ago')
+    expect(en(1900)).toBe('5 years ago')
+    expect(freshness(NOW + 5000, NOW, 'en')).toBe('today')
+    for (let d = 0; d < 4000; d += 3) {
+      const label = en(d)
+      expect(label, String(d)).not.toMatch(CYRILLIC)
+      expect(label.startsWith('0'), String(d)).toBe(false)
+    }
+  })
+
+  test('minutesAgoLabel: минуты сокращением, час и день — словами', () => {
+    expect(minutesAgoLabel(0, 'en')).toBe('just now')
+    expect(minutesAgoLabel(1, 'en')).toBe('1 min ago')
+    expect(minutesAgoLabel(59, 'en')).toBe('59 min ago')
+    expect(minutesAgoLabel(60, 'en')).toBe('an hour ago')
+    expect(minutesAgoLabel(125, 'en')).toBe('2 hours ago')
+    expect(minutesAgoLabel(1380, 'en')).toBe('23 hours ago')
+    expect(minutesAgoLabel(1440, 'en')).toBe('a day ago')
+    expect(minutesAgoLabel(2 * 1440, 'en')).toBe('2 days ago')
+  })
+
+  test('dayLabel и dateLabel: месяц словом, в UTC', () => {
+    expect(dayLabel('2026-08-19', 'en')).toBe('August 19')
+    expect(dayLabel('2026-01-01', 'en')).toBe('January 1')
+    const at = Math.floor(Date.UTC(2026, 7, 12, 22, 50) / 1000)
+    expect(dateLabel(at, { locale: 'en' })).toBe('August 12')
+    expect(dateLabel(at, { year: true, locale: 'en' })).toBe('August 12, 2026')
+    // явный ru — тот же ответ, что без языка
+    expect(dateLabel(at, { year: true, locale: 'ru' })).toBe(dateLabel(at, { year: true }))
+  })
+
+  test('английская дата тоже не зависит от зоны рантайма', () => {
+    const at = Math.floor(Date.UTC(2026, 7, 12, 22, 50) / 1000)
+    const tz = process.env.TZ
+    try {
+      const seen = new Set<string>()
+      for (const zone of ['UTC', 'Pacific/Kiritimati', 'America/Los_Angeles']) {
+        process.env.TZ = zone
+        seen.add(dateLabel(at, { year: true, locale: 'en' }))
+        seen.add(`${dayLabel('2026-08-12', 'en')}, 2026`)
+      }
+      expect([...seen]).toEqual(['August 12, 2026'])
+    } finally {
+      if (tz === undefined) delete process.env.TZ
+      else process.env.TZ = tz
+    }
+  })
+})
