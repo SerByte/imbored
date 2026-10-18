@@ -79,8 +79,12 @@ const CARD_NAME_MAX = 38
  * invited to “”» шире «Тебя зовут в «»» на 74 px (замер по advance width
  * assets/manrope-800.woff — тем, чем рисует next/og), а пять знаков названия
  * — около 120 px. Так самая длинная английская строка карточки не длиннее
- * самой длинной русской и не уходит лишней строкой вниз. «Matched on “”»
- * уже «Сошлись на «»», и после матча потолок общий.
+ * самой длинной русской, и строк ей нужно не больше, чем русской. Каждая
+ * отдельная — шире русской на ту же рамку: «Konstantin invites you to
+ * “Counter-Strike 2”» встаёт в две строки там, где русская — в одну. Короче
+ * не сказать, не уйдя от глоссария («X invites you»), а две строки карточка
+ * держит — их занимает и русское длинное название. «Matched on “”» уже
+ * «Сошлись на «»», и после матча потолок общий.
  */
 const CARD_SEED_MAX_EN = CARD_NAME_MAX - 5
 
@@ -228,9 +232,9 @@ export function inviteCopy(code: string, invite: RoomInvite | null, locale: Loca
     title: seed
       ? tr(locale, {
           ru: `${calls} в «${seed}» · пати ${code}`,
-          en: `${invitesTo(host, `“${seed}”`)} · party ${code}`,
+          en: `${invitesTo(host, `“${seed}”`)} · Party ${code}`,
         })
-      : tr(locale, { ru: `${calls} в пати ${code}`, en: invitesTo(host, `party ${code}`) }) +
+      : tr(locale, { ru: `${calls} в пати ${code}`, en: invitesTo(host, `Party ${code}`) }) +
         (preset ? ` · ${preset}` : ''),
     description:
       (seed ? `${seedOffer(seed, locale)} ` : '') +
@@ -276,11 +280,24 @@ function invitesTo(host: string | null, what: string): string {
  * настроения и заголовок экрана приглашения: одна фраза на оба, как
  * callsOf. Английская — своя на каждый случай: «You're invited» без ника и
  * «… wants to pick» с ником.
+ *
+ * «tonight's game», а не «a game for tonight»: строка стоит кеглем 44 в
+ * ширину 900, и длинному нику место остаётся, только пока фраза не шире
+ * русской. «Sergey wants to pick a game for tonight» — 858 px против 798 у
+ * «Sergey зовёт выбрать игру на вечер» (advance width
+ * assets/manrope-800.woff), и ник в десять знаков («Konstantin»,
+ * «Maksim_99») уводил английскую карточку во вторую строку там, где русская
+ * стоит в одну. С «tonight's game» английская фраза на
+ * 10 px уже русской при любом нике — и в карточке, и в h1 экрана
+ * приглашения. Безличная — фраза без ника, и её ширина не плавает: 794 px
+ * против русских 749, но обе встают в одну строку из 900, а в 286 px h1 —
+ * обе в две. Короче — только без «You're invited» глоссария или без
+ * «tonight», а строк это не сэкономит.
  */
 function pickTonight(host: string | null, locale: Locale): string {
   return tr(locale, {
     ru: `${callsOf(host)} выбрать игру на вечер`,
-    en: host ? `${host} wants to pick a game for tonight` : "You're invited to pick a game for tonight",
+    en: host ? `${host} wants to pick tonight's game` : "You're invited to pick tonight's game",
   })
 }
 
@@ -363,9 +380,9 @@ export type InviteDoor = {
  * Превью в чате режет по-своему — у карточки свой кегль и своя ширина.
  *
  * Английский — те же правила и те же фразы, что у превью (pickTonight,
- * seedOffer): «Already here: A, B and 2 more». Заголовок с ником длиннее
- * русского на пару знаков, но в 286 px он переносится на то же число строк
- * (замер по шрифту): ширину держит ник, а не фраза.
+ * seedOffer): «Already here: A, B and 2 more». Заголовок с ником не шире
+ * русского (замер — у pickTonight), и в 286 px он переносится на то же число
+ * строк: ширину держит ник, а не фраза.
  */
 export function inviteDoor(
   args: {

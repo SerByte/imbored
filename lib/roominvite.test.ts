@@ -272,20 +272,20 @@ describe('превью приглашения по-английски', () => {
 
   test('комната ждёт — кто зовёт и сколько уже внутри', () => {
     const c = inviteCopy('ABC234', openEn, 'en')
-    expect(c.title).toBe('Sergey invites you to party ABC234')
+    expect(c.title).toBe('Sergey invites you to Party ABC234')
     expect(c.description).toBe(
       "3 people are already in the room. Connect your Steam library and swipe on what you'd play. When everyone's votes line up, it's a match.",
     )
     expect(c.eyebrow).toBe('PARTY · INVITE')
-    expect(c.headline).toBe('Sergey wants to pick a game for tonight')
+    expect(c.headline).toBe("Sergey wants to pick tonight's game")
     expect(c.foot).toBe('3 people in the room · connect your library and swipe')
     expect(everything(c)).not.toMatch(CYRILLIC)
   })
 
   test('без ника хоста — безлично, и один человек — в единственном числе', () => {
     const c = inviteCopy('ABC234', { ...openEn, host: null, members: 1 }, 'en')
-    expect(c.title).toBe("You're invited to party ABC234")
-    expect(c.headline).toBe("You're invited to pick a game for tonight")
+    expect(c.title).toBe("You're invited to Party ABC234")
+    expect(c.headline).toBe("You're invited to pick tonight's game")
     expect(c.description).toMatch(/^1 person is already in the room\. Connect/)
     expect(c.foot).toBe('1 person in the room · connect your library and swipe')
   })
@@ -329,13 +329,13 @@ describe('превью приглашения по-английски', () => {
 
   test('настроение приходит русским названием и встаёт английским', () => {
     const c = inviteCopy('ABC234', { ...openEn, preset: 'Пара быстрых каток' }, 'en')
-    expect(c.title).toBe('Sergey invites you to party ABC234 · A few quick rounds')
+    expect(c.title).toBe('Sergey invites you to Party ABC234 · A few quick rounds')
     expect(c.headline).toBe('Sergey: a few quick rounds')
     expect(c.eyebrow).toBe('PARTY · INVITE')
     expect(c.foot).toBe(inviteCopy('ABC234', openEn, 'en').foot)
 
     const nobody = inviteCopy('ABC234', { ...openEn, host: null, preset: 'Уютно и надолго' }, 'en')
-    expect(nobody.title).toBe("You're invited to party ABC234 · Cozy and long")
+    expect(nobody.title).toBe("You're invited to Party ABC234 · Cozy and long")
     expect(nobody.headline).toBe("You're invited: cozy and long")
   })
 
@@ -358,12 +358,12 @@ describe('превью приглашения по-английски', () => {
     const host = 'Very-very long player nickname'
     const c = inviteCopy('ABC234', { ...openEn, host, preset: 'Спокойно, под разговор' }, 'en')
     expect(c.headline).toBe('Very-very long pla: chill, while we talk')
-    expect(c.title).toBe(`${host} invites you to party ABC234 · Chill, while we talk`)
+    expect(c.title).toBe(`${host} invites you to Party ABC234 · Chill, while we talk`)
   })
 
   test('предложенная игра — зовут в неё, и честно сказано, что это предложение', () => {
     const c = inviteCopy('ABC234', { ...openEn, seedName: 'Deep Rock Galactic' }, 'en')
-    expect(c.title).toBe('Sergey invites you to “Deep Rock Galactic” · party ABC234')
+    expect(c.title).toBe('Sergey invites you to “Deep Rock Galactic” · Party ABC234')
     expect(c.headline).toBe('Sergey invites you to “Deep Rock Galactic”')
     expect(c.description).toBe(
       'First card: “Deep Rock Galactic”. Not into it? Next up is a deck from your libraries. ' +
@@ -373,7 +373,7 @@ describe('превью приглашения по-английски', () => {
     expect(everything(c)).not.toMatch(CYRILLIC)
 
     const nobody = inviteCopy('ABC234', { ...openEn, host: null, seedName: 'Valheim' }, 'en')
-    expect(nobody.title).toBe("You're invited to “Valheim” · party ABC234")
+    expect(nobody.title).toBe("You're invited to “Valheim” · Party ABC234")
     expect(nobody.headline).toBe("You're invited to “Valheim”")
   })
 
@@ -404,6 +404,28 @@ describe('превью приглашения по-английски', () => {
     const c = inviteCopy('ABC234', { ...matchedEn, seedName: 'Valheim', preset: 'Весь вечер вместе' }, 'en')
     expect(c).toEqual(inviteCopy('ABC234', matchedEn, 'en'))
   })
+
+  /*
+   * «invites you to party ABC234» читается как «зовёт тусить», а код
+   * повисает отдельно. Пати с кодом — имя, как в глоссарии («Party
+   * ABC123»): с большой буквы во всех состояниях.
+   */
+  test('«Party ABC234» — с большой буквы во всех состояниях', () => {
+    const titles = [
+      inviteCopy('ABC234', null, 'en').title,
+      inviteCopy('ABC234', openEn, 'en').title,
+      inviteCopy('ABC234', { ...openEn, host: null }, 'en').title,
+      inviteCopy('ABC234', { ...openEn, preset: 'Уютно и надолго' }, 'en').title,
+      inviteCopy('ABC234', { ...openEn, seedName: 'Valheim' }, 'en').title,
+      inviteCopy('ABC234', { ...openEn, host: null, seedName: 'Valheim' }, 'en').title,
+      inviteCopy('ABC234', matchedEn, 'en').title,
+      inviteCopy('ABC234', { ...matchedEn, matchedName: null }, 'en').title,
+    ]
+    for (const t of titles) {
+      expect(t).toContain('Party ABC234')
+      expect(t).not.toMatch(/party ABC234/)
+    }
+  })
 })
 
 describe('экран приглашения по-английски', () => {
@@ -411,12 +433,12 @@ describe('экран приглашения по-английски', () => {
 
   test('кто зовёт — той же фразой, что крупная строка карточки', () => {
     expect(inviteDoor({ host: 'Sergey', names: ['Sergey'], seed: null }, 'en')).toEqual({
-      title: 'Sergey wants to pick a game for tonight',
+      title: "Sergey wants to pick tonight's game",
       here: null,
       seed: null,
     })
     expect(inviteDoor({ host: null, names: ['Player 3f9a'], seed: null }, 'en').title).toBe(
-      "You're invited to pick a game for tonight",
+      "You're invited to pick tonight's game",
     )
     expect(inviteDoor({ host: 'Sergey', names: ['Sergey', 'Anna'], seed: null }, 'en').title).toBe(
       inviteCopy('ABC234', { ...open, host: 'Sergey' }, 'en').headline,
@@ -436,7 +458,7 @@ describe('экран приглашения по-английски', () => {
   test('длинный ник хоста режется тем же потолком, что по-русски', () => {
     const host = 'xXx_DarkLordOfTheNight_2009_xXx!'
     const d = inviteDoor({ host, names: [host, 'Anna'], seed: null }, 'en')
-    expect(d.title).toBe('xXx_DarkLordOfTheNi… wants to pick a game for tonight')
+    expect(d.title).toBe("xXx_DarkLordOfTheNi… wants to pick tonight's game")
     expect(d.here).toBe('Already here: xXx_DarkLordOfTheNi… and Anna')
   })
 
