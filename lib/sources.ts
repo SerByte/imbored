@@ -1,3 +1,4 @@
+import { tr, type Locale } from './i18n'
 import type { CandidateSource } from './types'
 
 /**
@@ -45,6 +46,43 @@ export const SOURCE_BADGE_SHORT: Record<CandidateSource, string> = {
   familiar: 'Любимое',
   owned: 'Твоя',
   new: 'Новое',
+}
+
+/**
+ * Английские подписи — по глоссарию (docs/i18n.md), под те же две ширины:
+ * полная — полоса героя, короткая — плитка. «Bounced off» — одно слово на
+ * источник, фильтр библиотеки и состояние плитки, как «Открыл и закрыл»;
+ * «Unopened» — то же, что фильтр «Не распакованы».
+ *
+ * Тот же Record<CandidateSource, string> в обеих картах — новый источник
+ * не соберётся без английской подписи, как и без русской.
+ */
+const SOURCE_BADGE_EN: Record<CandidateSource, string> = {
+  untouched: 'Bought, never opened',
+  backlog: 'Bounced off',
+  comeback: 'Time to go back',
+  familiar: 'Old favorite',
+  owned: 'From your library',
+  new: 'New to you',
+}
+
+const SOURCE_BADGE_SHORT_EN: Record<CandidateSource, string> = {
+  untouched: 'Unopened',
+  backlog: 'Bounced off',
+  comeback: 'Time to go back',
+  familiar: 'Favorite',
+  owned: 'Yours',
+  new: 'New',
+}
+
+/** Подпись источника для полосы героя на языке страницы; SOURCE_BADGE — русская карта */
+export function sourceBadge(source: CandidateSource, locale: Locale = 'ru'): string {
+  return tr(locale, { ru: SOURCE_BADGE, en: SOURCE_BADGE_EN })[source]
+}
+
+/** Короткая подпись для плитки на языке страницы; SOURCE_BADGE_SHORT — русская */
+export function sourceBadgeShort(source: CandidateSource, locale: Locale = 'ru'): string {
+  return tr(locale, { ru: SOURCE_BADGE_SHORT, en: SOURCE_BADGE_SHORT_EN })[source]
 }
 
 /**

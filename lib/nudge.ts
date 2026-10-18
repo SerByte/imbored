@@ -19,9 +19,11 @@
  * подталкиванию собирается эвристикой (см. /api/recommend) — правило
  * владельца «никакого нового расхода на модель».
  *
- * Модуль без импортов значений: список и подписи читает /play.
+ * Модуль без импортов значений, кроме чистого lib/i18n: список и подписи
+ * читает /play.
  */
 
+import { tr, type Locale } from './i18n'
 import type { Scope } from './recommend'
 import type { CandidateSource, Mood } from './types'
 
@@ -36,6 +38,20 @@ export const NUDGE_LABEL: Record<Nudge, string> = {
   familiar: 'Знакомое',
   story: 'Про историю',
   different: 'Что-то другое',
+}
+
+/** Те же чипсы по-английски — по глоссарию: Tweak picks: Shorter · Calmer · … */
+const NUDGE_LABEL_EN: Record<Nudge, string> = {
+  shorter: 'Shorter',
+  calmer: 'Calmer',
+  familiar: 'Familiar',
+  story: 'More story',
+  different: 'Something else',
+}
+
+/** Подпись чипса на языке страницы; NUDGE_LABEL — русская карта, как была */
+export function nudgeLabel(n: Nudge, locale: Locale = 'ru'): string {
+  return tr(locale, { ru: NUDGE_LABEL, en: NUDGE_LABEL_EN })[n]
 }
 
 /** Мусор — «без подталкивания», а не 400: у каждого кода отказа на /play свой экран */

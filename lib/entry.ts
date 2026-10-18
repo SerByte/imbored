@@ -18,7 +18,7 @@
  *
  * Модуль клиентобезопасный: строку рисует /play, решение принимает сервер.
  */
-import { plural } from './plural'
+import { pl, tr, type Locale } from './i18n'
 import { SEMANTICS_MIN_CONFIDENCE } from './semantics'
 import type { CandidateSource, GameMeta } from './types'
 
@@ -74,18 +74,34 @@ export function showsEntry(source: CandidateSource): boolean {
  * Строка карточки. Про отзывы — со ссылкой на них, про теги — как про жанр:
  * «Порог входа высокий» у Grand Strategy — не наше мнение, а свойство жанра.
  * Часы — целым числом и не меньше одного: «через 0 часов» не бывает.
+ *
+ * Английская строка — своим шаблоном на каждый случай, и у жанровых в ней
+ * тоже нет слова reviews: правило «жанр — не наше мнение» одно на оба языка.
  */
-export function entryLine(e: EntryCost): string {
+export function entryLine(e: EntryCost, locale: Locale = 'ru'): string {
   if (e.level === 'high') {
     if (e.hours !== null) {
       const h = Math.max(1, Math.round(e.hours))
-      return `Раскрывается не сразу: по отзывам — через ${h} ${plural(h, 'час', 'часа', 'часов')}`
+      const hours = pl(locale, h, { ru: ['час', 'часа', 'часов'], en: ['hour', 'hours'] })
+      return tr(locale, {
+        ru: `Раскрывается не сразу: по отзывам — через ${h} ${hours}`,
+        en: `Takes a while to click: reviews say it gets good after ${h} ${hours}`,
+      })
     }
     return e.basis === 'reviews'
-      ? 'Раскрывается не сразу — так пишут в отзывах'
-      : 'Порог входа высокий: сначала придётся разобраться'
+      ? tr(locale, {
+          ru: 'Раскрывается не сразу — так пишут в отзывах',
+          en: "Takes a while to click — that's what reviews say",
+        })
+      : tr(locale, {
+          ru: 'Порог входа высокий: сначала придётся разобраться',
+          en: "Steep learning curve: you'll have to learn the ropes first",
+        })
   }
   return e.basis === 'reviews'
-    ? 'Затягивает с первых минут — так пишут в отзывах'
-    : 'Порог входа низкий: сел и играешь'
+    ? tr(locale, {
+        ru: 'Затягивает с первых минут — так пишут в отзывах',
+        en: "Hooks you from the first minutes — that's what reviews say",
+      })
+    : tr(locale, { ru: 'Порог входа низкий: сел и играешь', en: 'Easy to get into: just sit down and play' })
 }

@@ -1,3 +1,4 @@
+import { tr, type Locale } from './i18n'
 import { MIN_REVIEWS_TAIL } from './liveness'
 import type { CandidateSource, ScoreFactor, ScoreParts } from './types'
 
@@ -48,11 +49,34 @@ export const EDGE_BADGE: Record<PickEdge, string> = {
   underrated: 'Жемчужина',
 }
 
+/**
+ * Английские бейджи — по глоссарию (docs/i18n.md) и под тот же замер: не
+ * длиннее одиннадцати знаков, как русские. «Underrated», а не «Hidden gem»:
+ * «Hidden» в английской версии — полка бана, ровно та путаница, от которой
+ * русский бейдж ушёл к «Жемчужине».
+ */
+const EDGE_BADGE_EN: Record<PickEdge, string> = {
+  taste: 'Your taste',
+  mood: 'Mood match',
+  underrated: 'Underrated',
+}
+
+/** Бейдж на плитке на языке страницы; EDGE_BADGE — русский, как был */
+export function edgeBadge(edge: PickEdge, locale: Locale = 'ru'): string {
+  return tr(locale, { ru: EDGE_BADGE, en: EDGE_BADGE_EN })[edge]
+}
+
 /** Одна фраза под причиной у героя: чем он лучше остальных в этой выдаче */
 export const EDGE_LINE: Record<PickEdge, string> = {
   taste: 'Из всей подборки она ближе всего к тому, во что ты играешь.',
   mood: 'Из всей подборки она лучше всех попадает в это настроение.',
   underrated: 'Её мало кто знает, но почти все, кто играл, её хвалят.',
+}
+
+const EDGE_LINE_EN: Record<PickEdge, string> = {
+  taste: "Of all these picks, it's the closest to what you play.",
+  mood: 'Of all these picks, it fits this mood best.',
+  underrated: 'Not many people know it, but almost everyone who played it loves it.',
 }
 
 /**
@@ -61,10 +85,14 @@ export const EDGE_LINE: Record<PickEdge, string> = {
  * утверждало бы про часы, которых никто не видел. Сравнение то же — меняются
  * только слова: ближе всего к тому, что у него есть.
  */
-export function edgeLine(edge: PickEdge, timeHidden: boolean): string {
-  return edge === 'taste' && timeHidden
-    ? 'Из всей подборки она ближе всего к тому, что есть в твоей библиотеке.'
-    : EDGE_LINE[edge]
+export function edgeLine(edge: PickEdge, timeHidden: boolean, locale: Locale = 'ru'): string {
+  if (edge === 'taste' && timeHidden) {
+    return tr(locale, {
+      ru: 'Из всей подборки она ближе всего к тому, что есть в твоей библиотеке.',
+      en: "Of all these picks, it's the closest to what's in your library.",
+    })
+  }
+  return tr(locale, { ru: EDGE_LINE, en: EDGE_LINE_EN })[edge]
 }
 
 export type EdgeItem = {

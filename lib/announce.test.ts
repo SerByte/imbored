@@ -14,7 +14,7 @@ describe('playLine', () => {
     ]
     for (const e of events) expect(playLine(e), e.kind).toContain('«Balatro»')
     // и строки разные: по звуку надо отличить «дальше» от «пересобрал»
-    expect(new Set(events.map(playLine)).size).toBe(events.length)
+    expect(new Set(events.map((e) => playLine(e))).size).toBe(events.length)
   })
 
   test('«Как «X», но…» называет и затравку, и игру на экране', () => {
@@ -58,6 +58,65 @@ describe('playLine', () => {
     expect(
       playLine({ kind: 'fail', title: 'Библиотека не доехала', text: 'Steam не отдал список игр.' }),
     ).toBe('Библиотека не доехала. Steam не отдал список игр.')
+  })
+})
+
+/**
+ * Английская версия /play: те же события, те же правила — название игры в
+ * каждой строке и строки, различимые на слух. Шаблоны целые, не склейка.
+ */
+describe('playLine по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('каждая смена героя называет игру, и строки разные', () => {
+    const events: PlayEvent[] = [
+      { kind: 'reveal', name: 'Balatro' },
+      { kind: 'restore', name: 'Balatro' },
+      { kind: 'next', name: 'Balatro' },
+      { kind: 'pick', name: 'Balatro' },
+      { kind: 'reshape', name: 'Balatro' },
+      { kind: 'seed', name: 'Balatro', seed: 'Hades' },
+      { kind: 'refresh', name: 'Balatro' },
+    ]
+    const lines = events.map((e) => playLine(e, 'en'))
+    for (const [i, line] of lines.entries()) {
+      expect(line, events[i].kind).toContain('“Balatro”')
+      expect(line, events[i].kind).not.toMatch(CYRILLIC)
+    }
+    expect(new Set(lines).size).toBe(events.length)
+  })
+
+  test('точные строки', () => {
+    expect(playLine({ kind: 'reveal', name: 'Hades' }, 'en')).toBe('Found a game: “Hades”')
+    expect(playLine({ kind: 'restore', name: 'Hades' }, 'en')).toBe('Picks from your last visit. On screen: “Hades”')
+    expect(playLine({ kind: 'next', name: 'Hades' }, 'en')).toBe('Next game: “Hades”')
+    expect(playLine({ kind: 'pick', name: 'Hades' }, 'en')).toBe('Now on screen: “Hades”')
+    expect(playLine({ kind: 'reshape', name: 'Hades' }, 'en')).toBe('Picks rebuilt. First game: “Hades”')
+    expect(playLine({ kind: 'seed', name: 'Dead Cells', seed: 'Hades' }, 'en')).toBe(
+      'Similar to “Hades”. First game: “Dead Cells”',
+    )
+    expect(playLine({ kind: 'refresh', name: 'Hades' }, 'en')).toBe('Picks refreshed. First game: “Hades”')
+    expect(playLine({ kind: 'ask' }, 'en')).toBe("What's off? Pick a reason or skip")
+  })
+
+  test('бан: что ушло, что пришло, и «Уже прошёл» — не «больше не покажу»', () => {
+    expect(playLine({ kind: 'ban', name: 'Dota 2', done: false, next: 'Terraria' }, 'en')).toBe(
+      "Won't show “Dota 2” again. Next game: “Terraria”",
+    )
+    expect(playLine({ kind: 'ban', name: 'Dota 2', done: false }, 'en')).toBe("Won't show “Dota 2” again")
+    const done = playLine({ kind: 'ban', name: 'Portal 2', done: true, next: 'Hades' }, 'en')
+    expect(done).toBe('“Portal 2” marked as finished. Next game: “Hades”')
+    expect(done).not.toContain("Won't show")
+  })
+
+  test('отказ — заголовок и абзац как пришли', () => {
+    expect(
+      playLine({ kind: 'fail', title: "Your library didn't come through", text: "Steam didn't send the game list." }, 'en'),
+    ).toBe("Your library didn't come through. Steam didn't send the game list.")
+  })
+
+  test('по умолчанию — русский, как раньше', () => {
+    expect(playLine({ kind: 'next', name: 'Hades' })).toBe(playLine({ kind: 'next', name: 'Hades' }, 'ru'))
   })
 })
 

@@ -178,6 +178,18 @@ describe('undoLike: второе нажатие «Зашло» у героя', (
     expect(unlikeMiss('Hades')).toBe('Не вышло снять «Зашло» с «Hades» — нажми ещё раз.')
   })
 
+  // Английский герой: строка отказа на языке страницы, кнопка — «Liked it»
+  test('по-английски сбой говорит своей строкой', async () => {
+    await tapped()
+    fetchMock.mockResolvedValueOnce(json(500, {}))
+    const p = page([appid])
+    await undoLike('play', { appid, name: 'Hades' }, p.setLiked, p.say, 'en')
+    expect(p.liked().has(appid)).toBe(true)
+    expect(p.said).toEqual([null, "Couldn't undo “Liked it” for “Hades” — try again."])
+    expect(unlikeMiss('Hades', 'en')).toBe("Couldn't undo “Liked it” for “Hades” — try again.")
+    expect(unlikeMiss('Hades', 'en')).not.toMatch(/[А-Яа-яЁё]/)
+  })
+
   test('needsteam возвращает «Зашло» молча: на сервере оно осталось, а кнопку прячет режим чтения', async () => {
     await tapped()
     fetchMock.mockResolvedValueOnce(json(403, { error: 'needsteam' }))

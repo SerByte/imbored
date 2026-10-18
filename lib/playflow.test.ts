@@ -195,6 +195,24 @@ describe('switchLine', () => {
   test('сессия кончилась — молчим: страница уже уходит на вход', () => {
     expect(switchLine({ miss: 'gone' })).toBeNull()
   })
+
+  test('по-английски — тот же срок и та же честность про выдачу', () => {
+    expect(switchLine({ miss: 'limited', waitSec: 60 }, 'en')).toBe('Too many tries — try again in 1 minute')
+    expect(switchLine({ miss: 'limited', waitSec: 150 }, 'en')).toBe('Too many tries — try again in 3 minutes')
+    expect(switchLine({ miss: 'limited', waitSec: 7 }, 'en')).toBe('Too many tries — try again in 1 minute')
+    expect(switchLine({ miss: 'limited', waitSec: null }, 'en')).toBe('Too many tries — try again a bit later')
+    expect(switchLine({ miss: 'failed', code: null }, 'en')).toBe("Couldn't switch — your picks are unchanged")
+    expect(switchLine({ miss: 'failed', code: 'nocandidates' }, 'en')).toBe('Nothing fits that — your picks are unchanged')
+    expect(switchLine({ miss: 'failed', code: 'muted' }, 'en')).toBe('Nothing fits that — your picks are unchanged')
+    expect(switchLine({ miss: 'gone' }, 'en')).toBeNull()
+    for (const m of [
+      { miss: 'limited', waitSec: 600 },
+      { miss: 'limited', waitSec: null },
+      { miss: 'failed', code: 'x' },
+    ] as const) {
+      expect(switchLine(m, 'en'), JSON.stringify(m)).not.toMatch(/[А-Яа-яЁё]/)
+    }
+  })
 })
 
 describe('afterBan', () => {
@@ -272,6 +290,30 @@ describe('экран выгорания', () => {
   test('«просто» в абзаце не больше одного раза', () => {
     for (const o of ['familiar', 'continue', 'cozy', null] as const) {
       expect(burnoutInvite(o).match(/просто/gi) ?? [], String(o)).toHaveLength(1)
+    }
+  })
+
+  // Те же три правила по-английски: зовёт туда же, куда кнопка; выход
+  // «закрыть Steam» есть всегда; одно just на абзац
+  test('по-английски — целые фразы по тем же правилам', () => {
+    expect(burnoutInvite('cozy', 'en')).toBe(
+      "You could spend 20 minutes in something cozy… or just close Steam, and that's a win too.",
+    )
+    expect(burnoutInvite('continue', 'en')).toBe(
+      "You could keep playing what you're into right now… or just close Steam, and that's a win too.",
+    )
+    expect(burnoutInvite('familiar', 'en')).toBe(
+      "You could slip back into something familiar for a bit… or just close Steam, and that's a win too.",
+    )
+    expect(burnoutInvite(null, 'en')).toBe("You could just close Steam, and that's a win too.")
+    for (const o of ['familiar', 'continue', null] as const) {
+      expect(burnoutInvite(o, 'en'), String(o)).not.toMatch(/cozy|20 minutes/)
+    }
+    for (const o of ['familiar', 'continue', 'cozy', null] as const) {
+      const line = burnoutInvite(o, 'en')
+      expect(line, String(o)).toMatch(/close Steam, and that's a win too\.$/)
+      expect(line.match(/\bjust\b/gi) ?? [], String(o)).toHaveLength(1)
+      expect(line, String(o)).not.toMatch(/[А-Яа-яЁё]/)
     }
   })
 })

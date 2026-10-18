@@ -1,4 +1,5 @@
 import type { FeedbackCtx } from '@/lib/feedbackctx'
+import { tr, type Locale } from '@/lib/i18n'
 import { LIKE_ROWS_KEY } from '@/lib/planforget'
 import type { Mood } from '@/lib/types'
 import { isNeedSteam, writerStore } from '@/lib/writer'
@@ -233,8 +234,15 @@ async function unlikeRequest(appid: number, row: number | undefined): Promise<'o
   }
 }
 
-/** Строка отказа под героем: какая игра и что делать — карточка на месте */
-export const unlikeMiss = (name: string) => `Не вышло снять «Зашло» с «${name}» — нажми ещё раз.`
+/**
+ * Строка отказа под героем: какая игра и что делать — карточка на месте.
+ * По-английски кнопка называется «Liked it» (глоссарий), её и цитируем.
+ */
+export const unlikeMiss = (name: string, locale: Locale = 'ru') =>
+  tr(locale, {
+    ru: `Не вышло снять «Зашло» с «${name}» — нажми ещё раз.`,
+    en: `Couldn't undo “Liked it” for “${name}” — try again.`,
+  })
 
 /**
  * Второе нажатие «Зашло» у героя /play и /daily: снимает строку, которую
@@ -266,6 +274,7 @@ export async function undoLike(
   { appid, name }: { appid: number; name: string },
   setLiked: (update: (prev: Set<number>) => Set<number>) => void,
   say: (line: string | null) => void,
+  locale: Locale = 'ru',
 ): Promise<void> {
   say(null)
   setLiked((prev) => {
@@ -277,5 +286,5 @@ export async function undoLike(
   const res = await sent
   if (res === 'ok' || turns.get(appid) !== sent) return
   setLiked((prev) => new Set(prev).add(appid))
-  if (res === 'fail') say(unlikeMiss(name))
+  if (res === 'fail') say(unlikeMiss(name, locale))
 }
