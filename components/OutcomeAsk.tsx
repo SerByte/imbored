@@ -3,8 +3,10 @@
 import { AnimatePresence, m } from 'framer-motion'
 import Link from '@/components/Link'
 import { useEffect, useState } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { Portal } from '@/components/Portal'
 import { dayKey } from '@/lib/daily'
+import { tr } from '@/lib/i18n'
 import { createLocalStore } from '@/lib/localstore'
 import { EASE } from '@/lib/motion'
 import { outcomeQuestion, parseOutcomeAsk, type OutcomeAsk as Ask, type OutcomeVerdict } from '@/lib/outcome'
@@ -47,6 +49,7 @@ export function OutcomeAsk({
    */
   onDone?: () => void
 }) {
+  const locale = useLocale()
   const [ask, setAsk] = useState<Ask | null>(null)
 
   /*
@@ -103,7 +106,12 @@ export function OutcomeAsk({
       {/* Та же живая строка, что у StopAsk: плашка появляется без действия
           человека, и скринридер без неё о вопросе не узнал бы */}
       <p role="status" className="sr-only">
-        {shown && ask ? `${outcomeQuestion(ask)} Вопрос внизу экрана` : ''}
+        {shown && ask
+          ? tr(locale, {
+              ru: `${outcomeQuestion(ask)} Вопрос внизу экрана`,
+              en: `${outcomeQuestion(ask, locale)} The question is at the bottom of the screen`,
+            })
+          : ''}
       </p>
       <AnimatePresence>
         {shown && ask && (
@@ -116,24 +124,27 @@ export function OutcomeAsk({
             className="fixed inset-x-0 bottom-[calc(64px+env(safe-area-inset-bottom))] md:bottom-6 z-40 flex justify-center px-safe pointer-events-none"
           >
             <section
-              aria-label="Как тебе игра?"
+              aria-label={tr(locale, { ru: 'Как тебе игра?', en: "How's the game?" })}
               className="panel-lift p-4 w-full max-w-xl flex flex-col gap-3 pointer-events-auto"
             >
               <div className="flex items-baseline justify-between gap-3">
-                <p className="text-sm">{outcomeQuestion(ask)}</p>
+                <p className="text-sm">{outcomeQuestion(ask, locale)}</p>
                 <button
                   type="button"
                   onClick={() => answer('dismissed')}
                   className="rounded-full px-3 py-1.5 text-xs text-faint hover:text-ink transition-colors cursor-pointer"
                 >
-                  Закрыть
+                  {tr(locale, { ru: 'Закрыть', en: 'Close' })}
                 </button>
               </div>
+              {/* История советов и ответов — «Твои вечера» (components/Evenings) */}
               <p className="-mt-2 text-xs text-dim">
-                Часы — из Steam. Ответ поможет подбирать точнее, а поменять его можно в{' '}
-                {/* История советов и ответов — «Твои вечера» (components/Evenings) */}
+                {tr(locale, {
+                  ru: <>Часы — из Steam. Ответ поможет подбирать точнее, а поменять его можно в{' '}</>,
+                  en: <>Hours come from Steam. Your answer helps us pick better, and you can change it in your{' '}</>,
+                })}
                 <Link href="/library#evenings" prefetch={false} className="tap tap-tight underline decoration-edge hover:text-ink">
-                  библиотеке
+                  {tr(locale, { ru: 'библиотеке', en: 'library' })}
                 </Link>
                 .
               </p>
@@ -143,14 +154,14 @@ export function OutcomeAsk({
                   onClick={() => answer('hooked')}
                   className="rounded-full bg-ember/15 text-ember-text px-4 py-2 text-sm cursor-pointer hover:bg-ember/20 transition-colors"
                 >
-                  Зацепило
+                  {tr(locale, { ru: 'Зацепило', en: 'Hooked me' })}
                 </button>
                 <button
                   type="button"
                   onClick={() => answer('meh')}
                   className="pill"
                 >
-                  Так себе
+                  {tr(locale, { ru: 'Так себе', en: 'Meh' })}
                 </button>
               </div>
             </section>

@@ -2,7 +2,9 @@
 
 import { useState, useSyncExternalStore } from 'react'
 import { useDemoSession } from '@/components/DemoBar'
+import { useLocale } from '@/components/LocaleProvider'
 import { StatusLine } from '@/components/StatusLine'
+import { tr } from '@/lib/i18n'
 import { writerStore } from '@/lib/writer'
 
 /**
@@ -44,6 +46,9 @@ import { writerStore } from '@/lib/writer'
  * пока первое в пути, пишет второй такой же план — безобидно: план не
  * оценка, а одна игра — один план и для живой строки (самый свежий,
  * latestEveningPlan), и для «Твоих вечеров» (livePlanAppids, DISTINCT).
+ *
+ * Язык — из контекста (useLocale): островок рисуется внутри страницы, под
+ * LocaleProvider корня, и пропом его протягивать незачем.
  */
 export function TonightButton({
   name,
@@ -56,6 +61,7 @@ export function TonightButton({
 }) {
   const writer = useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server)
   const demo = useDemoSession()
+  const locale = useLocale()
   /** null — не нажимали или запрос в пути; true — записано; false — не вышло */
   const [done, setDone] = useState<boolean | null>(initialDone || null)
   if (writer !== true || demo) return null
@@ -75,13 +81,18 @@ export function TonightButton({
         aria-disabled={done === true}
         className="tap self-start hover:text-ink transition-colors cursor-pointer"
       >
-        {done ? 'Отложено на вечер' : 'Сыграю вечером на ПК'}
+        {done
+          ? tr(locale, { ru: 'Отложено на вечер', en: 'Saved for tonight' })
+          : tr(locale, { ru: 'Сыграю вечером на ПК', en: 'Play tonight on PC' })}
       </button>
       <StatusLine
         text={
           done
-            ? `Откроешь imbored на ПК — «${name}» будет ждать в подборке.`
-            : done === false && 'Не вышло — попробуй ещё раз.'
+            ? tr(locale, {
+                ru: `Откроешь imbored на ПК — «${name}» будет ждать в подборке.`,
+                en: `Open imbored on your PC and “${name}” will be waiting in your picks.`,
+              })
+            : done === false && tr(locale, { ru: 'Не вышло — попробуй ещё раз.', en: "Didn't work — try again." })
         }
         className="text-dim"
       />

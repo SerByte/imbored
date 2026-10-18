@@ -4,10 +4,11 @@ import { AnimatePresence, m } from 'framer-motion'
 import { Ambient } from '@/components/Ambient'
 import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
+import { useLocale } from '@/components/LocaleProvider'
 import { ProgressRing } from '@/components/ProgressRing'
 import { Spinner } from '@/components/Spinner'
 import { legacyArtUrl, type GameArtUrls } from '@/lib/art'
-import { plural } from '@/lib/plural'
+import { fmtNumber, pl, tr } from '@/lib/i18n'
 import { warmupPercent, warmupStage, type WallMemo, type WarmupProgress } from '@/lib/warmup'
 import { Eyebrow } from '@/components/Labels'
 
@@ -21,6 +22,10 @@ import { Eyebrow } from '@/components/Labels'
  *
  * Кольцо появляется только когда объём работы известен: до первого ответа
  * /api/prepare показывать «0%» было бы враньём, поэтому там спиннер.
+ *
+ * Язык — из контекста (useLocale): экран стоит на /play, /daily и /explore, а
+ * message каждая страница приносит уже на своём языке. Подпись в кольце
+ * (160 px) по-английски короче русской — «read» против «разобрано».
  */
 /** Игра, которая вышла из стены: её постер встаёт в центр перед выдачей */
 export type ChosenGame = { appid: number; name: string; art?: GameArtUrls | null }
@@ -59,6 +64,7 @@ export function WarmupScreen({
   /** Стена с прошлого прогрева — когда этот заход прогрев пропустил */
   memo?: WallMemo | null
 }) {
+  const locale = useLocale()
   const pct = warmupPercent(progress)
   const known = progress !== null && progress.total > 0
   const wall = progress?.library?.wall ?? memo?.wall ?? []
@@ -88,7 +94,9 @@ export function WarmupScreen({
             />
           </div>
           <p className="warmup-chosen-line">
-            {games > 1 ? `Из ${games.toLocaleString('ru-RU')} — одна` : 'Вот она'}
+            {games > 1
+              ? tr(locale, { ru: `Из ${fmtNumber(locale, games)} — одна`, en: `One of ${fmtNumber(locale, games)}` })
+              : tr(locale, { ru: 'Вот она', en: 'Here it is' })}
           </p>
         </div>
       )}
@@ -113,7 +121,7 @@ export function WarmupScreen({
               // Без имени кольцо звучало голым «48%»: сорок восемь процентов
               // чего, из разметки не следует. Число здесь — по запросу, а не
               // вслух: в живую область уходит только этап (см. ниже)
-              ariaLabel={`Разобрано ${Math.round(pct)}%`}
+              ariaLabel={tr(locale, { ru: `Разобрано ${Math.round(pct)}%`, en: `${Math.round(pct)}% read` })}
               label={
                 <div className="flex flex-col items-center gap-0.5">
                   <span
@@ -122,7 +130,7 @@ export function WarmupScreen({
                   >
                     {Math.round(pct)}%
                   </span>
-                  <span className="text-[11px] text-faint">разобрано</span>
+                  <span className="text-[11px] text-faint">{tr(locale, { ru: 'разобрано', en: 'read' })}</span>
                 </div>
               }
             />
@@ -145,7 +153,7 @@ export function WarmupScreen({
           время экрана — область, появившаяся вместе с текстом, не звучит.
         */}
         <p role="status" className="sr-only">
-          {warmupStage(message, progress)}
+          {warmupStage(message, progress, locale)}
         </p>
 
         {/* Строка статуса меняется по ходу — подменять её встык значит терять
@@ -184,13 +192,19 @@ export function WarmupScreen({
           >
             <p className="text-sm text-dim">
               <CountNumber value={progress.library.games} className="font-bold tabular-nums text-ink" />{' '}
-              {plural(progress.library.games, 'игра', 'игры', 'игр')} в библиотеке
+              {pl(locale, progress.library.games, { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] })}{' '}
+              {tr(locale, { ru: 'в библиотеке', en: 'in your library' })}
             </p>
             {/* Время скрыто — ни числа нетронутых, ни нуля: это галочка Steam.
                 «Похоже» — признак угадан по нулям (lib/playtime.ts) и бывает
                 ложным у десятка ни разу не запущенных игр */}
             {progress.library.timeHidden ? (
-              <p className="text-sm text-dim mt-1">похоже, время в них скрыто настройками Steam</p>
+              <p className="text-sm text-dim mt-1">
+                {tr(locale, {
+                  ru: 'похоже, время в них скрыто настройками Steam',
+                  en: 'playtime seems to be hidden by your Steam privacy settings',
+                })}
+              </p>
             ) : progress.library.untouched > 0 && (
               <p className="text-sm text-dim mt-1">
                 <CountNumber
@@ -198,7 +212,7 @@ export function WarmupScreen({
                   delay={260}
                   className="font-bold tabular-nums text-ember-text"
                 />{' '}
-                из них ты не открывал ни разу
+                {tr(locale, { ru: 'из них ты не открывал ни разу', en: "of them you've never launched" })}
               </p>
             )}
           </m.div>

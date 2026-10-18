@@ -1,4 +1,8 @@
-import { tagRu } from '@/lib/tagsru'
+'use client'
+
+import { useLocale } from '@/components/LocaleProvider'
+import { tr } from '@/lib/i18n'
+import { tagLabel } from '@/lib/tagsru'
 
 /**
  * РЯД ТЕГОВ ПОД НАЗВАНИЕМ ИГРЫ — И ОТМЕТКА НА ТЕХ, КОТОРЫЕ И РЕШИЛИ ДЕЛО.
@@ -37,9 +41,13 @@ import { tagRu } from '@/lib/tagsru'
  * про вкус — дело причины, и правило у неё строже.
  *
  * Теги приходят английскими ключами, и совпадение сверяется по ним же —
- * по-русски только подпись (tagRu, lib/tagsru.ts). Переведи ключ раньше, и
+ * по-русски только подпись (tagLabel, lib/tagsru.ts). Переведи ключ раньше, и
  * отметка «есть в твоих играх» не нашла бы ни одного тега: профиль вкуса
  * собран из английских.
+ *
+ * Язык — из контекста (useLocale), а не пропом: ряд стоит на /play и /daily,
+ * а вторая страница — чужой островок, и новый проп пришлось бы протягивать
+ * через обе. Обе страницы клиентские и живут под LocaleProvider корня.
  */
 export function TagChips({
   tags,
@@ -51,6 +59,7 @@ export function TagChips({
   matched?: string[]
   className?: string
 }) {
+  const locale = useLocale()
   if (tags.length === 0) return null
   const hit = new Set(matched)
 
@@ -80,11 +89,11 @@ export function TagChips({
           {hit.has(t) ? (
             <span className="inline-flex items-center gap-1.5 font-bold text-ink">
               <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-ember-text" />
-              {tagRu(t)}
-              <span className="sr-only"> — есть в твоих играх</span>
+              {tagLabel(t, locale)}
+              <span className="sr-only">{tr(locale, { ru: ' — есть в твоих играх', en: ' — in your games' })}</span>
             </span>
           ) : (
-            <span className="font-medium text-dim">{tagRu(t)}</span>
+            <span className="font-medium text-dim">{tagLabel(t, locale)}</span>
           )}
         </li>
       ))}

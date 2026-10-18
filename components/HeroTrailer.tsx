@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '@/components/Icon'
+import { useLocale } from '@/components/LocaleProvider'
+import { tr } from '@/lib/i18n'
 import type { Trailer } from '@/lib/trailer'
 
 /**
@@ -30,6 +32,7 @@ import type { Trailer } from '@/lib/trailer'
 const WAIT_MS = 2500
 
 export function HeroTrailer({ trailer }: { trailer: Trailer | null | undefined }) {
+  const locale = useLocale()
   const [armed, setArmed] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [stopped, setStopped] = useState(false)
@@ -89,8 +92,12 @@ export function HeroTrailer({ trailer }: { trailer: Trailer | null | undefined }
           type="button"
           onClick={() => setStopped(!stopped)}
           aria-pressed={stopped}
-          aria-label="Пауза фонового видео"
-          title={stopped ? 'Включить фоновое видео' : 'Остановить фоновое видео'}
+          aria-label={tr(locale, { ru: 'Пауза фонового видео', en: 'Pause background video' })}
+          title={
+            stopped
+              ? tr(locale, { ru: 'Включить фоновое видео', en: 'Play background video' })
+              : tr(locale, { ru: 'Остановить фоновое видео', en: 'Stop background video' })
+          }
           className="btn-circle hero-trailer-toggle"
         >
           <Icon name={stopped ? 'play' : 'pause'} size={18} />

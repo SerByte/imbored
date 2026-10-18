@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '@/components/Icon'
+import { useLocale } from '@/components/LocaleProvider'
 import { ShareLinkField, useShareLink } from '@/components/ShareLink'
 import { StatusLine } from '@/components/StatusLine'
 import { bounceTo } from '@/lib/destination'
+import { lp, tr } from '@/lib/i18n'
 import { pickShareUrl, type PickKind } from '@/lib/sharedpick'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
@@ -12,8 +14,12 @@ type SharePickSource = {
   appid: number
   name: string
   source: string
-  /** Подпись сервера (lib/pickshare); нет — выдача из кэша до этой правки, кнопки нет */
-  share?: { text: string; sig: string }
+  /**
+   * Подпись сервера (lib/pickshare); нет — выдача из кэша до этой правки, кнопки нет.
+   * lang — язык текста под подписью: есть только у английского и уезжает
+   * обратно в /api/pick, иначе подпись не сойдётся.
+   */
+  share?: { text: string; sig: string; lang?: 'en' }
 }
 
 type State =
@@ -42,12 +48,17 @@ type State =
  * дальше» и «Сегодня хочу из своего» не ждут запроса. Тогда он не трогает
  * ни чужое состояние, ни буфер — иначе ссылка на прежнюю игру ушла бы в
  * буфер под галочкой на кнопке новой.
+ *
+ * Ссылка — на языке страницы (/en/pick/… на /en), текст — на языке своей
+ * подписи (share.lang). Выдачу собирает сервер на языке запроса, так что оба
+ * совпадают; язык текста хранит и сама запись выбора (shared_picks.lang).
  */
 export function useSharePick(
   /** null — героя ещё нет: хук зовётся до ранних возвратов страницы */
   hero: SharePickSource | null | undefined,
   kind: PickKind,
 ): { button: ReactNode; panel: ReactNode } {
+  const locale = useLocale()
   const [state, setState] = useState<State | null>(null)
   const current = hero && state && state.at === hero.appid ? state : null
   const urlRef = useRef('')
@@ -56,8 +67,11 @@ export function useSharePick(
   useEffect(() => {
     shownRef.current = hero?.appid ?? null
   }, [hero?.appid])
-  const title = `«${hero?.name ?? ''}» — imbored`
-  const text = kind === 'daily' ? 'Моя игра дня от imbored' : 'imbored выбрал мне игру на вечер'
+  const title = tr(locale, { ru: `«${hero?.name ?? ''}» — imbored`, en: `“${hero?.name ?? ''}” — imbored` })
+  const text =
+    kind === 'daily'
+      ? tr(locale, { ru: 'Моя игра дня от imbored', en: 'My game of the day from imbored' })
+      : tr(locale, { ru: 'imbored выбрал мне игру на вечер', en: 'imbored picked my game for tonight' })
   const share = useShareLink('pick', () => urlRef.current, title, text)
 
   if (!hero?.share) return { button: null, panel: null }
@@ -78,10 +92,20 @@ export function useSharePick(
     const settle = (next: State | null) => setState((s) => (s && s.at !== at ? s : next))
     setState({ at, phase: 'busy' })
     try {
+      // Без withLang: роут отвечает одним id, без текста для человека, а язык
+      // текста едет в теле рядом с подписью, которая его и покрывает
       const res = await fetch('/api/pick', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appid: at, source: pick.source, kind, text: signed.text, sig: signed.sig }),
+        body: JSON.stringify({
+          appid: at,
+          source: pick.source,
+          kind,
+          text: signed.text,
+          sig: signed.sig,
+          // Язык подписан вместе с текстом: у русского поля нет, как до английской версии
+          ...(signed.lang ? { lang: signed.lang } : {}),
+        }),
       })
       if (await isNeedSteam(res)) {
         // Права кончились, пока страница была открыта: кнопки записи прячутся
@@ -95,33 +119,63 @@ export function useSharePick(
         settle({
           at,
           phase: 'failed',
-          message: (
-            <>
-              Вход закончился —{' '}
-              <a
-                href={bounceTo(kind === 'daily' ? '/daily' : '/play')}
-                className="tap tap-tight underline underline-offset-4"
-              >
-                войди снова
-              </a>
-              , и ссылка сделается.
-            </>
-          ),
+          // Голый <a> префикса языка сам не поставит: bounceTo берёт язык из
+          // пути, поэтому путь — уже на языке страницы
+          message: tr(locale, {
+            ru: (
+              <>
+                Вход закончился —{' '}
+                <a
+                  href={bounceTo(kind === 'daily' ? '/daily' : '/play')}
+                  className="tap tap-tight underline underline-offset-4"
+                >
+                  войди снова
+                </a>
+                , и ссылка сделается.
+              </>
+            ),
+            en: (
+              <>
+                You&apos;re signed out —{' '}
+                <a
+                  href={bounceTo(lp(locale, kind === 'daily' ? '/daily' : '/play'))}
+                  className="tap tap-tight underline underline-offset-4"
+                >
+                  sign in again
+                </a>{' '}
+                and we&apos;ll make the link.
+              </>
+            ),
+          }),
         })
         return
       }
       if (res.status === 429) {
         const min = Math.max(1, Math.ceil(Number(res.headers.get('Retry-After') ?? 60) / 60))
-        settle({ at, phase: 'failed', message: `Слишком часто — попробуй через ${min} мин.` })
+        settle({
+          at,
+          phase: 'failed',
+          message: tr(locale, {
+            ru: `Слишком часто — попробуй через ${min} мин.`,
+            en: `Too many tries — try again in ${min} min.`,
+          }),
+        })
         return
       }
       if (res.status === 403) {
-        settle({ at, phase: 'failed', message: 'Выдача устарела — обнови подборку и отправь снова.' })
+        settle({
+          at,
+          phase: 'failed',
+          message: tr(locale, {
+            ru: 'Выдача устарела — обнови подборку и отправь снова.',
+            en: 'These picks are out of date — refresh them and send again.',
+          }),
+        })
         return
       }
       const data = (await res.json().catch(() => null)) as { id?: unknown } | null
       if (!res.ok || typeof data?.id !== 'string') throw new Error(String(res.status))
-      const url = pickShareUrl(window.location.origin, data.id)
+      const url = pickShareUrl(window.location.origin, data.id, locale)
       // Герой сменился, пока шёл запрос: в буфер ссылку не кладём молча —
       // вернётся к этой игре, нажмёт, и ссылка уже будет готова. И не
       // считаем: первым «поделился» тогда станет нажатие в поле (counted)
@@ -131,7 +185,14 @@ export function useSharePick(
       urlRef.current = url
       void share.run()
     } catch {
-      settle({ at, phase: 'failed', message: 'Не получилось сделать ссылку — нажми ещё раз.' })
+      settle({
+        at,
+        phase: 'failed',
+        message: tr(locale, {
+          ru: 'Не получилось сделать ссылку — нажми ещё раз.',
+          en: "Couldn't make the link — try again.",
+        }),
+      })
     }
   }
 
@@ -149,12 +210,12 @@ export function useSharePick(
         onClick={() => void create()}
         aria-disabled={busy}
         aria-busy={busy}
-        title="Отправить другу"
+        title={tr(locale, { ru: 'Отправить другу', en: 'Send to a friend' })}
         className="btn-circle aria-disabled:opacity-60"
       >
         {/* Галочка — «Скопировано» этой игры, а не отклик прошлой */}
         <Icon name={share.state === 'done' && current?.phase === 'ready' ? 'check' : 'link'} size={20} />
-        <span className="sr-only">Отправить другу</span>
+        <span className="sr-only">{tr(locale, { ru: 'Отправить другу', en: 'Send to a friend' })}</span>
       </button>
       {share.status}
     </>
@@ -182,12 +243,17 @@ export function useSharePick(
             counted={current.counted}
             what="pick"
             url={current.url}
-            label={`Ссылка на выбор «${pick.name}»`}
+            label={tr(locale, { ru: `Ссылка на выбор «${pick.name}»`, en: `Link to the pick “${pick.name}”` })}
             title={title}
             text={text}
           />
           {/* Что уйдёт по ссылке — сказано тут же, а не только в политике */}
-          <p className="text-xs text-faint">По ссылке — игра и это объяснение, как здесь, но без имени профиля.</p>
+          <p className="text-xs text-faint">
+            {tr(locale, {
+              ru: 'По ссылке — игра и это объяснение, как здесь, но без имени профиля.',
+              en: 'The link shows the game and this explanation, as here, but not your profile name.',
+            })}
+          </p>
         </div>
       )}
       <StatusLine
