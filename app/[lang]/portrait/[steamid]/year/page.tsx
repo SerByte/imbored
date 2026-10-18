@@ -412,7 +412,10 @@ export default async function YearPage({ params }: { params: Promise<{ steamid: 
           }
           note={tr(locale, {
             ru: 'Лежали с нулём минут на начало окна — и дождались.',
-            en: 'They sat at zero minutes when the window opened, and their turn finally came.',
+            // «Окно» — наше слово для срока итогов (с первого снимка по
+            // последний); английскому читателю «the window opened» звучит как
+            // про настоящее окно, поэтому — «this period»
+            en: 'They were at zero minutes when this period began, and they finally got their turn.',
           })}
           more={year.unpacked.count > year.unpacked.games.length}
           games={year.unpacked.games.map((g) => ({ ...g, meta: `+${playedLine(g.minutes, locale)}` }))}
@@ -552,19 +555,30 @@ function YearShelf({
         {more && tr(locale, { ru: ' Здесь — первые двенадцать.', en: ' Showing the first twelve.' })}
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-        {games.map((g, i) => (
-          <m.div key={g.appid} {...inView(i % 6)}>
-            <GameLink appid={g.appid} lang={langOn(locale, g.name)} className="game-card block">
-              <GameCardBody
-                appid={g.appid}
-                name={g.name}
-                {...cover(g)}
-                sizes="(min-width: 1024px) 17vw, (min-width: 640px) 33vw, 50vw"
-                meta={<span className="truncate tabular-nums">{g.meta}</span>}
-              />
-            </GameLink>
-          </m.div>
-        ))}
+        {games.map((g, i) => {
+          // lang="ru" ставится на всю ссылку (у GameCardBody своего lang у
+          // названия нет), а подпись под ним — на языке страницы: её
+          // возвращаем на /en обратно, иначе «never launched» скринридер
+          // читал бы русским голосом. На русской странице атрибутов нет вовсе
+          const nameLang = langOn(locale, g.name)
+          return (
+            <m.div key={g.appid} {...inView(i % 6)}>
+              <GameLink appid={g.appid} lang={nameLang} className="game-card block">
+                <GameCardBody
+                  appid={g.appid}
+                  name={g.name}
+                  {...cover(g)}
+                  sizes="(min-width: 1024px) 17vw, (min-width: 640px) 33vw, 50vw"
+                  meta={
+                    <span lang={nameLang && locale} className="truncate tabular-nums">
+                      {g.meta}
+                    </span>
+                  }
+                />
+              </GameLink>
+            </m.div>
+          )
+        })}
       </div>
     </section>
   )
