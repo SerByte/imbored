@@ -1,6 +1,6 @@
 import Link from '@/components/Link'
 import { redirect } from 'next/navigation'
-import { Suspense } from 'react'
+import { Suspense, type ReactNode } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameCardBody } from '@/components/GameCard'
 import { Icon } from '@/components/Icon'
@@ -10,7 +10,7 @@ import { WarmCatalog } from '@/components/WarmCatalog'
 import { BannedShelf, type BannedGame } from '@/components/BannedShelf'
 import { DemoBar } from '@/components/DemoBar'
 import { trimArt } from '@/lib/art'
-import { lp, toLocale } from '@/lib/i18n'
+import { fmtNumber, lp, pl, toLocale, tr, type Locale } from '@/lib/i18n'
 import {
   bannedAppids,
   feedbackStats,
@@ -27,13 +27,14 @@ import {
   livePlanAppids,
   latestMajorPatchSince,
 } from '@/lib/db'
-import { PATCH_SINCE_LEAD, wallPatchPairs } from '@/lib/comeback'
+import { patchSinceLead, wallPatchPairs } from '@/lib/comeback'
 import {
   buildLibraryView,
   dayKey,
   forgottenCandidates,
   LIBRARY_FILTERS,
   LIBRARY_PAGE_SIZE,
+  libraryFilterLabel,
   libraryHref,
   libraryPage,
   parseLibraryFilter,
@@ -41,7 +42,7 @@ import {
   parseLibraryQuery,
   pickForgotten,
   searchLibraryView,
-  SHELF_EMPTY,
+  shelfEmpty,
   wallState,
 } from '@/lib/forgotten'
 import { isReplayable, type LibraryTileState } from '@/lib/recommend'
@@ -57,7 +58,6 @@ import { LibrarySearch } from '@/components/LibrarySearch'
 import { RailToCurrent } from '@/components/RailToCurrent'
 import { ShelfToStart } from '@/components/ShelfToStart'
 import { StatusLine } from '@/components/StatusLine'
-import { plural } from '@/lib/plural'
 import { dateLabel } from '@/lib/freshness'
 import {
   askableNow,
@@ -72,11 +72,27 @@ import { LikedShelf, type LikedGame } from '@/components/LikedShelf'
 import { NeedSteam } from '@/components/NeedSteam'
 import { pickSnapshotDelta } from '@/lib/libdelta'
 import { playedShort, playtimeHidden } from '@/lib/playtime'
+import type { Metadata } from 'next'
 import { WishlistShelf } from './WishlistShelf'
 
-export const metadata = {
-  title: 'Библиотека',
-  description: 'Вся твоя Steam-библиотека одной стеной: что заброшено, что ни разу не запускалось и сколько это стоило.',
+/*
+ * Язык — из params, а не getLocale(): у страницы есть тест деревом
+ * (page.test.ts), а next/root-params вне сборки бросает при импорте.
+ * Индексировать страницу нечего (robots), поэтому без alternates — только
+ * вкладка и превью ссылки на языке страницы.
+ */
+export async function generateMetadata(props: PageProps<'/[lang]/library'>): Promise<Metadata> {
+  const locale = toLocale((await props.params).lang)
+  return tr(locale, {
+    ru: {
+      title: 'Библиотека',
+      description: 'Вся твоя Steam-библиотека одной стеной: что заброшено, что ни разу не запускалось и сколько это стоило.',
+    },
+    en: {
+      title: 'Library',
+      description: "Your whole Steam library on one wall: what's abandoned, what's never been launched and what it all cost.",
+    },
+  })
 }
 
 export const dynamic = 'force-dynamic'
@@ -86,13 +102,29 @@ export const dynamic = 'force-dynamic'
  * где это правда (ноль минут), а игра, которую открыли и закрыли, получила своё
  * имя. Раньше обе были «не распакована» — включая ту, где на счётчике 110 минут.
  * Ember зарезервирован за «играешь сейчас» и в эту пару не отдаётся.
+ *
+ * Английские слова — те же, что у чипсов и бейджей источника (глоссарий:
+ * Unopened, Bounced off, Abandoned), только строчными: подпись стоит в
+ * строке под названием, как и русская. Не шире русских — плитка в две
+ * колонки на телефоне, и подпись обрезается рядом с меткой «обновлялась».
  */
-const STATE_LABEL: Record<LibraryTileState, { text: string; cls: string }> = {
-  active: { text: 'играешь сейчас', cls: 'text-ember-text' },
-  untouched: { text: 'не распакована', cls: 'text-info' },
-  unplayed: { text: 'открыл и закрыл', cls: 'text-info' },
-  comeback: { text: 'заброшена', cls: 'text-dim' },
-  played: { text: '', cls: 'text-dim' },
+const STATE_LABEL: Record<LibraryTileState, { text: Record<Locale, string>; cls: string }> = {
+  active: { text: { ru: 'играешь сейчас', en: 'playing now' }, cls: 'text-ember-text' },
+  untouched: { text: { ru: 'не распакована', en: 'unopened' }, cls: 'text-info' },
+  unplayed: { text: { ru: 'открыл и закрыл', en: 'bounced off' }, cls: 'text-info' },
+  comeback: { text: { ru: 'заброшена', en: 'abandoned' }, cls: 'text-dim' },
+  played: { text: { ru: '', en: '' }, cls: 'text-dim' },
+}
+
+/** Запасное имя игры без метаданных — глоссарий: «Игра 730» / «Game 730» */
+function gameFallback(appid: number, locale: Locale): string {
+  return tr(locale, { ru: `Игра ${appid}`, en: `Game ${appid}` })
+}
+
+/** «в 3 из 5 советов» · «3 of 5 picks» — одни формы на обе подписи над вечерами */
+const OF_PICKS: { ru: [string, string, string]; en: [string, string] } = {
+  ru: ['совета', 'советов', 'советов'],
+  en: ['pick', 'picks'],
 }
 
 /** Сколько советов на полке «Твои вечера»: свежие; сводка — по всем за окно */
@@ -254,7 +286,7 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
       appid: b.appid,
       // Каталог мог не дойти до этой игры — имя как у ArtPlaceholder, но полка
       // всё равно обязана показать плитку: иначе бан не снять вообще
-      name: meta?.name ?? `Игра ${b.appid}`,
+      name: meta?.name ?? gameFallback(b.appid, locale),
       headerImage: meta?.headerImage ?? null,
       art: trimArt(meta?.art),
       done: b.done,
@@ -264,7 +296,7 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
     const meta = metas.get(l.appid)
     return {
       appid: l.appid,
-      name: meta?.name ?? `Игра ${l.appid}`,
+      name: meta?.name ?? gameFallback(l.appid, locale),
       headerImage: meta?.headerImage ?? null,
       art: trimArt(meta?.art),
     }
@@ -286,16 +318,26 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
    * фразой: в долю они не идут (eveningsSummary), и молча выкинуть то, что
    * человек наиграл по совету, пока его не было, было бы нечестно в другую
    * сторону.
+   *
+   * Английская подпись — своей функцией (eveningsLeadEn): ветки те же, но
+   * фразы целые, а не русские куски в английском порядке.
    */
-  const lateHours = eveningsTotal.lateMinutes > 0 ? playedLine(eveningsTotal.lateMinutes) : null
+  const lateHours = eveningsTotal.lateMinutes > 0 ? playedLine(eveningsTotal.lateMinutes, locale) : null
   const eveningsLead =
-    eveningsTotal.checked > 0 ? (
+    locale === 'en' ? (
+      eveningsLeadEn({
+        total: eveningsTotal,
+        lateHours,
+        timeHidden,
+        pending: evenings.some((e) => e.minutes === null),
+      })
+    ) : eveningsTotal.checked > 0 ? (
       <>
         Наиграно после наших советов:{' '}
         <span className="text-ink tabular-nums">{playedLine(eveningsTotal.minutes)}</span>. Всерьёз, от
         пятнадцати минут, — в <span className="tabular-nums">{eveningsTotal.played}</span> из{' '}
         <span className="tabular-nums">{eveningsTotal.checked}</span>{' '}
-        {plural(eveningsTotal.checked, 'совета', 'советов', 'советов')}.
+        {pl(locale, eveningsTotal.checked, OF_PICKS)}.
         {lateHours && (
           <>
             {' '}
@@ -328,11 +370,11 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
     return {
       appid: e.appid,
       shownAt: e.shownAt,
-      name: meta?.name ?? `Игра ${e.appid}`,
+      name: meta?.name ?? gameFallback(e.appid, locale),
       headerImage: meta?.headerImage ?? null,
       art: trimArt(meta?.art),
-      date: dateLabel(e.shownAt),
-      played: timeHidden ? 'время скрыто' : eveningPlayed(e),
+      date: dateLabel(e.shownAt, { locale }),
+      played: timeHidden ? tr(locale, { ru: 'время скрыто', en: 'time hidden' }) : eveningPlayed(e, locale),
       playedEnough: playedEnough(e.minutes),
       verdict: e.verdict,
       owned: ownedNow.has(e.appid),
@@ -381,10 +423,14 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
    * метки. Промис уходит в <Suspense> у плитки (RefreshedPill): стена приходит
    * первым HTML, метка догружается стримом. Сбой запроса — просто без меток:
    * отказ базы здесь не повод ронять страницу.
+   *
+   * С языком страницы: на /en «подтверждённый» патч — с английским пересказом
+   * (tldr_en), как у причины на /en/play. Метка и причина обязаны называть
+   * один и тот же факт.
    */
   const patchPairs = wallPatchPairs(wall.shown, stateOf, { hidden: timeHidden, writer })
   const updatedP = patchPairs.length
-    ? latestMajorPatchSince(db, patchPairs).catch(() => new Map<number, string>())
+    ? latestMajorPatchSince(db, patchPairs, locale).catch(() => new Map<number, string>())
     : null
   const mayRefresh = new Set(patchPairs.map(([appid]) => appid))
   const shelf = pickForgotten(
@@ -433,34 +479,41 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
           {/* Демо называет себя и здесь: «твоя библиотека глазами сервиса» над
               чужой витриной — прямая неправда. Признак серверный, полоса
               приходит в первом HTML и стоит в потоке (см. DemoBar). */}
-          {isDemoId(steamid) && <DemoBar from="/library" className="mb-6" />}
-          <Eyebrow className="mb-3">Библиотека</Eyebrow>
-          <h1 className="font-display text-display-md max-w-md">Твоя библиотека глазами сервиса</h1>
+          {isDemoId(steamid) && <DemoBar from={lp(locale, '/library')} className="mb-6" />}
+          <Eyebrow className="mb-3">{tr(locale, { ru: 'Библиотека', en: 'Library' })}</Eyebrow>
+          <h1 className="font-display text-display-md max-w-md">
+            {tr(locale, { ru: 'Твоя библиотека глазами сервиса', en: 'Your library, as we see it' })}
+          </h1>
+          {/* Подписи чисел по-английски не шире русских («never launched» уже
+              «ни разу не запускал»): на телефоне три числа держат свои ряды */}
           <dl className="mt-7 flex flex-wrap gap-x-10 gap-y-4">
             <div className="flex flex-col-reverse">
               <dt className="lib-stat-label">
-                {plural(games.length, 'игра', 'игры', 'игр')}
+                {pl(locale, games.length, { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] })}
               </dt>
-              <dd className="lib-stat">{games.length.toLocaleString('ru-RU')}</dd>
+              <dd className="lib-stat">{fmtNumber(locale, games.length)}</dd>
             </div>
             {/* Время скрыто — одно слово вместо двух нулей: «0 часов» и «ни
                 разу не запускал: 300» были бы сказаны про сотни часов */}
             {timeHidden ? (
               <div className="flex flex-col-reverse">
-                <dt className="lib-stat-label">время в играх</dt>
-                <dd className="lib-stat">скрыто</dd>
+                <dt className="lib-stat-label">{tr(locale, { ru: 'время в играх', en: 'playtime' })}</dt>
+                <dd className="lib-stat">{tr(locale, { ru: 'скрыто', en: 'hidden' })}</dd>
               </div>
             ) : (
               <>
                 <div className="flex flex-col-reverse">
                   <dt className="lib-stat-label">
-                    {plural(totalHours, 'час', 'часа', 'часов')} в игре
+                    {pl(locale, totalHours, {
+                      ru: ['час в игре', 'часа в игре', 'часов в игре'],
+                      en: ['hour played', 'hours played'],
+                    })}
                   </dt>
-                  <dd className="lib-stat">{totalHours.toLocaleString('ru-RU')}</dd>
+                  <dd className="lib-stat">{fmtNumber(locale, totalHours)}</dd>
                 </div>
                 <div className="flex flex-col-reverse">
-                  <dt className="lib-stat-label">ни разу не запускал</dt>
-                  <dd className="lib-stat text-ember-text">{untouched.toLocaleString('ru-RU')}</dd>
+                  <dt className="lib-stat-label">{tr(locale, { ru: 'ни разу не запускал', en: 'never launched' })}</dt>
+                  <dd className="lib-stat text-ember-text">{fmtNumber(locale, untouched)}</dd>
                 </div>
               </>
             )}
@@ -473,30 +526,51 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
           */}
           {since && (
             <p className="mt-5 max-w-md text-sm leading-relaxed text-dim">
-              {/* Снимки одного дня — одна дата, а не «с 26 сентября по 26 сентября» */}
+              {/* Снимки одного дня — одна дата, а не «с 26 сентября по 26 сентября».
+                  Сравниваются русские подписи: день от языка страницы не зависит */}
               {dateLabel(since.fromAt) === dateLabel(snapshot.takenAt) ? (
-                `За ${dateLabel(snapshot.takenAt)}`
+                tr(locale, {
+                  ru: `За ${dateLabel(snapshot.takenAt)}`,
+                  en: `On ${dateLabel(snapshot.takenAt, { locale })}`,
+                })
+              ) : locale === 'en' ? (
+                <>
+                  From {dateLabel(since.fromAt, { year: !sameYear(since.fromAt, snapshot.takenAt), locale })} to{' '}
+                  {dateLabel(snapshot.takenAt, { locale })}
+                </>
               ) : (
                 <>
                   С {dateLabel(since.fromAt, { year: !sameYear(since.fromAt, snapshot.takenAt) })} по{' '}
                   {dateLabel(snapshot.takenAt)}
                 </>
               )}
-              {since.delta.minutes > 0 && (
-                <>
-                  {' '}· наиграно <span className="tabular-nums text-ink">{playedLine(since.delta.minutes)}</span>
-                </>
-              )}
+              {/* По-английски время идёт первым («3 h played»), а не за словом */}
+              {since.delta.minutes > 0 &&
+                (locale === 'en' ? (
+                  <>
+                    {' '}· <span className="tabular-nums text-ink">{playedLine(since.delta.minutes, locale)}</span> played
+                  </>
+                ) : (
+                  <>
+                    {' '}· наиграно <span className="tabular-nums text-ink">{playedLine(since.delta.minutes)}</span>
+                  </>
+                ))}
               {since.delta.added.length > 0 && (
                 <>
                   {' '}· <span className="tabular-nums">{since.delta.added.length}</span>{' '}
-                  {plural(since.delta.added.length, 'новая игра', 'новые игры', 'новых игр')}
+                  {pl(locale, since.delta.added.length, {
+                    ru: ['новая игра', 'новые игры', 'новых игр'],
+                    en: ['new game', 'new games'],
+                  })}
                 </>
               )}
               {since.delta.unpacked.length > 0 && (
                 <>
                   {' '}· <span className="tabular-nums">{since.delta.unpacked.length}</span>{' '}
-                  {plural(since.delta.unpacked.length, 'игра впервые запущена', 'игры впервые запущены', 'игр впервые запущено')}
+                  {pl(locale, since.delta.unpacked.length, {
+                    ru: ['игра впервые запущена', 'игры впервые запущены', 'игр впервые запущено'],
+                    en: ['game launched for the first time', 'games launched for the first time'],
+                  })}
                 </>
               )}
             </p>
@@ -504,11 +578,11 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
           <div className="mt-8 flex flex-wrap gap-3">
             <Link href="/portrait" prefetch={false} className="btn-glass">
               <Icon name="spark" size={18} />
-              Мой портрет игрока
+              {tr(locale, { ru: 'Мой портрет игрока', en: 'My player portrait' })}
             </Link>
             {/* Колода без вопросов о настроении — и полка «Приглянулось» при ней */}
             <Link href="/explore" className="btn-glass">
-              Полистать без обязательств
+              {tr(locale, { ru: 'Полистать без обязательств', en: 'Just browse' })}
               <Icon name="arrow" size={18} />
             </Link>
           </div>
@@ -547,16 +621,22 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
       */}
       {games.length === 0 && (
         <section className="max-w-2xl mb-10">
-          <p className="font-semibold text-ink mb-2">Steam не отдал ни одной игры</p>
+          <p className="font-semibold text-ink mb-2">
+            {tr(locale, { ru: 'Steam не отдал ни одной игры', en: "Steam didn't return any games" })}
+          </p>
           <p className="text-dim text-sm leading-relaxed mb-5">
-            Причин ровно две: игровые данные закрыты настройками профиля — или библиотека правда
-            пуста. Первая встречается намного чаще.
+            {tr(locale, {
+              ru: 'Причин ровно две: игровые данные закрыты настройками профиля — или библиотека правда пуста. Первая встречается намного чаще.',
+              en: 'There are only two reasons: your game details are hidden by your profile settings, or your library really is empty. The first is far more common.',
+            })}
           </p>
           {/* Проверка — входом через Steam: он пишет свежий снимок. Сессии по
-              ссылке — «Подключить заново» ниже, её дверь. */}
-          <PrivacyHelp retryHref={session && isWriter(session) ? steamLoginFor('/library') : undefined} />
+              ссылке — «Подключить заново» ниже, её дверь. Путь — на языке
+              страницы: steamLoginFor везёт язык через Steam (lang=en), и
+              возврат приходит на ту же английскую библиотеку. */}
+          <PrivacyHelp retryHref={session && isWriter(session) ? steamLoginFor(lp(locale, '/library')) : undefined} />
           <Link href={reconnectHref()} className="btn-ember mt-5 px-6 py-3">
-            Подключить заново
+            {tr(locale, { ru: 'Подключить заново', en: 'Reconnect' })}
           </Link>
         </section>
       )}
@@ -605,21 +685,36 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
             */
             <div className="panel-lift p-5 flex flex-col items-start gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
+                {/* Фраза целиком на каждую форму числа: английская не длиннее
+                    русской — строки текста рядом с кнопкой на lg замерены выше */}
                 <div className="font-display text-display-xs">
                   <span className="tabular-nums text-ember-text">{backlog.unplayedCount}</span>{' '}
-                  {plural(backlog.unplayedCount, 'игра уже твоя', 'игры уже твои', 'игр уже твои')} —
-                  попробовать можно прямо сейчас
+                  {pl(locale, backlog.unplayedCount, {
+                    ru: [
+                      'игра уже твоя — попробовать можно прямо сейчас',
+                      'игры уже твои — попробовать можно прямо сейчас',
+                      'игр уже твои — попробовать можно прямо сейчас',
+                    ],
+                    en: ['game is already yours — try it now', 'games are already yours — try one now'],
+                  })}
                 </div>
                 {/* Оговорка — только когда она правда: «не меньше … — цена
                     известна у 8 из 8» спорило само с собой */}
                 <div className="text-xs text-dim mt-1">
                   {/* Валюта — региона суммы (backlogValue), а не угаданная:
                       цены других регионов в неё не входят вовсе */}
-                  {backlog.pricedCount < backlog.unplayedCount ? 'Вместе не меньше' : 'Вместе'}{' '}
-                  <span className="tabular-nums">{formatPrice(backlog.cents, backlog.cc, { whole: true })}</span>{' '}
-                  {byPrices(backlog.cc)}
                   {backlog.pricedCount < backlog.unplayedCount
-                    ? ` — цена известна у ${backlog.pricedCount} из ${backlog.unplayedCount}`
+                    ? tr(locale, { ru: 'Вместе не меньше', en: 'Worth at least' })
+                    : tr(locale, { ru: 'Вместе', en: 'Worth' })}{' '}
+                  <span className="tabular-nums">
+                    {formatPrice(backlog.cents, backlog.cc, { whole: true, locale })}
+                  </span>{' '}
+                  {byPrices(backlog.cc, locale)}
+                  {backlog.pricedCount < backlog.unplayedCount
+                    ? tr(locale, {
+                        ru: ` — цена известна у ${backlog.pricedCount} из ${backlog.unplayedCount}`,
+                        en: ` — prices known for ${backlog.pricedCount} of ${backlog.unplayedCount}`,
+                      })
                     : null}
                 </div>
               </div>
@@ -630,7 +725,7 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
                 className="btn-ember shrink-0 px-5 py-3 text-sm"
               >
                 <Icon name="play" className="mr-2 inline-block align-[-0.125em]" />
-                Выбрать одну
+                {tr(locale, { ru: 'Выбрать одну', en: 'Pick one' })}
               </Link>
             </div>
           )}
@@ -639,11 +734,23 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
               {stats.rate !== null && (
                 <>
                   <div className="font-display text-display-xs">
-                    Подбор попадает в{' '}
-                    <span className="match">{Math.round(stats.rate * 100)}%</span>
+                    {locale === 'en' ? (
+                      <>
+                        Picks land <span className="match">{Math.round(stats.rate * 100)}%</span> of the time
+                      </>
+                    ) : (
+                      <>
+                        Подбор попадает в{' '}
+                        <span className="match">{Math.round(stats.rate * 100)}%</span>
+                      </>
+                    )}
                   </div>
+                  {/* Кнопки — их собственными словами: «Liked it» и «Not it» на /play */}
                   <div className="text-xs text-dim mt-1">
-                    {stats.liked} «зашло» против {stats.skipped} «не то»
+                    {tr(locale, {
+                      ru: `${stats.liked} «зашло» против ${stats.skipped} «не то»`,
+                      en: `${stats.liked} “Liked it” vs ${stats.skipped} “Not it”`,
+                    })}
                   </div>
                 </>
               )}
@@ -653,18 +760,33 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
                 сверенных советов (eveningsSummary): несверенный — «ещё
                 неизвестно», а не промах.
               */}
+              {/* По-английски — целыми фразами, а не «Actually played — 60% picks: 3
+                  of 5»: мера (15+ минут) встаёт к слову, а доля — с «of picks» */}
               {honest && (
                 <div className={stats.rate !== null ? 'text-xs text-dim mt-2' : 'font-display text-display-xs'}>
-                  Сыграно всерьёз —{' '}
-                  <span className={stats.rate !== null ? 'tabular-nums text-ink' : 'match'}>
-                    {Math.round((eveningsTotal.played / eveningsTotal.checked) * 100)}%
-                  </span>{' '}
-                  советов
-                  {stats.rate !== null ? (
+                  {locale === 'en' ? (
                     <>
-                      : {eveningsTotal.played} из {eveningsTotal.checked}, от пятнадцати минут
+                      {stats.rate !== null ? 'Actually played (15+ minutes): ' : 'Actually played: '}
+                      <span className={stats.rate !== null ? 'tabular-nums text-ink' : 'match'}>
+                        {Math.round((eveningsTotal.played / eveningsTotal.checked) * 100)}%
+                      </span>{' '}
+                      of picks
+                      {stats.rate !== null ? `, ${eveningsTotal.played} of ${eveningsTotal.checked}` : null}
                     </>
-                  ) : null}
+                  ) : (
+                    <>
+                      Сыграно всерьёз —{' '}
+                      <span className={stats.rate !== null ? 'tabular-nums text-ink' : 'match'}>
+                        {Math.round((eveningsTotal.played / eveningsTotal.checked) * 100)}%
+                      </span>{' '}
+                      советов
+                      {stats.rate !== null ? (
+                        <>
+                          : {eveningsTotal.played} из {eveningsTotal.checked}, от пятнадцати минут
+                        </>
+                      ) : null}
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -676,7 +798,7 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
           writer выше) — одна строка на месте первой из полок говорит, где они,
           а не три пустоты подряд. Есть ли там что-то, не сказано: это тоже
           сведение о владельце. */}
-      {!writer && <NeedSteam from="/library" why="see" className="mb-12 max-w-md" />}
+      {!writer && <NeedSteam from={lp(locale, '/library')} why="see" className="mb-12 max-w-md" />}
 
       {eveningItems.length > 0 && (
         <Evenings items={eveningItems} lead={eveningsLead} writer={writer} plans={eveningPlans} />
@@ -684,13 +806,13 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
 
       {shelf.length > 0 && (
         <section className="mb-12">
-          <Eyebrow className="mb-2">Запечатанное</Eyebrow>
+          <Eyebrow className="mb-2">{tr(locale, { ru: 'Запечатанное', en: 'Sealed' })}</Eyebrow>
           <div className="flex items-baseline justify-between gap-4 flex-wrap">
             {/* Заголовок намеренно без числа: «пять игр» — ложь при трёх, а
                 согласование «{N} игр, о которых ты забыл» — фабрика багов.
                 Число уже стоит в строке-сводке выше. */}
             <h2 className="font-display text-display-sm">
-              Ты забыл, что они у тебя есть
+              {tr(locale, { ru: 'Ты забыл, что они у тебя есть', en: 'You forgot you own these' })}
             </h2>
             {/*
               Ссылка ведёт к ФИЛЬТРУ, а не к подбору, и это не мелочь.
@@ -710,7 +832,7 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
                 prefetch={false}
                 className="tap link-more shrink-0"
               >
-                Все нераспакованные <Icon name="arrow" size={14} />
+                {tr(locale, { ru: 'Все нераспакованные', en: 'All unopened' })} <Icon name="arrow" size={14} />
               </Link>
             )}
           </div>
@@ -723,8 +845,10 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
                 ширине. Величина та же, что у остальной поясняющей копии
                 продукта. */}
           <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
-            Ни одну из них ты не запускал — по данным Steam там ноль минут. Завтра на полке будут
-            другие.
+            {tr(locale, {
+              ru: 'Ни одну из них ты не запускал — по данным Steam там ноль минут. Завтра на полке будут другие.',
+              en: "You've never launched any of them — per Steam, that's zero minutes. Tomorrow the shelf will show others.",
+            })}
           </p>
           {/*
             ЛЕСТНИЦА, А НЕ СТУПЕНЬКА. Было `grid-cols-2 md:grid-cols-5`, то
@@ -752,7 +876,7 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
                      сетки 2 → 5 и в полосе 640–1023 промахивалась: просила
                      то 50vw, то 20vw при настоящих 33vw. */
                   sizes="(min-width: 1024px) 20vw, (min-width: 640px) 33vw, 50vw"
-                  corner={<span className="lib-badge badge-line">Запечатана</span>}
+                  corner={<span className="lib-badge badge-line">{tr(locale, { ru: 'Запечатана', en: 'Sealed' })}</span>}
                 />
               </GameLink>
             ))}
@@ -784,6 +908,8 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
         {/* id у ленты свой: #wall — подложка и цель ссылки с полки
             «запечатанного», а прокручивается вбок именно лента */}
         <div id="wall-rail" className="chip-rail lib-filters-rail">
+          {/* Порядок — из LIBRARY_FILTERS, подпись — на языке страницы:
+              английские слова те же, что у бейджей источника (глоссарий) */}
           {LIBRARY_FILTERS.map((f) => (
             <Link
               key={f.id}
@@ -800,7 +926,7 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
               aria-current={f.id === filter ? 'page' : undefined}
               className={`pill shrink-0 ${f.id === filter ? 'is-on' : ''}`}
             >
-              {f.label} <span className="tabular-nums opacity-70">{found.counts[f.id]}</span>
+              {libraryFilterLabel(f.id, locale)} <span className="tabular-nums opacity-70">{found.counts[f.id]}</span>
             </Link>
           ))}
           <RailToCurrent railId="wall-rail" current={filter} />
@@ -814,7 +940,7 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
           сразу — «за две недели ты не запускал ничего» поверх «Steam не отдал
           ни одной игры». */}
       {games.length > 0 && view.games.length === 0 && view.filter !== 'all' && !q && (
-        <p className="text-dim text-sm">{SHELF_EMPTY[view.filter]}</p>
+        <p className="text-dim text-sm">{shelfEmpty(view.filter, locale)}</p>
       )}
 
       {/* Ничего не нашлось — своим сообщением, а не сообщением пустой полки:
@@ -835,15 +961,18 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
           !q
             ? null
             : found.games.length > 0
-              ? `По «${q}»${view.filter === 'all' ? '' : ' на этой полке'} ${plural(found.games.length, 'нашлась', 'нашлись', 'нашлось')} ${found.games.length} ${plural(found.games.length, 'игра', 'игры', 'игр')}.`
+              ? foundLine(locale, q, found.games.length, view.filter !== 'all')
               : view.filter === 'all' || found.counts.all === 0
-                ? `Ничего не нашлось по «${q}».`
-                : `На этой полке «${q}» нет — поищи на соседних: счётчики на чипсах показывают, где.`
+                ? tr(locale, { ru: `Ничего не нашлось по «${q}».`, en: `Nothing found for “${q}”.` })
+                : tr(locale, {
+                    ru: `На этой полке «${q}» нет — поищи на соседних: счётчики на чипсах показывают, где.`,
+                    en: `No “${q}” on this shelf — try the others: the numbers on the filters show where.`,
+                  })
         }
       />
       {q && found.games.length === 0 && (
         <Link href={libraryHref(view.filter)} scroll={false} prefetch={false} className="tap link-more -mt-1 mb-4">
-          Сбросить поиск
+          {tr(locale, { ru: 'Сбросить поиск', en: 'Clear search' })}
           <Icon name="close" size={14} />
         </Link>
       )}
@@ -894,7 +1023,7 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
                         вровень с первой */}
                     {!timeHidden && (
                       <span className={`tabular-nums ${refreshable ? 'self-start' : ''}`}>
-                        {playedShort(g.playtimeForever)}
+                        {playedShort(g.playtimeForever, locale)}
                       </span>
                     )}
                     {/* «Обновлялась» — рядом с «заброшена», а не вместо: состояние
@@ -903,16 +1032,16 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
                         невалиден; патчи ждут на /game в «Что нового». Узкой
                         плитке телефона метка уходит второй строкой (flex-wrap),
                         а не обрезает «заброшена» до «забр…» */}
-                    {label.text &&
+                    {label.text[locale] &&
                       (refreshable ? (
                         <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-0.5 self-start">
-                          <span className={`truncate ${label.cls}`}>{label.text}</span>
+                          <span className={`truncate ${label.cls}`}>{label.text[locale]}</span>
                           <Suspense fallback={null}>
-                            <RefreshedPill updated={updatedP} appid={g.appid} />
+                            <RefreshedPill updated={updatedP} appid={g.appid} locale={locale} />
                           </Suspense>
                         </span>
                       ) : (
-                        <span className={`truncate ${label.cls}`}>{label.text}</span>
+                        <span className={`truncate ${label.cls}`}>{label.text[locale]}</span>
                       ))}
                   </>
                 }
@@ -940,8 +1069,17 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
             className="btn-glass"
           >
             <LinkPending>
-              Показать ещё <span className="tabular-nums">{Math.min(wall.rest, LIBRARY_PAGE_SIZE)}</span>{' '}
-              из <span className="tabular-nums">{wall.rest}</span>
+              {locale === 'en' ? (
+                <>
+                  Show <span className="tabular-nums">{Math.min(wall.rest, LIBRARY_PAGE_SIZE)}</span> more of{' '}
+                  <span className="tabular-nums">{wall.rest}</span>
+                </>
+              ) : (
+                <>
+                  Показать ещё <span className="tabular-nums">{Math.min(wall.rest, LIBRARY_PAGE_SIZE)}</span>{' '}
+                  из <span className="tabular-nums">{wall.rest}</span>
+                </>
+              )}
             </LinkPending>
           </Link>
         </div>
@@ -960,7 +1098,14 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
             читается вовсе (writer выше) */}
         {writer && !isDemoId(steamid) && (
           <Suspense fallback={null}>
-            <WishlistShelf steamid={steamid} sid={session.sid} row={wishlist} owned={ownedNow} now={now} />
+            <WishlistShelf
+              steamid={steamid}
+              sid={session.sid}
+              row={wishlist}
+              owned={ownedNow}
+              now={now}
+              locale={locale}
+            />
           </Suspense>
         )}
         <BannedShelf games={bannedGames} writer={writer} />
@@ -977,6 +1122,54 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
 }
 
 /**
+ * Подпись над «Твоими вечерами» по-английски — те же четыре ветки, что у
+ * русской в LibraryPage, и обещают они то же самое. Целыми фразами: «Всерьёз,
+ * от пятнадцати минут, — в 3 из 5 советов» в английском порядке не
+ * собирается, а «Actually played» — то же слово, что в карточке доли выше
+ * (глоссарий).
+ */
+function eveningsLeadEn({
+  total,
+  lateHours,
+  timeHidden,
+  pending,
+}: {
+  total: ReturnType<typeof eveningsSummary>
+  lateHours: string | null
+  timeHidden: boolean
+  pending: boolean
+}): ReactNode {
+  if (total.checked > 0) {
+    return (
+      <>
+        Time played after our picks:{' '}
+        <span className="text-ink tabular-nums">{playedLine(total.minutes, 'en')}</span>. Actually played (15+
+        minutes): <span className="tabular-nums">{total.played}</span> of{' '}
+        <span className="tabular-nums">{total.checked}</span> {pl('en', total.checked, OF_PICKS)}.
+        {lateHours && (
+          <>
+            {' '}
+            Another <span className="text-ink tabular-nums">{lateHours}</span> added up while you were away — we
+            checked those later and leave them out of the count.
+          </>
+        )}
+      </>
+    )
+  }
+  if (lateHours) {
+    return (
+      <>
+        While you were away, <span className="text-ink tabular-nums">{lateHours}</span> added up after our picks
+        — checked against your first library snapshot once you were back.
+      </>
+    )
+  }
+  if (timeHidden) return 'What we picked for you and how it went. Minutes will show up once Steam shows your playtime again.'
+  if (pending) return 'What we picked for you and how it went. Minutes will catch up with the next library snapshot.'
+  return 'What we picked for you and how it went.'
+}
+
+/**
  * Метка «обновлялась» у заброшенной плитки — догружается стримом (см.
  * updatedP в LibraryPage): ждёт общий на порцию запрос и рисует пилюлю, только
  * если подтверждённый крупный патч после последнего запуска нашёлся.
@@ -984,20 +1177,40 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
 async function RefreshedPill({
   updated,
   appid,
+  locale,
 }: {
   updated: Promise<ReadonlyMap<number, string>>
   appid: number
+  locale: Locale
 }) {
   if (!(await updated).has(appid)) return null
   return (
     <span
       className="shrink-0 rounded-full border border-edge px-1.5 text-[11px] leading-4 text-ink"
       // Та же формулировка, что в причине на /play и в «Игре дня» (patchSentence)
-      title={`${PATCH_SINCE_LEAD}.`}
+      title={`${patchSinceLead(locale)}.`}
     >
-      обновлялась
+      {/* Короче русской («updated» против «обновлялась»): метка делит строку
+          плитки с обрезаемой подписью состояния */}
+      {tr(locale, { ru: 'обновлялась', en: 'updated' })}
     </span>
   )
+}
+
+/**
+ * «Нашлось» поиска по библиотеке — целой фразой на язык: по-русски запрос
+ * впереди («По «portal» нашлись 3 игры»), по-английски — в конце («Found 3
+ * games for “portal”»). Число и слово при нём — одной формой pl().
+ */
+function foundLine(locale: Locale, q: string, n: number, onShelf: boolean): string {
+  const hit = pl(locale, n, {
+    ru: [`нашлась ${n} игра`, `нашлись ${n} игры`, `нашлось ${n} игр`],
+    en: [`Found ${n} game`, `Found ${n} games`],
+  })
+  return tr(locale, {
+    ru: `По «${q}»${onShelf ? ' на этой полке' : ''} ${hit}.`,
+    en: `${hit} for “${q}”${onShelf ? ' on this shelf' : ''}.`,
+  })
 }
 
 /** Два момента в одном году по UTC — тогда дату пишем без года */

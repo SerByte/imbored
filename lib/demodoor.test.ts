@@ -130,7 +130,7 @@ describe('полоса стоит там, где демо в момент цен
   test('/library: признак серверный — полоса в потоке героя, из первого HTML', () => {
     const src = code(read('app/[lang]/library/page.tsx'))
     const hero = src.indexOf('lib-hero')
-    const bar = src.indexOf('{isDemoId(steamid) && <DemoBar from="/library" className="mb-6" />}')
+    const bar = src.indexOf(`{isDemoId(steamid) && <DemoBar from={lp(locale, '/library')} className="mb-6" />}`)
     expect(hero).toBeGreaterThan(-1)
     expect(bar, 'полоса ушла из героя библиотеки').toBeGreaterThan(hero)
     expect(bar).toBeLessThan(src.indexOf('<Eyebrow', hero))
