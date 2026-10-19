@@ -1948,7 +1948,7 @@ function Player({ say }: { say: (line: string) => void }) {
     }
     return (
       <div className="flex-1 flex items-center justify-center px-5 py-24">
-        <div className="max-w-lg w-full panel-lift p-8 text-center flex flex-col gap-5 anim-reveal">
+        <div className="max-w-lg w-full panel-lift p-6 sm:p-8 text-center flex flex-col gap-5 anim-reveal">
           <LogoMark size={48} className="mx-auto" />
           {/* Сюда приходят только нажатием («Не то — дальше» в пятый раз), и
               нажатая кнопка при этом исчезает — фокус забирает заголовок */}
@@ -1964,8 +1964,15 @@ function Player({ say }: { say: (line: string) => void }) {
             })}{' '}
             {burnoutInvite(offer, locale)}
           </p>
+          {/* Боковые поля px-4 у всех трёх вариантов: .btn-ember задаёт только
+              padding-block, и длинное название переносило подпись на две
+              строки, упёртые в оба края заливки (на русском тоже, английская
+              подпись — чаще). Поля берутся из поля карточки, а не из подписи:
+              на 360 px кнопке при p-8 доставалось 254 px, и px-5 сам ломал
+              «Просто продолжить «Dota 2»» посреди названия. С p-6 до sm ей
+              270 px — эта подпись в одну строку, как была. */}
           {offer === 'familiar' && familiar ? (
-            <button onClick={() => showPick(familiar)} className="btn-ember is-block py-3">
+            <button onClick={() => showPick(familiar)} className="btn-ember is-block px-4 py-3">
               {withForeignRuns(
                 locale,
                 tr(locale, {
@@ -1994,12 +2001,12 @@ function Player({ say }: { say: (line: string) => void }) {
               onClick={(via) =>
                 void sendFeedback(cont.appid, 'launched', undefined, ctxOf(null, 'continue', launchIntent(via)))
               }
-              className="btn-ember is-block py-3"
+              className="btn-ember is-block px-4 py-3"
             />
           ) : (
             offer === 'cozy' &&
             cozy && (
-              <button onClick={() => showPick(cozy)} className="btn-ember is-block py-3">
+              <button onClick={() => showPick(cozy)} className="btn-ember is-block px-4 py-3">
                 {withForeignRuns(
                   locale,
                   tr(locale, {
