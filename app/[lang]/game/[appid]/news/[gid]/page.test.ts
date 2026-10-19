@@ -223,6 +223,89 @@ describe('страница патча на /en', () => {
   })
 })
 
+/**
+ * hreflang патча — только на версии, что сами в поиске, как у адреса в карте
+ * сайта (app/sitemap.ts): в поиск каждую версию пускает пересказ своего языка
+ * (newsIndexable), и ссылка с русской на /en с noindex была бы пустым
+ * сигналом. Связка одна на обе версии; обе в поиске — голова как была.
+ */
+describe('страница патча: hreflang', () => {
+  const ru = { params: Promise.resolve({ appid: String(APPID), gid: GID }) }
+  const en = { params: Promise.resolve({ appid: String(APPID), gid: GID, lang: 'en' }) }
+  const PATH = `/game/${APPID}/news/${GID}`
+
+  /** Пост у живой игры каталога (теги есть) — с пересказами названных языков */
+  async function seed(told: { ru?: boolean; en?: boolean }, listed = true): Promise<void> {
+    const now = nowSec()
+    await upsertGameMeta(
+      db,
+      {
+        appid: APPID,
+        name: 'Counter-Strike 2',
+        tags: listed ? { FPS: 1000 } : {},
+        genres: [],
+        categories: [1],
+        reviewsTotal: 1000,
+        reviewsPercent: 80,
+      },
+      now,
+    )
+    await upsertNewsItems(db, [patch(GID, now - 3600)], now)
+    if (told.ru) await setNewsDigest(db, APPID, GID, { tldr: 'Починили сеть.', scale: 'major' }, now)
+    if (told.en) await setNewsDigestEn(db, APPID, GID, { tldrEn: 'Fixed the netcode.' }, now)
+  }
+
+  test('пересказ только русский — hreflang только на русскую, и с /en тоже', async () => {
+    await seed({ ru: true })
+    const ruMeta = await generateMetadata(ru)
+    const enMeta = await generateMetadata(en)
+    expect(ruMeta.robots).toBeUndefined()
+    expect(enMeta.robots).toEqual({ index: false, follow: true })
+    const languages = { ru: PATH, 'x-default': PATH }
+    expect(ruMeta.alternates).toEqual({ canonical: PATH, languages })
+    expect(enMeta.alternates).toEqual({ canonical: `/en${PATH}`, languages })
+  })
+
+  test('пересказ на обоих — обе версии и x-default на русскую, как было', async () => {
+    await seed({ ru: true, en: true })
+    const languages = { ru: PATH, en: `/en${PATH}`, 'x-default': PATH }
+    const ruMeta = await generateMetadata(ru)
+    expect(ruMeta.alternates).toEqual({ canonical: PATH, languages })
+    expect((await generateMetadata(en)).alternates).toEqual({ canonical: `/en${PATH}`, languages })
+    // порядок ключей — тот же, что у localeAlternates: голова не сдвинулась
+    expect(Object.keys(ruMeta.alternates?.languages ?? {})).toEqual(['ru', 'en', 'x-default'])
+  })
+
+  test('пересказ только английский — x-default на /en', async () => {
+    await seed({ en: true })
+    const ruMeta = await generateMetadata(ru)
+    const enMeta = await generateMetadata(en)
+    expect(ruMeta.robots).toEqual({ index: false, follow: true })
+    expect(enMeta.robots).toBeUndefined()
+    const languages = { en: `/en${PATH}`, 'x-default': `/en${PATH}` }
+    expect(ruMeta.alternates).toEqual({ canonical: PATH, languages })
+    expect(enMeta.alternates).toEqual({ canonical: `/en${PATH}`, languages })
+  })
+
+  test('игра не в каталоге — ни одна версия не в поиске, hreflang нет', async () => {
+    await seed({ ru: true, en: true }, false)
+    expect((await generateMetadata(ru)).alternates).toEqual({ canonical: PATH })
+    expect((await generateMetadata(en)).alternates).toEqual({ canonical: `/en${PATH}` })
+  })
+})
+
+describe('страница патча: путь над заголовком', () => {
+  test('ориентир на /en — «Breadcrumb», как у страницы жанра; русский — как был', async () => {
+    const tree = await render()
+    expect(JSON.stringify(tree)).toContain('"aria-label":"Путь к патчу"')
+    const enTree = flightOf(
+      await PatchPage({ params: Promise.resolve({ appid: String(APPID), gid: GID, lang: 'en' }) }),
+      ISLANDS,
+    )
+    expect(JSON.stringify(enTree)).toContain('"aria-label":"Breadcrumb"')
+  })
+})
+
 /** JSON-LD страницы, как он уходит в HTML */
 function ldOf(tree: unknown): string {
   let html: string | undefined

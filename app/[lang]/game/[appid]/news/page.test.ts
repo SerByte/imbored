@@ -252,7 +252,8 @@ describe('архив обновлений игры на /en', () => {
     const without = await meta(undefined, 'en')
     expect(without.robots).toEqual({ index: false, follow: true })
     expect(without.title).toBe('Counter-Strike 2 updates — what changed in each patch')
-    expect(String(without.description)).toMatch(/^3 Counter-Strike 2 patches — /)
+    // имя игры впереди, через двоеточие: число в названии не сливается со счётом
+    expect(String(without.description)).toMatch(/^Counter-Strike 2: 3 patches — /)
     expect(String(without.description)).not.toMatch(CYRILLIC)
 
     for (const gid of ['1', '2', '3']) await setNewsDigestEn(db, APPID, gid, { tldrEn: `Summary ${gid}.` }, now)
@@ -272,5 +273,58 @@ describe('архив обновлений игры на /en', () => {
     await seed([patch('sale', 1, { kind: 'news' })], [])
     await expect(PatchArchivePage(params(undefined, 'en'))).rejects.toThrow()
     expect(await meta(undefined, 'en')).toEqual({})
+  })
+
+  test('путь над заголовком — ориентир «Breadcrumb», как у страницы жанра', async () => {
+    await seed([patch('1', 1)], [])
+    expect(JSON.stringify(await render('en'))).toContain('"aria-label":"Breadcrumb"')
+    expect(JSON.stringify(await render())).toContain('"aria-label":"Путь к обновлениям"')
+  })
+})
+
+/**
+ * hreflang архива — только на версии, что сами в поиске, как у адреса в карте
+ * сайта (app/sitemap.ts): в поиск каждую версию пускают пересказы своего
+ * языка, и ссылка с русской на /en с noindex была бы пустым сигналом. Связка
+ * одна на обе версии; обе в поиске — голова как была.
+ */
+describe('архив обновлений: hreflang', () => {
+  const PATH = `/game/${APPID}/news`
+  const three = () => [patch('1', 1), patch('2', 2), patch('3', 3)]
+  const enDigests = async () => {
+    for (const gid of ['1', '2', '3']) await setNewsDigestEn(db, APPID, gid, { tldrEn: `Summary ${gid}.` }, now)
+  }
+
+  test('в поиске только русская — hreflang только на неё, и с /en тоже', async () => {
+    await seed(three(), ['1', '2', '3'])
+    const languages = { ru: PATH, 'x-default': PATH }
+    expect((await meta()).alternates).toEqual({ canonical: PATH, languages })
+    expect((await meta(undefined, 'en')).alternates).toEqual({ canonical: `/en${PATH}`, languages })
+  })
+
+  test('в поиске обе — обе и x-default на русскую, как было', async () => {
+    await seed(three(), ['1', '2', '3'])
+    await enDigests()
+    const languages = { ru: PATH, en: `/en${PATH}`, 'x-default': PATH }
+    expect((await meta()).alternates).toEqual({ canonical: PATH, languages })
+    expect((await meta(undefined, 'en')).alternates).toEqual({ canonical: `/en${PATH}`, languages })
+    // порядок ключей — тот же, что у localeAlternates: голова не сдвинулась
+    expect(Object.keys((await meta()).alternates?.languages ?? {})).toEqual(['ru', 'en', 'x-default'])
+  })
+
+  test('в поиске только английская — x-default на неё', async () => {
+    await seed(three(), [])
+    await enDigests()
+    const ru = await meta()
+    expect(ru.robots).toEqual({ index: false, follow: true })
+    const languages = { en: `/en${PATH}`, 'x-default': `/en${PATH}` }
+    expect(ru.alternates).toEqual({ canonical: PATH, languages })
+    expect((await meta(undefined, 'en')).alternates).toEqual({ canonical: `/en${PATH}`, languages })
+  })
+
+  test('ни одной версии в поиске — hreflang нет, canonical остаётся', async () => {
+    await seed(three(), ['1', '2'])
+    expect((await meta()).alternates).toEqual({ canonical: PATH })
+    expect((await meta(undefined, 'en')).alternates).toEqual({ canonical: `/en${PATH}` })
   })
 })
