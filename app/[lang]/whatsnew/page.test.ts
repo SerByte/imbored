@@ -260,7 +260,11 @@ describe('/en/whatsnew', () => {
     await setNewsDigestEn(db, 440, '4400', { tldrEn: 'In short, in English.' }, NOW)
     await setNewsDigest(db, 730, '7300', { tldr: 'Только по-русски.', scale: 'major' }, NOW)
     const tree = await pageEn()
-    const byApp = new Map(islandsOf(tree, 'PatchRow').map((p) => [(p.item as { appid: number }).appid, p.item]))
+    // Обложка — тоже строка ленты: у 440 единственной есть английский
+    // пересказ, и на /en обложкой встаёт она (тест ниже)
+    const byApp = new Map(
+      [...islandsOf(tree, 'PatchRow'), ...islandsOf(tree, 'Cover')].map((p) => [(p.item as { appid: number }).appid, p.item]),
+    )
     expect(byApp.get(440)).toMatchObject({ title: 'Игра 440 update', tldr: 'In short, in English.' })
     expect(byApp.get(730)).toMatchObject({ title: 'Игра 730 update' })
     expect(byApp.get(730)).not.toHaveProperty('tldr')
@@ -268,6 +272,31 @@ describe('/en/whatsnew', () => {
     // Вкладок нет у гостя без своих патчей — подпись общей ленты по-английски
     expect(textOf(tree)).toContain('In popular games')
     expect(textOf(tree)).toContain('Only major patches.')
+  })
+
+  /*
+   * Обложка /en — пост, которому есть что сказать по-английски. На проде
+   * обложкой /en/whatsnew стоял «Team Fortress 2 update · 36 changes · Read
+   * the patch», а его страница отвечала «We don't have these patch notes in
+   * English»: вес выбирал его, язык — никто.
+   */
+  test('обложка — самый весомый пост с английским текстом, а не просто самый весомый', async () => {
+    const english = { ...patch(620, 3, 50_000), blocks: [{ kind: 'p' as const, runs: [{ text: 'Fixed co-op saves.' }] }] }
+    await seed([patch(570, 1, 900_000), patch(730, 2, 20_000), patch(440, 4, 300_000), english], [])
+    await setNewsDigest(db, 440, '4400', { tldr: 'Коротко по-русски.', scale: 'major' }, NOW)
+    await setNewsDigestEn(db, 440, '4400', { tldrEn: 'In short, in English.' }, NOW)
+    const cover = islandsOf(await pageEn(), 'Cover').map((p) => (p.item as { appid: number }).appid)
+    // 570 тяжелее всех, но по-английски ему сказать нечего; из двух английских
+    // (пересказ у 440, тело у 620) — тот, что весомее
+    expect(cover).toEqual([440])
+    // Русская обложка — прежняя: самый весомый в окне
+    expect((await rows('popular')).cover).toEqual([570])
+  })
+
+  test('обложка /en: английского нет ни у кого — выбор прежний, по весу', async () => {
+    await seed([patch(570, 1, 900_000), patch(730, 2, 20_000)], [])
+    const cover = islandsOf(await pageEn(), 'Cover').map((p) => (p.item as { appid: number }).appid)
+    expect(cover).toEqual([570])
   })
 
   test('русская лента того же поста — с русским заголовком и пересказом', async () => {
