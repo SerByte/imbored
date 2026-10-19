@@ -407,8 +407,10 @@ describe('buildGroupDeck', () => {
      * русский и английский участник голосуют за те же карты в том же порядке.
      */
     test('по-английски подписана словом кнопки «Pass», а колода та же', () => {
-      expect(pinnedReason('en')).toBe('The one you were invited to. Pass, and the usual deck is next')
+      expect(pinnedReason('en')).toBe('The game this party is for. Pass, and the usual deck is next')
       expect(pinnedReason('en')).not.toMatch(/[А-Яа-яЁё]/)
+      // Карту видит и хост, которого никто не звал: подпись безлична, как русское «звали»
+      expect(pinnedReason('en')).not.toMatch(/\byou\b|invited/i)
       expect(pinnedReason()).toBe(PINNED_REASON)
       expect(PINNED_REASON).toBe('В неё и звали. Не хочется — дальше обычная колода')
 

@@ -54,11 +54,16 @@ export type GroupCard = {
  * По-английски «не хочу» — это кнопка «Pass» (глоссарий колоды пати), и
  * подпись говорит её словом. Строка стоит в две строки карточки
  * (line-clamp-2 в SwipeDeck), и английская в них укладывается.
+ *
+ * И без «you»: карту видит и хост, который комнату из этой игры и собрал, —
+ * «the one you were invited to» ему соврало бы, его никто не звал. Русское
+ * «звали» безлично и годится обоим; английская говорит о самой пати
+ * («Party ABC123» в шапке комнаты), а не о том, кто кого позвал.
  */
 export function pinnedReason(locale: Locale = 'ru'): string {
   return tr(locale, {
     ru: 'В неё и звали. Не хочется — дальше обычная колода',
-    en: 'The one you were invited to. Pass, and the usual deck is next',
+    en: 'The game this party is for. Pass, and the usual deck is next',
   })
 }
 
