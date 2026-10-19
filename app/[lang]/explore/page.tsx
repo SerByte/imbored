@@ -3,7 +3,7 @@
 import Link from '@/components/Link'
 import { useLocale } from '@/components/LocaleProvider'
 import { useLocaleRouter } from '@/components/useLocaleRouter'
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { GameCardBody } from '@/components/GameCard'
 import { TilePending } from '@/components/TilePending'
 import { Icon } from '@/components/Icon'
@@ -25,6 +25,7 @@ import {
 } from '@/lib/explore'
 import { focusAdrift } from '@/lib/focushandoff'
 import { lp, tr, withLang, type Locale } from '@/lib/i18n'
+import { langOn, withForeignRuns } from '@/lib/textlang'
 import { inTurn } from '@/lib/unlike'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { isNeedSteam, writerStore } from '@/lib/writer'
@@ -221,8 +222,12 @@ export default function ExplorePage() {
    * въезжает наверх своей анимацией появления, а не из-под улетающей соседки.
    */
   const [undone, setUndone] = useState(0)
-  /** Что сказать скринридеру о вернувшейся карте — строка стоит с первого кадра колоды */
-  const [said, setSaid] = useState('')
+  /**
+   * Что сказать скринридеру о вернувшейся карте — строка стоит с первого кадра
+   * колоды. Разметка, а не строка: на /en русское название в ней — своим lang
+   * (withForeignRuns), на ru — та же строка одним текстовым узлом
+   */
+  const [said, setSaid] = useState<ReactNode>('')
   /**
    * Сессия только читает (lib/writer): колода листается и у неё, но на
    * устройстве — «Приглянулось» живёт до закрытия вкладки. Строка NeedSteam
@@ -497,7 +502,13 @@ export default function ExplorePage() {
     setUndone((n) => n + 1)
     // Колода встаёт заново, но это не «новая колода»: фокус ей отдаёт undo, а не redeal
     setDealFocus(false)
-    setSaid(tr(locale, { ru: `«${card.name}» снова в колоде`, en: `“${card.name}” is back in the deck` }))
+    setSaid(
+      withForeignRuns(
+        locale,
+        tr(locale, { ru: `«${card.name}» снова в колоде`, en: `“${card.name}” is back in the deck` }),
+        [card.name],
+      ),
+    )
     if (keyboard) pendingFocus.current = 'deck'
   }
 
@@ -643,9 +654,14 @@ export default function ExplorePage() {
   const undoButton = lastSkip && (
     <button type="button" onClick={(e) => undo(e.detail === 0)} className="tap link-more max-w-full">
       <Icon name="back" size={14} />
-      {/* Один ряд с многоточием и на английском: длинное имя обрезается, а не переносится */}
+      {/* Один ряд с многоточием и на английском: длинное имя обрезается, а не переносится.
+          Русское название на /en — своим lang (withForeignRuns) */}
       <span className="min-w-0 truncate">
-        {tr(locale, { ru: `Вернуть «${lastSkip.name}»`, en: `Bring back “${lastSkip.name}”` })}
+        {withForeignRuns(
+          locale,
+          tr(locale, { ru: `Вернуть «${lastSkip.name}»`, en: `Bring back “${lastSkip.name}”` }),
+          [lastSkip.name],
+        )}
       </span>
     </button>
   )
@@ -801,10 +817,14 @@ export default function ExplorePage() {
           <StatusLine
             text={
               unlikeMissName
-                ? tr(locale, {
-                    ru: `Не вышло — «${unlikeMissName}» осталась на полке. Попробуй ещё раз.`,
-                    en: `Didn't work — “${unlikeMissName}” is still on the shelf. Try again.`,
-                  })
+                ? withForeignRuns(
+                    locale,
+                    tr(locale, {
+                      ru: `Не вышло — «${unlikeMissName}» осталась на полке. Попробуй ещё раз.`,
+                      en: `Didn't work — “${unlikeMissName}” is still on the shelf. Try again.`,
+                    }),
+                    [unlikeMissName],
+                  )
                 : null
             }
             className="sr-only"
@@ -865,13 +885,30 @@ export default function ExplorePage() {
                     else unlikeButtons.current.delete(c.appid)
                   }}
                   onClick={() => void unlike(c)}
-                  aria-label={tr(locale, {
-                    ru: `Убрать «${c.name}» с полки`,
-                    en: `Remove “${c.name}” from the shelf`,
-                  })}
+                  /*
+                    Имя кнопки — с игрой: «Убрать» у каждой плитки одно, и в
+                    списке кнопок их не различить. На ru — aria-label, как
+                    был. На /en — видимое слово и sr-only хвост: в атрибуте
+                    кусок своим lang не пометить, и английский голос читал
+                    русское название по буквам (WCAG 3.1.2). Имя начинается с
+                    видимого слова (WCAG 2.5.3) — приём «Already finished» у
+                    героя /play
+                  */
+                  aria-label={locale === 'ru' ? `Убрать «${c.name}» с полки` : undefined}
                   className="pill mt-3 self-start"
                 >
-                  {tr(locale, { ru: 'Убрать', en: 'Remove' })}
+                  {tr<ReactNode>(locale, {
+                    ru: 'Убрать',
+                    en: (
+                      <>
+                        Remove
+                        <span className="sr-only">
+                          {' '}
+                          “<span lang={langOn(locale, c.name)}>{c.name}</span>” from the shelf
+                        </span>
+                      </>
+                    ),
+                  })}
                 </button>
                 {/* Для глаза: скринридеру отказ уже сказала строка полки */}
                 {unlikeMiss === c.appid && (

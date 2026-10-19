@@ -233,9 +233,12 @@ describe('«Мимо» в колоде /explore возвращается', () =>
     const btn = code.slice(code.indexOf('constundoButton=lastSkip&&('), code.indexOf('</button>)', code.indexOf('constundoButton=')))
     expect(btn).toContain(flat(`onClick={(e) => undo(e.detail === 0)}`))
     expect(btn).toContain('max-w-full')
-    // Подпись — на языке страницы (tr), одним шаблоном на язык
+    // Подпись — на языке страницы (tr), одним шаблоном на язык; русское
+    // название на /en — своим lang (withForeignRuns, lib/flownames.test.ts)
     expect(btn).toContain(
-      flat('<span className="min-w-0 truncate">{tr(locale, { ru: `Вернуть «${lastSkip.name}»`, en: `Bring back “${lastSkip.name}”` })}</span>'),
+      flat(
+        '<span className="min-w-0 truncate">{withForeignRuns(locale, tr(locale, { ru: `Вернуть «${lastSkip.name}»`, en: `Bring back “${lastSkip.name}”` }), [lastSkip.name],)}</span>',
+      ),
     )
   })
 
