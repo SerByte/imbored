@@ -15,6 +15,7 @@ import { RefCapture } from '@/components/RefCapture'
 import { SearchLauncher } from '@/components/SearchLauncher'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
+import { cardUrl } from '@/lib/cardhash'
 import { htmlLang, isLocale, LOCALES, ogLocale, toLocale, tr, type Locale } from '@/lib/i18n'
 import { manifestHref } from '@/lib/manifest'
 import { appBaseUrl } from '@/lib/server'
@@ -128,8 +129,15 @@ export function generateStaticParams(): Array<{ lang: string }> {
  * (mergeStaticMetadata), twitter:image дозаполняет из openGraph сам, а
  * ownAddress переносит в страницу уже английскую. Русская версия images не
  * объявляет и получает файловую карточку до байта: адрес с хешем, размеры и
- * alt — оттуда. Хеша у английского адреса нет — его ставит только файловая
- * метадата.
+ * alt — оттуда.
+ *
+ * Адрес — с тем же ?<хеш>, что у файла (cardUrl, lib/cardhash.ts). Взять
+ * его у родителя, как ownAddress, здесь нельзя: файл этого же уровня
+ * родитель layout ещё не видит. Голым адрес и стоял — /en/opengraph-image
+ * без хвоста, — и после перерисовки карточки Facebook, X и Telegram, которые
+ * помнят превью по адресу картинки, сходили бы заново только за русской.
+ * Хвост наследуют и все страницы, что переподписывают эту карточку от
+ * родителя (ownAddress, rootCard), и 404 под /en (not-found.tsx).
  *
  * 404 под /en этим не закрыта: на not-found Next ставит файлы корня ещё раз,
  * последним уровнем (errorMetadataItem в resolve-metadata), и images этого
@@ -142,13 +150,15 @@ export function generateStaticParams(): Array<{ lang: string }> {
  * Сам opengraph-image.tsx здесь не правится, даже его комментарий: адрес
  * файловой карточки несёт хеш содержимого файла (?<contenthash>,
  * next-metadata-image-loader), и любая правка сменила бы og:image у каждой
- * русской страницы.
+ * русской страницы. Если всё же правится — ради новой карточки, — хеш в
+ * lib/cardhash.ts правится вместе с ним, и сторож lib/cardhash.test.ts
+ * не даст об этом забыть.
  */
 const EN_ROOT_CARD = { width: 1200, height: 630, type: 'image/png', alt: siteTitle('en') }
 
 function rootCardOn(locale: Locale): Pick<NonNullable<Metadata['openGraph']>, 'images'> {
   if (locale !== 'en') return {}
-  return { images: [{ url: `/${locale}/opengraph-image`, ...EN_ROOT_CARD }] }
+  return { images: [{ url: cardUrl(`/${locale}`, 'app/[lang]/opengraph-image.tsx'), ...EN_ROOT_CARD }] }
 }
 
 export async function generateMetadata({ params }: LayoutProps<'/[lang]'>): Promise<Metadata> {

@@ -4,6 +4,7 @@ import { createElement, type ComponentProps, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test, vi } from 'vitest'
 import nextConfig from '../next.config'
+import { cardUrl } from './cardhash'
 import { garbageRewrites } from './i18nroutes'
 
 /**
@@ -164,7 +165,7 @@ describe('карточка превью 404', () => {
     expect(en).toEqual({ openGraph: root.openGraph })
     expect(en.openGraph).toMatchObject({ type: 'website', siteName: 'imbored', locale: 'en_US' })
     expect(en.openGraph?.images).toEqual([
-      { url: '/en/opengraph-image', width: size.width, height: size.height, type: contentType, alt: 'imbored — what to play' },
+      { url: cardUrl('/en', 'app/[lang]/opengraph-image.tsx'), width: size.width, height: size.height, type: contentType, alt: 'imbored — what to play' },
     ])
     expect(JSON.stringify(en)).not.toMatch(CYR)
   })
