@@ -21,7 +21,8 @@
  *    дуге.
  * 4. Выброшены DEFAULT_ITEMS с ссылками на Unsplash: items приходят всегда, а
  *    четыре внешние ссылки в проде не нужны.
- * 5. Подписи для скринридера — по-русски, как всё остальное приложение.
+ * 5. Подписи для скринридера — на языке страницы, как всё остальное
+ *    приложение (useLocale: слайдер стоит на /play, /daily и /game обоих языков).
  * 6. Автолистание останавливается. В исходнике его прерывал только курсор
  *    над слайдером: фокус с клавиатуры, палец и ручное листание не значили
  *    ничего, и кадр сменялся раз в 4,5 с у человека под рукой — провал WCAG
@@ -53,6 +54,8 @@ import { tweenValue, type Tween } from './tween'
 import { Mesh, Program, Renderer, Texture, Triangle } from 'ogl'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
+import { tr } from '@/lib/i18n'
 import styles from './MorphSlider.module.css'
 
 export type MorphTransition = 'melt' | 'ripple' | 'shear' | 'swirl'
@@ -747,11 +750,12 @@ export default function MorphSlider({
   showControls = true,
   showIndicators = true,
   className = '',
-  label = 'Слайдер',
+  label,
   onChange,
   onActivate,
   paused = false,
 }: MorphSliderProps) {
+  const locale = useLocale()
   const containerRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<MorphEngine | null>(null)
   const [index, setIndex] = useState(startIndex)
@@ -1041,8 +1045,8 @@ export default function MorphSlider({
         ref={containerRef}
         className={styles.stage}
         role="group"
-        aria-roledescription="карусель"
-        aria-label={label}
+        aria-roledescription={tr(locale, { ru: 'карусель', en: 'carousel' })}
+        aria-label={label ?? tr(locale, { ru: 'Слайдер', en: 'Slider' })}
         tabIndex={0}
         onKeyDown={onKeyDown}
       />
@@ -1068,7 +1072,7 @@ export default function MorphSlider({
           <button
             type="button"
             className={styles.btn}
-            aria-label="Предыдущий кадр"
+            aria-label={tr(locale, { ru: 'Предыдущий кадр', en: 'Previous image' })}
             onClick={handlePrev}
           >
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -1085,7 +1089,7 @@ export default function MorphSlider({
           <button
             type="button"
             className={styles.btn}
-            aria-label="Следующий кадр"
+            aria-label={tr(locale, { ru: 'Следующий кадр', en: 'Next image' })}
             onClick={handleNext}
           >
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -1109,9 +1113,13 @@ export default function MorphSlider({
         <button
           type="button"
           className={`${styles.btn} ${styles.toggle}`}
-          aria-label="Пауза"
+          aria-label={tr(locale, { ru: 'Пауза', en: 'Pause' })}
           aria-pressed={stopped}
-          title={stopped ? 'Листать самому' : 'Остановить автолистание'}
+          title={
+            stopped
+              ? tr(locale, { ru: 'Листать самому', en: 'Browse on your own' })
+              : tr(locale, { ru: 'Остановить автолистание', en: 'Stop autoplay' })
+          }
           onClick={() => setStopped((v) => !v)}
         >
           {stopped ? (
@@ -1127,13 +1135,13 @@ export default function MorphSlider({
       )}
 
       {showIndicators && (
-        <div className={styles.indicators} role="group" aria-label="Кадры">
+        <div className={styles.indicators} role="group" aria-label={tr(locale, { ru: 'Кадры', en: 'Images' })}>
           {items.map((_, i) => (
             <button
               key={i}
               type="button"
               aria-current={i === index ? 'true' : undefined}
-              aria-label={`Кадр ${i + 1} из ${items.length}`}
+              aria-label={tr(locale, { ru: `Кадр ${i + 1} из ${items.length}`, en: `Image ${i + 1} of ${items.length}` })}
               className={`${styles.dot} ${i === index ? styles.isActive : ''}`}
               onClick={() => {
                 setStopped(true)

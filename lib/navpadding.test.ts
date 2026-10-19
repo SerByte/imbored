@@ -29,7 +29,7 @@ import { describe, expect, test } from 'vitest'
  * который сторожит обратное — что `fixed` живёт СНАРУЖИ смузера.
  */
 
-const LAYOUT = fs.readFileSync(path.join(__dirname, '..', 'app', 'layout.tsx'), 'utf8')
+const LAYOUT = fs.readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'layout.tsx'), 'utf8')
 
 /** Строка отступа: важно и число, и то, что он снимается на широких экранах. */
 const PAD = /pb-\[calc\(52px\+env\(safe-area-inset-bottom\)\)\]\s+md:pb-0/

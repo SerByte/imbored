@@ -10,7 +10,15 @@
  * Строки собраны здесь, а не в разметке, чтобы их можно было проверить без
  * браузера: одна на событие, и в каждой — название игры, ради которого она
  * и звучит.
+ *
+ * Английская строка — целым шаблоном на событие, а не переводом кусков:
+ * «Следующая игра: …» и склейка бана с продолжением по-английски строятся
+ * своим порядком слов. Различимость на слух (тест) обязана держаться и там.
  */
+
+import type { ReactNode } from 'react'
+import { tr, type Locale } from './i18n'
+import { withForeignRuns } from './textlang'
 
 export type PlayEvent =
   /** Первая выдача после прогрева (в рулетке молчим — барабан скажет сам) */
@@ -48,29 +56,45 @@ export type PlayEvent =
    */
   | { kind: 'fail'; title: string; text: string }
 
-export function playLine(e: PlayEvent): string {
+export function playLine(e: PlayEvent, locale: Locale = 'ru'): string {
   switch (e.kind) {
     case 'reveal':
-      return `Подобрал игру: «${e.name}»`
+      return tr(locale, { ru: `Подобрал игру: «${e.name}»`, en: `Found a game: “${e.name}”` })
     case 'restore':
-      return `Выдача с прошлого захода. На экране «${e.name}»`
+      return tr(locale, {
+        ru: `Выдача с прошлого захода. На экране «${e.name}»`,
+        en: `Picks from your last visit. On screen: “${e.name}”`,
+      })
     case 'next':
-      return `Следующая игра: «${e.name}»`
+      return tr(locale, { ru: `Следующая игра: «${e.name}»`, en: `Next game: “${e.name}”` })
     case 'pick':
-      return `На экране «${e.name}»`
+      return tr(locale, { ru: `На экране «${e.name}»`, en: `Now on screen: “${e.name}”` })
     case 'reshape':
-      return `Выдача пересобрана. Первая игра: «${e.name}»`
+      return tr(locale, {
+        ru: `Выдача пересобрана. Первая игра: «${e.name}»`,
+        en: `Picks rebuilt. First game: “${e.name}”`,
+      })
     case 'seed':
-      return `Похожие на «${e.seed}». Первая игра: «${e.name}»`
+      return tr(locale, {
+        ru: `Похожие на «${e.seed}». Первая игра: «${e.name}»`,
+        en: `Similar to “${e.seed}”. First game: “${e.name}”`,
+      })
     case 'refresh':
-      return `Выдача обновлена. Первая игра: «${e.name}»`
+      return tr(locale, {
+        ru: `Выдача обновлена. Первая игра: «${e.name}»`,
+        en: `Picks refreshed. First game: “${e.name}”`,
+      })
     case 'ban': {
-      const gone = e.done ? `«${e.name}» отмечена пройденной` : `«${e.name}» больше не покажу`
-      return e.next ? `${gone}. Следующая игра: «${e.next}»` : gone
+      const gone = e.done
+        ? tr(locale, { ru: `«${e.name}» отмечена пройденной`, en: `“${e.name}” marked as finished` })
+        : tr(locale, { ru: `«${e.name}» больше не покажу`, en: `Won't show “${e.name}” again` })
+      if (!e.next) return gone
+      return tr(locale, { ru: `${gone}. Следующая игра: «${e.next}»`, en: `${gone}. Next game: “${e.next}”` })
     }
     case 'ask':
-      return 'Почему не то? Выбери причину или пропусти'
+      return tr(locale, { ru: 'Почему не то? Выбери причину или пропусти', en: "What's off? Pick a reason or skip" })
     case 'fail':
+      // Заголовок и абзац приходят уже на языке страницы (экран отказа)
       return `${e.title}. ${e.text}`
   }
 }
@@ -86,4 +110,26 @@ export function playLine(e: PlayEvent): string {
  */
 export function freshLine(prev: string, next: string): string {
   return prev === next ? `${next} ` : next
+}
+
+/**
+ * Строка живой области — для разметки: на /en русское название игры в ней —
+ * своим <span lang="ru">, иначе английский голос скринридера читает кириллицу
+ * по буквам (WCAG 3.1.2; то же правило, что у ников и названий на /en —
+ * withForeignRuns из lib/textlang). Каталог знает игры, у которых главное
+ * название русское, и на /en «Found a game: “…”» звучит с ним.
+ *
+ * Строка остаётся строкой (freshLine сравнивает и метит их), а пометка — на
+ * выводе. Названия в английских шаблонах playLine всегда в “…”, так что куски
+ * берутся из самой строки, без второго канала рядом с ней. На русской
+ * странице — та же строка как есть, одним текстовым узлом: русская разметка
+ * не меняется.
+ */
+export function liveLineOn(locale: Locale, line: string): ReactNode {
+  if (locale !== 'en') return line
+  return withForeignRuns(
+    locale,
+    line,
+    [...line.matchAll(/“([^”]+)”/g)].map((m) => m[1]),
+  )
 }

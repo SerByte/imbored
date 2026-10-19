@@ -1286,3 +1286,103 @@ describe('/api/recommend: «Не предлагать»', () => {
     expect(await res.json()).toEqual({ error: 'muted' })
   })
 })
+
+/**
+ * Язык выдачи — из адреса (?lang=en, withLang на /play). Всё, что роут пишет
+ * словами, пишется на нём: причины, сессия, слова настроения. И текст
+ * «Отправить другу» подписан вместе с языком — /api/pick запишет его тем же,
+ * а русская подпись английскому тексту не подойдёт. Без ?lang= — прежний
+ * русский ответ: в поле share нет и ключа lang.
+ */
+describe('/api/recommend: язык выдачи', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  type Body = {
+    picks: Array<{
+      appid: number
+      source: string
+      reason: string
+      session: { label: string; value: string } | null
+      signals: { moodWords: string[] } | null
+      share?: { text: string; sig: string; lang?: string }
+    }>
+  }
+
+  /** Библиотека с латинскими названиями: кириллица в ответе тогда — только наша */
+  async function library(): Promise<void> {
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })))
+    await signIn(db, STEAMID, { verified: true })
+    const now = nowSec()
+    const ids = [620, 413150, 105600, 646570]
+    await saveLibrarySnapshot(
+      db,
+      STEAMID,
+      ids.map((appid) => ({ appid, name: `Game ${appid}`, playtimeForever: 0, playtime2Weeks: 0 })),
+      now,
+    )
+    await upsertGamesMeta(
+      db,
+      ids.map((appid) => ({
+        appid,
+        name: `Game ${appid}`,
+        tags: { Puzzle: 100, Casual: 60 },
+        genres: [],
+        categories: [2],
+      })),
+      now,
+    )
+    await upsertSemantics(db, [
+      {
+        appid: 620,
+        semantics: {
+          v: 1,
+          axes: { challenge: 20, complexity: 40, pace: 40 },
+          session: { bucket: 'short', minutes: 20, canStopAnytime: false },
+          timeToFun: { bucket: null, hours: null },
+          confidence: 0.8,
+          n: 40,
+          basis: 'tags+reviews',
+        },
+        computedAt: now,
+      },
+    ])
+  }
+
+  test('?lang=en — причины, сессия и слова настроения по-английски, текст подписан с языком', async () => {
+    await library()
+    const res = await POST(post('/api/recommend?lang=en', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body
+    expect(body.picks.length).toBeGreaterThan(0)
+    expect(JSON.stringify(body), 'кириллица в английской выдаче').not.toMatch(CYRILLIC)
+    const hero = body.picks.find((p) => p.appid === 620)
+    expect(hero?.session?.label).toBe('Session')
+    expect(hero?.signals?.moodWords.length).toBeGreaterThan(0)
+    for (const p of body.picks) {
+      expect(p.share?.lang, String(p.appid)).toBe('en')
+      const v = { steamid: STEAMID, appid: p.appid, source: p.source, text: p.share!.text }
+      expect(pickShareOk(sessionSecret(), { ...v, lang: 'en' }, p.share!.sig)).toBe(true)
+      // та же подпись русскому тексту не подходит
+      expect(pickShareOk(sessionSecret(), v, p.share!.sig)).toBe(false)
+    }
+  })
+
+  test('без ?lang= — русская выдача, у текста нет пометки языка', async () => {
+    await library()
+    const res = await POST(post('/api/recommend', { mood: MOOD }))
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Body
+    expect(body.picks.find((p) => p.appid === 620)?.session?.label).toBe('Сессия')
+    for (const p of body.picks) {
+      expect(p.share && Object.keys(p.share).sort(), String(p.appid)).toEqual(['sig', 'text'])
+      const v = { steamid: STEAMID, appid: p.appid, source: p.source, text: p.share!.text }
+      expect(pickShareOk(sessionSecret(), v, p.share!.sig)).toBe(true)
+    }
+  })
+})

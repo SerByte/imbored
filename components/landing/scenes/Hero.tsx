@@ -7,6 +7,8 @@ import { Suspense, useRef, useState, useSyncExternalStore } from 'react'
 import { ConnectCard } from '@/components/landing/ConnectCard'
 import { ConnectFallback } from '@/components/landing/ConnectFallback'
 import { HeroNotice } from '@/components/landing/HeroNotice'
+import { useLocale } from '@/components/LocaleProvider'
+import { tr } from '@/lib/i18n'
 import { DUR, EASE_GSAP } from '@/lib/motion'
 
 gsap.registerPlugin(ScrollTrigger, useGSAP)
@@ -41,6 +43,7 @@ const onServer = () => false
  */
 export function Hero() {
   const ref = useRef<HTMLElement>(null)
+  const locale = useLocale()
   // Гидрирует ли эта отрисовка HTML с сервера — тогда титр уже на экране и
   // вход его не прячет (ниже). Первое значение — на всю жизнь компонента:
   // после гидрации снимок станет true, а решение остаться должно
@@ -238,16 +241,34 @@ export function Hero() {
         */}
         <div className="hero-type" data-hero-type>
           <p className="hero-eyebrow" data-hero-eyebrow>
-            Во что поиграть сегодня
+            {tr(locale, { ru: 'Во что поиграть сегодня', en: 'What to play tonight' })}
           </p>
-          <h1 className="hero-wordmark" data-hero-wordmark>
-            Одна игра. <span>И почему именно она.</span>
-          </h1>
+          {/*
+            Заголовок — знак первого экрана, и его ширина замерена: английский
+            не шире русского ни на одной ширине (обе строки — в две строки
+            кадра, как и были). Вторая строка — span: она блочная и тише.
+          */}
+          {locale === 'en' ? (
+            <h1 className="hero-wordmark" data-hero-wordmark>
+              One game. <span>And why it’s the one.</span>
+            </h1>
+          ) : (
+            <h1 className="hero-wordmark" data-hero-wordmark>
+              Одна игра. <span>И почему именно она.</span>
+            </h1>
+          )}
 
-          <p className="hero-lede" data-hero-lede>
-            Скажи, сколько у тебя времени и сил. Мы прочитаем твою библиотеку Steam и{' '}
-            <b>выберем одну игру на вечер — с объяснением</b>.
-          </p>
+          {locale === 'en' ? (
+            <p className="hero-lede" data-hero-lede>
+              Tell us how much time and energy you have. We’ll read your Steam library and{' '}
+              <b>pick one game for tonight — and explain why</b>.
+            </p>
+          ) : (
+            <p className="hero-lede" data-hero-lede>
+              Скажи, сколько у тебя времени и сил. Мы прочитаем твою библиотеку Steam и{' '}
+              <b>выберем одну игру на вечер — с объяснением</b>.
+            </p>
+          )}
         </div>
 
         {/*
@@ -267,7 +288,7 @@ export function Hero() {
       </div>
 
       <a className="hero-cue tap" href="#scene-pain" data-hero-cue>
-        <span>Что это такое</span>
+        <span>{tr(locale, { ru: 'Что это такое', en: 'What’s this?' })}</span>
         <span aria-hidden className="hero-cue-arrow">
           ↓
         </span>

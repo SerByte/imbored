@@ -1,8 +1,10 @@
 import type { GameArtUrls } from './art'
 import { hashString, mulberry32 } from './daily'
 import { ALIVE_POOL, parseTagMap, type Db } from './db'
+import { fmtNumber, tr, type Locale } from './i18n'
 import { playedLine } from './outcome'
-import { tagRu } from './tagsru'
+import { tagLabel } from './tagsru'
+import { langOn } from './textlang'
 import type { LibraryGame } from './types'
 
 /**
@@ -33,6 +35,15 @@ export type TriviaQuestion = {
   answer: number
   /** подпись после ответа */
   reveal?: string
+  /**
+   * Куски данных в prompt и reveal — названия игр и ники, — которым на /en
+   * нужен свой lang="ru" (withForeignRuns у PartyTrivia). Фраза приходит
+   * готовой, и имён, вклеенных в неё, клиенту иначе не узнать: варианты он
+   * видит, а название в «Who has more hours in “…”?» или третьего владельца
+   * в разгадке — нет. Только русские (langOn) и только когда есть что метить:
+   * на русской странице поля нет, ответ — прежний до байта.
+   */
+  runs?: string[]
 }
 
 export type TriviaCatalogGame = {
@@ -132,15 +143,34 @@ function pick<T>(arr: T[], rnd: () => number): T | undefined {
   return arr.length ? arr[Math.floor(rnd() * arr.length)] : undefined
 }
 
+/**
+ * Набор вопросов комнаты.
+ *
+ * locale — язык текста вопросов и подписей тегов. Сид от языка не зависит,
+ * и русский и английский участники одной комнаты получают те же вопросы —
+ * кроме редкого «какого тега нет»: варианты сводятся по показанной подписи
+ * (makeNotTag), а два ключа, слитые русским словарём в одно слово, по-
+ * английски остаются двумя, и дальше ряд вопросов может разойтись. Счёта
+ * нет, сравнивать ответы не с кем, а одинаковые варианты на экране — хуже.
+ * Ответы-имена — метки ростера: их язык решает memberLabel у вызывающего.
+ */
 export function buildTrivia(args: {
   seed: string
   catalog: TriviaCatalogGame[]
   party: TriviaParty[]
   count?: number
+  locale?: Locale
 }): TriviaQuestion[] {
   const { seed, catalog, party } = args
   const count = args.count ?? TRIVIA_COUNT
+  const locale = args.locale ?? 'ru'
   const rnd = mulberry32(hashString(seed))
+
+  /** Данные во фразе вопроса — в поле runs, только русские и только на /en (см. TriviaQuestion) */
+  const runsOf = (names: string[]): { runs?: string[] } => {
+    const runs = [...new Set(names.filter((n) => langOn(locale, n) === 'ru'))]
+    return runs.length ? { runs } : {}
+  }
 
   const out: TriviaQuestion[] = []
   const seen = new Set<string>()
@@ -173,17 +203,27 @@ export function buildTrivia(args: {
     // Без заметного разрыва или без часа у лидера это угадайка, а не вопрос
     if (sorted[0].min < HOURS_MIN || !(sorted[0].min >= sorted[1].min * HOURS_RATIO)) return null
     const opts = sorted.slice(0, 2).map((x) => ({ label: x.name }))
+    // Одно имя у обоих (две демо-личности — оба «Демо-игрок», тёзки из Steam):
+    // варианты «Демо-игрок / Демо-игрок» — не вопрос, и у кнопок PartyTrivia
+    // были бы одинаковые подписи
+    if (opts[0].label === opts[1].label) return null
     const s = shuffled(opts, 0, rnd)
     return {
       id: `hours:${sorted[0].game}`,
       kind: 'hours',
-      prompt: `У кого больше часов в «${sorted[0].game}»?`,
+      prompt: tr(locale, {
+        ru: `У кого больше часов в «${sorted[0].game}»?`,
+        en: `Who has more hours in “${sorted[0].game}”?`,
+      }),
       options: s.items,
       answer: s.answer,
       // playedLine, а не часы: до десяти часов он точен до минуты («1 ч 29 мин»
       // против «1 ч»), и округлённая разгадка не показывает ничью там, где
-      // её нет. Выше десяти часов порог 1.3 сам разводит подписи
-      reveal: sorted.map((x) => `${x.name} — ${playedLine(x.min)}`).join(', '),
+      // её нет. Выше десяти часов порог 1.3 сам разводит подписи. На языке
+      // вопроса: «1 h 29 min», «2,434 h» — сокращения глоссария
+      reveal: sorted.map((x) => `${x.name} — ${playedLine(x.min, locale)}`).join(', '),
+      // Владельцев в разгадке бывает больше двух вариантов — все, у кого игра
+      ...runsOf([sorted[0].game, ...sorted.map((x) => x.name)]),
     }
   }
 
@@ -204,8 +244,16 @@ export function buildTrivia(args: {
       .filter((x) => x.top.length === 3)
     const chosen = pick(withTop, rnd)
     if (!chosen) return null
-    const opts = party.map((p) => ({ label: p.name }))
-    const correct = party.findIndex((p) => p.steamid === chosen.p.steamid)
+    /*
+     * Варианты — имена без повторов. Тёзки в комнате бывают (две демо-личности —
+     * оба «Демо-игрок»), и один вариант на двоих честен, только пока загадан
+     * не один из них: у топа тёзки ответ значит сразу двоих, угадывать нечего.
+     * Имена разные — те же варианты в том же порядке, что party.
+     */
+    const names = [...new Set(party.map((p) => p.name))]
+    if (party.filter((p) => p.name === chosen.p.name).length > 1) return null
+    const opts = names.map((label) => ({ label }))
+    const correct = names.indexOf(chosen.p.name)
     const s = shuffled(opts, correct, rnd)
     return {
       // Ключ — по самим играм, а не по человеку. Здесь стоял steamid, и
@@ -215,9 +263,13 @@ export function buildTrivia(args: {
       // дедупа внутри батча топ-3 различает людей не хуже.
       id: `toptrio:${hashString(chosen.top.map((g) => g.appid).join(',')).toString(36)}`,
       kind: 'toptrio',
-      prompt: `Чей это топ-3: ${chosen.top.map((g) => g.name).join(', ')}?`,
+      prompt: tr(locale, {
+        ru: `Чей это топ-3: ${chosen.top.map((g) => g.name).join(', ')}?`,
+        en: `Whose top 3 is this: ${chosen.top.map((g) => g.name).join(', ')}?`,
+      }),
       options: s.items,
       answer: s.answer,
+      ...runsOf(chosen.top.map((g) => g.name)),
     }
   }
 
@@ -243,10 +295,14 @@ export function buildTrivia(args: {
     return {
       id: `ccu:${Math.min(a.appid, b.appid)}:${Math.max(a.appid, b.appid)}`,
       kind: 'ccu',
-      prompt: 'Куда сейчас набилось больше народу?',
+      prompt: tr(locale, { ru: 'Куда сейчас набилось больше народу?', en: "Where's the bigger crowd right now?" }),
       options: s.items,
       answer: s.answer,
-      reveal: `${hi.name} — ${hi.ccu!.toLocaleString('ru-RU')}, ${lo.name} — ${lo.ccu!.toLocaleString('ru-RU')}`,
+      // По-английски пары — через « · »: онлайн там с запятыми разрядов, и
+      // запятая между парами слипалась с ними («512,345, Counter-Strike 2 —
+      // 1,234,567»). У русского разряды — пробелом, разгадка как была
+      reveal: `${hi.name} — ${fmtNumber(locale, hi.ccu!)}${tr(locale, { ru: ', ', en: ' · ' })}${lo.name} — ${fmtNumber(locale, lo.ccu!)}`,
+      ...runsOf([hi.name, lo.name]),
     }
   }
 
@@ -267,7 +323,7 @@ export function buildTrivia(args: {
     return {
       id: `cover:${target.appid}`,
       kind: 'cover',
-      prompt: 'Что это за игра?',
+      prompt: tr(locale, { ru: 'Что это за игра?', en: 'Which game is this?' }),
       image: { appid: target.appid, art: target.art, headerImage: target.headerImage },
       options: s.items,
       answer: s.answer,
@@ -286,7 +342,12 @@ export function buildTrivia(args: {
    * подписям ВСЕХ своих тегов, не только трёх показанных: иначе он выглядел бы
    * ровно как тег, который у игры есть, — и PartyTrivia получила бы два
    * одинаковых key.
+   *
+   * Подпись — на языке вопроса (tagLabel), и сводятся варианты той же
+   * подписью, что показана: по-английски это сам тег без пробелов по краям,
+   * и «Dystopian » с «Dystopian» сходятся в одно так же, как по-русски.
    */
+  const label = (tag: string) => tagLabel(tag, locale)
   const makeNotTag = (): TriviaQuestion | null => {
     const target = pick(
       catalog.filter((g) => Object.keys(g.tags).length >= 3),
@@ -297,7 +358,7 @@ export function buildTrivia(args: {
     const ownLabels = new Set(
       Object.entries(target.tags)
         .sort((a, b) => b[1] - a[1])
-        .map(([t]) => tagRu(t)),
+        .map(([t]) => label(t)),
     )
     const shown = [...ownLabels].slice(0, 3)
     if (shown.length < 3) return null
@@ -305,19 +366,23 @@ export function buildTrivia(args: {
       ...new Set(
         catalog
           .flatMap((g) => Object.keys(g.tags))
-          .filter((t) => !(t in target.tags) && !ownLabels.has(tagRu(t))),
+          .filter((t) => !(t in target.tags) && !ownLabels.has(label(t))),
       ),
     ]
     const wrong = pick(foreign, rnd)
     if (!wrong) return null
-    const opts = [{ label: tagRu(wrong) }, ...shown.map((label) => ({ label }))]
+    const opts = [{ label: label(wrong) }, ...shown.map((own) => ({ label: own }))]
     const s = shuffled(opts, 0, rnd)
     return {
       id: `nottag:${target.appid}:${wrong}`,
       kind: 'nottag',
-      prompt: `Какого тега нет у «${target.name}»?`,
+      prompt: tr(locale, {
+        ru: `Какого тега нет у «${target.name}»?`,
+        en: `Which tag doesn't “${target.name}” have?`,
+      }),
       options: s.items,
       answer: s.answer,
+      ...runsOf([target.name]),
     }
   }
 

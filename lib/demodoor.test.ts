@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { DemoBar } from '../components/DemoBar'
@@ -52,6 +52,21 @@ describe('двери полосы демо', () => {
     expect(loginTarget(query(steam))).toContain('time=')
     expect(query(link).get('next')).toContain('time=')
   })
+
+  /*
+   * Полоса на английской странице: обе двери возвращают на неё же. Вход —
+   * с lang=en, ссылка — через английскую главную, next в ней без языка
+   * (язык уже у главной, как у bounceTo).
+   */
+  test.each([`/en${PLAY}`, '/en/daily', '/en/library'])('%s: обе двери — обратно на английскую', (from) => {
+    const { steam, link } = demoDoors(from)
+    expect(new URLSearchParams(steam.split('?')[1]).get('lang')).toBe('en')
+    expect(loginTarget(query(steam))).toBe(from)
+    expect(link.startsWith('/en?')).toBe(true)
+    const q = query(link)
+    expect(q.get('reconnect')).toBe('1')
+    expect(`/en${destinationUrl(q.get('next'))}`).toBe(from)
+  })
 })
 
 describe('полоса', () => {
@@ -87,14 +102,34 @@ describe('полоса', () => {
   test('в потоке — только сама строка, без слоя', () => {
     expect(html({ from: '/library', className: 'mb-6' })).toMatch(/^<p class="[^"]*\bmb-6\b/)
   })
+
+  /*
+   * Страницы зовут полосу русским путём (from="/daily"), и на /en двери
+   * обязаны вести обратно на английскую: те же адреса, что у demoDoors от
+   * '/en/daily', — и ни слова по-русски.
+   */
+  test('на английском — по-английски, и обе двери ведут на /en', async () => {
+    const { LocaleProvider } = await import('@/components/LocaleProvider')
+    const out = renderToStaticMarkup(
+      createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, createElement(DemoBar, { from: '/daily' })),
+    )
+    const { steam, link } = demoDoors('/en/daily')
+    expect(out).toContain(`href="${steam.replace(/&/g, '&amp;')}"`)
+    expect(out).toContain(`href="${link.replace(/&/g, '&amp;')}"`)
+    expect(out).toMatch(/>Sign in with Steam<\/a>/)
+    // вопрос, на который двери отвечают, а не обрубок фразы перед ними
+    expect(out).toContain('<span class="text-dim">Want picks based on yours?</span>')
+    expect(out).not.toMatch(/[А-Яа-яЁё]/)
+  })
 })
 
 describe('полоса стоит там, где демо в момент ценности', () => {
   test('/play: в герое, поверх кадра, по подсказке о входе', () => {
-    const src = code(read('app/play/page.tsx'))
+    const src = code(read('app/[lang]/play/page.tsx'))
     expect(src).toContain('const demo = useDemoSession()')
     const hero = src.indexOf('media-dark relative min-h-[78vh]')
-    const bar = src.indexOf('{demo && <DemoBar from={`/play?${search}`} overlay />}')
+    // Путь — на языке страницы: двери полосы ведут обратно на ту же /en/play
+    const bar = src.indexOf('{demo && <DemoBar from={lp(locale, `/play?${search}`)} overlay />}')
     const ladder = src.indexOf('variants={LADDER}', hero)
     expect(hero).toBeGreaterThan(-1)
     expect(bar, 'полоса ушла из героя выдачи').toBeGreaterThan(hero)
@@ -102,10 +137,10 @@ describe('полоса стоит там, где демо в момент цен
   })
 
   test('/daily: в герое, поверх кадра, по подсказке о входе', () => {
-    const src = code(read('app/daily/page.tsx'))
+    const src = code(read('app/[lang]/daily/page.tsx'))
     expect(src).toContain('const demo = useDemoSession()')
     const hero = src.indexOf('media-dark relative flex-1 min-h-[92vh]')
-    const bar = src.indexOf('{demo && <DemoBar from="/daily" overlay />}')
+    const bar = src.indexOf("{demo && <DemoBar from={lp(locale, '/daily')} overlay />}")
     const text = src.indexOf('pb-16 pt-40', hero)
     expect(hero).toBeGreaterThan(-1)
     expect(bar, 'полоса ушла из героя игры дня').toBeGreaterThan(hero)
@@ -113,16 +148,16 @@ describe('полоса стоит там, где демо в момент цен
   })
 
   test('/library: признак серверный — полоса в потоке героя, из первого HTML', () => {
-    const src = code(read('app/library/page.tsx'))
+    const src = code(read('app/[lang]/library/page.tsx'))
     const hero = src.indexOf('lib-hero')
-    const bar = src.indexOf('{isDemoId(steamid) && <DemoBar from="/library" className="mb-6" />}')
+    const bar = src.indexOf(`{isDemoId(steamid) && <DemoBar from={lp(locale, '/library')} className="mb-6" />}`)
     expect(hero).toBeGreaterThan(-1)
     expect(bar, 'полоса ушла из героя библиотеки').toBeGreaterThan(hero)
     expect(bar).toBeLessThan(src.indexOf('<Eyebrow', hero))
   })
 
   test('клиентские страницы ставят полосу только поверх героя', () => {
-    for (const file of ['app/play/page.tsx', 'app/daily/page.tsx']) {
+    for (const file of ['app/[lang]/play/page.tsx', 'app/[lang]/daily/page.tsx']) {
       const tags = [...code(read(file)).matchAll(/<DemoBar\b[^>]*\/>/g)].map((m) => m[0])
       expect(tags.length, file).toBe(1)
       expect(tags[0], `${file}: без overlay полоса сдвинет героя после гидратации`).toMatch(/\boverlay\b/)

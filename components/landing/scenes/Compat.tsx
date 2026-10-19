@@ -1,10 +1,8 @@
-'use client'
-
-import gsap from 'gsap'
 import type { CSSProperties } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { Eyebrow } from '@/components/Labels'
-import { Stage } from '@/components/landing/Stage'
+import { CompatStage } from '@/components/landing/scenes/CompatStage'
+import { fmtNumber, tr, type Locale } from '@/lib/i18n'
 import type { LandingDemo } from '@/lib/landing'
 
 /**
@@ -21,8 +19,17 @@ import type { LandingDemo } from '@/lib/landing'
  *
  * Счётчики крутятся твином по объекту, а не компонентом CountNumber: сцена
  * скрублена, и число обязано ехать назад ровно так же, как вперёд.
+ *
+ * Язык — пропом от главной, тем же, на каком собрана демо-выдача (landingDemo
+ * считается на сервере под язык страницы): числа и подписи сцены обязаны
+ * говорить с ней на одном языке. Без пропа — русский.
+ *
+ * Компонент серверный: стопки, итог и таблица рисуются на сервере, а
+ * партитура (gsap) живёт в клиентском CompatStage. Демо-выдачу она берёт из
+ * разметки — data-count у счётчиков и --k у шкал, — так что в клиент едут
+ * только язык и колбэки, а не демо и подписи обоих языков.
  */
-export function Compat({ demo }: { demo: LandingDemo }) {
+export function Compat({ demo, locale = 'ru' }: { demo: LandingDemo; locale?: Locale }) {
   const compat = demo.compat
   const shared = compat.rows.length
   // Стопки — настоящие обложки демо-библиотеки: две половины одного набора
@@ -56,114 +63,28 @@ export function Compat({ demo }: { demo: LandingDemo }) {
   const bar = (v: number) => Math.max(0.07, Math.sqrt(Math.max(0, v) / peak))
 
   return (
-    <Stage
-      id="compat"
-      label="Совместимость и пати"
-      end="+=110%"
-      enter={(intro, root) => {
-        /*
-         * ПОДЪЁЗД К СТОЛКНОВЕНИЮ.
-         *
-         * Кадр сцены ставится на подъёме: две библиотеки съезжаются к центру
-         * ещё до закрепления, иначе целый экран прокрутки показывает пустоту.
-         *
-         * Половины приезжают ИЗ-ЗА КРАЯ и доворачиваются: наклон тоже едет,
-         * от почти плоского к встречному. Съезд без доворота читался тем, чем
-         * и был, — двумя блоками, которые подвинули; с доворотом это две
-         * стопки, которые кладут навстречу друг другу.
-         *
-         * Шов тушится здесь же: гореть ему пока не над чем, библиотеки ещё не
-         * встретились. Зажигается он в build, на кульминации.
-         */
-        const a = root.querySelector('[data-stack="a"]')
-        const b = root.querySelector('[data-stack="b"]')
-        const seam = root.querySelector('[data-compat-seam]')
-        gsap.set(a, { xPercent: -46, autoAlpha: 0, rotate: -1 })
-        gsap.set(b, { xPercent: 46, autoAlpha: 0, rotate: 1 })
-        gsap.set(seam, { autoAlpha: 0, scaleY: 0.55 })
-        intro
-          .to(a, { xPercent: 0, autoAlpha: 1, rotate: -7, duration: 0.7, ease: 'power3.out' }, 0)
-          .to(b, { xPercent: 0, autoAlpha: 1, rotate: 7, duration: 0.7, ease: 'power3.out' }, 0.04)
-      }}
-      build={(tl, root) => {
-        const rows = root.querySelectorAll('[data-compat-row]')
-        const counters = root.querySelectorAll<HTMLElement>('[data-count]')
-        const fills = root.querySelectorAll('.compat-fill')
-        const seam = root.querySelector('[data-compat-seam]')
-        const tally = root.querySelectorAll('[data-tally]')
-
-        gsap.set(rows, { autoAlpha: 0, y: 18 })
-        gsap.set(fills, { scaleX: 0 })
-        gsap.set(tally, { autoAlpha: 0, y: 14 })
-
-        /**
-         * Куда доехать шкале — берётся у неё самой.
-         *
-         * Тянуть их все в scaleX: 1 нельзя, и это уже было сделано: доля живёт
-         * в --k, а твин в единицу приводил ВСЕ шкалы к полной длине. Кадр
-         * выглядел исправным — восемь строк, у каждой обе половины залиты, —
-         * и врал: Dota с 2400 против 50 показывала две одинаковые полоски.
-         * Ровно тот вид, ради опровержения которого таблицу и переделывали.
-         */
-        const goal = (_i: number, el: Element) =>
-          Number((el as HTMLElement).style.getPropertyValue('--k')) || 0
-
-        /*
-         * ПАРТИТУРА С ОДНОЙ КУЛЬМИНАЦИЕЙ, А НЕ «ВСЁ ВЫЕХАЛО СНИЗУ».
-         *
-         * Такт 0 — вспышка шва: библиотеки сошлись, и первым появляется то, что
-         * у них общего. Всё остальное — следствие этой вспышки и приходит
-         * ПОСЛЕ неё: сначала итог (два числа под швом), потом строки, и только
-         * потом весы разъезжаются по сторонам.
-         *
-         * Весы едут дольше всех и с волной: 0.05 с между соседними строками
-         * даёт видимый прокат сверху вниз, а не одновременный щелчок восьми
-         * шкал.
-         *
-         * scaleX/scaleY и opacity — композитор, ничего не пересобирает.
-         */
-        // Счётчики добавляются ПЕРВЫМИ, хотя играют не первыми: порядок
-        // добавления в таймлайн больше ни на что не влияет (см. tl.duration()
-        // в Stage.tsx), но читать партитуру проще, когда самая длинная волна
-        // стоит в конце цепочки и последней же заканчивается.
-        counters.forEach((node) => {
-          const target = Number(node.dataset.count ?? 0)
-          const box = { v: 0 }
-          // Обнуление живёт ЗДЕСЬ, а не в разметке: в build не заходят при
-          // «уменьшить движение», и там число остаётся настоящим.
-          node.textContent = '0'
-          tl.to(
-            box,
-            {
-              v: target,
-              duration: 0.6,
-              ease: 'power1.out',
-              onUpdate: () => {
-                node.textContent = Math.round(box.v).toLocaleString('ru-RU')
-              },
-            },
-            0.16,
-          )
-        })
-
-        tl.to(seam, { autoAlpha: 1, scaleY: 1, duration: 0.35, ease: 'power2.out' }, 0)
-          .to(tally, { autoAlpha: 1, y: 0, stagger: 0.07, duration: 0.3, ease: 'power2.out' }, 0.12)
-          .to(rows, { autoAlpha: 1, y: 0, stagger: 0.045, duration: 0.28, ease: 'power2.out' }, 0.2)
-          .to(fills, { scaleX: goal, stagger: 0.035, duration: 0.5, ease: 'power2.out' }, 0.34)
-      }}
+    <CompatStage
+      label={tr(locale, { ru: 'Совместимость и пати', en: 'Compatibility and parties' })}
+      locale={locale}
     >
       <p className="slate">
         <b>04</b>
-        <span>Совместимость и пати</span>
+        <span>{tr(locale, { ru: 'Совместимость и пати', en: 'Compatibility and parties' })}</span>
       </p>
 
       <div className="compat-grid">
         <div className="min-w-0">
           {/* «по-настоящему» одним куском: браузер рвал его на дефисе, и
               строка кончалась на «по-» */}
-          <h2 className="font-display text-display-md text-balance" style={{ maxWidth: '21ch' }}>
-            Сравним библиотеки <span className="whitespace-nowrap">по-настоящему</span>, а&nbsp;не по анкете
-          </h2>
+          {locale === 'en' ? (
+            <h2 className="font-display text-display-md text-balance" style={{ maxWidth: '21ch' }}>
+              A real comparison of your libraries, not a&nbsp;quiz
+            </h2>
+          ) : (
+            <h2 className="font-display text-display-md text-balance" style={{ maxWidth: '21ch' }}>
+              Сравним библиотеки <span className="whitespace-nowrap">по-настоящему</span>, а&nbsp;не по анкете
+            </h2>
+          )}
 
           <div className="stacks">
             <div className="stack" data-stack="a">
@@ -215,28 +136,28 @@ export function Compat({ demo }: { demo: LandingDemo }) {
           <div className="tally">
             <div data-tally>
               <div className="tally-n" data-count={shared}>
-                {shared.toLocaleString('ru-RU')}
+                {fmtNumber(locale, shared)}
               </div>
-              <div className="tally-l">общих игр</div>
+              <div className="tally-l">{tr(locale, { ru: 'общих игр', en: 'games in common' })}</div>
             </div>
             <div data-tally>
               <div className="tally-n" data-count={compat.hours}>
-                {compat.hours.toLocaleString('ru-RU')}
+                {fmtNumber(locale, compat.hours)}
               </div>
-              <div className="tally-l">часов на двоих</div>
+              <div className="tally-l">{tr(locale, { ru: 'часов на двоих', en: 'hours between you' })}</div>
             </div>
           </div>
         </div>
 
         <div className="min-w-0">
           <Eyebrow tone="faint" className="mb-3">
-            Что нашлось у обоих
+            {tr(locale, { ru: 'Что нашлось у обоих', en: 'What you both have' })}
           </Eyebrow>
           <ul className="compat-rows">
             {compat.rows.map((r) => (
               <li key={r.name} className="compat-row" data-compat-row>
                 <span className="compat-name">{r.name}</span>
-                <span className="compat-a">{r.a.toLocaleString('ru-RU')}</span>
+                <span className="compat-a">{fmtNumber(locale, r.a)}</span>
                 {/*
                   Весы. Доли считаются от самого большого часа во ВСЕЙ таблице,
                   а не внутри строки: иначе у каждой игры своя шкала, и Portal 2
@@ -252,16 +173,18 @@ export function Compat({ demo }: { demo: LandingDemo }) {
                     <span className="compat-fill" style={{ '--k': bar(r.b) } as CSSProperties} />
                   </span>
                 </span>
-                <span className="compat-b">{r.b.toLocaleString('ru-RU')}</span>
+                <span className="compat-b">{fmtNumber(locale, r.b)}</span>
               </li>
             ))}
           </ul>
           <p className="mt-4 max-w-md text-xs leading-relaxed text-faint">
-            Процент совпадения вкусов мы тут не показываем: он считается по редкости тегов во всём
-            каталоге, а не по этой паре, — на демо он был бы красивым и неправдой.
+            {tr(locale, {
+              ru: 'Процент совпадения вкусов мы тут не показываем: он считается по редкости тегов во всём каталоге, а не по этой паре, — на демо он был бы красивым и неправдой.',
+              en: 'We don’t show a taste match percentage here: it’s based on how rare tags are across the whole catalog, not on this pair — on a demo it would look nice and be wrong.',
+            })}
           </p>
         </div>
       </div>
-    </Stage>
+    </CompatStage>
   )
 }

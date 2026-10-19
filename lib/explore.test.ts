@@ -115,7 +115,7 @@ describe('exploreSignal: потолок ожидания колоды', () => {
 describe('страница /explore', () => {
   /** Комментарии гасятся пробелами: докблоки цитируют сами правила */
   const page = fs
-    .readFileSync(path.join(__dirname, '..', 'app', 'explore', 'page.tsx'), 'utf8')
+    .readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'explore', 'page.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
     .replace(/(^|[^:])(\/\/[^\n]*)/g, (_, pre: string, c: string) => pre + ' '.repeat(c.length))
 
@@ -128,7 +128,9 @@ describe('страница /explore', () => {
   })
 
   test('каждый запрос колоды — с потолком ожидания', () => {
-    const calls = page.match(/fetch\('\/api\/explore'[^)]*\)/g) ?? []
+    // Адрес колоды — с языком страницы (deckUrl = withLang('/api/explore', locale))
+    expect(page).toMatch(/const deckUrl = withLang\('\/api\/explore', locale\)/)
+    const calls = page.match(/fetch\((?:'\/api\/explore'|deckUrl)[^)]*\)/g) ?? []
     expect(calls.length, 'запросы колоды не найдены — сторож ослеп').toBeGreaterThanOrEqual(2)
     for (const c of calls) {
       expect(c, 'без потолка повисшее соединение держит «Собираю…», пока его держит браузер').toMatch(

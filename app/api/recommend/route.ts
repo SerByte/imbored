@@ -4,7 +4,8 @@ import { buildCandidates } from '@/lib/candidates'
 import { buildPickContext, cardView, heroMediaView, scoreView } from '@/lib/cards'
 import { getGamesMetaLite, getHeroMedia, latestEveningPlan } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
-import { HUB_GENRES, hubTagOf } from '@/lib/gamehub'
+import { hubTagOf, hubTitle } from '@/lib/gamehub'
+import { localeFromRequest } from '@/lib/i18n'
 import { claudePicks, heuristicPicks, llmAvailable, reasonPrice, topUpPicks } from '@/lib/llm'
 import { llmDailyCap, takeLlmBudgetForIp } from '@/lib/llmcap'
 import { parseLean, parseMood } from '@/lib/mood'
@@ -95,6 +96,12 @@ const DEMO_LLM_LIMIT = 2
 const DEMO_LLM_WINDOW_SEC = 86_400
 
 export async function POST(req: Request) {
+  /*
+   * Язык причин, подписей и текста «Отправить другу» — из адреса (/play
+   * зовёт withLang): всё, что здесь пишется словами, пишется на нём. Ответ —
+   * POST и не кэшируется, но правило одно на все роуты (docs/i18n.md).
+   */
+  const locale = localeFromRequest(req)
   const session = await currentSession()
   if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
   const { steamid } = session
@@ -194,11 +201,12 @@ export async function POST(req: Request) {
      * То же у жанра со страницы /games: «верни что-нибудь из бана» у выдачи
      * визуальных новелл «с друзьями» — чужой совет, пусто там от жанра
      * (свои — только сетевые, пул магазина — только мультиплеер). Название —
-     * из словаря, без чтения базы, и только если жанр применился: при
-     * затравке его нет (buildCandidates), и экран тогда про затравку.
+     * из словаря на языке запроса (hubTitle), без чтения базы, и только если
+     * жанр применился: при затравке его нет (buildCandidates), и экран тогда
+     * про затравку.
      */
     const seedName = seed === null ? undefined : (await getGamesMetaLite(db, [seed])).get(seed)?.name
-    const genreTitle = seed === null && genre !== null ? HUB_GENRES[genre].title : null
+    const genreTitle = seed === null && genre !== null ? hubTitle(genre, locale) : null
     return NextResponse.json(
       {
         error: 'nocandidates',
@@ -220,7 +228,7 @@ export async function POST(req: Request) {
     db,
     set,
     [...new Set([...heroPool, ...discovery].map((c) => c.appid))],
-    { patches: isWriter(session) },
+    { patches: isWriter(session), locale },
   )
   const { metaNow, anchorOf, hoursOf, hideUrgency, patchOf } = ctx
 
@@ -284,6 +292,7 @@ export async function POST(req: Request) {
           // «С твоего последнего захода вышло крупное обновление» — у
           // заброшенных, где патч подтверждён моделью (lib/comeback.ts)
           patchOf,
+          locale,
         })
       : null
   const byHeuristic = (pool: ScoredCandidate[], count: number) =>
@@ -297,6 +306,7 @@ export async function POST(req: Request) {
       hideUrgency,
       playtimeHidden: set.playtimeHidden,
       patchOf,
+      locale,
     })
   // Модель могла вернуть меньше пятёрки (отсеяла validatePicks) — недостающее
   // добирает та же эвристика из кандидатов, которых модель не взяла.
@@ -323,7 +333,7 @@ export async function POST(req: Request) {
         DISCOVERY_CARDS,
         now,
         profile,
-        { tagWeight, anchorOf, hideUrgency, playtimeHidden: set.playtimeHidden },
+        { tagWeight, anchorOf, hideUrgency, playtimeHidden: set.playtimeHidden, locale },
       )
 
   // «Продолжить «X»» — то, во что он играет сейчас: строкой под героем, а не
@@ -404,15 +414,18 @@ export async function POST(req: Request) {
       // И без факта о патче: «С твоего последнего захода…» на публичной
       // странице получатель прочтёт про себя, а дату запуска она выдаст
       // любому (shareText, lib/comeback.ts)
+      // Язык текста — в подписи (lang): /api/pick сверит и запишет его
       ...shareView(sessionSecret(), {
         steamid,
         appid: p.appid,
         source: p.source,
         text: shareText(
           p.reason,
-          reasonPrice(p.source, metaNow(p.appid), ctx.now, hideUrgency),
+          // Тот же язык, что у причины: хвост режется точным совпадением
+          reasonPrice(p.source, metaNow(p.appid), ctx.now, hideUrgency, locale),
           patchOf(p.appid),
         ),
+        lang: locale,
       }),
     })),
     discoveries: discoveries.map((p, i) => ({
@@ -427,11 +440,12 @@ export async function POST(req: Request) {
     lean,
     // Эхо затравки «Как «X», но…»: чьи соседи на экране. null — обычная выдача
     seed: seedRef,
-    // Эхо жанра со страницы /games: название — для подписи «Только рогалики»,
+    // Эхо жанра со страницы /games: название — для подписи «Только рогалики»
+    // (на языке запроса: hubTitle, как заголовок страницы жанра),
     // own — есть ли в пятёрке свои. Нет своих — подпись скажет, что эти из
     // магазина: «рогалики из твоей библиотеки» без единой своей были бы
     // неправдой. null — без жанра, в том числе при затравке и мусоре в поле
-    genre: set.genre ? { title: HUB_GENRES[set.genre].title, own: picks.some((p) => p.source !== 'new') } : null,
+    genre: set.genre ? { title: hubTitle(set.genre, locale), own: picks.some((p) => p.source !== 'new') } : null,
     // Эхо подталкивания: какой чипс под героем нажат. null — без него, в том
     // числе при мусоре в поле
     nudge,

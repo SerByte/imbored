@@ -3,8 +3,9 @@ import { DEMO_METAS } from './demo'
 import { landingDemo, MOOD_KEYS, type MoodKey } from './landing'
 import { REASON_MAX } from './llm'
 import { topTags } from './recommend'
-import { SOURCE_BADGE } from './sources'
+import { SOURCE_BADGE, sourceBadge } from './sources'
 import { tagRu } from './tagsru'
+import type { CandidateSource } from './types'
 
 /**
  * Сторож демо-выдачи главной.
@@ -195,5 +196,86 @@ describe('демо-выдача главной', () => {
     expect(demo.compat.countB).toBe(10)
     const sums = demo.compat.rows.map((r) => r.a + r.b)
     expect(sums, 'строки обязаны идти по убыванию суммы часов').toEqual([...sums].sort((x, y) => y - x))
+  })
+})
+
+/**
+ * Английская главная — та же демо-выдача на тех же данных: меняются только
+ * слова. Обе главные статические и собираются каждая своим вызовом, поэтому
+ * сторож сравнивает их напрямую.
+ */
+describe('демо-выдача английской главной', () => {
+  const ru = landingDemo(NOW)
+  const en = landingDemo(NOW, 'en')
+  const CYR = /[А-Яа-яЁё]/
+
+  test('те же игры в том же порядке, те же числа', () => {
+    for (const key of MOOD_KEYS) {
+      expect(en.picks[key].map((c) => c.appid), key).toEqual(ru.picks[key].map((c) => c.appid))
+    }
+    expect(en.wall.map((g) => g.appid)).toEqual(ru.wall.map((g) => g.appid))
+    expect({ ...en.compat, rows: en.compat.rows.map((r) => [r.a, r.b]) }).toEqual({
+      ...ru.compat,
+      rows: ru.compat.rows.map((r) => [r.a, r.b]),
+    })
+    expect([en.libraryCount, en.libraryHours]).toEqual([ru.libraryCount, ru.libraryHours])
+  })
+
+  test('теги — сами теги Steam, тем же отбором, что у чипсов выдачи', () => {
+    const metas = new Map(DEMO_METAS.map((m) => [m.appid, m]))
+    for (const key of MOOD_KEYS) {
+      for (const card of en.picks[key]) {
+        expect(card.tags, `${key}: ${card.name}`).toEqual(topTags(metas.get(card.appid)))
+        for (const t of card.tags) expect(t, `${key}: ${card.name}`).not.toMatch(CYR)
+      }
+    }
+  })
+
+  /*
+   * Причина первой карточки — про демо-игрока и по-английски: ни «you», ни
+   * кириллицы. Названия демо-игр латинские, так что любая русская буква здесь —
+   * недопереведённый шаблон.
+   */
+  test('у первой карточки — английская причина про демо-игрока, без «you»; у остальных её нет', () => {
+    const YOU = /\b(?:you|your|yours|yourself|you've|you're|you'll)\b/i
+    for (const key of MOOD_KEYS) {
+      const [first, ...rest] = en.picks[key]
+      expect(first.why, key).toBeTruthy()
+      expect(first.why!.length, key).toBeLessThanOrEqual(REASON_MAX)
+      expect(first.why, key).toContain(`“${first.name}”`)
+      expect(first.why, key).toMatch(/demo player/)
+      expect(first.why, `${key}: ${first.why}`).not.toMatch(YOU)
+      expect(first.why, `${key}: ${first.why}`).not.toMatch(CYR)
+      for (const c of rest) expect(c.why, `${key}: ${c.name}`).toBeUndefined()
+    }
+  })
+
+  /*
+   * Бейдж источника — та же подпись, что у полосы героя выдачи (sourceBadge
+   * из lib/sources), на языке главной. Источник у карточки тот же, что у
+   * русской на том же месте: выбор от языка не зависит.
+   */
+  test('бейджи источников — английские подписи глоссария', () => {
+    const sourceOf = new Map(Object.entries(SOURCE_BADGE).map(([source, badge]) => [badge, source as CandidateSource]))
+    for (const key of MOOD_KEYS) {
+      en.picks[key].forEach((card, i) => {
+        const source = sourceOf.get(ru.picks[key][i].badge)
+        expect(source, `${key}: ${ru.picks[key][i].badge}`).toBeDefined()
+        expect(card.badge, `${key}: ${card.name}`).toBe(sourceBadge(source!, 'en'))
+        expect(card.badge, `${key}: ${card.name}`).not.toMatch(CYR)
+      })
+    }
+    // «Куплена, но не распакована» в демо есть (тест выше) — и её английская пара
+    expect(MOOD_KEYS.flatMap((key) => en.picks[key].map((c) => c.badge))).toContain('Bought, never opened')
+  })
+
+  test('имена стены и совместимости — без кириллицы', () => {
+    for (const g of en.wall) expect(g.name).not.toMatch(CYR)
+    for (const r of en.compat.rows) expect(r.name).not.toMatch(CYR)
+  })
+
+  test('без locale — прежняя русская главная', () => {
+    expect(landingDemo(NOW, 'ru')).toEqual(ru)
+    expect(ru.picks['chill:solo'][0].why).toMatch(/демо-игрок/)
   })
 })

@@ -20,8 +20,8 @@
 
 import type { HeroMediaView, PickCard, ScoreView, ShareView } from './cards'
 import { parseLean, type Lean } from './mood'
+import { pl, tr, type Locale } from './i18n'
 import { parseNudge, type Nudge } from './nudge'
-import { plural } from './plural'
 import { parseEveningPlan, type EveningPlan } from './eveningplan'
 import type { ContinueGame, MatchExplanation, Scope } from './recommend'
 
@@ -218,12 +218,18 @@ export type Miss =
  * двадцать подборов за десять минут, а каждое нажатие переключателя и есть
  * подбор, — и тогда честнее всего назвать срок.
  */
-export function switchLine(m: Miss): string | null {
+export function switchLine(m: Miss, locale: Locale = 'ru'): string | null {
   switch (m.miss) {
     case 'limited': {
-      if (m.waitSec === null) return 'Слишком часто — попробуй чуть позже'
+      if (m.waitSec === null) {
+        return tr(locale, { ru: 'Слишком часто — попробуй чуть позже', en: 'Too many tries — try again a bit later' })
+      }
       const min = Math.max(1, Math.ceil(m.waitSec / 60))
-      return `Слишком часто — попробуй через ${min} ${plural(min, 'минуту', 'минуты', 'минут')}`
+      const minutes = pl(locale, min, { ru: ['минуту', 'минуты', 'минут'], en: ['minute', 'minutes'] })
+      return tr(locale, {
+        ru: `Слишком часто — попробуй через ${min} ${minutes}`,
+        en: `Too many tries — try again in ${min} ${minutes}`,
+      })
     }
     case 'gone':
       return null
@@ -235,8 +241,14 @@ export function switchLine(m: Miss): string | null {
       // нашлось» правдиво и тут: фильтр он ставил сам, и экран отказа первой
       // выдачи (FAIL.muted) называет его прямо
       return m.code === 'nocandidates' || m.code === 'muted'
-        ? 'Под это ничего не нашлось, выдача прежняя'
-        : 'Не получилось переключить, выдача прежняя'
+        ? tr(locale, {
+            ru: 'Под это ничего не нашлось, выдача прежняя',
+            en: 'Nothing fits that — your picks are unchanged',
+          })
+        : tr(locale, {
+            ru: 'Не получилось переключить, выдача прежняя',
+            en: "Couldn't switch — your picks are unchanged",
+          })
   }
 }
 
@@ -375,6 +387,17 @@ const BURNOUT_INVITE: Record<NonNullable<BurnoutOffer>, string> = {
 }
 
 /**
+ * Английский абзац — целыми фразами на каждое предложение, без склейки
+ * «зов… а можно закрыть»: порядок слов там свой, и кусок «Можно» не
+ * переводится отдельно. Правило про одно «просто» то же — одно just.
+ */
+const BURNOUT_INVITE_EN: Record<NonNullable<BurnoutOffer>, string> = {
+  familiar: "You could slip back into something familiar for a bit… or just close Steam, and that's a win too.",
+  continue: "You could keep playing what you're into right now… or just close Steam, and that's a win too.",
+  cozy: "You could spend 20 minutes in something cozy… or just close Steam, and that's a win too.",
+}
+
+/**
  * Абзац экрана выгорания зовёт туда же, куда кнопка под ним.
  *
  * Он всегда говорил «зайти на 20 минут во что-то уютное», а кнопка выбиралась
@@ -383,7 +406,10 @@ const BURNOUT_INVITE: Record<NonNullable<BurnoutOffer>, string> = {
  * BurnoutOffer, и разойтись им негде. «Закрыть Steam» остаётся всегда: это
  * тоже ответ, и экран о нём.
  */
-export function burnoutInvite(offer: BurnoutOffer): string {
+export function burnoutInvite(offer: BurnoutOffer, locale: Locale = 'ru'): string {
   const close = 'просто закрыть Steam, и это тоже победа.'
-  return offer ? `${BURNOUT_INVITE[offer]}… а можно ${close}` : `Можно ${close}`
+  return tr(locale, {
+    ru: offer ? `${BURNOUT_INVITE[offer]}… а можно ${close}` : `Можно ${close}`,
+    en: offer ? BURNOUT_INVITE_EN[offer] : "You could just close Steam, and that's a win too.",
+  })
 }

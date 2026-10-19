@@ -3,7 +3,9 @@
 import { AnimatePresence, m } from 'framer-motion'
 import { MotionLazy } from '@/components/motion/MotionLazy'
 import { useEffect, useRef, useSyncExternalStore } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { Portal } from '@/components/Portal'
+import { tr } from '@/lib/i18n'
 import { pressSwipes, stepIndex, swipeStep, zoomedIn } from '@/lib/lightbox'
 import { backdropOf, holdScroll, makeInert } from '@/lib/pagelock'
 import { Icon } from '@/components/Icon'
@@ -78,6 +80,7 @@ export function Lightbox({
   onClose: () => void
   layoutId?: (i: number) => string
 }) {
+  const locale = useLocale()
   const overlayRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   /** Где началось касание — для свайпа; null — касания нет. */
@@ -255,7 +258,10 @@ export function Lightbox({
             }}
             role="dialog"
             aria-modal="true"
-            aria-label={`Скриншот ${index + 1} из ${images.length}`}
+            aria-label={tr(locale, {
+              ru: `Скриншот ${index + 1} из ${images.length}`,
+              en: `Screenshot ${index + 1} of ${images.length}`,
+            })}
           >
             <div aria-hidden className="absolute inset-0 bg-black/85 backdrop-blur-sm" />
             <m.img
@@ -277,7 +283,7 @@ export function Lightbox({
                 e.stopPropagation()
                 onClose()
               }}
-              aria-label="Закрыть"
+              aria-label={tr(locale, { ru: 'Закрыть', en: 'Close' })}
               className="btn-circle absolute top-[max(1.25rem,env(safe-area-inset-top))] right-[max(1.25rem,env(safe-area-inset-right))]"
             >
               <Icon name="close" size={18} />
@@ -295,7 +301,7 @@ export function Lightbox({
                     e.stopPropagation()
                     onIndex(stepIndex(index, -1, images.length))
                   }}
-                  aria-label="Предыдущий кадр"
+                  aria-label={tr(locale, { ru: 'Предыдущий кадр', en: 'Previous image' })}
                   className="btn-circle absolute left-[max(0.75rem,env(safe-area-inset-left))] top-1/2 -translate-y-1/2"
                 >
                   <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -308,7 +314,7 @@ export function Lightbox({
                     e.stopPropagation()
                     onIndex(stepIndex(index, 1, images.length))
                   }}
-                  aria-label="Следующий кадр"
+                  aria-label={tr(locale, { ru: 'Следующий кадр', en: 'Next image' })}
                   className="btn-circle absolute right-[max(0.75rem,env(safe-area-inset-right))] top-1/2 -translate-y-1/2"
                 >
                   <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -333,7 +339,10 @@ export function Lightbox({
             >
               {index + 1}/{images.length}
             </span>
-            <StatusLine text={`Кадр ${index + 1} из ${images.length}`} className="sr-only" />
+            <StatusLine
+              text={tr(locale, { ru: `Кадр ${index + 1} из ${images.length}`, en: `Image ${index + 1} of ${images.length}` })}
+              className="sr-only"
+            />
             </m.div>
           )}
         </AnimatePresence>

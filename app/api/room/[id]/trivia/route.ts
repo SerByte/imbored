@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { memberLabel } from '@/lib/room'
 import { getLatestSnapshot, getRoom, roomMembers } from '@/lib/db'
+import { localeFromRequest } from '@/lib/i18n'
 import { checkRate, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
 import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { buildTrivia, loadTriviaCatalog } from '@/lib/trivia'
@@ -85,17 +86,20 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
 
   const round = Math.max(0, asked)
   const seed = `${id}:${steamid}:${round}`
+  // Язык — только подписей (withLang у PartyTrivia): сид от него не зависит,
+  // и вопросы у русского и английского участника те же (buildTrivia)
+  const locale = localeFromRequest(req)
 
   const party = await Promise.all(
     members.map(async (m) => ({
       steamid: m.steamid,
-      name: memberLabel(id, m.steamid, m.personaName),
+      name: memberLabel(id, m.steamid, m.personaName, locale),
       library: (await getLatestSnapshot(db, m.steamid))?.games ?? [],
     })),
   )
 
   const catalog = await loadTriviaCatalog(db, seed)
-  const questions = buildTrivia({ seed, catalog, party })
+  const questions = buildTrivia({ seed, catalog, party, locale })
 
   // Пустой список — легальный ответ: клиент просто не покажет блок
   return NextResponse.json({ round, questions })

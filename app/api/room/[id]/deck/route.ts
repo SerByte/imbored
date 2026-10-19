@@ -16,6 +16,7 @@ import {
 import { discountView, trustedPrice } from '@/lib/discount'
 import { sessionTrait } from '@/lib/gametraits'
 import { buildGroupDeck } from '@/lib/group'
+import { localeFromRequest } from '@/lib/i18n'
 import { parseMood } from '@/lib/mood'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from '@/lib/pool'
 import { checkRate, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
@@ -54,6 +55,10 @@ const POOL_STEP = 100
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
+  // Язык того, кто смотрит (withLang у страницы): «Нет у: …», подпись первой
+  // карты, сессия и срок скидки. Состав и порядок колоды от него не зависят —
+  // комната голосует за одни и те же карты на любом языке (buildGroupDeck)
+  const locale = localeFromRequest(req)
 
   const session = await currentSession()
   if (!session) return NextResponse.json({ error: 'nosession' }, { status: 401 })
@@ -112,7 +117,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     Promise.all(
       members.map(async (m) => ({
         steamid: m.steamid,
-        name: memberLabel(id, m.steamid, m.personaName),
+        name: memberLabel(id, m.steamid, m.personaName, locale),
         library: (await getLatestSnapshot(db, m.steamid))?.games ?? [],
       })),
     ),
@@ -180,6 +185,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     // «только мультиплеер» buildGroupDeck проверяет и для неё. Ниже её, как
     // любую карту, может снять filterActual, а проголосованную — shown
     pinned: room.seedAppid ?? null,
+    locale,
   })
 
   // Колода собирается из библиотек участников, а они офлайн-фильтры каталога
@@ -224,10 +230,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       ccuAt: meta?.ccuAt ?? null,
       // «Матч ~15 мин»: для вечера вместе длина захода — второй вопрос после
       // «есть ли с кем», и ответ на него тот же, что на карточке игры
-      session: meta ? sessionTrait(meta) : null,
+      session: meta ? sessionTrait(meta, locale) : null,
       // Скидка нужна только там, где кому-то придётся покупать: у карточки
       // «есть у всех» цена вообще не участвует в разговоре, у бесплатной — тоже
-      discount: meta && !c.ownedByAll && !c.isFree ? discountView(meta, now) : null,
+      discount: meta && !c.ownedByAll && !c.isFree ? discountView(meta, now, { locale }) : null,
     }
   })
 

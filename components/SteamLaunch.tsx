@@ -1,6 +1,9 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { Icon } from '@/components/Icon'
+import { useLocale } from '@/components/LocaleProvider'
+import { tr } from '@/lib/i18n'
 import { track } from '@/lib/track'
 
 /** Какой веткой нажата кнопка: steam:// или магазин под пальцем (см. onClick) */
@@ -60,15 +63,23 @@ export type LaunchVia = 'steam' | 'store'
  * магазин загрузку не начнёт, — там не ссылка, а строка о том, где это
  * сделать. onLaunch у загрузки не зовётся: она не запуск, и спрашивать через
  * десять минут «не зацепило?» не о чем.
+ *
+ * Подписи по умолчанию — на языке страницы, и считаются в теле, а не в
+ * значениях параметров: язык знает только useLocale(), а хук в значении по
+ * умолчанию не позовёшь. undefined — «подпись по умолчанию», null у
+ * mobileLabel — «мобильной ветки нет», как и раньше. Названия пунктов
+ * клиента Steam — его собственные английские («Library», «Install»).
+ *
+ * Подпись — ReactNode, а не строка: у подписи с названием игры на /en
+ * русское название идёт своим <span lang="ru"> (withForeignRuns), и кнопка
+ * печатает его как есть. Строка остаётся строкой, разметка прежняя.
  */
 export function SteamLaunch({
   appid,
   className = '',
   mode = 'run',
-  label = mode === 'install' ? 'Поставить на загрузку' : 'Запустить в Steam',
-  mobileLabel = mode === 'install'
-    ? 'Поставить на загрузку можно из приложения Steam: «Библиотека» → игра → «Установить»'
-    : 'Открыть в Steam',
+  label: ownLabel,
+  mobileLabel: ownMobileLabel,
   onClick,
   onLaunch,
   icon = false,
@@ -76,8 +87,8 @@ export function SteamLaunch({
   appid: number
   className?: string
   mode?: 'run' | 'install'
-  label?: string
-  mobileLabel?: string | null
+  label?: ReactNode
+  mobileLabel?: ReactNode
   onClick?: (via: LaunchVia) => void
   onLaunch?: () => void
   /**
@@ -87,6 +98,22 @@ export function SteamLaunch({
    */
   icon?: boolean
 }) {
+  const locale = useLocale()
+  const install = mode === 'install'
+  const label =
+    ownLabel ??
+    (install
+      ? tr(locale, { ru: 'Поставить на загрузку', en: 'Start the download' })
+      : tr(locale, { ru: 'Запустить в Steam', en: 'Launch in Steam' }))
+  const mobileLabel =
+    ownMobileLabel === undefined
+      ? install
+        ? tr(locale, {
+            ru: 'Поставить на загрузку можно из приложения Steam: «Библиотека» → игра → «Установить»',
+            en: 'You can start the download in the Steam app: “Library” → the game → “Install”',
+          })
+        : tr(locale, { ru: 'Открыть в Steam', en: 'Open in Steam' })
+      : ownMobileLabel
   return (
     <>
       <a

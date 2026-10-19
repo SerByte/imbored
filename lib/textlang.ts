@@ -10,14 +10,18 @@
  * Отдельным модулем, а не в lib/gamepage, где правило родилось: gamepage тянет
  * базу, errlog и серверные модули, а признак нужен и клиентским строкам ленты
  * патчей (PatchRow, GameNews). Из зависимостей — только lib/patchtitle, такой
- * же чистый и клиентобезопасный, и gamepage только реэкспортирует.
+ * же чистый и клиентобезопасный, и createElement из react — для
+ * withForeignRuns; gamepage только реэкспортирует.
  *
  * Это не hasCyrillic из lib/cyrillic («есть ли что беречь» — хватает одной
  * буквы) и не detectLang из lib/news («есть ли по-русски хоть что-то для
  * пересказа» — хватает доли в 15 %). Здесь вопрос «каким голосом читать», и
- * отвечает на него большинство букв.
+ * отвечает на него большинство букв. Ничья — русскому голосу на обеих
+ * страницах (textLangOn): так же её решает isRussianText.
  */
 
+import { createElement, type ReactNode } from 'react'
+import type { Locale } from './i18n'
 import { withoutGameName } from './patchtitle'
 
 function letters(text: string): { cyr: number; lat: number } {
@@ -70,7 +74,88 @@ export function textLang(
   gameName?: string | null,
 ): 'en' | undefined {
   if (!text) return undefined
-  const rest = letters(withoutGameName(text, gameName))
-  const { cyr, lat } = rest.cyr + rest.lat > 0 ? rest : letters(text)
+  const { cyr, lat } = lettersWithout(text, gameName)
   return lat > cyr ? 'en' : undefined
+}
+
+/** Буквы текста без названия игры; не осталось ни одной — по целому тексту (см. textLang) */
+function lettersWithout(text: string, gameName?: string | null): { cyr: number; lat: number } {
+  const rest = letters(withoutGameName(text, gameName))
+  return rest.cyr + rest.lat > 0 ? rest : letters(text)
+}
+
+/**
+ * Атрибут lang для куска чужого текста на странице языка page.
+ *
+ * На русской странице — ровно textLang: помечаем латиницу. На английской
+ * всё наоборот: страница объявлена lang="en", латиницу английский голос
+ * читает и так, а чужим теперь стал русский текст — патчноут, который
+ * издатель выпустил по-русски, или русский заголовок поста. Ему — 'ru', когда
+ * кириллицы в нём не меньше, чем латиницы, остальному — undefined, кусок
+ * наследует lang="en" страницы. Подсчёт тот же, что у textLang, и название
+ * игры в него так же не входит.
+ *
+ * Ничья — 'ru', а не голос страницы, и цена ошибки тут неравная. Русское имя
+ * магазина «God of War Рагнарёк» — восемь букв на восемь: без пометки
+ * английский голос читал «Рагнарёк» по буквам, а русский латинскую половину
+ * читает словами. Так же ничью решают isRussianText (cyr >= lat) и русская
+ * страница: у textLang она наследует lang="ru" — на обеих страницах ничья
+ * звучит русским голосом.
+ */
+export function textLangOn(
+  page: Locale,
+  text: string | null | undefined,
+  gameName?: string | null,
+): 'en' | 'ru' | undefined {
+  if (page !== 'en') return textLang(text, gameName)
+  if (!text) return undefined
+  const { cyr, lat } = lettersWithout(text, gameName)
+  return cyr > 0 && cyr >= lat ? 'ru' : undefined
+}
+
+/**
+ * lang куска данных — ника из Steam, названия игры: 'ru', когда на /en
+ * кириллицы в нём не меньше латиницы (ничья — тоже, см. textLangOn), и
+ * английский голос скринридера не читает его по буквам (WCAG 3.1.2). Аудитория сайта по большей части русскоязычная, так
+ * что русский ник на /en — частый случай, а не редкий.
+ *
+ * Только на /en. На русской странице атрибута нет, как не было: textLangOn
+ * там пометил бы латинский ник как 'en', а это уже другая правка, не
+ * перевод, и русская страница обязана остаться прежней до байта.
+ *
+ * Одно правило на совместимость (app/[lang]/compat/nick.tsx) и портрет
+ * (app/[lang]/portrait/[steamid]/portrait-text.tsx): раньше у каждой была
+ * своя копия.
+ */
+export function langOn(locale: Locale, text: string): 'ru' | undefined {
+  return locale === 'en' && textLangOn(locale, text) === 'ru' ? 'ru' : undefined
+}
+
+/**
+ * Текст с вкраплениями данных: на /en каждое вхождение русского ника или
+ * названия игры — своим <span lang="ru">, остальное наследует lang страницы.
+ *
+ * Фраза остаётся одним шаблоном tr() или одной строкой модели и режется уже
+ * готовой: склеивать её из кусков ради пометки значило бы собирать
+ * английский порядок слов из обрывков. Искать ник в английской фразе
+ * безопасно: кириллицы в шаблоне нет, и русский ник находит только сам себя.
+ *
+ * Нечего помечать (русская страница, латинские ники) — та же строка, одним
+ * текстовым узлом, как раньше. Есть что — массив кусков без общей обёртки:
+ * обёртку под флекс-родителя ставит withNicks (app/[lang]/compat/nick.tsx).
+ */
+export function withForeignRuns(
+  locale: Locale,
+  text: string,
+  runs: ReadonlyArray<string | null | undefined>,
+): ReactNode {
+  const marked = [...new Set(runs.filter((r): r is string => !!r && langOn(locale, r) === 'ru'))]
+    // Длинные первыми: «Вася Пупкин» раньше «Вася», иначе имя разрезалось бы по частям
+    .sort((a, b) => b.length - a.length)
+  if (!marked.length) return text
+  const escaped = marked.map((r) => r.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  // С группой split оставляет найденное на нечётных местах
+  return text
+    .split(new RegExp(`(${escaped.join('|')})`, 'g'))
+    .map((part, i) => (i % 2 ? createElement('span', { key: i, lang: 'ru' }, part) : part))
 }

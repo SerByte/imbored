@@ -140,7 +140,7 @@ describe('сохранённая тема — и там, где скрипт т�
   })
 
   test('ключ хранилища — тот же, что читает скрипт темы', () => {
-    const layout = fs.readFileSync(path.join(ROOT, 'app', 'layout.tsx'), 'utf8')
+    const layout = fs.readFileSync(path.join(ROOT, 'app', '[lang]', 'layout.tsx'), 'utf8')
     expect(layout).toContain(`localStorage.getItem('${STORAGE_KEY}')`)
   })
 

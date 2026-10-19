@@ -1,10 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { createElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
+import { withNicks } from '../app/[lang]/compat/nick'
+import * as portraitText from '../app/[lang]/portrait/[steamid]/portrait-text'
 import { NewsBody } from '../components/NewsBody'
 import type { NewsBlock } from './steamhtml'
-import { isRussianText, textLang } from './textlang'
+import { isRussianText, langOn, textLang, textLangOn, withForeignRuns } from './textlang'
 
 describe('isRussianText', () => {
   test('русское описание с латинскими названиями — русское', () => {
@@ -80,6 +83,119 @@ describe('textLang', () => {
 })
 
 /**
+ * На английской странице чужим становится русский: патчноут, который издатель
+ * выпустил по-русски, на /en читался бы английским голосом. Правило то же,
+ * что у textLang, только в обратную сторону.
+ */
+describe('textLangOn', () => {
+  test('на русской странице — ровно textLang', () => {
+    for (const [text, game] of [
+      ['Patch 0.5.1 Has Been Released', undefined],
+      ['Патч 2.31', undefined],
+      ['Обновление Counter-Strike 2', 'Counter-Strike 2'],
+      ['1.0.3', undefined],
+      [null, undefined],
+    ] as const) {
+      expect(textLangOn('ru', text, game), String(text)).toBe(textLang(text, game))
+    }
+  })
+
+  test('на английской — ru для русского текста, остальное наследует en', () => {
+    expect(textLangOn('en', 'Патч 2.31')).toBe('ru')
+    expect(textLangOn('en', 'Станьте вором в VR! Ощутите азарт воровства.')).toBe('ru')
+    expect(textLangOn('en', 'Patch 0.5.1 Has Been Released')).toBeUndefined()
+    expect(textLangOn('en', '1.0.3')).toBeUndefined()
+    expect(textLangOn('en', '版本更新 1.2')).toBeUndefined()
+    expect(textLangOn('en', '')).toBeUndefined()
+    expect(textLangOn('en', undefined)).toBeUndefined()
+  })
+
+  test('название игры в подсчёт не входит и на английской', () => {
+    // 13 латинских букв названия перевешивали бы 10 русских — а заголовок русский
+    expect(textLangOn('en', 'Обновление Counter-Strike 2', 'Counter-Strike 2')).toBe('ru')
+    expect(textLangOn('en', 'Counter-Strike 2 Update', 'Counter-Strike 2')).toBeUndefined()
+    expect(textLangOn('en', 'Мор', 'Мор')).toBe('ru')
+  })
+
+  /**
+   * Ничья букв — русскому голосу. Русское имя магазина «God of War Рагнарёк»
+   * (2322010 в копии базы) — восемь латинских на восемь кириллических, и с
+   * правилом «строго больше» h1 карточки и ссылка «Similar to “…”» на /en
+   * шли без lang: английский голос читал «Рагнарёк» по буквам.
+   */
+  test('ничья на английской — ru, на русской — по-прежнему без пометки', () => {
+    expect(textLangOn('en', 'God of War Рагнарёк')).toBe('ru')
+    expect(textLangOn('en', 'Hotfix для VR, фикс')).toBeUndefined()
+    // русская страница не меняется: ничья там и так читается русским голосом
+    expect(textLangOn('ru', 'God of War Рагнарёк')).toBeUndefined()
+    expect(textLang('God of War Рагнарёк')).toBeUndefined()
+  })
+
+  test('на английской согласован с isRussianText: ru ровно у русского текста', () => {
+    for (const text of ['Станьте вором в VR!', 'Hotfix для VR', 'Ёж и Щука', 'Rise, Tarnished', 'FPS фпс', 'God of War Рагнарёк', '1.0.3']) {
+      expect(textLangOn('en', text), text).toBe(isRussianText(text) ? 'ru' : undefined)
+    }
+  })
+})
+
+/**
+ * Ники и названия игр внутри английских фраз — одно правило на совместимость
+ * и портрет. Раньше у каждой страницы была своя копия langOn и разрезания
+ * фразы; теперь обе зовут lib/textlang, и вывод обязан остаться тем же:
+ * портрет — куски без обёртки, совместимость — те же куски в одном <span>.
+ */
+describe('langOn и withForeignRuns', () => {
+  const html = (node: ReactNode) => renderToStaticMarkup(createElement('p', null, node))
+
+  test('lang="ru" — только у русского текста и только на /en', () => {
+    expect(langOn('en', 'Костя')).toBe('ru')
+    expect(langOn('en', 'Mira')).toBeUndefined()
+    expect(langOn('en', '1337')).toBeUndefined()
+    // Русская страница без атрибутов, как была: латиница там не помечалась
+    expect(langOn('ru', 'Mira')).toBeUndefined()
+    expect(langOn('ru', 'Костя')).toBeUndefined()
+  })
+
+  test('название поровну латиницей и кириллицей — тоже lang="ru"', () => {
+    // h1 карточки игры и «Similar to “…”» зовут langOn, «All … updates» — withForeignRuns
+    expect(langOn('en', 'God of War Рагнарёк')).toBe('ru')
+    expect(langOn('ru', 'God of War Рагнарёк')).toBeUndefined()
+    expect(html(withForeignRuns('en', 'All God of War Рагнарёк updates', ['God of War Рагнарёк']))).toBe(
+      '<p>All <span lang="ru">God of War Рагнарёк</span> updates</p>',
+    )
+  })
+
+  test('каждое вхождение — своим узлом, длинное имя раньше своей части', () => {
+    expect(html(withForeignRuns('en', 'Костя Pro and Костя', ['Костя', 'Костя Pro', 'Mira']))).toBe(
+      '<p><span lang="ru">Костя Pro</span> and <span lang="ru">Костя</span></p>',
+    )
+    // Спецсимволы ника — буквально, а не регуляркой
+    expect(html(withForeignRuns('en', 'Hi, Вася (1.0)?', ['Вася (1.0)?']))).toBe('<p>Hi, <span lang="ru">Вася (1.0)?</span></p>')
+  })
+
+  test('нечего помечать — та же строка, одним текстовым узлом', () => {
+    expect(withForeignRuns('ru', 'Костя увидит у себя, что вы сравнились.', ['Костя'])).toBe(
+      'Костя увидит у себя, что вы сравнились.',
+    )
+    expect(withForeignRuns('en', 'Mira will see your comparison.', ['Mira', null, undefined])).toBe(
+      'Mira will see your comparison.',
+    )
+  })
+
+  test('портрет и совместимость зовут одно правило', () => {
+    expect(portraitText.langOn).toBe(langOn)
+    expect(portraitText.withForeignRuns).toBe(withForeignRuns)
+    // совместимость — те же куски, но в одном общем <span>: фраза стоит во
+    // flex-родителях, и без обёртки ник отъехал бы от «'s» на ширину зазора
+    expect(html(withNicks('en', "Костя's player portrait", ['Костя']))).toBe(
+      '<p><span><span lang="ru">Костя</span>&#x27;s player portrait</span></p>',
+    )
+    expect(withNicks('en', "Mira's player portrait", ['Mira'])).toBe("Mira's player portrait")
+    expect(withNicks('ru', 'Портрет игрока Костя', ['Костя'])).toBe('Портрет игрока Костя')
+  })
+})
+
+/**
  * Тело патча — самый длинный чужой текст на сайте, и важнее заголовков:
  * NewsBody помечает его сам, чтобы ни одно из трёх мест (лента, блок на
  * карточке игры, страница патча) не забыло.
@@ -111,6 +227,15 @@ describe('NewsBody помечает язык тела', () => {
     ]
     expect(html(blocks)).not.toContain('lang=')
   })
+
+  // На /en чужим становится русское тело: голос страницы английский
+  test('на /en: русское тело — lang="ru", английское — без атрибута', () => {
+    const en = (blocks: NewsBlock[]) => renderToStaticMarkup(NewsBody({ blocks, locale: 'en' }))
+    expect(en([{ kind: 'p', runs: [{ text: 'Исправлен вылет на Vertigo при загрузке карты' }] }])).toMatch(
+      /^<div lang="ru" class="/,
+    )
+    expect(en([{ kind: 'p', runs: [{ text: 'Fixed a crash on Vertigo' }] }])).not.toContain('lang=')
+  })
 })
 
 const ROOT = path.join(__dirname, '..')
@@ -132,11 +257,11 @@ const HEADINGS: Array<{ file: string; expr: string; count: number }> = [
   { file: 'components/whatsnew/PatchRow.tsx', expr: 'heading', count: 2 },
   { file: 'components/whatsnew/Cover.tsx', expr: 'item.title', count: 1 },
   { file: 'components/GameNews.tsx', expr: 'heading', count: 2 },
-  { file: 'app/game/[appid]/news/[gid]/page.tsx', expr: 'heading', count: 1 },
+  { file: 'app/[lang]/game/[appid]/news/[gid]/page.tsx', expr: 'heading', count: 1 },
   // «Другие патчи» внизу страницы патча
-  { file: 'app/game/[appid]/news/[gid]/page.tsx', expr: 'title', count: 1 },
+  { file: 'app/[lang]/game/[appid]/news/[gid]/page.tsx', expr: 'title', count: 1 },
   // архив обновлений игры: ссылкой на страницу патча и текстом рядом со ссылкой в Steam
-  { file: 'app/game/[appid]/news/page.tsx', expr: 'heading', count: 2 },
+  { file: 'app/[lang]/game/[appid]/news/page.tsx', expr: 'heading', count: 2 },
 ]
 
 describe('заголовок патча несёт свой lang', () => {
@@ -152,21 +277,24 @@ describe('заголовок патча несёт свой lang', () => {
         /\slang=\{/,
       )
     }
-    expect(src, `${file}: lang считается правилом lib/textlang`).toContain('textLang(')
+    // textLangOn — правило lib/textlang с языком страницы: на /en чужой — русский
+    expect(src, `${file}: lang считается правилом lib/textlang`).toContain('textLangOn(locale, ')
   })
 
   /**
-   * Язык заголовка считается без названия игры (второй аргумент textLang):
-   * иначе «Обновление Counter-Strike 2» уходит английским голосом. Вызов с
-   * одним аргументом здесь — вернувшийся дефект, а не стиль.
+   * Язык заголовка считается без названия игры (третий аргумент textLangOn,
+   * после языка страницы): иначе «Обновление Counter-Strike 2» уходит
+   * английским голосом. Вызов без него здесь — вернувшийся дефект, а не стиль.
    */
-  test.each([...new Set(HEADINGS.map((h) => h.file))])('%s: textLang знает название игры', (file) => {
-    const calls = [...code(file).matchAll(/textLang\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)].map((m) => m[1])
-    expect(calls.length, `${file}: вызов textLang не найден`).toBeGreaterThan(0)
-    for (const args of calls) expect(args, `${file}: textLang(${args}) без названия игры`).toContain(',')
+  test.each([...new Set(HEADINGS.map((h) => h.file))])('%s: textLangOn знает название игры', (file) => {
+    const calls = [...code(file).matchAll(/textLangOn\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)].map((m) => m[1])
+    expect(calls.length, `${file}: вызов textLangOn не найден`).toBeGreaterThan(0)
+    for (const args of calls) {
+      expect(args.split(',').length, `${file}: textLangOn(${args}) без названия игры`).toBeGreaterThanOrEqual(3)
+    }
   })
 
   test('тело патча идёт через NewsBody, а он ставит lang сам', () => {
-    expect(code('components/NewsBody.tsx')).toMatch(/lang=\{textLang\(blocksToText\(blocks\)\)\}/)
+    expect(code('components/NewsBody.tsx')).toMatch(/lang=\{textLangOn\(locale, blocksToText\(blocks\)\)\}/)
   })
 })

@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { createDb, getCatalogMeta, setNewsDigest, upsertNewsItems, type Db } from './db'
+import { createDb, getCatalogMeta, setNewsDigest, setNewsDigestEn, upsertNewsItems, type Db } from './db'
 import {
   announceFreshPatches,
   INDEXNOW_ENDPOINT,
   INDEXNOW_MARK,
+  INDEXNOW_MARK_EN,
   indexNowEnabled,
   indexNowKey,
   pingIndexNow,
@@ -113,6 +114,49 @@ describe('announceFreshPatches', () => {
     const revalidate = vi.fn()
     await announceFreshPatches(db, { now: NOW + 60, baseUrl: BASE, revalidate, env: PROD, fetchFn })
     expect(await announceFreshPatches(db, { now: NOW + 120, baseUrl: BASE, revalidate, env: PROD, fetchFn })).toBeNull()
+  })
+
+  /*
+   * /en-страница патча индексируется с английским пересказом, а он пишется
+   * своим догоном и в другой день. Английский проход — своя выборка
+   * (tldr_en_at) и своя отметка; русский от него не меняется.
+   */
+  test('английские страницы — своим проходом и своей отметкой, тем же пингом', async () => {
+    const revalidate = vi.fn()
+    const fetchFn = vi.fn(async () => new Response(null, { status: 200 }))
+    await setNewsDigestEn(db, 730, '200', { tldrEn: 'In short.' }, NOW + 30)
+    const res = await announceFreshPatches(db, { now: NOW + 60, baseUrl: BASE, revalidate, env: PROD, fetchFn })
+    expect(res).toEqual({ count: 3, pinged: true, ok: true, status: 200 })
+    const [, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(String(init.body)).urlList).toEqual([
+      `${BASE}/game/730/news/100`,
+      `${BASE}/game/730/news/200`,
+      `${BASE}/en/game/730/news/200`,
+    ])
+    // адрес без языка — revalidateSitePath сбросит обе копии сам, и по разу
+    expect(revalidate.mock.calls.map((c) => c[0])).toEqual(['/game/730/news/100', '/game/730/news/200'])
+    expect(JSON.parse((await getCatalogMeta(db, INDEXNOW_MARK))!).digestedAt).toBe(NOW + 20)
+    expect(JSON.parse((await getCatalogMeta(db, INDEXNOW_MARK_EN))!).digestedAt).toBe(NOW + 30)
+
+    // английский пересказ пришёл позже русского — объявляется только /en
+    await setNewsDigestEn(db, 730, '100', { tldrEn: 'In short.' }, NOW + 200)
+    fetchFn.mockClear()
+    const again = await announceFreshPatches(db, { now: NOW + 300, baseUrl: BASE, revalidate, env: PROD, fetchFn })
+    expect(again?.count).toBe(1)
+    const [, init2] = fetchFn.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(String(init2.body)).urlList).toEqual([`${BASE}/en/game/730/news/100`])
+    // русская отметка стоит, где была
+    expect(JSON.parse((await getCatalogMeta(db, INDEXNOW_MARK))!).digestedAt).toBe(NOW + 20)
+    expect(await announceFreshPatches(db, { now: NOW + 400, baseUrl: BASE, revalidate, env: PROD, fetchFn })).toBeNull()
+  })
+
+  test('отказ IndexNow держит отметки обоих языков', async () => {
+    await setNewsDigestEn(db, 730, '100', { tldrEn: 'In short.' }, NOW + 30)
+    const fetchFn = vi.fn(async () => new Response(null, { status: 429 }))
+    const revalidate = vi.fn()
+    await announceFreshPatches(db, { now: NOW + 60, baseUrl: BASE, revalidate, env: PROD, fetchFn })
+    const again = await announceFreshPatches(db, { now: NOW + 120, baseUrl: BASE, revalidate, env: PROD, fetchFn })
+    expect(again?.count).toBe(3)
   })
 
   test('без ключа или не на проде — страницы перегенерируются, а в сеть не ходим', async () => {

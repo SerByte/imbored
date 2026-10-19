@@ -10,8 +10,11 @@ import {
   roomVoteCounts,
   snapshotOwns,
 } from '@/lib/db'
+import { isDemoId } from '@/lib/demoid'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { logSwallowed } from '@/lib/errlog'
+import { storeUrlFor } from '@/lib/gamedesc'
+import { localeFromRequest } from '@/lib/i18n'
 import { parseMood } from '@/lib/mood'
 import { inviteDoor, type InviteDoor } from '@/lib/roominvite'
 import { PEEK_LIMIT, PEEK_WINDOW_SEC } from '@/lib/roompeek'
@@ -42,6 +45,9 @@ const ROOM_ID_RE = /^[A-Z0-9]{6}$/
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
   if (!ROOM_ID_RE.test(id)) return NextResponse.json({ error: 'badroom' }, { status: 404 })
+  // Язык страницы, которая опрашивает (withLang): ростер, экран приглашения и
+  // срок скидки — подписи для человека. Без ?lang= ответ русский, как был
+  const locale = localeFromRequest(req)
 
   const db = await getDb()
 
@@ -165,7 +171,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       // секретом, а не прежний хеш без него — тот обращался перебором, см.
       // lib/roomkey. Им же хост называет, кого убрать (leave/route.ts)
       id: memberKey(secret, id, m.steamid),
-      name: memberLabel(id, m.steamid, m.personaName),
+      name: memberLabel(id, m.steamid, m.personaName, locale),
       // «(ты)» — у того, за кого сессия действует; не-участнику по чужой
       // ссылке чужая строка своей не становится
       me: isMember && m.steamid === steamid,
@@ -197,13 +203,26 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     const seed = await seedRead
     const host = members.find((m) => m.steamid === room.createdBy)
     const hostFirst = host ? [host, ...members.filter((m) => m !== host)] : members
-    invite = inviteDoor({
-      host: host?.personaName ?? null,
-      names: hostFirst.map((m) => memberLabel(id, m.steamid, m.personaName)),
-      seed: seed
-        ? { appid: seed.appid, name: seed.name, headerImage: seed.headerImage ?? null, art: seed.art ?? null }
-        : null,
-    })
+    // «Already here» на /en — имена неразрывно: «Demo player and Demo friend»
+    // на 360 рвался посреди имени («… and Demo» / «friend»), а русская
+    // строка с теми же двумя демо в ширину влезает. Неразрывный пробел внутри
+    // метки переносит строку между именами; длина метки та же, и обрезка
+    // inviteDoor прежняя. Ростер (memberViews) — с обычными пробелами, ru —
+    // до байта как был
+    const doorName = (label: string) => (locale === 'en' ? label.replace(/ /g, '\u00a0') : label)
+    // Демо-хост — признаком, не steamid: на /en его русская подпись
+    // становится «Demo player», тем же словом, что в «Уже здесь» (memberLabel)
+    invite = inviteDoor(
+      {
+        host: host?.personaName ?? null,
+        hostDemo: host ? isDemoId(host.steamid) : false,
+        names: hostFirst.map((m) => doorName(memberLabel(id, m.steamid, m.personaName, locale))),
+        seed: seed
+          ? { appid: seed.appid, name: seed.name, headerImage: seed.headerImage ?? null, art: seed.art ?? null }
+          : null,
+      },
+      locale,
+    )
   }
 
   return NextResponse.json({
@@ -232,7 +251,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           headerImage: matchedMeta.headerImage ?? null,
           art: matchedMeta.art ?? null,
           store: matchedMeta.store ?? null,
-          storeUrl: matchedMeta.storeUrl ?? null,
+          // Страница магазина — на языке смотрящего: у пула других магазинов
+          // (appid < 0) в базе русская страница, английская — в наложении
+          // (storeUrlFor, lib/gamedesc). На ru — та же meta.storeUrl
+          storeUrl: storeUrlFor(matchedMeta, locale),
           ownedByMe,
           forCount,
           // Кому из остальных её не хватает — метками ростера и колоды
@@ -251,7 +273,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           // и у бесплатной: взять её в магазине региона нельзя всё равно, а
           // рядом с isFree ответ выбирает PriceTag — «не продаётся» первым
           unsold: matchedMeta.storeHidden === true,
-          discount: matchedMeta.isFree ? null : discountView(matchedMeta, now),
+          discount: matchedMeta.isFree ? null : discountView(matchedMeta, now, { locale }),
         }
       : null,
     now,

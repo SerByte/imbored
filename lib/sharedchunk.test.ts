@@ -23,7 +23,12 @@ import { code, reach, rel, ROOT } from './testing/importgraph'
  *  - квиз (lib/quiz, его тексты STEPS — 1.2 КБ кириллицы) — его тянула
  *    подпись прошлого настроения, которая нужна одной главной, через
  *    «Подобрать» в шапке (components/PickLink → lib/lastmood). Подпись теперь
- *    в lib/lastmoodcaption.
+ *    в lib/lastmoodcaption;
+ *  - пресеты (lib/presets, таблицы с подписями на двух языках) — тем же
+ *    путём: lib/lastmood нужен был один playHref. Адреса и разбор параметров
+ *    теперь в lib/playhref, без таблиц: −3.0 КБ на 19 маршрутах, где своих
+ *    пресетов нет (/daily, /explore, /whatsnew, /rooms, /compat*,
+ *    /portrait*, /games*, /privacy, 404…).
  *
  * Замер сборкой (Next 16.3.8, Turbopack, npm run budget) после всех четырёх:
  * общий фундамент 496.9 → 482.9 КБ (−5.1 КБ gzip) — это /privacy, /support,
@@ -42,14 +47,21 @@ import { code, reach, rel, ROOT } from './testing/importgraph'
  * корневые границы ошибок с шаблоном (app/error.tsx, app/global-error.tsx,
  * app/template.tsx — SHELL ниже). Увезённое вернулось бы через них так же
  * молча, поэтому сторож обходит всех четверых.
+ *
+ * app/global-error.tsx — ещё и отдельная группа чанков: общий с лэйаутом
+ * модуль не делится с ним, а едет второй копией. Так lib/i18n с lib/plural
+ * (1.8 КБ) ехал на каждый маршрут дважды — единственный дубль во всей
+ * сборке, — пока аварийный экран брал из него splitLocale, tr и lp. Теперь
+ * язык адреса — lib/pathlocale без зависимостей, и сторож ниже держит
+ * lib/i18n вне графа аварийного экрана: −1.8 КБ на всех 26 маршрутах.
  */
 
-const LAYOUT = path.join(ROOT, 'app', 'layout.tsx')
+const LAYOUT = path.join(ROOT, 'app', '[lang]', 'layout.tsx')
 const files = (entry: string) => [...reach(path.join(ROOT, entry)).files].map(rel)
 const read = (file: string) => code(fs.readFileSync(path.join(ROOT, file), 'utf8'))
 
 /** Всё, что едет в первую загрузку каждого маршрута: лэйаут, корневые границы ошибок и шаблон */
-const SHELL = ['app/layout.tsx', 'app/error.tsx', 'app/global-error.tsx', 'app/template.tsx']
+const SHELL = ['app/[lang]/layout.tsx', 'app/[lang]/error.tsx', 'app/global-error.tsx', 'app/[lang]/template.tsx']
 
 /**
  * Пакеты, которым место в чанке закулисья, а не в первой загрузке. Пакетом
@@ -76,6 +88,8 @@ const LEFT = [
   // подпись прошлого настроения
   'lib/lastmoodcaption.ts',
   'lib/quiz.ts',
+  // таблицы пресетов: шапке нужен только playHref (lib/playhref)
+  'lib/presets.ts',
 ]
 
 describe('общий фундамент: лэйаут не везёт того, что не нужно первому кадру', () => {
@@ -96,7 +110,7 @@ describe('общий фундамент: лэйаут не везёт того, 
     expect(back, 'аналитика снова в первой загрузке каждой страницы — ставь её в components/Backstage.tsx').toEqual([])
   })
 
-  test('продление входа, тело записки и квиз — тоже', () => {
+  test('продление входа, тело записки, квиз и пресеты — тоже', () => {
     expect(
       [...shellFiles].filter((f) => LEFT.includes(f)),
       'модуль въехал в общий фундамент — догружай его через import(), как components/BackstageLazy.tsx и components/ReadOnlyNote.tsx',
@@ -139,14 +153,30 @@ describe('общий фундамент: лэйаут не везёт того, 
     )
 
     expect(files('components/landing/ConnectCard.tsx')).toEqual(
-      expect.arrayContaining(['lib/lastmoodcaption.ts', 'lib/quiz.ts']),
+      expect.arrayContaining(['lib/lastmoodcaption.ts', 'lib/quiz.ts', 'lib/presets.ts']),
     )
+
+    expect(files('lib/lastmood.ts')).toContain('lib/playhref.ts')
+    expect(files('lib/destination.ts')).toContain('lib/playhref.ts')
+    expect(files('app/global-error.tsx')).toContain('lib/pathlocale.ts')
+  })
+
+  /*
+   * Аварийный экран — своя группа чанков первой загрузки, и общий с лэйаутом
+   * модуль едет в неё второй копией (см. докблок выше). lib/i18n в его графе —
+   * это 1.8 КБ дубля на каждом маршруте. Тип из lib/i18n брать можно: import
+   * type в сборку не попадает, и обход его пропускает.
+   */
+  test('аварийный экран не везёт вторую копию lib/i18n', () => {
+    const shown = files('app/global-error.tsx')
+    expect(shown, 'язык адреса — pathLocale из lib/pathlocale, строки — парой без tr()').not.toContain('lib/i18n.ts')
+    expect(shown).not.toContain('lib/plural.ts')
   })
 
   test('увезённое догружается import() из оболочек, которые стоят в лэйауте', () => {
     expect(read('components/BackstageLazy.tsx')).toMatch(/import\(\s*'\.\/Backstage'\s*\)/)
     expect(read('components/ReadOnlyNote.tsx')).toMatch(/import\(\s*'\.\/ReadOnlyNoteBox'\s*\)/)
-    const markup = read('app/layout.tsx')
+    const markup = read('app/[lang]/layout.tsx')
     expect(markup).toContain('<Backstage />')
     expect(markup).toContain('<ReadOnlyNote />')
   })
@@ -168,5 +198,24 @@ describe('общий фундамент: лэйаут не везёт того, 
     const pick = files('components/PickLink.tsx')
     expect(pick).toContain('lib/lastmood.ts')
     expect(pick, 'тексты квиза снова в шапке каждой страницы').not.toContain('lib/quiz.ts')
+    expect(pick, 'таблицы пресетов снова в шапке каждой страницы — playHref бери из lib/playhref').not.toContain(
+      'lib/presets.ts',
+    )
+  })
+
+  /*
+   * Не фундамент, но тот же довод: «Отправить другу» у героя /play и /daily
+   * нужен один адрес выбора. lib/sharedpick и lib/comeback при загрузке
+   * модуля собирают регулярки (new RegExp(String.raw…), Object.values
+   * PATCH_SINCE_LEADS), и сборщик их не выбросит — импорт оттуда вёз бы их в
+   * первую загрузку обеих страниц. PickKind — тоже из lib/pickurl (или
+   * `import type`): тип рядом с импортом значения (`{ x, type PickKind }`)
+   * модуль из сборки не убирает, и обход считает такой импорт настоящим.
+   */
+  test('«Отправить другу» берёт адрес выбора без регулярок lib/sharedpick', () => {
+    const share = files('components/SharePick.tsx')
+    expect(share).toContain('lib/pickurl.ts')
+    expect(share).not.toContain('lib/sharedpick.ts')
+    expect(share).not.toContain('lib/comeback.ts')
   })
 })

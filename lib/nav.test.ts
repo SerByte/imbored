@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { isNavActive } from './nav'
+import { isNavActive, navPrefetch } from './nav'
 
 describe('isNavActive', () => {
   test('точное совпадение и вложенные пути', () => {
@@ -25,5 +25,26 @@ describe('isNavActive', () => {
     expect(isNavActive('/play', '/quiz', ['/play'])).toBe(true)
     expect(isNavActive('/room/ABC123', '/rooms', ['/room'])).toBe(true)
     expect(isNavActive('/library', '/quiz', ['/play'])).toBe(false)
+  })
+
+  test('язык в адресе не в счёт: /en/… и внутренний /ru/… — тот же раздел', () => {
+    expect(isNavActive('/en/whatsnew', '/whatsnew')).toBe(true)
+    expect(isNavActive('/en/play', '/quiz', ['/play'])).toBe(true)
+    expect(isNavActive('/en/room/ABC123', '/rooms', ['/room'])).toBe(true)
+    expect(isNavActive('/ru/daily', '/daily')).toBe(true)
+    // главная — точно и на английском
+    expect(isNavActive('/en', '/')).toBe(true)
+    expect(isNavActive('/en/', '/')).toBe(true)
+    expect(isNavActive('/en/quiz', '/')).toBe(false)
+    expect(isNavActive('/enx', '/')).toBe(false)
+  })
+})
+
+describe('navPrefetch на английском', () => {
+  test('динамический раздел — без префетча и под /en', () => {
+    expect(navPrefetch('/en/library')).toBe(false)
+    expect(navPrefetch('/en/compat/76561198000000000')).toBe(false)
+    expect(navPrefetch('/en/daily')).toBeUndefined()
+    expect(navPrefetch('/en')).toBeUndefined()
   })
 })

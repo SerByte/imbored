@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { revalidatePath } from 'next/cache'
 import { after, NextResponse } from 'next/server'
 import { refreshCatalogSignals, refreshReviewPulse, type PulseResult, type SignalsResult } from '@/lib/catalogsignals'
 import { openRun, runChain } from '@/lib/chain'
@@ -18,6 +17,7 @@ import {
   type CatchUpResult,
   type PageSliceResult,
 } from '@/lib/pagejob'
+import { revalidateSitePath } from '@/lib/revalidate'
 import { getDb, nowSec } from '@/lib/server'
 
 export const dynamic = 'force-dynamic'
@@ -138,11 +138,11 @@ export async function GET(req: Request) {
           // из очереди догона их строки уже ушли, и упади срез — следующее
           // звено их не вернуло бы. Срезу остаются те, что догон не сбросил
           const сброшеныДогоном = new Set(догон?.cards ?? [])
-          const сброшеноДогоном = revalidateGamePages(сброшеныДогоном, revalidatePath)
+          const сброшеноДогоном = revalidateGamePages(сброшеныДогоном, revalidateSitePath)
           const срез = await runPageSlice(db, { deadlineAt })
           const slice = resetSliceCards(
             { ...срез, cards: срез.cards.filter((appid) => !сброшеныДогоном.has(appid)) },
-            revalidatePath,
+            revalidateSitePath,
           )
           const [сигналы, пульс] = await Promise.all([сверка, пульсЗвена])
           return {
@@ -170,7 +170,7 @@ export async function GET(req: Request) {
        * достанется следующему запуску. Исключение глотает runChain.
        */
       onEnd: async () => {
-        await revalidateEndedDeals(db, revalidatePath, nowSec())
+        await revalidateEndedDeals(db, revalidateSitePath, nowSec())
       },
     }),
   )

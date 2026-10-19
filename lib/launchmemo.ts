@@ -1,5 +1,5 @@
+import { pl, tr, type Locale } from './i18n'
 import { createLocalStore } from './localstore'
-import { plural } from './plural'
 import type { Mood } from './types'
 
 /**
@@ -122,8 +122,17 @@ export const STOP_MINUTES: Record<Mood['time'], number> = { short: 15, medium: 2
 /**
  * Строка под кнопками. Разрешение, а не таймер: «возвращайся», а не «у тебя
  * осталось», — счётчик на экране превратил бы отдых в задачу на время.
+ * По-английски — вопросом и приглашением (глоссарий): то же разрешение уйти.
+ * И не шире русской: строка стоит под кнопками героя одной строкой, и на
+ * 360 px «…Come back and we'll find another.» (333 px шрифтом строки)
+ * переносилась там, где русская (312 px) помещалась; «Come back for
+ * another.» — 277.
  */
-export function stopRuleLine(time: Mood['time']): string {
+export function stopRuleLine(time: Mood['time'], locale: Locale = 'ru'): string {
   const m = STOP_MINUTES[time] ?? STOP_MINUTES.medium
-  return `Не зацепит за ${m} ${plural(m, 'минуту', 'минуты', 'минут')} — возвращайся, дадим другую.`
+  const minutes = pl(locale, m, { ru: ['минуту', 'минуты', 'минут'], en: ['minute', 'minutes'] })
+  return tr(locale, {
+    ru: `Не зацепит за ${m} ${minutes} — возвращайся, дадим другую.`,
+    en: `Not hooked in ${m} ${minutes}? Come back for another.`,
+  })
 }

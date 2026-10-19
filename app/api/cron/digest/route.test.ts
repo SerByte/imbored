@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { routePaths } from '@/lib/i18n'
 import { CRON_JOBS, sliceHealth } from '@/lib/cron'
 import { acquireLease, DIGEST_LEASE, getCatalogMeta, type Db } from '@/lib/db'
 import { takeLlmBudget } from '@/lib/llmcap'
@@ -94,8 +95,11 @@ describe('/api/cron/digest', () => {
     expect((await ask()).status).toBe(202)
     await settled()
     // и архивы обновлений тех же игр: пересказ там — главное в строке.
-    // «сброшено» ниже — по-прежнему число игр, а не адресов
-    expect(revalidated.sort()).toEqual(['/game/570', '/game/570/news', '/game/730', '/game/730/news'])
+    // «сброшено» ниже — по-прежнему число игр, а не адресов. Каждый адрес —
+    // в обеих языковых копиях маршрута (revalidateSitePath)
+    expect(revalidated.sort()).toEqual(
+      ['/game/570', '/game/570/news', '/game/730', '/game/730/news'].flatMap(routePaths).sort(),
+    )
     const mark = await lastMark()
     expect(mark).not.toHaveProperty('cards')
     expect(mark).toMatchObject({ digested: 2, сброшено: 2, итого: { digested: 2, сброшено: 2 } })

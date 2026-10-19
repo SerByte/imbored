@@ -1,0 +1,721 @@
+'use client'
+
+import { AnimatePresence, m } from 'framer-motion'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Ambient } from '@/components/Ambient'
+import { ClickSpark } from '@/components/ClickSpark'
+import { Icon, type IconName } from '@/components/Icon'
+import { Eyebrow } from '@/components/Labels'
+import { useLocale } from '@/components/LocaleProvider'
+import { MuteTags } from '@/components/MuteTags'
+import { PosterFan, type FanGame } from '@/components/PosterFan'
+import { SoundToggle } from '@/components/SoundToggle'
+import { SpotlightCard } from '@/components/SpotlightCard'
+import { useSearch } from '@/components/useSearch'
+import { freshLastMood, lastMoodStore } from '@/lib/lastmood'
+import { bounceTo } from '@/lib/destination'
+import { tr } from '@/lib/i18n'
+import { CONFIRM_MS, DUR, EASE, EASE_IN, OUTRO } from '@/lib/motion'
+import { NEUTRAL_MOOD, type Lean } from '@/lib/mood'
+import { hasFreshWarm, warmMarkStore } from '@/lib/warmmark'
+import { timeHiddenStore } from '@/lib/playtime'
+import { hubTagOf, hubTitle } from '@/lib/gamehub'
+import { parseGenreParam, parseSeedParam, playHref, presetLabel, VIBE_PRESETS } from '@/lib/presets'
+import { stepsFor } from '@/lib/quiz'
+import { isSoundOn } from '@/lib/quizsound'
+import type { Focus } from '@/lib/recommend'
+import { getSessionHint, knownGuest, subscribeSessionHint } from '@/lib/sessionhint'
+import type { Mood } from '@/lib/types'
+import { track } from '@/lib/track'
+import { forgetPrewarm, hintChanged, prewarmWanted, startPrewarm } from '@/lib/warmup'
+import { writerStore } from '@/lib/writer'
+
+/**
+ * Направление задаёт «Назад»: шаг возвращается оттуда, куда ушёл.
+ *
+ * Кривые взяты из lib/motion.ts, а не выписаны на месте: голая строка 'easeIn'
+ * была единственной кривой приложения без токена, и докблок --ease-in прямо
+ * говорит, что она существует ей на замену.
+ *
+ * staggerChildren — вся разница между «блок приехал» и «ответы разложили».
+ * beforeChildren: заголовок встаёт на место раньше, чем начнут появляться
+ * карточки, иначе они обгоняют вопрос, на который отвечают.
+ */
+const STEP_VARIANTS = {
+  enter: (back: boolean) => ({ opacity: 0, x: back ? -24 : 24 }),
+  center: {
+    opacity: 1,
+    x: 0,
+    transition: {
+      duration: DUR.base,
+      ease: EASE,
+      when: 'beforeChildren' as const,
+      staggerChildren: 0.06,
+    },
+  },
+  exit: (back: boolean) => ({
+    opacity: 0,
+    x: back ? 24 : -24,
+    transition: { duration: DUR.fast, ease: EASE_IN },
+  }),
+}
+
+/*
+ * АРТ ОТВЕТОВ. Плитка «Весь вечер» с веером из «Ведьмака», «Балдура» и
+ * «Элдена» объясняет ответ быстрее подписи: это не картинка к слову, а
+ * примеры того, что с этим ответом приедет. Игры известные и узнаваемые по
+ * постеру; в выдачу они не попадают сами по себе — выдачу собирает движок из
+ * библиотеки человека, здесь только иллюстрация.
+ *
+ * Постеры — legacy library_600x900 из CDN Steam, как у полки разделов на
+ * главной (PosterFan): тот же файл уже мог лежать в кэше.
+ */
+const ANSWER_ART: Record<string, readonly FanGame[]> = {
+  short: [
+    { appid: 1794680, name: 'Vampire Survivors' },
+    { appid: 2379780, name: 'Balatro' },
+    { appid: 646570, name: 'Slay the Spire' },
+  ],
+  medium: [
+    { appid: 1145360, name: 'Hades' },
+    { appid: 588650, name: 'Dead Cells' },
+  ],
+  long: [
+    { appid: 292030, name: 'The Witcher 3' },
+    { appid: 1086940, name: "Baldur's Gate 3" },
+    { appid: 1245620, name: 'Elden Ring' },
+  ],
+  chill: [
+    { appid: 413150, name: 'Stardew Valley' },
+    { appid: 105600, name: 'Terraria' },
+  ],
+  engaged: [
+    { appid: 367520, name: 'Hollow Knight' },
+    { appid: 504230, name: 'Celeste' },
+  ],
+  solo: [
+    { appid: 753640, name: 'Outer Wilds' },
+    { appid: 632470, name: 'Disco Elysium' },
+  ],
+  friends: [
+    { appid: 548430, name: 'Deep Rock Galactic' },
+    { appid: 892970, name: 'Valheim' },
+  ],
+}
+
+/*
+ * Иконки ярлыков вместо эмодзи. Эмодзи рисует шрифт системы — цветные, разного
+ * веса и на каждой платформе свои; рядом с монохромной «Премьерой» они
+ * читались наклейками. Сами эмодзи остаются в данных (lib/presets.ts): их
+ * по-прежнему показывает выбор настроения комнаты.
+ */
+const PRESET_ICON: Record<string, IconName> = {
+  'after-work': 'home',
+  sleep: 'moon',
+  friday: 'users',
+  weekend: 'calendar',
+  quick: 'bolt',
+}
+
+/** Заголовок и карточки приходят по одной — шаг раскладывается, а не падает. */
+const ITEM_VARIANTS = {
+  enter: { opacity: 0, y: 14 },
+  center: { opacity: 1, y: 0, transition: { duration: DUR.base, ease: EASE } },
+  exit: { opacity: 0, transition: { duration: DUR.fast, ease: EASE_IN } },
+}
+
+/*
+ * Вопросы приезжают из lib/quiz.ts, а не лежат здесь копией.
+ *
+ * Копия была, и слово в слово совпадала с оригиналом — ровно до первой правки
+ * одного из двух мест. Разойтись они могли молча: тип у местной версии был
+ * шире (key: string, value: string), поэтому переименованный ответ не сломал бы
+ * ни сборку, ни тест, а просто перестал бы совпадать с тем, что читает разбор
+ * настроения. Канон один, и он же кортеж из трёх — по его длине рисуется
+ * рельса точек внизу экрана.
+ */
+
+/** Снимок сервера: гостя там не знают, как и подсказку о входе */
+const notGuest = () => false
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+function Quiz() {
+  const locale = useLocale()
+  const router = useLocaleRouter()
+  const search = useSearch()
+  const [stepIndex, setStepIndex] = useState(0)
+  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [back, setBack] = useState(false)
+  /** Ответ, который сейчас подтверждается; в финале он же победитель. */
+  const [chosen, setChosen] = useState<string | null>(null)
+  /**
+   * Перенос фокуса между шагами.
+   *
+   * AnimatePresence mode="wait" размонтирует кнопку, в которой был фокус, и
+   * он падает в body: клавиатурного человека молча выкидывает в начало
+   * документа посреди анкеты. Задача та же, что решена в
+   * components/room/RoomWaiting при уходе колоды.
+   *
+   * Но эффектом на stepIndex это не чинится, и проверено, что не чинится:
+   * mode="wait" монтирует новый шаг ТОЛЬКО после того, как доиграет уход
+   * старого, а эффект срабатывает сразу — узла ещё нет, фокусировать нечего.
+   * Поэтому фокус забирает ref-колбэк, то есть сам момент появления узла, а
+   * флаг отличает смену шага от первого захода: воровать фокус у человека,
+   * который только открыл страницу, не за чем.
+   */
+  const wantStepFocus = useRef(false)
+  const stepHeadRef = useCallback((el: HTMLHeadingElement | null) => {
+    if (!el || !wantStepFocus.current) return
+    wantStepFocus.current = false
+    el.focus()
+  }, [])
+  const [outro, setOutro] = useState(false)
+
+  // Шаги на языке страницы: оси, ключи и порядок общие (lib/quiz), разные только слова
+  const steps = stepsFor(locale)
+  const step = steps[stepIndex]
+  const last = stepIndex === steps.length - 1
+  // Приходит с /library («Выбрать одну →») и живёт до самого /play. Не настроение,
+  // а отдельная ось — как roulette у «Мне повезёт».
+  //
+  // Читается через useSearch, а не useSearchParams: второй ронял весь
+  // маршрут в клиентский рендер, и /quiz отдавал пустую разметку — шапку и
+  // подвал. Подпись над пресетами меняется кадром позже, а в адрес выдачи
+  // фокус попадает только по нажатию, то есть заведомо после гидратации.
+  const focus: Focus | null = useMemo(
+    () => (new URLSearchParams(search).get('from') === 'untouched' ? 'untouched' : null),
+    [search],
+  )
+  /*
+   * «Как «X», но…» извне выдачи: со страницы игры, из «Твоих вечеров» и с
+   * экрана отказа /play приходят с ?seed=<appid> (quizHref). Квиз спрашивает
+   * настроение как обычно и несёт затравку в адрес выдачи — соседи X под
+   * сказанное. Тот же отложенный разбор, что у фокуса: в адрес она попадает
+   * только по нажатию. С фокусом не едет — у «нераспакованного» вопрос уже
+   * задан (quizHref).
+   */
+  const seed = useMemo(
+    () => (focus ? null : parseSeedParam(new URLSearchParams(search).get('seed'))),
+    [search, focus],
+  )
+  /*
+   * Жанр со страницы /games/<slug> («Подобрать рогалики из своей библиотеки»,
+   * quizHref): квиз спрашивает настроение и несёт жанр в адрес выдачи. Здесь,
+   * в отличие от /play, — по словарю жанров (hubTagOf): подпись над рядом
+   * называет жанр по имени, и чужой адрес не должен стать подписью. С фокусом
+   * и затравкой не едет — их вопрос уже задан (quizHref). Имя — на языке
+   * страницы (hubTitle), как заголовок страницы жанра, откуда пришли.
+   */
+  const genre = useMemo(() => {
+    if (focus || seed) return null
+    const slug = parseGenreParam(new URLSearchParams(search).get('genre'))
+    const tag = slug ? hubTagOf(slug) : null
+    return slug && tag ? { slug, title: hubTitle(tag, locale) } : null
+  }, [search, focus, seed, locale])
+  // Скрыто ли время в Steam — с прошлой выдачи на этом устройстве (lib/playtime)
+  const timeHidden =
+    useSyncExternalStore(timeHiddenStore.subscribe, timeHiddenStore.get, timeHiddenStore.server) === true
+  // Гость наверняка (lib/sessionhint) — строка о последнем шаге внизу экрана
+  const guest = useSyncExternalStore(subscribeSessionHint, knownGuest, notGuest)
+
+  /** Заведён ли аудиоконтекст. Общий на оба пути — иначе снос пропускает тот,
+   *  что подняли не тем путём, и контекст переживает уход на выдачу. */
+  const audioLive = useRef(false)
+
+  const voice = useCallback((v: 'select' | 'outro') => {
+    if (!isSoundOn()) return
+    audioLive.current = true
+    /*
+     * armAudio перед каждым голосом, хотя есть и общий прогрев ниже.
+     * Он идемпотентен, а порядок событий — нет: слушатель окна ловит click в
+     * фазе всплытия, то есть ПОСЛЕ обработчика React. Нажатие по ответу
+     * успевало позвать play раньше, чем появлялся контекст, и первый ответ
+     * уходил молча. Здесь мы внутри жеста, поэтому контекст заводится сразу
+     * в состоянии running.
+     */
+    void import('@/lib/quizaudio')
+      .then((audio) => {
+        audio.armAudio()
+        audio.play(v)
+      })
+      .catch(() => {})
+  }, [])
+
+  /*
+   * Контекст звука заводится на ПЕРВОМ жесте и только если звук уже разрешён:
+   * политика автозапуска не даёт создать AudioContext иначе. Слушаем и click —
+   * он приходит уже ПОСЛЕ обработчика тумблера, поэтому включение звука заводит
+   * контекст тем же нажатием, а не следующим.
+   *
+   * Здесь же снос: контекст переживает уход со страницы, а квиз уезжает на
+   * /play сразу после финального такта.
+   */
+  useEffect(() => {
+    const arm = () => {
+      if (audioLive.current || !isSoundOn()) return
+      audioLive.current = true
+      void import('@/lib/quizaudio')
+        .then((audio) => audio.armAudio())
+        .catch(() => {})
+    }
+    window.addEventListener('pointerdown', arm)
+    window.addEventListener('click', arm)
+    window.addEventListener('keydown', arm)
+    return () => {
+      window.removeEventListener('pointerdown', arm)
+      window.removeEventListener('click', arm)
+      window.removeEventListener('keydown', arm)
+      if (audioLive.current) void import('@/lib/quizaudio').then((audio) => audio.disposeAudio())
+    }
+  }, [])
+
+  /*
+   * Прогрев каталога — пока человек отвечает (startPrewarm в lib/warmup).
+   *
+   * Первый вызов /api/prepare разбирает пачку в двести игр, до десяти секунд.
+   * Раньше эти секунды человек проводил на экране ожидания /play, уже
+   * ответив на всё; теперь они идут под вопросами, а /play забирает готовый
+   * ответ своим первым кругом.
+   *
+   * Кому греть — решает prewarmWanted: гостю и демо не греем. Слушаем обе
+   * догадки о входе, а не читаем их один раз: после возврата из Steam вход
+   * подтверждает только ответ touch, и он приходит уже после монтирования.
+   * Повторы безвредны — второй вызов, пока первый свежий, не уходит.
+   *
+   * Свежая метка прогрева (lib/warmmark) — повод не греть вовсе: /play её
+   * увидит и цикл пропустит, ответ квиза забрать будет некому.
+   *
+   * Подсказка сменилась — в соседней вкладке вышли или вошли другим
+   * профилем (hintChanged): ответ, начатый при прежнем входе, забываем, и
+   * круг начинается заново уже под новым.
+   */
+  useEffect(() => {
+    const warm = () => {
+      if (!prewarmWanted(getSessionHint(), writerStore.get())) return
+      if (hasFreshWarm(warmMarkStore.get(), Date.now())) return
+      startPrewarm()
+    }
+    let seen = getSessionHint()
+    const onHint = () => {
+      const next = getSessionHint()
+      if (hintChanged(seen, next)) forgetPrewarm()
+      seen = next
+      warm()
+    }
+    warm()
+    const offWriter = writerStore.subscribe(warm)
+    const offHint = subscribeSessionHint(onHint)
+    return () => {
+      offWriter()
+      offHint()
+    }
+  }, [])
+
+  /*
+   * Адрес собирает playHref (lib/presets.ts), а не строка здесь: копий было
+   * три, и ось lean добавилась бы в одну из них.
+   *
+   * Гостя — сразу на лендинг, тем же адресом, каким развернул бы /play
+   * (bounceTo везёт настроение, ось и затравку через вход). Раньше последний
+   * ответ вёл его на /play: экран прогрева, круг до сервера, 401 — и лендинг
+   * с общим обещанием, как будто ответов не было. Теперь лендинг повторяет
+   * их и называет один оставшийся шаг (destinationPromise). Гость — только
+   * наверняка, со слов сервера (knownGuest); «не знаем» идёт через /play,
+   * как раньше: вошедший, принятый за гостя, потерял бы выдачу. push, а не
+   * replace: запись квиза живая, и «Назад» с лендинга возвращает к ответам.
+   */
+  const go = useCallback(
+    (mood: Mood, opts: { roulette?: boolean; focus?: Focus; lean?: Lean } = {}) => {
+      // Любой уход на выдачу — финал квиза, пресет или рулетка
+      track('quiz_done')
+      const href = playHref(mood, {
+        roulette: opts.roulette,
+        focus: opts.focus ?? focus,
+        lean: opts.lean,
+        seed,
+        genre: genre?.slug,
+      })
+      router.push(knownGuest() ? bounceTo(href) : href)
+    },
+    [focus, seed, genre, router],
+  )
+
+  function pick(value: string) {
+    // Второе нажатие во время такта игнорируем: иначе два таймера начинают
+    // спорить, и человек уезжает на выдачу с чужим ответом.
+    if (chosen) return
+    const next = { ...answers, [step.key]: value }
+    setChosen(value)
+
+    if (!last) {
+      voice('select')
+      /*
+       * Такт подтверждения. Раньше шаг менялся в тот же кадр, и нажатие ничем
+       * не подтверждалось — карточка просто исчезала. CONFIRM_MS равен
+       * --dur-fast, ровно столько же длится уход шага.
+       */
+      window.setTimeout(() => {
+        setAnswers(next)
+        setBack(false)
+        setChosen(null)
+        wantStepFocus.current = true
+        setStepIndex((i) => i + 1)
+      }, CONFIRM_MS)
+      return
+    }
+
+    voice('outro')
+    setAnswers(next)
+    setOutro(true)
+    const delay = prefersReducedMotion() ? OUTRO.reducedNavMs : OUTRO.navMs
+    window.setTimeout(() => go(next as unknown as Mood), delay)
+  }
+
+  /** Нажатие подтверждается всегда; расходятся ответы только в финале. */
+  const cardState = (value: string) => {
+    if (!outro) return chosen === value ? 'press' : 'idle'
+    return chosen === value ? 'won' : 'lost'
+  }
+
+  const grid = (
+    <div
+      className={`grid w-full gap-4 ${step.options.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}
+    >
+      {step.options.map((o) => (
+        <m.div key={o.value} variants={ITEM_VARIANTS} className="h-full">
+          {/* Состояние живёт на CSS, а не в motion: transform обёртки уже занят
+              вариантами входа, и два источника одного свойства дрались бы за
+              него на каждом кадре. */}
+          <div data-answer={cardState(o.value)} className="quiz-answer h-full">
+            <SpotlightCard
+              onClick={() => pick(o.value)}
+              className="panel-lift quiz-tile fan-host h-full w-full px-6 py-6 text-left"
+              backdrop={
+                <>
+                  <PosterFan games={ANSWER_ART[o.value] ?? []} />
+                  <span aria-hidden className="quiz-scrim" />
+                </>
+              }
+            >
+              <span className="block text-[1.375rem] leading-tight font-extrabold tracking-[-0.025em]">
+                {o.label}
+              </span>
+              <span className="block text-sm text-dim mt-1.5">{o.hint}</span>
+            </SpotlightCard>
+          </div>
+        </m.div>
+      ))}
+    </div>
+  )
+
+  return (
+    <div className="relative flex-1 flex flex-col items-center justify-center px-5 py-24 overflow-hidden">
+      {/* Фон делает один выдох и встаёт: дыхание по кругу — знак ожидания
+          (прогрев, колесо), а квиз читают и отвечают. См. .anim-exhale */}
+      <Ambient className="anim-exhale" />
+
+      {/* Тумблер вне центральной колонки: композиция экрана не меняется, а
+          звук всё равно нужно чем-то включать. */}
+      {/* По колонке шапки (max-w-6xl px-safe), а не по краю окна: на 1440
+          тумблер стоял в 20px от края экрана, на 144px правее кнопки темы */}
+      <div className="pointer-events-none absolute inset-x-0 top-20 md:top-24">
+        <div className="mx-auto flex max-w-6xl justify-end px-safe">
+          <div className="pointer-events-auto">
+            <SoundToggle />
+          </div>
+        </div>
+      </div>
+
+      <div className="relative w-full max-w-3xl flex flex-col items-center gap-10">
+        {stepIndex === 0 && (
+          <div className="w-full flex flex-col items-center gap-3 anim-rise">
+            {/* С жанром — «сначала свои», а не «из твоей библиотеки»: до двух
+                мест пятёрки магазинные и при своих, а своих нет — все пять
+                (genreLine в lib/playflow). Квиз, обещавший «рогалики из твоей
+                библиотеки», спорил бы со следующим экраном — «своих таких не
+                нашлось — эти из магазина» */}
+            <span className="text-xs text-faint">
+              {/* «Similar to», а не «Like»: в начале строки like читается
+                  глаголом, как сердце «Liked it»; глоссарий — Similar to “X” */}
+              {focus
+                ? tr(locale, { ru: 'Только нераспакованное — одним тапом:', en: 'Unopened only, in one tap:' })
+                : seed
+                  ? tr(locale, { ru: 'Похожее на выбранную игру — одним тапом:', en: 'Similar to the game you picked, in one tap:' })
+                  : genre
+                    ? tr(locale, {
+                        ru: `${genre.title} — сначала свои, одним тапом:`,
+                        en: `${genre.title} — yours first, in one tap:`,
+                      })
+                    : tr(locale, { ru: 'Одним тапом:', en: 'In one tap:' })}
+            </span>
+            {/*
+              На телефоне пилюли едут одной лентой, а не переносятся.
+
+              Замер на 375×812: семь пилюль вставали в ШЕСТЬ рядов, из них
+              пять — по одной штуке, потому что «🕳️ Залипнуть на выходные»
+              шире половины экрана. Облако занимало 262px, то есть треть
+              экрана, и уводило вопрос «Сколько у тебя времени?» на y=478, а
+              первую карточку ответа — на y=590. До того, ради чего страница
+              существует, нужно было доскроллить.
+
+              chip-rail уже лежал в globals.css и не использовался никем: он
+              пережил откат кино-квиза, вместе с которым ушло 1409 строк
+              соседних стилей. Написан он ровно под этот случай — правый фейд
+              вместо стрелок, спрятанный скроллбар в обоих движках и снятый
+              backdrop-filter у стеклянных чипов, без которого Chromium не
+              рисует их внутри маски ВООБЩЕ.
+
+              justify-start, а не center: в ленте с переполнением центрирование
+              прячет первый элемент за левым краем без возможности доскроллить.
+              На десктопе оба возвращаются — там перенос строками и уместен,
+              и маска сама гаснет на 768px.
+
+              py-1, а не только снизу: лента прокручивается, а прокручиваемый
+              контейнер режет всё, что выходит за его край, — в том числе
+              кольцо фокуса (4px наружу) и подъём glass-hover сверху.
+            */}
+            <div className="chip-rail self-stretch flex flex-nowrap md:flex-wrap justify-start md:justify-center gap-2 -mx-5 px-5 md:mx-0 md:px-0 py-1">
+              {VIBE_PRESETS.map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => go(p.mood, { lean: p.lean })}
+                  /* py-3, а не py-2: замерено на 375 px — пилюля выходила 38 px
+                     при стандарте продукта в 44 (докблок .tap). Утилитой .tap
+                     это не чинится: её зона вылезает на 6 px вбок, а пилюли
+                     стоят с зазором 8, и соседи начали бы воровать нажатия —
+                     ровно тот дефект, что уже описан у .chip. Растёт сама
+                     кнопка, зазор остаётся настоящим. */
+                  className="pill shrink-0 py-3"
+                >
+                  {PRESET_ICON[p.key] ? <Icon name={PRESET_ICON[p.key]} size={16} /> : <span aria-hidden>{p.emoji}</span>}
+                  {presetLabel(p, locale)}
+                </button>
+              ))}
+              {/*
+                С затравкой «Как «X», но…» броска и «нераспакованного» нет:
+                подпись над рядом обещает похожее на X, а обе кнопки уводят
+                в выдачу, где затравки не бывает (askSeed на /play) — они
+                молча отменили бы то, о чём человек пришёл просить. С жанром —
+                по той же причине: в рулетке и «нераспакованном» его нет.
+              */}
+              {!seed && !genre && (
+                <button
+                  onClick={() => {
+                    // Время — из прошлого настроения, если оно свежее: сколько у
+                    // человека есть минут, — не то, что стоит отдавать на волю
+                    // случая. Бросок — во всём остальном.
+                    const last = freshLastMood(lastMoodStore.get(), Math.floor(Date.now() / 1000))
+                    go(
+                      {
+                        time:
+                          last?.mood.time ??
+                          (['short', 'medium', 'long'] as const)[Math.floor(Math.random() * 3)],
+                        vibe: (['chill', 'engaged'] as const)[Math.floor(Math.random() * 2)],
+                        social: 'solo',
+                      },
+                      { roulette: true },
+                    )
+                  }}
+                  className="pill shrink-0 py-3 text-ember-text"
+                >
+                  <Icon name="dice" size={16} />
+                  {tr(locale, { ru: 'Мне повезёт', en: 'Surprise me' })}
+                </button>
+              )}
+              {/*
+                Кнопки нет, когда фокус УЖЕ включён — то есть когда сюда
+                пришли с /library по «Все нераспакованные →». Там она не
+                просто лишняя: подпись рядом в этот момент просит выбрать
+                настроение, а кнопка ставит NEUTRAL_MOOD и уезжает, то есть
+                отменяет ровно то, о чём её сосед только что попросил.
+              */}
+              {/* При скрытом в Steam времени нетронутого не узнать: сервер
+                  отдаёт на этот фокус всё своё, и подпись говорит, что
+                  приедет (timeHiddenStore — признак с прошлой выдачи) */}
+              {!focus && !seed && !genre && (
+                <button
+                  onClick={() => go(NEUTRAL_MOOD, { focus: 'untouched' })}
+                  className="pill shrink-0 py-3 text-ember-text"
+                >
+                  <Icon name="box" size={16} />
+                  {tr(locale, {
+                    ru: timeHidden ? 'Из своей библиотеки' : 'Ни разу не запускал',
+                    en: timeHidden ? 'From your library' : 'Never launched',
+                  })}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/*
+          Подпись стоит ПЕРЕД тем, что объясняет, и это единственная правка
+          порядка на экране.
+
+          Раньше она была одна на оба пути и стояла ПОСЛЕ чипсов: «одним
+          тапом — или ответь на три вопроса:». Человек встречал семь
+          неподписанных кнопок и только под ними узнавал, что это ярлыки, —
+          а двоеточие в конце той же строки указывало вперёд, на вопросы.
+          Одна строка тянула в две стороны сразу и не помогала ни одной.
+
+          Теперь половин две, и каждая стоит над своим: «Одним тапом:» над
+          рядом ярлыков, «Или ответь на три вопроса:» — в одной группе с
+          точками шага, а не в одной с чипсами. Слова те же, переехало
+          только место.
+        */}
+        <div className="flex flex-col items-center gap-3">
+          {stepIndex === 0 && (
+            <span className="text-xs text-faint anim-rise">
+              {tr(locale, { ru: 'Или ответь на три вопроса:', en: 'Or answer three questions:' })}
+            </span>
+          )}
+          {/* «Шаг 2 из 3 · Вайб» и три полосы, как у сериала «серия 2 из 3».
+              Для глаза: скринридер слышит «Вопрос N из 3» в имени заголовка
+              шага ниже, и вторая такая же подпись была бы дублем. */}
+          <div aria-hidden className="flex flex-col items-center gap-2.5">
+            <Eyebrow as="span" tone="dim">
+              {tr(locale, {
+                ru: `Шаг ${stepIndex + 1} из ${steps.length}`,
+                en: `Step ${stepIndex + 1} of ${steps.length}`,
+              })}{' '}
+              · {step.axis}
+            </Eyebrow>
+            <div className="flex gap-1.5">
+              {steps.map((s, i) => (
+                <span key={s.key} className="relative h-1 w-12 overflow-hidden rounded-full bg-track">
+                  {/* Заливка едет масштабом от левого края: пройденный шаг
+                      дотягивается до конца, будущий стоит пустым */}
+                  <span
+                    className={`absolute inset-0 origin-left rounded-full bg-ink transition-transform duration-[320ms] ease-[cubic-bezier(.22,1,.36,1)] ${
+                      i <= stepIndex ? 'scale-x-100' : 'scale-x-0'
+                    }`}
+                  />
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Шаги едут в сторону движения: вперёд — влево, «Назад» — вправо.
+            Раньше шаг просто перемонтировался и появлялся на том же месте.
+
+            initial={false} — то же самое правило, что у .anim-page-in в globals.css:
+            «анимация может только добавить проявление, но не может спрятать контент».
+            Там оно было выписано для CSS и не доехало до motion. А здесь состояние
+            enter — это opacity: 0, и motion рендерит его ИНЛАЙНОМ УЖЕ НА СЕРВЕРЕ:
+            проверено, в HTML приезжало style="opacity:0;transform:translateX(24px)"
+            на вопросе и translateY(14px) на каждом ответе. То есть разметка уже у
+            человека, а экран пуст до конца гидратации — а если она не случится
+            вовсе (сбой чанка, ошибка в соседнем компоненте), то навсегда.
+
+            Хореография при этом не теряется: мгновенно появляется только ПЕРВЫЙ
+            шаг, а переходы между шагами — то, ради чего всё и сделано, — едут как ехали. */}
+        <AnimatePresence mode="wait" custom={back} initial={false}>
+          <m.div
+            key={step.key}
+            custom={back}
+            variants={STEP_VARIANTS}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            className="w-full flex flex-col items-center gap-10"
+          >
+            {/*
+              tabIndex={-1} — чтобы заголовок мог принять фокус программно, не
+              появляясь при этом в обходе по Tab. role="status" на нём же
+              лишний: заголовок и так объявляется при получении фокуса.
+
+              «Какой это вопрос из скольких» — в его же имени, а не живой
+              строкой рядом. Строка стояла здесь, под key={step.key}, и
+              каждый шаг монтировал новую область уже с текстом «Вопрос 2 из
+              3» — такую скринридер объявляет не везде (ГРАНИЦА в
+              lib/liveregion.test.ts), а видимая подпись выше aria-hidden.
+              Номер звучал только на первом шаге. В имени заголовка, который
+              забирает фокус при смене шага, он слышен везде и без гонки
+              живой строки с переездом фокуса.
+            */}
+            <m.h1
+              ref={stepHeadRef}
+              tabIndex={-1}
+              variants={ITEM_VARIANTS}
+              className="font-display text-display-md text-center outline-none"
+            >
+              <span className="sr-only">
+                {tr(locale, {
+                  ru: `Вопрос ${stepIndex + 1} из ${steps.length}. `,
+                  en: `Question ${stepIndex + 1} of ${steps.length}. `,
+                })}
+              </span>
+              {step.question}
+            </m.h1>
+
+            {/* Залп искр ровно один раз за прохождение — в финале и программно,
+                на sparkAt из партитуры, а не по клику. lib/motion.test.ts
+                сторожит, что искры успевают дожить до навигации. */}
+            {outro ? (
+              <ClickSpark className="block w-full" fireOnMount fireDelay={OUTRO.sparkAt}>
+                {grid}
+              </ClickSpark>
+            ) : (
+              grid
+            )}
+          </m.div>
+        </AnimatePresence>
+
+        {/*
+          Гостю — заранее, что будет после ответов (knownGuest): квиз ведёт
+          его не в выдачу, а к подключению библиотеки, и узнавать об этом
+          только на лендинге значило бы отвечать, не зная, куда ведут ответы.
+          Строка на первом шаге, под плитками и ВНЕ ПОТОКА — в нижнем поле
+          экрана (py-24), а не над вопросом: флаг приходит ответом touch уже
+          после гидратации, и строка в колонке сдвинула бы вопрос и плитки
+          под пальцем — сверху вниз, а на десктопе, где колонка по центру, и
+          снизу вверх. absolute в flex-колонке не берёт себе и зазор gap-10.
+          Снимок сервера — «не гость», как и у всех до ответа.
+        */}
+        {stepIndex === 0 && guest && (
+          <p className="absolute inset-x-0 top-full mx-auto mt-10 max-w-sm text-center text-xs text-dim anim-rise">
+            {tr(locale, {
+              ru: 'Потом останется подключить библиотеку — ссылкой на профиль, через Steam или демо: игру выбираем из неё.',
+              en: 'Then just connect your library — with a profile link, Steam or the demo: we pick the game from it.',
+            })}
+          </p>
+        )}
+
+        {stepIndex > 0 && !outro && (
+          <button
+            onClick={() => {
+              setBack(true)
+              wantStepFocus.current = true
+              setStepIndex(stepIndex - 1)
+            }}
+            className="tap link-more cursor-pointer"
+          >
+            <Icon name="back" size={16} />
+            {tr(locale, { ru: 'Назад', en: 'Back' })}
+          </button>
+        )}
+
+        {/* «Не предлагать» (components/MuteTags) — на каждом шаге, а не только
+            на первом с ярлыками: выдачу он режет любую, и кто дошёл до третьего
+            вопроса, не должен возвращаться к первому, чтобы убрать хорроры.
+            Последним — это не вопрос о вечере, и в порядке обхода он не стоит
+            между вопросом и ответами */}
+        <MuteTags />
+      </div>
+    </div>
+  )
+}
+
+/*
+ * Границы Suspense здесь больше нет: она стояла ради useSearchParams, а
+ * вместе с пустым фолбэком означала пустую разметку маршрута. См.
+ * components/useSearch.
+ */
+export default function QuizPage() {
+  return <Quiz />
+}

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   archiveBreadcrumbLd,
+  archiveCrumb,
   gameBreadcrumbLd,
   gameJsonLd,
   genreBreadcrumbLd,
@@ -11,7 +12,7 @@ import {
   websiteJsonLd,
 } from './jsonld'
 import { newsHeading } from './newspage'
-import { SITE_DESCRIPTION } from './site'
+import { SITE_DESCRIPTION, siteDescription } from './site'
 import { regionCurrency } from './steamregion'
 import { tagRu } from './tagsru'
 import type { GameMeta } from './types'
@@ -75,6 +76,19 @@ describe('gameJsonLd', () => {
     expect(witcher('  ')).not.toHaveProperty('alternateName')
     // повтор заголовка ничего не называет
     expect(witcher('The Witcher 3: Wild Hunt')).not.toHaveProperty('alternateName')
+  })
+
+  test('на /en русского второго названия нет: его нет и под заголовком (pageNameRu)', () => {
+    const out = gameJsonLd({
+      meta: game({ appid: 292030, name: 'The Witcher 3: Wild Hunt' }),
+      nameRu: 'Ведьмак 3: Дикая Охота',
+      baseUrl: BASE,
+      locale: 'en',
+      currency: 'USD',
+      now: NOW,
+    })
+    expect(out.name).toBe('The Witcher 3: Wild Hunt')
+    expect(out).not.toHaveProperty('alternateName')
   })
 
   test('минимальная карточка — это VideoGame с адресом страницы', () => {
@@ -478,6 +492,262 @@ describe('страница патча', () => {
       [4, newsHeading(item.title, 'Counter-Strike 2'), 'https://imbored.cc/game/730/news/5123894512345'],
     ])
     expect(patchBreadcrumbLd({ item, game: null, baseUrl: BASE }).itemListElement).toHaveLength(2)
+  })
+})
+
+/**
+ * Разметка /en-страницы обязана называть ту же страницу, что её canonical
+ * (/en/…). Русский url и mainEntityOfPage при английском canonical — две
+ * разные страницы для робота.
+ */
+describe('адреса разметки на языке страницы', () => {
+  const item = {
+    appid: 730,
+    gid: '5123894512345',
+    title: 'Counter-Strike 2: Release Notes for 9/25/2026',
+    url: 'https://store.steampowered.com/news/app/730/view/5123894512345',
+    publishedAt: Date.parse('2026-09-25T18:00:00Z') / 1000,
+  }
+
+  test('сайт на /en — английская версия: адрес /en, язык и описание английские', () => {
+    expect(websiteJsonLd(BASE, 'en')).toEqual({
+      '@context': 'https://schema.org',
+      '@type': 'WebSite',
+      name: 'imbored',
+      url: 'https://imbored.cc/en',
+      inLanguage: 'en',
+      description: siteDescription('en'),
+    })
+    expect(websiteJsonLd(BASE, 'ru')).toEqual(websiteJsonLd(BASE))
+  })
+
+  test('карточка, её крошки, жанр и патч — под /en', () => {
+    expect(gameJsonLd({ meta: game(), baseUrl: BASE, locale: 'en', currency: 'USD', now: NOW }).url).toBe(
+      'https://imbored.cc/en/game/730',
+    )
+    expect(
+      gameBreadcrumbLd({ meta: game(), baseUrl: BASE, locale: 'en', genre: { title: 'Шутеры', path: '/games/fps' } })
+        .itemListElement.map((i) => i.item),
+    ).toEqual(['https://imbored.cc/en', 'https://imbored.cc/en/games', 'https://imbored.cc/en/games/fps', 'https://imbored.cc/en/game/730'])
+    expect(
+      genreBreadcrumbLd({ title: 'Шутеры', path: '/games/fps', baseUrl: BASE, locale: 'en' }).itemListElement.map((i) => i.item),
+    ).toEqual(['https://imbored.cc/en', 'https://imbored.cc/en/games', 'https://imbored.cc/en/games/fps'])
+    expect(
+      genreItemListLd({ title: 'Шутеры', games: [{ appid: 730, name: 'CS2' }], baseUrl: BASE, locale: 'en' }).itemListElement[0].url,
+    ).toBe('https://imbored.cc/en/game/730')
+
+    const article = patchArticleLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE, locale: 'en' })
+    expect(article.url).toBe('https://imbored.cc/en/game/730/news/5123894512345')
+    expect(article.mainEntityOfPage).toBe(article.url)
+    expect(article.about?.url).toBe('https://imbored.cc/en/game/730')
+    // язык ТЕКСТА статьи: пересказа нет — текст статьи составляют подписи
+    // страницы, а они на /en английские
+    expect(article.inLanguage).toBe('en')
+    expect(
+      patchBreadcrumbLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE, locale: 'en' }).itemListElement.map((i) => i.item),
+    ).toEqual([
+      'https://imbored.cc/en',
+      'https://imbored.cc/en/game/730',
+      'https://imbored.cc/en/game/730/news',
+      'https://imbored.cc/en/game/730/news/5123894512345',
+    ])
+    expect(
+      archiveBreadcrumbLd({ appid: 730, gameName: 'Counter-Strike 2', baseUrl: BASE, locale: 'en' }).itemListElement.map(
+        (i) => i.item,
+      ),
+    ).toEqual(['https://imbored.cc/en', 'https://imbored.cc/en/game/730', 'https://imbored.cc/en/game/730/news'])
+  })
+})
+
+/**
+ * Язык статьи патча — язык её текста, то есть пересказа. Пока чтение патча не
+ * отдаёт tldr_en, /en получает русский пересказ: назвать его английским —
+ * сказать роботу неправду о description, который он покажет сниппетом.
+ */
+describe('язык статьи патча — язык пересказа', () => {
+  const base = {
+    appid: 730,
+    gid: '5123894512345',
+    title: 'Counter-Strike 2 Update',
+    url: 'https://store.steampowered.com/news/app/730/view/5123894512345',
+    publishedAt: Date.parse('2026-09-25T18:00:00Z') / 1000,
+  }
+  const game = { name: 'Counter-Strike 2' }
+
+  test('русский пересказ на /en — статья русская, description тот же, что на странице', () => {
+    const ld = patchArticleLd({ item: { ...base, tldr: 'Поправили баланс AWP и карту Mirage.' }, game, baseUrl: BASE, locale: 'en' })
+    expect(ld.inLanguage).toBe('ru')
+    expect(ld.description).toBe('Поправили баланс AWP и карту Mirage.')
+  })
+
+  test('заголовок статьи и крошки на /en — titleEn или «{Game} update», не русский заголовок издателя', () => {
+    const ru = { ...base, title: 'Обновление Counter-Strike 2: новая карта', tldr: 'AWP rebalanced.' }
+    const crumb = (item: typeof ru & { titleEn?: string }, locale?: 'en' | 'ru') =>
+      patchBreadcrumbLd({ item, game, baseUrl: BASE, locale }).itemListElement.at(-1)?.name
+    expect(patchArticleLd({ item: { ...ru, titleEn: 'Update 1.5: a new map' }, game, baseUrl: BASE, locale: 'en' }).headline).toBe(
+      'Update 1.5: a new map',
+    )
+    expect(crumb({ ...ru, titleEn: 'Update 1.5: a new map' }, 'en')).toBe('Update 1.5: a new map')
+    // общий «{Game} update» — целиком, как в h1 (patchHeading): голое «Update» ничего не называет
+    expect(patchArticleLd({ item: ru, game, baseUrl: BASE, locale: 'en' }).headline).toBe('Counter-Strike 2 update')
+    expect(crumb(ru, 'en')).toBe('Counter-Strike 2 update')
+    // с номером версии из заголовка издателя — режется, как любой заголовок с названием впереди
+    const versioned = { ...ru, title: 'Обновление 1.5: новая карта' }
+    expect(patchArticleLd({ item: versioned, game, baseUrl: BASE, locale: 'en' }).headline).toBe('Update 1.5')
+    expect(crumb(versioned, 'en')).toBe('Update 1.5')
+    expect(patchArticleLd({ item: ru, game: null, baseUrl: BASE, locale: 'en' }).headline).toBe('Update')
+    expect(JSON.stringify(patchArticleLd({ item: ru, game, baseUrl: BASE, locale: 'en' }))).not.toMatch(/[А-Яа-яЁё]/)
+    // английский заголовок издателя — как и был
+    expect(patchArticleLd({ item: base, game, baseUrl: BASE, locale: 'en' }).headline).toBe('Update')
+    // по-русски — заголовок издателя, перевод не читается
+    expect(patchArticleLd({ item: { ...ru, titleEn: 'Update' }, game, baseUrl: BASE }).headline).toBe(
+      'Обновление Counter-Strike 2: новая карта',
+    )
+    expect(crumb({ ...ru, titleEn: 'Update' })).toBe('Обновление Counter-Strike 2: новая карта')
+  })
+
+  /**
+   * Автор и издатель — imbored той версии, что и страница: на /en — /en, как
+   * у WebSite главной; русский корень на английской странице — другая
+   * страница для робота.
+   */
+  test('автор и издатель — главная той же версии', () => {
+    const en = patchArticleLd({ item: base, game, baseUrl: BASE, locale: 'en' })
+    expect(en.author).toEqual({ '@type': 'Organization', name: 'imbored', url: 'https://imbored.cc/en' })
+    expect(en.publisher).toEqual(en.author)
+    const ru = patchArticleLd({ item: base, game, baseUrl: BASE })
+    expect(ru.author).toEqual({ '@type': 'Organization', name: 'imbored', url: 'https://imbored.cc/' })
+    expect(ru.publisher).toEqual(ru.author)
+  })
+
+  test('английский пересказ на /en — статья английская', () => {
+    const ld = patchArticleLd({ item: { ...base, tldr: 'AWP rebalanced, Mirage reworked.' }, game, baseUrl: BASE, locale: 'en' })
+    expect(ld.inLanguage).toBe('en')
+    expect(ld.description).toBe('AWP rebalanced, Mirage reworked.')
+  })
+
+  test('пустой пересказ на /en — язык страницы', () => {
+    expect(patchArticleLd({ item: { ...base, tldr: '   ' }, game, baseUrl: BASE, locale: 'en' }).inLanguage).toBe('en')
+    expect(patchArticleLd({ item: { ...base, tldr: null }, game, baseUrl: BASE, locale: 'en' }).inLanguage).toBe('en')
+  })
+
+  test('на русской странице — ru при любом пересказе, как было', () => {
+    for (const tldr of ['Поправили баланс AWP.', 'AWP rebalanced.', '1.0.3', null, undefined]) {
+      expect(patchArticleLd({ item: { ...base, tldr }, game, baseUrl: BASE }).inLanguage).toBe('ru')
+    }
+  })
+})
+
+/** Ни одной русской буквы: английская разметка обязана совпадать с английской страницей */
+const CYRILLIC = /[А-Яа-яЁё]/
+
+describe('тексты разметки на языке страницы', () => {
+  const en = (over: Partial<GameMeta> = {}) =>
+    gameJsonLd({ meta: game(over), baseUrl: BASE, locale: 'en', currency: 'USD', now: NOW })
+
+  test('genre на /en — теги ключами Steam, как чипсы, даже когда жанры Steam есть', () => {
+    // жанры у игры русские (appdetails с l=russian) — английской странице они не годятся
+    expect(en({ genres: ['Экшены', 'Бесплатные'] }).genre).toEqual(['FPS', 'Shooter'])
+    expect(en({ genres: [], tags: { 'Souls-like': 100, RPG: 90, 'Dystopian ': 80 } }).genre).toEqual([
+      'Souls-like',
+      'RPG',
+      'Dystopian',
+    ])
+    // на русской — как было: жанры Steam, а без них — русские подписи тегов
+    expect(ld({ genres: ['Экшены'] }).genre).toEqual(['Экшены'])
+  })
+
+  test('описание на /en — только нерусское', () => {
+    expect(en({ shortDescription: 'Соревновательный шутер.' })).not.toHaveProperty('description')
+    expect(en({ shortDescription: 'A competitive shooter.' }).description).toBe('A competitive shooter.')
+    // на русской — как лежит, на любом языке
+    expect(ld({ shortDescription: 'A competitive shooter.' }).description).toBe('A competitive shooter.')
+  })
+
+  test('описание на /en — английский слот и наложение других магазинов (descriptionFor)', () => {
+    expect(en({ shortDescriptionEn: 'A competitive shooter.' }).description).toBe('A competitive shooter.')
+    // немецкое — не английское, хоть и латиница
+    expect(en({ shortDescription: 'Der kompetitive Shooter mit der größten Community.' })).not.toHaveProperty('description')
+    expect(en({ appid: -106, shortDescription: 'Та самая MOBA. Бесплатно.' }).description).toBe(
+      'The MOBA everyone knows. Free to play.',
+    )
+    // русская — как лежит, слот её не касается
+    expect(ld({ shortDescriptionEn: 'A competitive shooter.' }).description).toBe('Соревновательный шутер.')
+  })
+
+  test('inLanguage игры на /en не ставится: строки «Русский» там нет', () => {
+    expect(en({ ruLang: 3 })).not.toHaveProperty('inLanguage')
+    expect(ld({ ruLang: 3 }).inLanguage).toBe('ru')
+  })
+
+  test('английская карточка игры — без кириллицы при латинских названиях и тегах', () => {
+    const out = en({ shortDescription: 'A competitive shooter.', genres: ['Экшены'], ruLang: 2 })
+    expect(JSON.stringify(out)).not.toMatch(CYRILLIC)
+  })
+
+  test('крошки: «Games by genre» и жанр, как в строке над названием', () => {
+    const game_ = gameBreadcrumbLd({
+      meta: game(),
+      baseUrl: BASE,
+      locale: 'en',
+      genre: { title: 'First-person shooters', path: '/games/fps' },
+    })
+    expect(game_.itemListElement.map((i) => i.name)).toEqual([
+      'imbored',
+      'Games by genre',
+      'First-person shooters',
+      'Counter-Strike 2',
+    ])
+    const genre = genreBreadcrumbLd({ title: 'Roguelikes', path: '/games/roguelike', baseUrl: BASE, locale: 'en' })
+    expect(genre.itemListElement.map((i) => [i.position, i.name, i.item])).toEqual([
+      [1, 'imbored', 'https://imbored.cc/en'],
+      [2, 'Games by genre', 'https://imbored.cc/en/games'],
+      [3, 'Roguelikes', 'https://imbored.cc/en/games/roguelike'],
+    ])
+    expect(JSON.stringify([game_, genre])).not.toMatch(CYRILLIC)
+    // без языка — русская подпись
+    expect(genreBreadcrumbLd({ title: 'Рогалики', path: '/games/roguelike', baseUrl: BASE }).itemListElement[1].name).toBe(
+      'Игры по жанрам',
+    )
+  })
+
+  test('статья патча на /en — английский пересказ и язык en', () => {
+    const item = {
+      appid: 730,
+      gid: '5123894512345',
+      title: 'Counter-Strike 2: Release Notes for 9/25/2026',
+      url: 'https://store.steampowered.com/news/app/730/view/5123894512345',
+      publishedAt: Date.parse('2026-09-25T18:00:00Z') / 1000,
+      tldr: 'AWP rebalanced and Mirage tweaked.',
+    }
+    const out = patchArticleLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE, locale: 'en' })
+    expect(out.inLanguage).toBe('en')
+    expect(out.description).toBe('AWP rebalanced and Mirage tweaked.')
+    expect(JSON.stringify(out)).not.toMatch(CYRILLIC)
+    // на русской — ru, как было
+    expect(patchArticleLd({ item, game: null, baseUrl: BASE }).inLanguage).toBe('ru')
+  })
+
+  test('крошки патча и архива на /en — «Updates», как в строке над заголовком', () => {
+    const item = {
+      appid: 730,
+      gid: '5123894512345',
+      title: 'Counter-Strike 2: Release Notes for 9/25/2026',
+      url: 'https://store.steampowered.com/news/app/730/view/5123894512345',
+      publishedAt: Date.parse('2026-09-25T18:00:00Z') / 1000,
+    }
+    const patch = patchBreadcrumbLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE, locale: 'en' })
+    expect(patch.itemListElement.map((i) => i.name).slice(0, 3)).toEqual(['imbored', 'Counter-Strike 2', 'Updates'])
+    const archive = archiveBreadcrumbLd({ appid: 730, gameName: 'Counter-Strike 2', baseUrl: BASE, locale: 'en' })
+    expect(archive.itemListElement.map((i) => [i.position, i.name, i.item])).toEqual([
+      [1, 'imbored', 'https://imbored.cc/en'],
+      [2, 'Counter-Strike 2', 'https://imbored.cc/en/game/730'],
+      [3, 'Updates', 'https://imbored.cc/en/game/730/news'],
+    ])
+    expect(JSON.stringify([patch, archive])).not.toMatch(CYRILLIC)
+    // имя архива — одно на разметку и видимый путь, по-русски — прежняя константа
+    expect(archiveCrumb('en')).toBe('Updates')
+    expect(archiveCrumb()).toBe('Обновления')
   })
 })
 

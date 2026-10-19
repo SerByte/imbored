@@ -2,8 +2,10 @@
 
 import { useReducedMotion } from 'framer-motion'
 import { useRef, useState } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { Spinner } from '@/components/Spinner'
 import { StatusLine } from '@/components/StatusLine'
+import { tr } from '@/lib/i18n'
 import type { Trailer } from '@/lib/trailer'
 import { Icon } from '@/components/Icon'
 
@@ -79,6 +81,7 @@ export function TrailerPreview({
   smallPoster?: string
   className?: string
 }) {
+  const locale = useLocale()
   const videoRef = useRef<HTMLVideoElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
   const [state, setState] = useState<State>('idle')
@@ -109,6 +112,9 @@ export function TrailerPreview({
   // Имя игры — хвостом для скринридера: видимая подпись обязана быть началом
   // доступного имени (WCAG 2.5.3), а «В движении» без игры непонятно о чём
   const forReader = <span className="sr-only">, {name}</span>
+  // Подпись кнопки — одна на оба места (строка и постер), как и раньше
+  const motion = tr(locale, { ru: 'В движении', en: 'In motion' })
+  const muted = tr(locale, { ru: '· без звука', en: '· muted' })
 
   return (
     <div className={className}>
@@ -119,8 +125,8 @@ export function TrailerPreview({
           className="btn-glass"
         >
           <Icon name="play" size={16} />
-          В движении
-          <span className="font-semibold text-dim">· без звука</span>
+          {motion}
+          <span className="font-semibold text-dim">{muted}</span>
           {forReader}
         </button>
       )}
@@ -149,7 +155,10 @@ export function TrailerPreview({
           playsInline
           preload="none"
           controls={state === 'playing'}
-          aria-label={`${name}: несколько секунд геймплея без звука`}
+          aria-label={tr(locale, {
+            ru: `${name}: несколько секунд геймплея без звука`,
+            en: `${name}: a few seconds of gameplay, no sound`,
+          })}
           onPlaying={() => setState('playing')}
           onEnded={() => setState('idle')}
           className="absolute inset-0 h-full w-full object-cover"
@@ -184,7 +193,7 @@ export function TrailerPreview({
                 sr-only и середину кадра не сдвигает.
               */}
               <StatusLine
-                text={state === 'failed' ? 'Видео не загрузилось' : null}
+                text={state === 'failed' ? tr(locale, { ru: 'Видео не загрузилось', en: "The video didn't load" }) : null}
                 className="panel-lift px-4 py-2 text-sm text-dim"
               />
               {state === 'failed' ? null : state === 'loading' ? (
@@ -196,8 +205,8 @@ export function TrailerPreview({
                   className="btn-glass"
                 >
                   <Icon name="play" size={16} />
-                  В движении
-                  <span className="font-semibold text-dim">· без звука</span>
+                  {motion}
+                  <span className="font-semibold text-dim">{muted}</span>
                   {forReader}
                 </button>
               )}

@@ -1,4 +1,8 @@
-import Link from 'next/link'
+'use client'
+
+import Link from '@/components/Link'
+import { useLocale } from '@/components/LocaleProvider'
+import { tr, withLang } from '@/lib/i18n'
 
 /**
  * Дверь, которая работает без единой строчки скрипта.
@@ -86,6 +90,24 @@ export const PASSWORD_NOTE_ID = 'steam-password-note'
  * было бы странно.
  */
 export function AccessNote() {
+  const locale = useLocale()
+  /*
+   * На английском — те же три мысли и та же разметка: id у первой фразы,
+   * ссылка в конце. Своей веткой, а не tr() по кускам: русская разметка
+   * остаётся той же до байта, а куски tr() разбили бы её текст на другие
+   * узлы. Длина замерена в браузере по ширинам сноски (см.
+   * CONNECT_CARD_MIN_H): английская не даёт лишней строки нигде.
+   */
+  if (locale === 'en') {
+    return (
+      <p className="max-w-md text-xs leading-relaxed text-dim">
+        <span id={PASSWORD_NOTE_ID}>{ACCESS_EN.password}</span> {ACCESS_EN.reads}{' '}
+        <Link href="/privacy" className="tap tap-tight underline decoration-edge hover:text-ink">
+          {ACCESS_EN.more}
+        </Link>
+      </p>
+    )
+  }
   return (
     <p className="max-w-md text-xs leading-relaxed text-dim">
       <span id={PASSWORD_NOTE_ID}>Пароль вводишь на сайте Steam — мы его не видим.</span> Читаем
@@ -97,18 +119,28 @@ export function AccessNote() {
   )
 }
 
+/** Сноска по-английски: пароль — у Steam, что читаем, ссылка на /privacy */
+const ACCESS_EN = {
+  password: 'You enter your password on Steam’s site — we never see it.',
+  reads: 'We read your games, playtime and wishlist, and never post anything.',
+  more: 'Details',
+}
+
 export function ConnectFallback() {
+  const locale = useLocale()
   return (
     <div className="flex w-full max-w-xl flex-col gap-4">
       <div className={`connect-card flex ${CONNECT_CARD_MIN_H} flex-col items-start gap-4`}>
         {/* Без скрипта поле ссылки не работает, поэтому здесь одна дверь —
             вход через Steam, той же белой кнопкой, что у настоящей формы. */}
+        {/* Язык входа — в адресе (withLang): без скрипта его иначе нёс бы
+            только Referer, а его режут расширения и настройки браузера */}
         <a
-          href="/api/auth/steam"
+          href={withLang('/api/auth/steam', locale)}
           aria-describedby={PASSWORD_NOTE_ID}
           className="btn-ember inline-block px-8 text-base"
         >
-          Войти через Steam
+          {tr(locale, { ru: 'Войти через Steam', en: 'Sign in with Steam' })}
         </a>
         <AccessNote />
       </div>

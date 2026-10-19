@@ -38,6 +38,35 @@ export const OTHER_STORE_GAMES: GameMeta[] = [
   ext(-111, 'Minecraft', 'mojang', 'https://www.minecraft.net/ru-ru', { Sandbox: 5400, Crafting: 4800, Survival: 4400, Multiplayer: 4200, Building: 4000 }, COOP, 'Кубики, из которых сделано детство интернета.'),
 ]
 
+/**
+ * Английская половина пула — для /en: описание и страница магазина по-английски.
+ *
+ * Наложением, а не полями в OTHER_STORE_GAMES, и это про базу, а не про вкус.
+ * Пул досевается раз на базу (migrateDb, флаг other_stores_seeded_v1) и
+ * демо-входом — досевом, который строку не трогает, если она есть. Новые поля
+ * в записи доехали бы только до свежих баз, а живой нужен был бы пересев.
+ * Здесь же их читают descriptionFor и storeUrlFor (lib/gamedesc) прямо по
+ * appid, и база о них не знает вовсе.
+ *
+ * Ключ — appid записи пула; что у каждой записи есть пара, сторожит
+ * lib/otherstores.test.ts. Адреса — английские страницы тех же магазинов
+ * (en-US), а не русские с переключателем: человек с /en иначе попадал бы в
+ * магазин по-русски.
+ */
+export const OTHER_STORE_EN: Readonly<Record<number, { shortDescription: string; storeUrl: string }>> = {
+  [-101]: { shortDescription: 'Battle royale, building and endless crossovers. Free to play.', storeUrl: 'https://store.epicgames.com/en-US/p/fortnite' },
+  [-102]: { shortDescription: 'Soccer with rocket-powered cars. Free to play.', storeUrl: 'https://store.epicgames.com/en-US/p/rocket-league' },
+  [-103]: { shortDescription: 'A goofy obstacle course for 60 players. Free to play.', storeUrl: 'https://store.epicgames.com/en-US/p/fall-guys' },
+  [-104]: { shortDescription: 'Psychological horror from Remedy, only on the Epic Games Store.', storeUrl: 'https://store.epicgames.com/en-US/p/alan-wake-2' },
+  [-105]: { shortDescription: "Riot's 5v5 tactical shooter. Free to play.", storeUrl: 'https://playvalorant.com/en-us/' },
+  [-106]: { shortDescription: 'The MOBA everyone knows. Free to play.', storeUrl: 'https://www.leagueoflegends.com/en-us/' },
+  [-107]: { shortDescription: 'Azeroth is still waiting. Battle.net subscription.', storeUrl: 'https://worldofwarcraft.blizzard.com/en-us/' },
+  [-108]: { shortDescription: 'Card duels set in the Warcraft universe. Free to play.', storeUrl: 'https://hearthstone.blizzard.com/en-us' },
+  [-109]: { shortDescription: "Blizzard's hero shooter. Free to play.", storeUrl: 'https://overwatch.blizzard.com/en-us/' },
+  [-110]: { shortDescription: 'An anime adventure across the open world of Teyvat. Free to play.', storeUrl: 'https://genshin.hoyoverse.com/en/' },
+  [-111]: { shortDescription: 'The blocks the whole internet grew up on.', storeUrl: 'https://www.minecraft.net/en-us' },
+}
+
 /*
  * Здесь жил seedOtherStores, и звали его с КАЖДОГО POST /api/prepare: пул
  * сеется один раз и живёт вечно, а прогрев дёргает prepare до восьмидесяти

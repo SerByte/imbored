@@ -9,6 +9,7 @@
  * /daily, /library, /quiz (замер сборкой). Полноту и совпадение обеих таблиц
  * с пулом держит lib/otherstores.test.ts.
  */
+import type { Locale } from './i18n'
 
 /** Магазин игры не из Steam — ключ STORE_LABEL и STORE_TINT (lib/stores), как store в пуле */
 export const OTHER_STORE_OF: Readonly<Record<number, string>> = {
@@ -45,4 +46,39 @@ export const OTHER_STORE_GENRE: Readonly<Record<number, string>> = {
   [-109]: 'Геройский шутер',
   [-110]: 'Открытый мир',
   [-111]: 'Песочница',
+}
+
+/**
+ * Те же одиннадцать жанров по-английски — для /en. Отдельной таблицей рядом,
+ * а не через tagLabel: обложка не тянет словарь тегов ни на каком языке, и
+ * пара строк на игру весит меньше любого импорта. Sentence case, как у
+ * остальных подписей английской версии; MOBA и MMORPG — как пишутся везде.
+ */
+const OTHER_STORE_GENRE_EN: Readonly<Record<number, string>> = {
+  [-101]: 'Battle royale',
+  [-102]: 'Sports',
+  [-103]: 'Party game',
+  [-104]: 'Horror',
+  [-105]: 'Tactical shooter',
+  [-106]: 'MOBA',
+  [-107]: 'MMORPG',
+  [-108]: 'Card game',
+  [-109]: 'Hero shooter',
+  [-110]: 'Open world',
+  [-111]: 'Sandbox',
+}
+
+const GENRE_BY_LOCALE = { ru: OTHER_STORE_GENRE, en: OTHER_STORE_GENRE_EN } satisfies Record<
+  Locale,
+  Readonly<Record<number, string>>
+>
+
+/**
+ * Жанр обложки на языке страницы; undefined — игра не из пула (у Steam своя
+ * обложка, и жанр ей не нужен). hasOwn — appid приходит из данных, и
+ * «constructor» не должен найти прототип.
+ */
+export function otherStoreGenre(appid: number, locale: Locale = 'ru'): string | undefined {
+  const table = GENRE_BY_LOCALE[locale]
+  return Object.hasOwn(table, appid) ? table[appid] : undefined
 }

@@ -1,7 +1,9 @@
 'use client'
 
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { splitWords } from '@/lib/splitwords'
+import { langOn } from '@/lib/textlang'
 
 /** power3.out — та же кривая, что была у gsap-твина */
 const easeOut = (t: number) => 1 - (1 - t) ** 3
@@ -50,6 +52,15 @@ const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayout
  * называл игру, на которой сошлись (components/MatchCeremony.tsx). Прежние
  * 'div' | 'span' в типе убраны: вернуть их — ошибка компиляции, а не
  * тихая дыра, которую видно только скринридером.
+ *
+ * Язык — у самого тега, и он закрывает разом aria-label и слова. Набирает
+ * этот заголовок данные, а не интерфейс: название игры (герой /play и
+ * /daily, матч, обложка «Что нового») или ник (портрет, совместимость). На
+ * /en русское название из каталога («Одни из нас™: Часть II») английский
+ * голос скринридера читал по буквам: lang="ru" — когда кириллицы в тексте не
+ * меньше латиницы (langOn из lib/textlang, то же правило, что у ников и карточек
+ * каталога; WCAG 3.1.2). Строка интерфейса на /en и так английская, и
+ * langOn её не тронет. На русской странице атрибута нет, как не было.
  */
 export function SplitHeading({
   children,
@@ -87,6 +98,7 @@ export function SplitHeading({
   /** -1 — фокус принимается программно, но в обход по Tab заголовок не встаёт */
   tabIndex?: number
 }) {
+  const lang = langOn(useLocale(), children)
   const ref = useRef<HTMLElement>(null)
   const setRef = useCallback(
     (el: HTMLElement | null) => {
@@ -158,7 +170,7 @@ export function SplitHeading({
   // Колбэк с общим HTMLElement подходит любому из тегов — объектный ref
   // динамического тега раньше приходилось глушить @ts-expect-error
   return (
-    <Tag ref={setRef} className={className} aria-label={children} tabIndex={tabIndex}>
+    <Tag ref={setRef} className={className} lang={lang} aria-label={children} tabIndex={tabIndex}>
       {splitWords(children).map((word, i) => (
         <Fragment key={i}>
           {i > 0 && ' '}

@@ -2,15 +2,17 @@
 
 import { AnimatePresence, m } from 'framer-motion'
 import { MotionLazy } from '@/components/motion/MotionLazy'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import type { CardNews } from '@/lib/gamepage'
+import { tr } from '@/lib/i18n'
 import { indexedNewsPath, newsPath } from '@/lib/newspage'
 import type { NewsBlock } from '@/lib/steamhtml'
-import { NewsBody } from './NewsBody'
+import { ForeignBody, NewsBody } from './NewsBody'
 import { NewsDate, ScaleBadge } from './NewsMeta'
 import { stripGameName } from '@/lib/patchtitle'
-import { textLang } from '@/lib/textlang'
+import { textLangOn } from '@/lib/textlang'
 import { Icon } from '@/components/Icon'
 
 /**
@@ -22,6 +24,11 @@ import { Icon } from '@/components/Icon'
  * инлайновые скрипты, то есть сериализованные пропсы этого самого островка, а
  * видимого текста на странице 6.5 КБ. Тело свежего патча лежало в разметке
  * ДВАЖДЫ: один раз отрисованным, второй — в полезной нагрузке.
+ *
+ * Заголовок и пересказ строки уже на языке страницы — их кладёт cardNews
+ * (lib/gamepage): на /en title — newsTitleOn, tldr — английский пересказ или
+ * ничего. Здесь по-английски только подписи, а тело на /en показывается,
+ * только если оно английское: признак english приходит с /api/news.
  */
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -77,7 +84,10 @@ function Row({
   open: boolean
   onToggle: (gid: string | null) => void
 }) {
+  const locale = useLocale()
   const [blocks, setBlocks] = useState<NewsBlock[] | null>(null)
+  /** Тело английское (/api/news); false — на /en вместо тела ссылка на оригинал */
+  const [english, setEnglish] = useState<boolean | null>(null)
   const [failed, setFailed] = useState(false)
   /* Ref, а не состояние: «запрос уже ушёл» на разметку не влияет, зато его
      читает обработчик наведения — раньше любой перерисовки. */
@@ -90,8 +100,10 @@ function Row({
     setFailed(false)
     fetch(`/api/news?appid=${item.appid}&gid=${encodeURIComponent(item.gid)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((d: { blocks?: unknown }) => {
+      .then((d: { blocks?: unknown; english?: unknown }) => {
         if (!Array.isArray(d.blocks)) throw new Error('shape')
+        // Без признака (ответ старого кэша грани) — как раньше: тело показывается
+        setEnglish(typeof d.english === 'boolean' ? d.english : null)
         setBlocks(d.blocks as NewsBlock[])
       })
       .catch(() => {
@@ -116,9 +128,10 @@ function Row({
 
   // Название игры — заголовок всей страницы; в заголовке патча оно лишнее.
   const heading = stripGameName(item.title, name)
-  // Английский заголовок — с lang="en", как в ленте (PatchRow, lib/textlang);
-  // название игры — имя собственное, в подсчёт языка не входит
-  const headingLang = textLang(heading, name)
+  // Чужой язык заголовка — своим lang, как в ленте (PatchRow, lib/textlang):
+  // английский на русской странице, русский на /en; название игры — имя
+  // собственное, в подсчёт языка не входит
+  const headingLang = textLangOn(locale, heading, name)
   // null — страницы нет в поиске (хотфикс без пересказа, игра вне каталога):
   // заголовок тогда просто текст, см. indexedNewsPath
   const href = indexedNewsPath(item)
@@ -163,12 +176,12 @@ function Row({
             60–70 знаков на 390 и весь пересказ на десктопе. Сторож —
             lib/newsrow.test.ts.
           */}
-          <NewsDate at={item.publishedAt} />
+          <NewsDate at={item.publishedAt} locale={locale} />
           {item.tldr && !open && (
             <span className="line-clamp-2 text-xs leading-relaxed text-dim">{item.tldr}</span>
           )}
         </div>
-        <ScaleBadge scale={item.scale} />
+        <ScaleBadge scale={item.scale} locale={locale} />
         {/* Без tap и без relative: любой из них сделал бы рамкой ::before
             саму кнопку, и слой сжался бы до шеврона */}
         <button
@@ -189,7 +202,7 @@ function Row({
           aria-expanded={open}
           // Видимого текста у кнопки больше нет — только шеврон; имя — то,
           // что она покажет, а «свёрнуто/развёрнуто» скажет aria-expanded
-          aria-label={`Что изменилось: ${heading}`}
+          aria-label={tr(locale, { ru: `Что изменилось: ${heading}`, en: `What changed: ${heading}` })}
           className="mt-1 shrink-0 rounded-full text-dim before:absolute before:inset-0"
         >
           <span
@@ -218,10 +231,17 @@ function Row({
                 </p>
               )}
               {blocks ? (
-                <NewsBody blocks={blocks} />
+                locale === 'en' && english === false && blocks.length ? (
+                  <ForeignBody locale={locale} />
+                ) : (
+                  <NewsBody blocks={blocks} locale={locale} />
+                )
               ) : failed ? (
                 <p className="text-sm leading-relaxed text-dim">
-                  Не удалось загрузить патч. Он открывается по ссылке ниже.
+                  {tr(locale, {
+                    ru: 'Не удалось загрузить патч. Он открывается по ссылке ниже.',
+                    en: "Couldn't load the patch notes. You can open them with the link below.",
+                  })}
                 </p>
               ) : (
                 /* Скелет ровно на высоту абзаца: без него панель раскрывается
@@ -252,7 +272,7 @@ function Row({
                   prefetch={false}
                   className="tap font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
                 >
-                  Отдельной страницей
+                  {tr(locale, { ru: 'Отдельной страницей', en: 'Open as a page' })}
                 </Link>
                 <a
                   href={item.url}
@@ -260,7 +280,7 @@ function Row({
                   rel="noopener noreferrer"
                   className="tap text-dim hover:text-ink transition-colors"
                 >
-                  Оригинал в Steam
+                  {tr(locale, { ru: 'Оригинал в Steam', en: 'Original on Steam' })}
                 </a>
               </div>
             </div>

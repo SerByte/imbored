@@ -1,3 +1,4 @@
+import { tr, type Locale } from './i18n'
 import { PLAY_DEAL_KEY } from './planforget'
 
 /**
@@ -191,12 +192,37 @@ export function cookieValue(cookies: string, name: string): string | null {
 }
 
 /**
+ * Подписи чипов по-английски. Sentence case, как вся английская версия: в
+ * сводке «horror, VR, early access» подпись идёт со строчной, и «Early
+ * Access» с прописной в середине дал бы «early Access». Жанр «Ранний доступ»
+ * в genres выше — данные Steam, а не подпись: он остаётся как есть.
+ */
+const MUTE_LABEL_EN: Record<MuteKey, string> = {
+  horror: 'Horror',
+  vr: 'VR',
+  early: 'Early access',
+  lewd: 'Explicit',
+  gore: 'Gore and violence',
+  anime: 'Anime',
+  hard: 'Hardcore',
+  pvp: 'Competitive',
+  mmo: 'MMO',
+}
+
+/** Подпись чипа на языке страницы; MUTES[].label — русская, как была */
+export function muteLabel(key: MuteKey, locale: Locale = 'ru'): string {
+  return tr(locale, { ru: MUTES.find((p) => p.key === key)?.label ?? key, en: MUTE_LABEL_EN[key] })
+}
+
+/**
  * Сводка для свёрнутой строки квиза: «хорроры, VR, ранний доступ». Подписи
  * чипов — с прописной; в середине фразы — со строчной, кроме аббревиатур.
+ * Правило одно на оба языка: «horror, VR, early access».
  */
-export function muteSummary(mutes: readonly MutePreset[]): string {
+export function muteSummary(mutes: readonly MutePreset[], locale: Locale = 'ru'): string {
   return mutes
-    .map((p) => (/^\p{Lu}{2}/u.test(p.label) ? p.label : p.label[0].toLowerCase() + p.label.slice(1)))
+    .map((p) => tr(locale, { ru: p.label, en: MUTE_LABEL_EN[p.key] }))
+    .map((label) => (/^\p{Lu}{2}/u.test(label) ? label : label[0].toLowerCase() + label.slice(1)))
     .join(', ')
 }
 

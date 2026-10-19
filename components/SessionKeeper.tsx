@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import { useEffect } from 'react'
+import { splitLocale } from '@/lib/i18n'
 import { settleSessionHint } from '@/lib/sessionhint'
 import { claimSessionTouch, forgetSessionTouch } from '@/lib/sessiontouch'
 import { writerFrom, writerStore } from '@/lib/writer'
@@ -47,8 +48,9 @@ export function SessionKeeper() {
   const pathname = usePathname()
 
   useEffect(() => {
-    // На главной молчим: там свой вызов, и он же решает, что рисовать
-    if (pathname === '/') return
+    // На главной молчим: там свой вызов, и он же решает, что рисовать. На
+    // английской (/en) — та же главная
+    if (splitLocale(pathname ?? '').path === '/') return
 
     const touch = () => {
       if (!claimSessionTouch()) return

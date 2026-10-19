@@ -1,5 +1,6 @@
 import { hasCyrillic } from './cyrillic'
 import { foldTitle } from './foldtitle'
+import { fmtNumber, pl, tr, type Locale } from './i18n'
 import { plural } from './plural'
 
 /**
@@ -532,21 +533,42 @@ export type SearchPhase = 'idle' | 'loading' | 'ready' | 'failed'
  * а их у сотни игр из шести тысяч: «Ведьмак 3» найдётся, а «гонки» или
  * «скайрим» — нет, и не потому, что игры нет. Прежняя подсказка —
  * «названия здесь… обычно латиницей» — говорила, что по-русски искать
- * незачем вовсе, а это уже не так.
+ * незачем вовсе, а это уже не так. На /en подсказка та же: кириллицей там
+ * набирают реже, но каталог и вторые названия для них те же.
+ *
+ * locale — язык окна. По-английски каждая строка — целой фразой, а не
+ * склейкой русских кусков: у английского глагол от числа не зависит, зато
+ * «1 game» и «3 games» — разные слова. Число — с разрядами по-английски
+ * («Found 5,816 games»); по-русски оно, как и раньше, без разрядов.
  */
-export function searchStatus(phase: SearchPhase, query: string, found: SearchResult): string {
-  if (phase === 'failed') return 'Каталог не загрузился — проверь связь и попробуй ещё раз'
+export function searchStatus(phase: SearchPhase, query: string, found: SearchResult, locale: Locale = 'ru'): string {
+  if (phase === 'failed') {
+    return tr(locale, {
+      ru: 'Каталог не загрузился — проверь связь и попробуй ещё раз',
+      en: "Couldn't load the catalog — check your connection and try again",
+    })
+  }
   if (!foldTitle(query)) return ''
-  if (phase !== 'ready') return 'Загружаю каталог…'
+  if (phase !== 'ready') return tr(locale, { ru: 'Загружаю каталог…', en: 'Loading the catalog…' })
   const { total } = found
   if (total === 0) {
     return hasCyrillic(query)
-      ? 'Ничего не нашлось. Русское название есть не у каждой игры — попробуй как в Steam, латиницей'
-      : 'Ничего не нашлось'
+      ? tr(locale, {
+          ru: 'Ничего не нашлось. Русское название есть не у каждой игры — попробуй как в Steam, латиницей',
+          en: 'Nothing found. Not every game has a Russian title — try the Steam name in Latin letters',
+        })
+      : tr(locale, { ru: 'Ничего не нашлось', en: 'Nothing found' })
+  }
+  const shown = found.games.length
+  const more = total > shown
+  if (locale === 'en') {
+    const games = `${fmtNumber('en', total)} ${pl('en', total, { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] })}`
+    // Кавычки английские: «ёлочки» — только в русской строке (глоссарий docs/i18n.md)
+    const via = found.layout ? ` for “${found.layout}”` : ''
+    return `Found ${games}${via}${more ? `, showing the first ${shown}` : ''}`
   }
   const verb = plural(total, 'Нашлась', 'Нашлись', 'Нашлось')
   const noun = plural(total, 'игра', 'игры', 'игр')
   const via = found.layout ? ` по «${found.layout}»` : ''
-  const more = total > found.games.length ? `, вот первые ${found.games.length}` : ''
-  return `${verb} ${total} ${noun}${via}${more}`
+  return `${verb} ${total} ${noun}${via}${more ? `, вот первые ${shown}` : ''}`
 }

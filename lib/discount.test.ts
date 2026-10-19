@@ -198,6 +198,72 @@ describe('trustedPrice', () => {
 })
 
 /**
+ * Английская подпись срока: те же границы, своя фраза. Подпись считает
+ * сервер на языке запроса — клиент рисует её как есть.
+ */
+describe('срок скидки по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('сутки, дни и дата — словами глоссария', () => {
+    expect(discountEndsLabel(NOW + 5 * HOUR, NOW, { locale: 'en' })).toBe('last day today')
+    expect(discountEndsLabel(NOW + 1.5 * DAY, NOW, { locale: 'en' })).toBe('1 day left')
+    expect(discountEndsLabel(NOW + 2.5 * DAY, NOW, { locale: 'en' })).toBe('2 days left')
+    expect(discountEndsLabel(NOW + 3.5 * DAY, NOW, { locale: 'en' })).toBe('3 days left')
+    // 1700000000 — 14 ноября 2023 UTC, плюс десять суток
+    expect(discountEndsLabel(NOW + 10 * DAY, NOW, { locale: 'en' })).toBe('until Nov 24')
+    expect(discountEndsLabel(NOW - 1, NOW, { locale: 'en' })).toBeNull()
+  })
+
+  test('calendar — датой и по-английски, в UTC: день не уезжает у Тихого океана', () => {
+    // 23:30 UTC — в Лос-Анджелесе ещё 24-е, в Москве уже 25-е; подпись одна
+    const endsAt = Math.floor(Date.UTC(2023, 10, 24, 23, 30) / 1000)
+    const tz = process.env.TZ
+    try {
+      for (const zone of ['UTC', 'America/Los_Angeles', 'Pacific/Kiritimati']) {
+        process.env.TZ = zone
+        expect(discountEndsLabel(endsAt, NOW, { calendar: true, locale: 'en' }), zone).toBe('until Nov 24')
+      }
+    } finally {
+      if (tz === undefined) delete process.env.TZ
+      else process.env.TZ = tz
+    }
+  })
+
+  test('discountView печёт подпись на языке запроса', () => {
+    const meta = onSale({ discountEndsAt: NOW + 2 * DAY })
+    expect(discountView(meta, NOW, { locale: 'en' })?.endsLabel).toBe('2 days left')
+    expect(discountView(meta, NOW, { calendar: true, locale: 'en' })?.endsLabel).toBe('until Nov 16')
+    expect(discountView(meta, NOW, { urgency: false, locale: 'en' })?.endsLabel).toBeUndefined()
+    // явный ru — ровно то, что без языка
+    expect(discountView(meta, NOW, { locale: 'ru' })).toEqual(discountView(meta, NOW))
+  })
+
+  test('битый срок — без подписи, а не исключение на всю страницу', () => {
+    // Intl на Invalid Date бросает RangeError; срок NaN или Infinity из кривой
+    // записи уронил бы страницу с ценой в error.tsx
+    for (const endsAt of [Number.NaN, Number.POSITIVE_INFINITY, 1e16]) {
+      for (const calendar of [false, true]) {
+        expect(discountEndsLabel(endsAt, NOW, { calendar, locale: 'en' }), `${endsAt} ${calendar}`).toBeNull()
+        // русская ветка не бросала и не бросает
+        expect(() => discountEndsLabel(endsAt, NOW, { calendar })).not.toThrow()
+      }
+    }
+    const view = discountView(onSale({ discountEndsAt: Number.NaN }), NOW, { locale: 'en' })
+    expect(view?.percent).toBe(50)
+    expect(view?.endsLabel).toBeUndefined()
+  })
+
+  test('ни одной русской буквы ни на одном сроке', () => {
+    for (const left of [HOUR, 1.2 * DAY, 2.2 * DAY, 3.2 * DAY, 10 * DAY, 200 * DAY]) {
+      for (const calendar of [false, true]) {
+        const label = discountEndsLabel(NOW + left, NOW, { calendar, locale: 'en' })
+        expect(label, `${left} ${calendar}`).not.toMatch(CYRILLIC)
+      }
+    }
+  })
+})
+
+/**
  * Обычная цена погасшей распродажи — подписанная строка героя карточки, пока
  * сверка каталога не переснимет цену. Ценой она не становится: trustedPrice
  * по-прежнему null, и в разметку и суммы она не попадает.

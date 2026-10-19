@@ -253,7 +253,7 @@ describe('ожидание первой выдачи', () => {
    */
   test('/play шлёт ожидание ровно рядом с показом и только на заходе', () => {
     const src = fs
-      .readFileSync(path.join(__dirname, '..', 'app', 'play', 'page.tsx'), 'utf8')
+      .readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'play', 'page.tsx'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
     expect([...src.matchAll(/track\('pick_shown'\)/g)]).toHaveLength(1)

@@ -7,13 +7,18 @@ import {
   parseGenreParam,
   parseSeedParam,
   playHref,
+  presetHint,
   presetHref,
+  presetLabel,
   quizHref,
+  isRoomPresetKey,
   nearestRoomPreset,
+  ROOM_PRESET_KEYS,
   ROOM_PRESETS,
   roomArrival,
   roomBridgeHref,
   roomPresetByKey,
+  roomPresetByLabel,
   roomPresetOf,
   roomSeedHref,
   roomSeedOf,
@@ -181,8 +186,8 @@ describe('quizHref', () => {
     const root = path.join(__dirname, '..')
     const read = (...p: string[]) => fs.readFileSync(path.join(root, ...p), 'utf8')
     // У жанра — в ветке Onward для kind 'genre' (у подборки жанра нет)
-    expect(read('app', 'games', '[tag]', 'page.tsx')).toContain('href={quizHref(null, null, genre.slug)}')
-    const quiz = read('app', 'quiz', 'page.tsx')
+    expect(read('app', '[lang]', 'games', '[tag]', 'page.tsx')).toContain('href={quizHref(null, null, genre.slug)}')
+    const quiz = read('app', '[lang]', 'quiz', 'page.tsx')
     expect(quiz).toMatch(/playHref\(mood, \{[^}]*genre: genre\?\.slug,/)
     // рулетка и «нераспакованное» жанра не несут — при жанре их кнопок нет
     expect(quiz).toContain('{!seed && !genre && (')
@@ -192,7 +197,7 @@ describe('quizHref', () => {
   // Подпись ряда квиза не обещает «из твоей библиотеки»: магазинные в
   // пятёрке бывают и при своих, а следующий экран честно скажет, откуда они
   test('квиз с жанром обещает «сначала свои», а не «из твоей библиотеки»', () => {
-    const quiz = fs.readFileSync(path.join(__dirname, '..', 'app', 'quiz', 'page.tsx'), 'utf8')
+    const quiz = fs.readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'quiz', 'page.tsx'), 'utf8')
     expect(quiz).toContain('`${genre.title} — сначала свои, одним тапом:`')
     expect(quiz).not.toMatch(/\$\{genre\.title\}[^`]*из твоей библиотеки/)
   })
@@ -241,6 +246,22 @@ describe('ROOM_PRESETS', () => {
     expect(roomPresetOf(undefined)).toBeNull()
     // Комнаты «коротко и спокойно» в списке нет — и подписывать её нечем
     expect(roomPresetOf({ time: 'short', vibe: 'chill', social: 'friends' })).toBeNull()
+  })
+
+  /*
+   * Ключи живут второй копией в lib/playhref (ROOM_PRESET_KEYS): ими roomQuery
+   * в lib/destination проверяет ?preset= и ?hint=, не везя таблицу пресетов в
+   * каждый маршрут. Новый пресет без ключа там отбрасывался бы при входе.
+   */
+  test('ключи без таблицы — те же и в том же порядке', () => {
+    expect(ROOM_PRESETS.map((p) => p.key)).toEqual(ROOM_PRESET_KEYS)
+  })
+
+  test('isRoomPresetKey отвечает так же, как roomPresetByKey', () => {
+    for (const raw of [...ROOM_PRESET_KEYS, null, undefined, '', 'EVENING', 'friday', '__proto__', 'toString', ' quick']) {
+      expect(isRoomPresetKey(raw), String(raw)).toBe(roomPresetByKey(raw) !== null)
+      if (isRoomPresetKey(raw)) expect(roomPresetByKey(raw)?.key).toBe(raw)
+    }
   })
 })
 
@@ -384,6 +405,59 @@ describe('игра, в которую зовут', () => {
   test('мусор — null: ноль, минус, дробь, хвосты, экспонента, слишком длинное', () => {
     for (const raw of [null, undefined, '', '0', '-570', '570.5', '570abc', ' 570', '0570', '1e5', '0x10', '2147483648', '99999999999']) {
       expect(roomSeedOf(raw), String(raw)).toBeNull()
+    }
+  })
+})
+
+/*
+ * Подписи пресетов на английской странице. Русские label и hint остаются
+ * как были — по ним приглашение и доска пати называют комнату, и по ним же
+ * пресет находится обратно (roomPresetByLabel).
+ */
+describe('подписи пресетов по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('вайб-пресеты — по глоссарию, без повторов', () => {
+    expect(VIBE_PRESETS.map((p) => presetLabel(p, 'en'))).toEqual([
+      'After work, no energy',
+      '30 min before bed',
+      'Friday with friends',
+      'Lose the weekend',
+      'Quick round',
+    ])
+  })
+
+  test('пресеты комнаты — по глоссарию: катка — round, никогда не match', () => {
+    expect(ROOM_PRESETS.map((p) => presetLabel(p, 'en'))).toEqual([
+      'All evening together',
+      'A few quick rounds',
+      'Cozy and long',
+      'Chill, while we talk',
+    ])
+    for (const p of ROOM_PRESETS) {
+      expect(presetHint(p, 'en'), p.key).not.toMatch(/match/i)
+      expect(presetHint(p, 'en').length, p.key).toBeGreaterThan(10)
+    }
+  })
+
+  test('ни одна английская подпись не повторяется и не несёт кириллицы', () => {
+    const all = [...VIBE_PRESETS.map((p) => presetLabel(p, 'en')), ...ROOM_PRESETS.map((p) => presetLabel(p, 'en'))]
+    expect(new Set(all).size).toBe(all.length)
+    for (const text of [...all, ...ROOM_PRESETS.map((p) => presetHint(p, 'en'))]) expect(text).not.toMatch(CYRILLIC)
+  })
+
+  test('по умолчанию — русские label и hint, как были', () => {
+    for (const p of VIBE_PRESETS) expect(presetLabel(p)).toBe(p.label)
+    for (const p of ROOM_PRESETS) {
+      expect(presetLabel(p)).toBe(p.label)
+      expect(presetHint(p)).toBe(p.hint)
+    }
+  })
+
+  test('пресет комнаты находится по русскому названию — и только по нему', () => {
+    for (const p of ROOM_PRESETS) expect(roomPresetByLabel(p.label), p.key).toBe(p)
+    for (const raw of [null, undefined, '', 'All evening together', 'toString', VIBE_PRESETS[0].label]) {
+      expect(roomPresetByLabel(raw), String(raw)).toBeNull()
     }
   })
 })

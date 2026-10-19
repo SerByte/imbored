@@ -182,7 +182,7 @@ describe('posterReady', () => {
  * и показывает тот самый адрес, которого дождался.
  */
 describe('/play: такт выбора ждёт свой постер', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'app', 'play', 'page.tsx'), 'utf8')
+  const src = fs.readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'play', 'page.tsx'), 'utf8')
 
   test('setChosen — только после posterReady и с тем же адресом', () => {
     const gate = src.indexOf('await posterReady(poster, CHOSEN_POSTER_WAIT_MS)')

@@ -2,9 +2,11 @@
 
 import { usePathname } from 'next/navigation'
 import { useCallback, useEffect, useRef } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { Portal } from '@/components/Portal'
 import { steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
+import { tr } from '@/lib/i18n'
 import { overlaps, takeFocus, withFocusRing } from '@/lib/skiplink'
 import { writerStore } from '@/lib/writer'
 
@@ -15,6 +17,13 @@ import { writerStore } from '@/lib/writer'
  * чтобы кириллица не лежала в первой загрузке каждой страницы.
  */
 export const READONLY_SAY = 'Режим просмотра: оценки, запуски и свои пати сохранятся после входа через Steam.'
+
+/**
+ * То же по-английски. Отдельной строкой, а не объектом по языку вместо
+ * READONLY_SAY: оболочка выбирает язык сама (useLocale), а русская строка
+ * остаётся той же, что ждут оболочка и её тесты.
+ */
+export const READONLY_SAY_EN = 'View-only mode: ratings, launches and your own parties will be saved once you sign in with Steam.'
 
 /**
  * ПОКАЗЫВАТЬ ЛИ — РЕШАЕТ ПРИЗНАК ЗАПИСИ, а не один флажок (lib/writer).
@@ -96,6 +105,7 @@ export function hideOnWriter(hide: () => void): () => void {
  */
 export function ReadOnlyNoteBox({ onHide }: { onHide: () => void }) {
   const pathname = usePathname()
+  const locale = useLocale()
   const box = useRef<HTMLElement>(null)
 
   /**
@@ -161,23 +171,27 @@ export function ReadOnlyNoteBox({ onHide }: { onHide: () => void }) {
       <div className="fixed inset-x-0 top-20 z-40 flex justify-center px-safe pointer-events-none">
         <section
           ref={box}
-          aria-label="Режим просмотра"
+          aria-label={tr(locale, { ru: 'Режим просмотра', en: 'View-only mode' })}
           className="panel-lift anim-rise p-4 w-full max-w-xl flex flex-col gap-3 pointer-events-auto"
         >
           <p className="text-sm leading-relaxed text-ink">
-            Ты вошёл по ссылке на профиль — это режим просмотра. Подбор работает, а оценки,
-            запуски и свои пати сохранятся после входа через Steam.
+            {tr(locale, {
+              ru: 'Ты вошёл по ссылке на профиль — это режим просмотра. Подбор работает, а оценки, запуски и свои пати сохранятся после входа через Steam.',
+              en: 'You signed in with a profile link, so this is view-only mode. Picks work, but ratings, launches and your own parties are saved only after you sign in with Steam.',
+            })}
           </p>
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+            {/* Путь с языком (usePathname на /en отдаёт /en/…): steamLoginFor
+                сам везёт lang=en, и возврат из Steam — на английскую страницу */}
             <a href={steamLoginFor(pathname)} className="tap text-sm text-ember-text hover:underline">
-              Войти через Steam
+              {tr(locale, { ru: 'Войти через Steam', en: 'Sign in with Steam' })}
             </a>
             <button
               type="button"
               onClick={dismiss}
               className="tap text-sm text-dim transition-colors hover:text-ink"
             >
-              Понятно
+              {tr(locale, { ru: 'Понятно', en: 'Got it' })}
             </button>
           </div>
         </section>

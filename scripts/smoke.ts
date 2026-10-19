@@ -6,6 +6,12 @@
  * видит, что собранный сайт на чистой базе без ключей вообще поднимается и
  * что по нему можно пройти: вход, квиз, выдача, страница игры. Этот прогон —
  * ровно это, в CI после сборки (.github/workflows/ci.yml, шаг «Смоук»).
+ * Первым шагом пути — русский браузер на «/»: он остаётся на русской
+ * главной, а английский с того же адреса уезжает на /en (lib/homelocale.ts).
+ *
+ * Следом — английский проход: /en и /en/quiz отвечают 200 с <html lang="en">,
+ * английский браузер с «/» уезжает на /en, а /ru/quiz снаружи — постоянный
+ * редирект на /quiz (docs/i18n.md, «Адреса»).
  *
  * Без ключей Steam и модели: демо-вход сети не требует, выдача — эвристика.
  * Единственный поход наружу — цены Steam (lib/deals), и его отказ выдачу не
@@ -74,6 +80,13 @@ async function main(): Promise<void> {
       await page.getByRole('heading', { level: 1, name: 'Что мы о тебе знаем' }).waitFor()
     })
 
+    await step('русский браузер на «/» остаётся на русской главной', async () => {
+      await open(page, '/')
+      if (new URL(page.url()).pathname !== '/') throw new Error(`«/» привёл на ${page.url()}`)
+      const lang = await page.locator('html').getAttribute('lang')
+      if (lang !== 'ru') throw new Error(`<html lang="${lang}"> на /`)
+    })
+
     await step('демо-вход с главной ведёт в квиз', async () => {
       await open(page, '/')
       await page.getByRole('button', { name: /Демо без Steam/ }).first().click()
@@ -97,6 +110,47 @@ async function main(): Promise<void> {
     await step('страница игры открывается', async () => {
       await open(page, game)
       await page.getByRole('heading', { level: 1 }).first().waitFor()
+    })
+
+    /*
+     * Английская версия — отдельным контекстом с английским браузером: ни
+     * кук, ни Accept-Language русского прохода, как у человека, который
+     * пришёл впервые (docs/i18n.md).
+     */
+    const en = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      locale: 'en-US',
+      timezoneId: 'UTC',
+      reducedMotion: 'reduce',
+    })
+    const enPage = await en.newPage()
+    enPage.setDefaultTimeout(STEP_MS)
+    watch(enPage)
+
+    await step('английская главная открывается на английском', async () => {
+      await open(enPage, '/en')
+      const lang = await enPage.locator('html').getAttribute('lang')
+      if (lang !== 'en') throw new Error(`<html lang="${lang}"> на /en`)
+    })
+
+    await step('английский браузер с «/» уезжает на /en', async () => {
+      await open(enPage, '/')
+      if (new URL(enPage.url()).pathname !== '/en') throw new Error(`«/» привёл на ${enPage.url()}`)
+    })
+
+    await step('английский квиз открывается', async () => {
+      await open(enPage, '/en/quiz')
+      const lang = await enPage.locator('html').getAttribute('lang')
+      if (lang !== 'en') throw new Error(`<html lang="${lang}"> на /en/quiz`)
+    })
+
+    await step('/ru/quiz — постоянный редирект на /quiz', async () => {
+      const res = await enPage.goto(BASE + '/ru/quiz', { waitUntil: 'domcontentloaded', timeout: STEP_MS })
+      const hop = res?.request().redirectedFrom()
+      const status = (await hop?.response())?.status()
+      if (status !== 308) throw new Error(`/ru/quiz ответил ${status ?? 'без редиректа'}`)
+      if (res?.url() !== BASE + '/quiz') throw new Error(`/ru/quiz привёл на ${res?.url()}`)
+      if (res?.status() !== 200) problems.push(`/quiz после редиректа: документ ${res?.status()}`)
     })
   } finally {
     await browser.close()

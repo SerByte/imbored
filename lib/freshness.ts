@@ -1,6 +1,22 @@
-import { plural } from './plural'
+import { fmtDate, pl, tr, type Locale } from './i18n'
 
 const DAY = 86_400
+
+/** Формы слова при числе — как их ждёт pl(): три русские, две английские */
+type Forms = Parameters<typeof pl>[2]
+
+/**
+ * «N единиц назад» на языке подписи. one — как сказать про ровно одну
+ * единицу: по-русски «неделю назад», по-английски «a week ago». Без one
+ * единица идёт с числом, как остальные.
+ */
+function unitsAgo(locale: Locale, n: number, forms: Forms, one?: { ru: string; en: string }): string {
+  if (n === 1 && one) return tr(locale, one)
+  const word = pl(locale, n, forms)
+  return tr(locale, { ru: `${n} ${word} назад`, en: `${n} ${word} ago` })
+}
+
+const DAYS: Forms = { ru: ['день', 'дня', 'дней'], en: ['day', 'days'] }
 
 /**
  * Свежесть словами. В ленте это несёт больше смысла, чем полная дата: человек
@@ -13,11 +29,11 @@ const DAY = 86_400
  * Плюс vitest собирает только lib/, а до переезда на freshness не было ни
  * одного теста.
  */
-export function freshness(publishedAt: number, nowSec: number): string {
+export function freshness(publishedAt: number, nowSec: number, locale: Locale = 'ru'): string {
   const days = Math.floor((nowSec - publishedAt) / DAY)
-  if (days <= 0) return 'сегодня'
-  if (days === 1) return 'вчера'
-  if (days < 7) return `${days} ${plural(days, 'день', 'дня', 'дней')} назад`
+  if (days <= 0) return tr(locale, { ru: 'сегодня', en: 'today' })
+  if (days === 1) return tr(locale, { ru: 'вчера', en: 'yesterday' })
+  if (days < 7) return unitsAgo(locale, days, DAYS)
   /*
    * Границы считаются по ДНЯМ, а не по производной величине, и это чинит
    * настоящую дыру. Было `const m = days/30; if (m < 12)` — при 360–364 днях
@@ -31,17 +47,52 @@ export function freshness(publishedAt: number, nowSec: number): string {
    * написан живым языком, а в обложке ленты подпись стоит капслоком с разрядкой,
    * где «1 НЕДЕЛЮ НАЗАД» особенно спотыкается. Двойка и дальше остаются числом:
    * «2 недели назад» — уже нормальная речь.
+   *
+   * По-английски единица тоже без цифры, но со своим артиклем: «a week ago»,
+   * а не «1 week ago», — та же живая речь, а не перевод русского оборота.
    */
   if (days < 31) {
-    const w = Math.floor(days / 7)
-    return w === 1 ? 'неделю назад' : `${w} ${plural(w, 'неделю', 'недели', 'недель')} назад`
+    return unitsAgo(
+      locale,
+      Math.floor(days / 7),
+      { ru: ['неделю', 'недели', 'недель'], en: ['week', 'weeks'] },
+      { ru: 'неделю назад', en: 'a week ago' },
+    )
   }
   if (days < 365) {
-    const m = Math.floor(days / 30)
-    return m === 1 ? 'месяц назад' : `${m} ${plural(m, 'месяц', 'месяца', 'месяцев')} назад`
+    return unitsAgo(
+      locale,
+      Math.floor(days / 30),
+      { ru: ['месяц', 'месяца', 'месяцев'], en: ['month', 'months'] },
+      { ru: 'месяц назад', en: 'a month ago' },
+    )
   }
-  const y = Math.floor(days / 365)
-  return y === 1 ? 'год назад' : `${y} ${plural(y, 'год', 'года', 'лет')} назад`
+  return unitsAgo(
+    locale,
+    Math.floor(days / 365),
+    { ru: ['год', 'года', 'лет'], en: ['year', 'years'] },
+    { ru: 'год назад', en: 'a year ago' },
+  )
+}
+
+/**
+ * fmtDate, который на битой дате отвечает строкой, а не исключением.
+ *
+ * Intl.DateTimeFormat#format на Invalid Date бросает RangeError, а
+ * toLocaleDateString, на котором эти подписи жили до перевода, отвечал
+ * строкой «Invalid Date». Разница не косметическая: подпись даты стоит
+ * посреди страниц без своей границы ошибок (портрет, библиотека, лента), и
+ * одна кривая дата в данных — NaN, Infinity, ключ суток вида «2026-8-1» —
+ * уронила бы в error.tsx всю страницу вместо одной странной подписи.
+ *
+ * Строка та же, что печатал движок, и на обоих языках:
+ * toLocaleDateString('en-US') на битой дате отвечает ровно так же. Проверка
+ * по getTime(), а не по Number.isFinite(atSec): конечное, но слишком большое
+ * число секунд (за ±8,64e15 мс) тоже даёт Invalid Date.
+ */
+function dateOrInvalid(locale: Locale, d: Date, opts: Intl.DateTimeFormatOptions): string {
+  if (Number.isNaN(d.getTime())) return 'Invalid Date'
+  return fmtDate(locale, d, opts)
 }
 
 /**
@@ -67,8 +118,12 @@ export function freshness(publishedAt: number, nowSec: number): string {
  * можно только дорисовкой после монтирования, то есть мигнув. Тот же выбор
  * уже сделан у dayLabel выше.
  */
-export function dateLabel(atSec: number, opts: { year?: boolean } = {}): string {
-  return new Date(atSec * 1000).toLocaleDateString('ru-RU', {
+export function dateLabel(atSec: number, opts: { year?: boolean; locale?: Locale } = {}): string {
+  // fmtDate и есть Intl.DateTimeFormat: русская строка та же, что давал
+  // toLocaleDateString('ru-RU'), а английская — «August 12, 2026».
+  // timeZone задан здесь явно, хотя fmtDate и сам ставит UTC: причина
+  // зафиксирована в докблоке выше, и она не должна держаться на чужом дефолте
+  return dateOrInvalid(opts.locale ?? 'ru', new Date(atSec * 1000), {
     day: 'numeric',
     month: 'long',
     ...(opts.year ? { year: 'numeric' as const } : {}),
@@ -85,13 +140,22 @@ export function dateLabel(atSec: number, opts: { year?: boolean } = {}): string 
  * а подпись собиралась как `${minutes} мин назад` — то есть комната
  * двадцатитрёхчасовой давности честно писала «1380 мин назад».
  */
-export function minutesAgoLabel(minutes: number): string {
-  if (minutes < 1) return 'только что'
-  if (minutes < 60) return `${minutes} мин назад`
+export function minutesAgoLabel(minutes: number, locale: Locale = 'ru'): string {
+  if (minutes < 1) return tr(locale, { ru: 'только что', en: 'just now' })
+  // «мин» — сокращение, оно не склоняется ни по-русски, ни по-английски
+  if (minutes < 60) return tr(locale, { ru: `${minutes} мин назад`, en: `${minutes} min ago` })
   const h = Math.floor(minutes / 60)
-  if (h < 24) return `${h} ${plural(h, 'час', 'часа', 'часов')} назад`
-  const d = Math.floor(h / 24)
-  return `${d} ${plural(d, 'день', 'дня', 'дней')} назад`
+  // Русская подпись про один час — с цифрой («1 час назад»), так она и жила;
+  // по-английски «an hour ago»: «1 hour ago» звучит счётчиком, а не речью
+  if (h < 24) {
+    return unitsAgo(
+      locale,
+      h,
+      { ru: ['час', 'часа', 'часов'], en: ['hour', 'hours'] },
+      { ru: '1 час назад', en: 'an hour ago' },
+    )
+  }
+  return unitsAgo(locale, Math.floor(h / 24), DAYS, { ru: '1 день назад', en: 'a day ago' })
 }
 
 /**
@@ -110,8 +174,8 @@ export function minutesAgoLabel(minutes: number): string {
  * подразумеваемая: достаточно кому-нибудь задать TZ, и подпись разъедется с
  * ключом навсегда, а не только на границе суток.
  */
-export function dayLabel(dateStr: string): string {
-  return new Date(`${dateStr}T00:00:00Z`).toLocaleDateString('ru-RU', {
+export function dayLabel(dateStr: string, locale: Locale = 'ru'): string {
+  return dateOrInvalid(locale, new Date(`${dateStr}T00:00:00Z`), {
     day: 'numeric',
     month: 'long',
     timeZone: 'UTC',

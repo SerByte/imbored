@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { clientErrorCode, isChunkLoadError, reportClientError } from '@/lib/clienterr'
+import type { Locale } from '@/lib/i18n'
 import {
   BG,
   DIM,
@@ -13,6 +14,7 @@ import {
   LIGHT_INK,
   PLATE,
 } from '@/lib/palette'
+import { pathLocale } from '@/lib/pathlocale'
 
 /**
  * Последний экран, на котором продукт ещё говорит своим языком.
@@ -49,6 +51,26 @@ import {
  * считается из неё самой и уходит в /api/clienterr. lib/clienterr — чистый
  * модуль без стилей и без React, упасть второй раз ему не на чем.
  */
+/*
+ * Язык — из адреса в браузере, а не из сегмента [lang]: global-error стоит
+ * ВМЕСТО корневого layout, и ни LocaleProvider, ни next/root-params здесь
+ * нет. Сервер (рендер упавшего layout) отдаёт русский, браузер после
+ * гидратации берёт язык из location.pathname — так разметка совпадает, а
+ * /en/… переходит на английский сразу после неё.
+ *
+ * Из lib/i18n — только тип. global-error — своя группа чанков первой
+ * загрузки, отдельная от корневого layout, и каждый его импорт едет на все
+ * маршруты второй копией: с splitLocale, htmlLang, tr и lp здесь весь
+ * lib/i18n с lib/plural (1.8 КБ) приезжал дважды. Язык адреса — pathLocale
+ * (lib/pathlocale, без зависимостей, совпадает со splitLocale), lang — сам
+ * язык (htmlLang и есть тождество), главная — '/en' или '/' (то же, что
+ * lp(locale, '/')), строки — парой через t() ниже, как tr(). Сторожит
+ * lib/sharedchunk.test.ts.
+ */
+const noSubscribe = () => () => {}
+const browserLocale = (): Locale => pathLocale(window.location.pathname ?? '/')
+const serverLocale = (): Locale => 'ru'
+
 export default function GlobalError({
   error,
   retry,
@@ -58,6 +80,9 @@ export default function GlobalError({
 }) {
   const code = error.digest ?? clientErrorCode(error)
   const stale = isChunkLoadError(error)
+  const locale = useSyncExternalStore(noSubscribe, browserLocale, serverLocale)
+  // tr() без lib/i18n: строка на языке адреса, обе ветки рядом
+  const t = (ru: string, en: string) => (locale === 'en' ? en : ru)
 
   useEffect(() => {
     if (!error.digest) {
@@ -66,7 +91,7 @@ export default function GlobalError({
   }, [error, code])
 
   return (
-    <html lang="ru">
+    <html lang={locale}>
       <body
         style={{
           margin: 0,
@@ -81,7 +106,7 @@ export default function GlobalError({
           WebkitFontSmoothing: 'antialiased',
         }}
       >
-        <title>Что-то сломалось · imbored</title>
+        <title>{t('Что-то сломалось · imbored', 'Something broke · imbored')}</title>
         <style>{`
           :root { color-scheme: dark }
           @media (prefers-color-scheme: light) {
@@ -127,12 +152,14 @@ export default function GlobalError({
           </svg>
 
           <h1 style={{ margin: 0, fontSize: '26px', lineHeight: 1.2, letterSpacing: '-0.01em' }}>
-            Что-то сломалось целиком
+            {t('Что-то сломалось целиком', 'Everything broke at once')}
           </h1>
 
           <p className="ge-dim" style={{ margin: 0, fontSize: '15px', lineHeight: 1.6, color: DIM }}>
-            Упало не на странице, а во всём приложении сразу. Скорее всего, это на нашей стороне и
-            уже чинится — попробуй ещё раз.
+            {t(
+              'Упало не на странице, а во всём приложении сразу. Скорее всего, это на нашей стороне и уже чинится — попробуй ещё раз.',
+              'Not just this page — the whole app went down. It’s most likely on our end and already being fixed. Try again.',
+            )}
           </p>
 
           <button
@@ -152,22 +179,25 @@ export default function GlobalError({
               cursor: 'pointer',
             }}
           >
-            {stale ? 'Обновить страницу' : 'Попробовать снова'}
+            {stale
+              ? t('Обновить страницу', 'Reload the page')
+              : t('Попробовать снова', 'Try again')}
           </button>
 
           {/*
-            Обычная <a>, а не <Link>, и правило линтера здесь ошибается. <Link>
-            делает клиентский переход, то есть оставляет жить то самое дерево React,
-            которое только что развалилось целиком. Полная перезагрузка тут не издержка,
-            а смысл: корневой layout отрабатывает заново.
+            Обычная <a>, а не <Link>. <Link> делает клиентский переход, то есть
+            оставляет жить то самое дерево React, которое только что развалилось
+            целиком. Полная перезагрузка тут не издержка, а смысл: корневой layout
+            отрабатывает заново. Главная — на языке адреса (/ или /en); адрес
+            выражением, и no-html-link-for-pages его не проверяет — исключение
+            для правила больше не нужно.
           */}
-          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a
-            href="/"
+            href={locale === 'en' ? '/en' : '/'}
             className="ge-link ge-dim"
             style={{ color: DIM, fontSize: '14px', textDecoration: 'none' }}
           >
-            На главную
+            {t('На главную', 'Home')}
           </a>
 
           {/* Код нужен не человеку, а нам: по нему ошибка находится в логах.
@@ -176,7 +206,7 @@ export default function GlobalError({
             className="ge-dim"
             style={{ color: DIM, fontFamily: 'ui-monospace, monospace', fontSize: '11px' }}
           >
-            код: {code}
+            {t('код', 'code')}: {code}
           </span>
         </main>
       </body>

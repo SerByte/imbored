@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { revalidatePath, revalidateTag } from 'next/cache'
+import { revalidateTag } from 'next/cache'
 import { after, NextResponse } from 'next/server'
 import { openRun, runChain } from '@/lib/chain'
 import { cronAuthorized, digestLinkVerdict } from '@/lib/cron'
@@ -8,6 +8,7 @@ import { logSwallowed } from '@/lib/errlog'
 import { resetSliceCards } from '@/lib/gamecache'
 import { announceFreshPatches } from '@/lib/indexnow'
 import { runDigestSlice } from '@/lib/newsjob'
+import { revalidateSitePath } from '@/lib/revalidate'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
 import { NEWS_MAJOR_TAG } from '@/lib/whatsnewcache'
 
@@ -73,7 +74,7 @@ export async function GET(req: Request) {
         // а заголовок с ним становится ссылкой. Карточка живёт в ISR неделю
         // (lib/gamecache), поэтому её адрес сбрасываем здесь же, по звену. В
         // архиве обновлений игры пересказ — главное в строке: его тоже
-        return resetSliceCards(slice, revalidatePath, { archives: true })
+        return resetSliceCards(slice, revalidateSitePath, { archives: true })
       },
       // Упавшее звено запуск останавливает — это про деньги, см. digestLinkVerdict
       verdict: ({ result, failed }) => digestLinkVerdict({ failed, result }),
@@ -96,7 +97,7 @@ export async function GET(req: Request) {
             await announceFreshPatches(db, {
               now: nowSec(),
               baseUrl: appBaseUrl(),
-              revalidate: (path) => revalidatePath(path),
+              revalidate: revalidateSitePath,
             })
           } catch (err) {
             logSwallowed('digest:indexnow', err)

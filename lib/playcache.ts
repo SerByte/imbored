@@ -41,6 +41,7 @@
  */
 
 import { parseEveningPlan, PLAN_HOLD_MS } from './eveningplan'
+import { DEFAULT_LOCALE, type Locale } from './i18n'
 import { createLocalStore } from './localstore'
 import { parseLean, type Lean } from './mood'
 import { parseNudge } from './nudge'
@@ -60,8 +61,13 @@ export const PLAY_CACHE_TTL_MS = 15 * 60_000
  *
  * 2 — у цены появился регион (priceCc, unsold): карточка первой версии пришла
  * бы без валюты, и ценник у героя-покупки молча пропал бы на пятнадцать минут.
+ *
+ * 3 — у выдачи появился язык: причины и строки карточки сервер отдаёт на
+ * языке запроса, и язык теперь часть ключа (playCacheKey). Запись второй
+ * версии своего языка не знает — ключ без языка она получала и на /en/play,
+ * — и гадать по ней, с какой страницы она, незачем: проще не узнавать.
  */
-export const PLAY_CACHE_VERSION = 2
+export const PLAY_CACHE_VERSION = 3
 
 export type PlayCache = {
   v: typeof PLAY_CACHE_VERSION
@@ -115,6 +121,12 @@ export type PlayCache = {
  * обычная выдача не должна вставать на месте рогаликов, о которых просили со
  * страницы жанра. Своей частью с меткой «g:» — с затравкой её не спутать, — и
  * тоже только когда он есть.
+ *
+ * Язык страницы — тоже в ключе, последней частью и только не русский.
+ * Хранилище вкладки одно на /play и /en/play: переключатель языка ведёт на
+ * тот же адрес с тем же запросом, и без языка в ключе английская страница
+ * подняла бы из записи выдачу с русскими причинами — а сервер её собрал бы
+ * заново по-английски. Русский ключ при этом прежний.
  */
 export function playCacheKey(q: {
   mood: Mood
@@ -123,6 +135,7 @@ export function playCacheKey(q: {
   lean: Lean | null
   seed?: number | null
   genre?: string | null
+  locale?: Locale
 }): string {
   return [
     `${q.mood.time}.${q.mood.vibe}.${q.mood.social}`,
@@ -131,6 +144,7 @@ export function playCacheKey(q: {
     q.lean ?? '',
     ...(q.seed ? [String(q.seed)] : []),
     ...(q.genre ? [`g:${q.genre}`] : []),
+    ...(q.locale && q.locale !== DEFAULT_LOCALE ? [q.locale] : []),
   ].join('|')
 }
 

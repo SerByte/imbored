@@ -1,0 +1,44 @@
+import type { Metadata, ResolvingMetadata } from 'next'
+import { MotionLazy } from '@/components/motion/MotionLazy'
+import { toLocale, tr } from '@/lib/i18n'
+import { rootCard } from '@/lib/site'
+
+/**
+ * См. app/rooms/layout.tsx: страница клиентская, а metadata экспортируется
+ * только из серверных модулей — отсюда отдельный layout.
+ *
+ * Здесь это не про выдачу: /play закрыт в robots.txt (lib/robots.ts), потому
+ * что без куки он всё равно выбрасывает на лендинг. Заголовок нужен
+ * человеку — вкладке, истории и закладке. Главный экран продукта звался в
+ * браузере ровно так же, как сам сайт, и среди нескольких открытых вкладок
+ * imbored его нельзя было отличить ни от лендинга, ни от портрета.
+ *
+ * Язык — из params маршрута, а не из next/root-params: так же, как у
+ * ownAddress (lib/site), и layout годится вызвать без сборки.
+ */
+export async function generateMetadata(props: LayoutProps<'/[lang]/play'>, parent?: ResolvingMetadata): Promise<Metadata> {
+  const locale = toLocale((await props.params).lang)
+  return {
+    // карточка корня на /en — с английской подписью (lib/site)
+    ...(await rootCard(props, parent)),
+    // Не «Подборка»: на экране одна игра, и вкладка обязана говорить то же
+    title: tr(locale, { ru: 'Одна игра', en: 'One game' }),
+    description: tr(locale, {
+      ru: 'Одна игра на сегодня из твоей библиотеки, а если своего не хватит — пара находок из магазина. С объяснением, почему именно она, и с числом тех, кто играет в неё прямо сейчас.',
+      // Не калька «С объяснением, почему…»: по-английски это обрывок без
+      // глагола, а описание уходит в каждое превью ссылки (og, twitter)
+      en: "One game for tonight from your library — and a couple of store finds if that's not enough. You'll see why it's the one and how many people are playing it right now.",
+    }),
+  }
+}
+
+/**
+ * Других параметров, кроме языка, у страницы нет: чужой язык (/xx/…) — сразу
+ * 404 без рендера и без записи ISR. Почему не один раз в корне — в
+ * app/[lang]/layout.tsx, у generateStaticParams.
+ */
+export const dynamicParams = false
+
+export default function PlayLayout({ children }: LayoutProps<'/[lang]/play'>) {
+  return <MotionLazy>{children}</MotionLazy>
+}

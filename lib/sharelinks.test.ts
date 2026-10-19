@@ -242,14 +242,31 @@ describe('телеметрия шаринга', () => {
     match: 'матчем',
   }
 
+  const SHARE_WORDS_EN: Record<ShareKind, string> = {
+    room: 'a party',
+    compat: 'a comparison',
+    portrait: 'a portrait',
+    year: 'a year in review',
+    pick: 'a pick',
+    patch: 'a patch',
+    match: 'its match',
+  }
+
   test('/privacy называет, что «Поделиться» считается с тем, чем, и «Скачать карточку»', () => {
-    const policy = fs.readFileSync(path.join(ROOT, 'app', 'privacy', 'page.tsx'), 'utf8').replace(/\s+/g, ' ')
+    // текст политики — в page.copy.tsx, на обоих языках
+    const policy = fs.readFileSync(path.join(ROOT, 'app', '[lang]', 'privacy', 'page.copy.tsx'), 'utf8').replace(/\s+/g, ' ')
     const steps = policy.match(/Ещё мы считаем несколько шагов:[^.]*/)?.[0] ?? ''
     expect(steps).toMatch(/«Скачать карточку»/)
     // Только сам список после двоеточия: «пати» есть в абзаце и у приглашения
     const shared = steps.match(/«Поделиться» — вместе с тем, чем поделились:([^—]*)—/)?.[1] ?? ''
     expect(shared, 'список «чем поделились» не нашёлся — сторож ослеп').not.toBe('')
     expect(SHARE_KINDS.filter((what) => !shared.includes(SHARE_WORDS[what]))).toEqual([])
+
+    const stepsEn = policy.match(/We also count a few steps:[^.]*/)?.[0] ?? ''
+    expect(stepsEn).toMatch(/“Download card”/)
+    const sharedEn = stepsEn.match(/“Share” — along with what was shared:([^—]*)—/)?.[1] ?? ''
+    expect(sharedEn, 'английский список «чем поделились» не нашёлся — сторож ослеп').not.toBe('')
+    expect(SHARE_KINDS.filter((what) => !sharedEn.includes(SHARE_WORDS_EN[what]))).toEqual([])
   })
 
   /*
@@ -286,11 +303,11 @@ describe('телеметрия шаринга', () => {
    * переменную текстом не проверить.
    */
   const SHARERS: Record<string, ShareKind> = {
-    'app/room/[id]/page.tsx': 'room',
-    'app/compat/CopyCompatLink.tsx': 'compat',
-    'app/compat/page.tsx': 'compat',
-    'app/portrait/[steamid]/page.tsx': 'portrait',
-    'app/portrait/[steamid]/year/page.tsx': 'year',
+    'app/[lang]/room/[id]/RoomPage.tsx': 'room',
+    'app/[lang]/compat/CopyCompatLink.tsx': 'compat',
+    'app/[lang]/compat/page.tsx': 'compat',
+    'app/[lang]/portrait/[steamid]/page.tsx': 'portrait',
+    'app/[lang]/portrait/[steamid]/year/page.tsx': 'year',
     'components/SharePick.tsx': 'pick',
     'components/PatchShare.tsx': 'patch',
     'components/room/MatchShare.tsx': 'match',

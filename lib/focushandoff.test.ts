@@ -98,7 +98,7 @@ describe('цель программного фокуса', () => {
   test('скан видит цели фокуса продукта', () => {
     // без этого тест ниже зеленел бы и тогда, когда поиск сломался
     const files = new Set(targets.map(([f]) => f))
-    for (const f of ['app/explore/page.tsx', 'components/EchoTitle.tsx', 'components/room/RoomWaiting.tsx']) {
+    for (const f of ['app/[lang]/explore/page.tsx', 'components/EchoTitle.tsx', 'components/room/RoomWaiting.tsx']) {
       expect(files, f).toContain(f)
     }
   })
@@ -115,11 +115,12 @@ describe('цель программного фокуса', () => {
 })
 
 describe('/explore: колода уходит — фокус остаётся на странице', () => {
-  const page = read('app/explore/page.tsx')
+  const page = read('app/[lang]/explore/page.tsx')
   const deck = read('components/SwipeDeck.tsx')
 
   test('конец колоды — заголовок, который принимает фокус', () => {
-    expect(page).toMatch(/<h2 ref=\{deckEndHead\} tabIndex=\{-1\}[^>]*>\s*Колода кончилась/)
+    // Заголовок — на языке страницы (tr): русская ветка та же
+    expect(page).toMatch(/<h2 ref=\{deckEndHead\} tabIndex=\{-1\}[^>]*>\s*\{tr\(locale, \{ ru: 'Колода кончилась'/)
   })
 
   test('голос с клавиатуры по последней карте отдаёт фокус этому заголовку', () => {
@@ -141,7 +142,7 @@ describe('/explore: колода уходит — фокус остаётся н
     const redeal = page.slice(page.indexOf('const redeal = async (keyboard: boolean)'))
     const decide = redeal.indexOf('setDealFocus(keyboard && focusAdrift(document, deckEnd.current))')
     expect(decide, 'решение о фокусе новой колоды пропало').toBeGreaterThan(-1)
-    expect(redeal.indexOf("await fetch('/api/explore'")).toBeLessThan(decide)
+    expect(redeal.indexOf('await fetch(deckUrl')).toBeLessThan(decide)
     expect(redeal.indexOf('await show(res')).toBeGreaterThan(decide)
     expect(page).toMatch(/<div ref=\{deckEnd\} className="panel-lift/)
   })
@@ -162,13 +163,13 @@ describe('/explore: колода уходит — фокус остаётся н
     const retry = page.slice(page.indexOf('const retry = async (keyboard: boolean)'))
     const decide = retry.indexOf('setDealFocus(keyboard && focusAdrift(document, failBox.current))')
     expect(decide, 'решение о фокусе после повтора пропало').toBeGreaterThan(-1)
-    expect(retry.indexOf("await fetch('/api/explore'")).toBeLessThan(decide)
+    expect(retry.indexOf('await fetch(deckUrl')).toBeLessThan(decide)
     expect(retry.indexOf('await show(res')).toBeGreaterThan(decide)
   })
 })
 
 describe('пати: матч и экран ожидания', () => {
-  const room = read('app/room/[id]/page.tsx')
+  const room = read('app/[lang]/room/[id]/RoomPage.tsx')
 
   /**
    * Строка матча — одним узлом через подмену. React сверяет детей по месту:
@@ -178,7 +179,11 @@ describe('пати: матч и экран ожидания', () => {
    * скринридер объявляет не везде (components/StatusLine).
    */
   test('строка матча стоит первой в return лобби и церемонии', () => {
-    expect(room).toMatch(/const matchStatus = \(\s*<StatusLine\s+text=\{matchLine\(/)
+    // Текст — строка matchLine; на /en русское название в ней — своим lang
+    expect(room).toMatch(/const matchSaid = matchLine\(/)
+    expect(room).toMatch(
+      /const matchStatus = \(\s*<StatusLine\s+text=\{matchSaid && withForeignRuns\(locale, matchSaid, \[state\.matchedGame\?\.name\]\)\}/,
+    )
     // return, внутри которого стоит церемония, и return лобби
     for (const mark of ['<MatchCeremony', '<div className="room-page']) {
       const at = room.indexOf(mark)
@@ -265,7 +270,7 @@ describe('пати: нажатая кнопка уходит — фокус ос
     expect(roster).toMatch(/\}, \[members, missed\]\)/)
     const rosters = tags(read('components/room/RoomWaiting.tsx'), 'MemberRoster')
     expect(rosters.some((t) => /\sisHost=\{isHost\}/.test(t) && /\smissed=\{missedMember\}/.test(t))).toBe(true)
-    expect(read('app/room/[id]/page.tsx')).toMatch(/missedMember=\{leaveMiss\?\.memberId \?\? null\}/)
+    expect(read('app/[lang]/room/[id]/RoomPage.tsx')).toMatch(/missedMember=\{leaveMiss\?\.memberId \?\? null\}/)
   })
 
   /*
@@ -275,7 +280,7 @@ describe('пати: нажатая кнопка уходит — фокус ос
    * слышал, что вход удался.
    */
   test('вход по приглашению отдаёт фокус заголовку лобби — после своего нажатия и только потерянный', () => {
-    const room = read('app/room/[id]/page.tsx')
+    const room = read('app/[lang]/room/[id]/RoomPage.tsx')
     const h1 = tags(room, 'h1').filter((t) => /ref=\{lobbyHead\}/.test(t))
     expect(h1.length, 'заголовок «Пати …» — не цель фокуса').toBe(1)
     expect(h1[0]).toMatch(/ref=\{lobbyHead\} tabIndex=\{-1\}/)
@@ -302,7 +307,7 @@ describe('пати: нажатая кнопка уходит — фокус ос
   })
 
   test('/room/new: экран отказа на месте спиннера забирает фокус заголовком', () => {
-    const fresh = read('app/room/new/page.tsx')
+    const fresh = read('app/[lang]/room/new/page.tsx')
     const h1 = tags(fresh, 'h1')
     // выбор настроения — без переноса: это первый экран, фокус у открывшего не отнимаем
     expect(h1.filter((t) => /ref=\{focusFailure\} tabIndex=\{-1\}/.test(t)).length).toBe(2)

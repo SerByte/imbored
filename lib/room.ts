@@ -1,4 +1,6 @@
 import { hashString } from './daily'
+import { tr, type Locale } from './i18n'
+import { personaLabel, playerFallback } from './playername'
 
 /**
  * Общие типы комнаты для API-роутов и компонентов ожидания.
@@ -126,15 +128,29 @@ export function waitingMode(args: {
  * Полный хеш был бы другим делом — его перебор и обращал id в steamid.
  * Секрет сюда не тянется потому, что метку строит и lib/db (доска «Пати»),
  * которому lib/server не импортировать.
+ *
+ * locale — язык того, кому отдаётся ростер: метка — интерфейс, а не ник.
+ * Запасное имя — «Player ab12» с тем же хешем (playerFallback), и
+ * демо-личности тоже называются на языке страницы (personaLabel): их имя
+ * хранится русским. Обе — из lib/playername, как у сравнения и портрета:
+ * один человек на разных экранах назван одним словом.
  */
 export function memberLabel(
   roomId: string,
   steamid: string,
   personaName: string | null | undefined,
+  locale: Locale = 'ru',
 ): string {
-  if (personaName) return personaName
-  return `Игрок ${hashString(roomId + steamid).toString(36).slice(0, 4)}`
+  if (personaName) return personaLabel(steamid, personaName, locale)
+  return playerFallback(hashString(roomId + steamid).toString(36).slice(0, 4), locale)
 }
+
+/**
+ * Ник по признаку «это демо» — правило живёт в lib/playername рядом с
+ * personaLabel, одно на ростер и на приглашение. Отсюда — ради тех, кто звал
+ * его из комнаты до переезда.
+ */
+export { demoPersonaName } from './playername'
 
 const ROOM_CODE_RE = /^[A-Z0-9]{6}$/
 
@@ -171,9 +187,19 @@ export function parseRoomCode(raw: string): string | null {
  * свой голос может быть ещё в пути, и тогда матч и правда появится сам.
  * hasMore — есть ли кнопка «Ещё 20 игр»; без неё совет взять ещё — тупик.
  */
-export function rosterHint(args: { swiping: number; hasMore: boolean }): string | null {
-  if (args.swiping > 0) return 'Матч появится сам — обновлять не надо.'
-  if (args.hasMore) return 'Совпадения нет — возьмите ещё игр кнопкой ниже.'
+export function rosterHint(args: { swiping: number; hasMore: boolean }, locale: Locale = 'ru'): string | null {
+  if (args.swiping > 0) {
+    return tr(locale, {
+      ru: 'Матч появится сам — обновлять не надо.',
+      en: 'The match will show up on its own — no need to refresh.',
+    })
+  }
+  if (args.hasMore) {
+    return tr(locale, {
+      ru: 'Совпадения нет — возьмите ещё игр кнопкой ниже.',
+      en: 'No match — grab more games with the button below.',
+    })
+  }
   return null
 }
 
@@ -192,14 +218,17 @@ export function rosterHint(args: { swiping: number; hasMore: boolean }): string 
  * как страницу. Условия на комнату — те же, при которых рисуется церемония:
  * только своим и только с игрой.
  */
-export function matchLine(args: {
-  sawOpen: boolean
-  status: 'open' | 'matched'
-  isMember: boolean
-  game: { name: string } | null
-}): string | null {
+export function matchLine(
+  args: {
+    sawOpen: boolean
+    status: 'open' | 'matched'
+    isMember: boolean
+    game: { name: string } | null
+  },
+  locale: Locale = 'ru',
+): string | null {
   if (!args.sawOpen || args.status !== 'matched' || !args.isMember || !args.game) return null
-  return `Матч: «${args.game.name}»`
+  return tr(locale, { ru: `Матч: «${args.game.name}»`, en: `Match: “${args.game.name}”` })
 }
 
 /**
@@ -291,9 +320,17 @@ export function roomMissText(
  * (deckLimited в app/room/[id]) и у входа (joinFailure там же): отказ по
  * частоте назван своей строкой и просит подождать, а не повторить.
  */
-export function publicFailure(status: number): string {
-  if (status === 429) return 'Доску переключали слишком часто — подожди несколько минут и попробуй снова.'
-  return 'Доска не переключилась — проверь связь и нажми ещё раз.'
+export function publicFailure(status: number, locale: Locale = 'ru'): string {
+  if (status === 429) {
+    return tr(locale, {
+      ru: 'Доску переключали слишком часто — подожди несколько минут и попробуй снова.',
+      en: "You've switched the board too often — wait a few minutes, then try again.",
+    })
+  }
+  return tr(locale, {
+    ru: 'Доска не переключилась — проверь связь и нажми ещё раз.',
+    en: "The board didn't switch — check your connection and tap it again.",
+  })
 }
 
 /**
@@ -420,23 +457,33 @@ export function awaitingOthers(args: {
  * чужой матч — не его новость. Открыл ссылку на уже сошедшуюся комнату — тоже
  * null: новости нет, церемония и есть страница.
  */
-export function roomTabTitle(args: {
-  roomId: string
-  status: 'open' | 'matched'
-  isMember: boolean
-  /** ждёт ли человек других — awaitingOthers */
-  awaiting: boolean
-  sawOpen: boolean
-  /** матч пришёл, пока вкладка была скрыта, и её с тех пор не открывали */
-  unseen: boolean
-  matchedName: string | null
-}): string | null {
+export function roomTabTitle(
+  args: {
+    roomId: string
+    status: 'open' | 'matched'
+    isMember: boolean
+    /** ждёт ли человек других — awaitingOthers */
+    awaiting: boolean
+    sawOpen: boolean
+    /** матч пришёл, пока вкладка была скрыта, и её с тех пор не открывали */
+    unseen: boolean
+    matchedName: string | null
+  },
+  locale: Locale = 'ru',
+): string | null {
   if (!args.isMember) return null
   if (args.status === 'matched') {
     if (!args.sawOpen || !args.matchedName) return null
-    return `${args.unseen ? '● ' : ''}Сошлись: ${args.matchedName}`
+    return `${args.unseen ? '● ' : ''}${tr(locale, { ru: 'Сошлись', en: 'Matched' })}: ${args.matchedName}`
   }
-  if (args.awaiting) return `Ждём остальных · Пати ${args.roomId}`
+  // Код — через неразрывный пробел: полоса вкладок режет заголовок, и «Пати»
+  // без кода на конце строки — пустое слово
+  if (args.awaiting) {
+    return tr(locale, {
+      ru: `Ждём остальных · Пати ${args.roomId}`,
+      en: `Waiting for others · Party ${args.roomId}`,
+    })
+  }
   return null
 }
 

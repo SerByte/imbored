@@ -1,6 +1,7 @@
 import { hashString } from './daily'
 import { collapseEditions, editionKey, isVariantName } from './editions'
 import { foldTitle, matchesTitle } from './foldtitle'
+import { tr, type Locale } from './i18n'
 import { isJunk, looksLikeNonGame } from './junk'
 import { LIBRARY_QUERY_MAX } from './libraryhref'
 import { playtimeHidden } from './playtime'
@@ -148,6 +149,33 @@ export const LIBRARY_FILTERS = [
 
 export type LibraryFilter = (typeof LIBRARY_FILTERS)[number]['id']
 
+/** Русские подписи чипсов по id — из самого списка, второй копии слов нет */
+const LIBRARY_FILTER_RU = Object.fromEntries(LIBRARY_FILTERS.map((f) => [f.id, f.label])) as Record<
+  LibraryFilter,
+  string
+>
+
+/**
+ * Английские подписи тех же чипсов — слова из глоссария: «Unopened» и
+ * «Bounced off» — те же, что у бейджа источника и у состояния плитки, иначе
+ * чипс и плитка под ним назвали бы одно разными словами.
+ */
+const LIBRARY_FILTER_EN = {
+  all: 'All',
+  untouched: 'Unopened',
+  unplayed: 'Bounced off',
+  comeback: 'Abandoned',
+  active: 'Playing now',
+} satisfies Record<LibraryFilter, string>
+
+/**
+ * Подпись чипса на языке страницы. LIBRARY_FILTERS остаётся русским и
+ * задаёт порядок чипсов: страница идёт по нему, а подпись берёт отсюда.
+ */
+export function libraryFilterLabel(id: LibraryFilter, locale: Locale = 'ru'): string {
+  return tr(locale, { ru: LIBRARY_FILTER_RU[id], en: LIBRARY_FILTER_EN[id] })
+}
+
 /**
  * ЧТО НАПИСАНО НА ПУСТОЙ ПОЛКЕ — СВОЁ У КАЖДОГО ФИЛЬТРА.
  *
@@ -169,6 +197,22 @@ export const SHELF_EMPTY: Record<Exclude<LibraryFilter, 'all'>, string> = {
   unplayed: 'Открыть и бросить на первом часе — не про тебя.',
   comeback: 'Заброшенных нет: ты возвращаешься к своим играм.',
   active: 'За две недели ты не запускал ничего.',
+}
+
+/**
+ * Те же строки по-английски. «Играю сейчас» и тут не поздравляет: пустая
+ * полка за две недели — не хорошая новость ни на каком языке.
+ */
+const SHELF_EMPTY_EN = {
+  untouched: "Nothing sealed: you've at least opened everything you bought.",
+  unplayed: "Opening a game and dropping it in the first hour just isn't you.",
+  comeback: 'Nothing abandoned: you keep coming back to your games.',
+  active: "You haven't launched anything in the last two weeks.",
+} satisfies Record<Exclude<LibraryFilter, 'all'>, string>
+
+/** Строка пустой полки на языке страницы; SHELF_EMPTY — её русская половина */
+export function shelfEmpty(filter: Exclude<LibraryFilter, 'all'>, locale: Locale = 'ru'): string {
+  return tr(locale, { ru: SHELF_EMPTY[filter], en: SHELF_EMPTY_EN[filter] })
 }
 
 

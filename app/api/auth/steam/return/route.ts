@@ -16,6 +16,7 @@ import {
 import { fetchOwnedGames, fetchPlayerSummary } from '@/lib/steam'
 import { RETURN_PATH, stateMatches, verifyAssertion } from '@/lib/steam-openid'
 import { loginCarry, loginTarget } from '@/lib/destination'
+import { LANG_COOKIE, LANG_COOKIE_MAX_AGE_SEC, localeFromRequest, lp } from '@/lib/i18n'
 import { recordTelemetryLater } from '@/lib/telemetry'
 import { eventKey } from '@/lib/track'
 
@@ -54,7 +55,13 @@ export async function GET(req: NextRequest) {
    * форматы и закрытый список адресов, так что везти его безопасно.
    */
   const carry = loginCarry(params).toString()
-  const fail = (code: string) => redirect(`${base}/?error=${code}${carry ? `&${carry}` : ''}`)
+  /*
+   * Язык входа — тот, с которым его начали (?lang=en в return_to, см.
+   * loginLocale в app/api/auth/steam): с /en/library человек и после Steam
+   * попадает на английскую страницу, а отказ — на английский лендинг.
+   */
+  const locale = localeFromRequest(req)
+  const fail = (code: string) => redirect(`${base}${lp(locale, '/')}?error=${code}${carry ? `&${carry}` : ''}`)
 
   /*
    * Сначала state — он проверяется локально и бесплатно, так что чужой или
@@ -164,7 +171,14 @@ export async function GET(req: NextRequest) {
 
     // Куда человек шёл до разворота на лендинг; список закрытый —
     // произвольный адрес сюда не попадёт (см. lib/destination.ts).
-    const res = redirect(`${base}${loginTarget(params)}`)
+    const res = redirect(`${base}${lp(locale, loginTarget(params))}`)
+    // Вошёл с английской версии — и «/» дальше ведёт на неё: с сессией ни
+    // страна, ни язык браузера главную не меняют (lib/homelocale.ts), решает
+    // кука. Та же кука, что пишет переключатель в подвале
+    // (components/LocaleSwitch)
+    if (locale !== 'ru') {
+      res.cookies.set(LANG_COOKIE, locale, { path: '/', maxAge: LANG_COOKIE_MAX_AGE_SEC, sameSite: 'lax' })
+    }
     res.cookies.set(
       SESSION_COOKIE,
       // Единственное место, где владение профилем ДОКАЗАНО: выше отработал

@@ -5,6 +5,7 @@ import {
   catalogSignalsQueue,
   reviewPulseQueue,
   claimNewsPollBatch,
+  claimPageEnrich,
   countNewsPollDue,
   createDb,
   dealsEndedBetween,
@@ -42,6 +43,7 @@ import {
   countLiked,
   getNewsPage,
   getUnsummarized,
+  getUnsummarizedEn,
   listExplore,
   listPublicRooms,
   migrateDb,
@@ -228,6 +230,14 @@ const CASES: Case[] = [
     indexes: ['idx_news_feed', 'idx_news_app'],
     sortFree: false,
   },
+  // Те же архивы для /en — английские пересказы остаточным фильтром по тому
+  // же частичному индексу
+  {
+    name: 'английские архивы обновлений для карты сайта',
+    run: async (db) => sitemapPatchArchives(await withPatches(db), 3, 5000, 'en'),
+    indexes: ['idx_news_feed', 'idx_news_app'],
+    sortFree: false,
+  },
   // IndexNow после среза пересказов: то же окно и тот же индекс, что у
   // карты сайта, tldr_at — остаточным фильтром. Сортировка по tldr_at —
   // по окну крупных патчей за девяносто дней, намеренно (см. докблок)
@@ -282,6 +292,44 @@ const CASES: Case[] = [
     run: (db) => getUnsummarized(db),
     indexes: ['idx_news_tldr_v2'],
     sortFree: true,
+  },
+  // Английский догон: патчи с русским пересказом без английского — свой
+  // частичный индекс, свежие первыми, LIMIT обрывает чтение
+  {
+    name: 'очередь английского пересказа',
+    run: (db) => getUnsummarizedEn(db),
+    indexes: ['idx_news_en_digest'],
+    sortFree: true,
+  },
+  // Факт о патче на /en: тот же скалярный подзапрос на пару, но по
+  // английскому двойнику — в нём только патчи с английским пересказом
+  {
+    name: 'свежий крупный патч после последнего запуска, по-английски',
+    run: async (db) =>
+      latestMajorPatchSince(
+        await withPatches(db),
+        [
+          [730, NOW - 86_400],
+          [570, NOW - 86_400],
+        ],
+        'en',
+      ),
+    indexes: ['idx_news_en_major'],
+    sortFree: true,
+  },
+  // Карта сайта и IndexNow на /en: тот же idx_news_feed, английский пересказ
+  // и его отметка — остаточным фильтром по окну
+  {
+    name: 'патчи для карты сайта /en',
+    run: (db) => sitemapNews(db, NOW - 90 * 86_400, 5000, 'en'),
+    indexes: ['idx_news_feed'],
+    sortFree: true,
+  },
+  {
+    name: 'свежепересказанные по-английски патчи',
+    run: (db) => freshlyDigestedPatches(db, NOW - 90 * 86_400, NOW - 3600, 100, 'en'),
+    indexes: ['idx_news_feed'],
+    sortFree: false,
   },
   {
     name: 'пачка опроса новостей',
@@ -340,6 +388,21 @@ const CASES: Case[] = [
     name: 'индекс поиска по каталогу',
     run: (db) => searchIndexGames(db, 10_000),
     indexes: ['idx_games_pool'],
+    sortFree: true,
+  },
+  // Очередь карточек с английской пересборкой: русская работа — по пулу, как
+  // всегда, а пересказы модели без английского слота — своим частичным
+  // индексом. По пулу их поиск после догона читал бы весь каталог на звено
+  {
+    name: 'очередь карточек с английской пересборкой',
+    run: (db) =>
+      claimPageEnrich(db, NOW - 180 * 86_400, 20, {
+        maxTries: 3,
+        redoHeuristic: true,
+        redoBefore: NOW - 7 * 86_400,
+        redoEnglish: true,
+      }),
+    indexes: ['idx_games_pool', 'idx_games_page_en'],
     sortFree: true,
   },
   // Подборки хаба (/games/coop, /games/free, /games/short): верх пула по

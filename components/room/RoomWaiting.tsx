@@ -3,11 +3,14 @@
 import type { ShareLink } from '@/components/ShareLink'
 import { type ReactNode, useEffect, useRef } from 'react'
 import { Ambient } from '@/components/Ambient'
+import { useLocale } from '@/components/LocaleProvider'
 import { StatusLine } from '@/components/StatusLine'
 import { focusAdrift } from '@/lib/focushandoff'
+import { tr } from '@/lib/i18n'
 import { plural } from '@/lib/plural'
 import { type RoomMemberView, rosterHint, waitingMode } from '@/lib/room'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
+import { withForeignRuns } from '@/lib/textlang'
 import { AloneInvite, RoomEscapeHatch } from './AloneInvite'
 import { LeaderPick } from './LeaderPick'
 import { MatchNotifyToggle } from './MatchNotify'
@@ -103,6 +106,7 @@ export function RoomWaiting({
   publicMiss: string | null
 }) {
   const headRef = useRef<HTMLHeadingElement>(null)
+  const locale = useLocale()
   const me = members.find((m) => m.me)
   const mode = waitingMode({
     memberCount: members.length,
@@ -153,15 +157,25 @@ export function RoomWaiting({
    * идёт раз в 2.5 секунды, и регион с «Дима 12 из 20» зачитывался бы вслух
    * круглосуточно. Строка меняется, лишь когда меняется одно из двух чисел, —
    * React не тронет DOM, а скринридер промолчит.
+   *
+   * Русское название лидера на /en — своим lang (withForeignRuns), как в
+   * колоде: «Top pick: “Вальхейм”» английский голос читал по буквам. Куски
+   * те же на каждом опросе, и DOM React так же не трогает.
    */
   const liveSummary =
-    mode === 'alone'
-      ? 'В комнате только ты.'
-      : `Вас ${members.length}. Отсвайпали: ${doneCount} из ${members.length}.` +
-        (near.length
-          ? ` Почти совпали: ${near.length} ${plural(near.length, 'расклад', 'расклада', 'раскладов')}.`
-          : '') +
-        (offer ? ` Лидер голосов: «${offer.name}», ${offer.forCount} из ${offer.memberCount} за.` : '')
+    locale === 'en'
+      ? mode === 'alone'
+        ? "It's just you in the room."
+        : `There are ${members.length} of you. Done swiping: ${doneCount} of ${members.length}.` +
+          (near.length ? ` Near misses: ${near.length}.` : '') +
+          (offer ? ` Top pick: “${offer.name}”, ${offer.forCount} of ${offer.memberCount} said yes.` : '')
+      : mode === 'alone'
+        ? 'В комнате только ты.'
+        : `Вас ${members.length}. Отсвайпали: ${doneCount} из ${members.length}.` +
+          (near.length
+            ? ` Почти совпали: ${near.length} ${plural(near.length, 'расклад', 'расклада', 'раскладов')}.`
+            : '') +
+          (offer ? ` Лидер голосов: «${offer.name}», ${offer.forCount} из ${offer.memberCount} за.` : '')
 
   return (
     <section className="relative flex-1 flex flex-col gap-5">
@@ -169,7 +183,7 @@ export function RoomWaiting({
       <div aria-hidden className="grain absolute inset-0" />
 
       <p role="status" aria-live="polite" className="sr-only">
-        {liveSummary}
+        {withForeignRuns(locale, liveSummary, [offer?.name])}
       </p>
 
       {mode === 'alone' && (
@@ -188,7 +202,7 @@ export function RoomWaiting({
 
       {/* Свои лайки нужны и в одиночестве: они и есть ответ на «а не зря ли
           я всё это листал» — голоса записаны и ждут второго человека */}
-      {mode === 'alone' && <MyLikesRail games={myLikes} />}
+      {mode === 'alone' && <MyLikesRail games={myLikes} locale={locale} />}
 
       {mode === 'others' && (
         <>
@@ -204,21 +218,33 @@ export function RoomWaiting({
             */}
             <h2 ref={headRef} tabIndex={-1} className="font-display text-display-sm">
               {pending.length === 0
-                ? 'Все отсвайпали — и ни разу не совпали'
+                ? tr(locale, {
+                    ru: 'Все отсвайпали — и ни разу не совпали',
+                    en: "Everyone's done swiping — and not a single match",
+                  })
                 : pending.length === 1
-                  ? 'Колода пройдена — ждём ещё одного'
-                  : `Колода пройдена — ждём ещё ${pending.length} ${plural(
-                      pending.length,
-                      'человека',
-                      'человека',
-                      'человек',
-                    )}`}
+                  ? tr(locale, { ru: 'Колода пройдена — ждём ещё одного', en: 'Deck done — waiting for one more' })
+                  : tr(locale, {
+                      ru: `Колода пройдена — ждём ещё ${pending.length} ${plural(
+                        pending.length,
+                        'человека',
+                        'человека',
+                        'человек',
+                      )}`,
+                      en: `Deck done — waiting for ${pending.length} more`,
+                    })}
             </h2>
             {pending.length === 0 && (
               <p className="text-dim text-sm">
                 {offer
-                  ? 'Единогласия нет — но одна игра набрала большинство.'
-                  : 'Вкусы разошлись полностью. Бывает — и это тоже нормальный вечер.'}
+                  ? tr(locale, {
+                      ru: 'Единогласия нет — но одна игра набрала большинство.',
+                      en: 'Not unanimous — but one game got a majority.',
+                    })
+                  : tr(locale, {
+                      ru: 'Вкусы разошлись полностью. Бывает — и это тоже нормальный вечер.',
+                      en: "Your tastes split completely. It happens — and that's a fine evening too.",
+                    })}
               </p>
             )}
           </div>
@@ -239,7 +265,10 @@ export function RoomWaiting({
           <StatusLine
             text={
               !offer && pending.length === 0 && leaderMiss === 'stale'
-                ? 'Голоса сдвинулись — брать пока нечего.'
+                ? tr(locale, {
+                    ru: 'Голоса сдвинулись — брать пока нечего.',
+                    en: 'The votes shifted — nothing to go with yet.',
+                  })
                 : null
             }
             className="text-sm text-dim text-center"
@@ -247,10 +276,13 @@ export function RoomWaiting({
           <MemberRoster
             members={members}
             deckSize={deckSize}
-            hint={rosterHint({
-              swiping: members.filter((m) => !m.done).length,
-              hasMore,
-            })}
+            hint={rosterHint(
+              {
+                swiping: members.filter((m) => !m.done).length,
+                hasMore,
+              },
+              locale,
+            )}
             isHost={isHost}
             onRemove={onRemoveMember}
             removing={leaving}
@@ -268,8 +300,8 @@ export function RoomWaiting({
             уведомление со страницы не работает (телефоны, pageNotices в lib/room).
           */}
           {(pending.length > 0 || offer) && <MatchNotifyToggle />}
-          <NearMissList near={near} />
-          <MyLikesRail games={myLikes} />
+          <NearMissList near={near} locale={locale} />
+          <MyLikesRail games={myLikes} locale={locale} />
         </>
       )}
 
@@ -277,11 +309,13 @@ export function RoomWaiting({
         <>
           <div className="relative panel-lift p-6 sm:p-8 flex flex-col gap-3 text-center">
             <h2 ref={headRef} tabIndex={-1} className="font-display text-display-sm">
-              Выбирать не из чего
+              {tr(locale, { ru: 'Выбирать не из чего', en: 'Nothing to choose from' })}
             </h2>
             <p className="text-dim text-sm leading-relaxed max-w-md mx-auto">
-              Колода пустая — в ваших библиотеках не нашлось ничего сетевого. Тут дело не в
-              тебе: подключи библиотеку или позови кого-то, у кого есть во что играть вместе.
+              {tr(locale, {
+                ru: 'Колода пустая — в ваших библиотеках не нашлось ничего сетевого. Тут дело не в тебе: подключи библиотеку или позови кого-то, у кого есть во что играть вместе.',
+                en: "The deck is empty — your libraries have nothing multiplayer. It's not you: connect your library or invite someone who has games to play together.",
+              })}
             </p>
           </div>
           {/* Без строки под списком: колоды не было, и матчу неоткуда взяться */}
@@ -298,7 +332,10 @@ export function RoomWaiting({
       <PartyTrivia
         roomId={roomId}
         interruptKey={`${members.length}:${doneCount}:${near.length}:${offer?.appid ?? ''}`}
-        interruptNote="В комнате что-то произошло — викторина подождёт."
+        interruptNote={tr(locale, {
+          ru: 'В комнате что-то произошло — викторина подождёт.',
+          en: 'Something happened in the room — trivia can wait.',
+        })}
       />
 
       <div className="relative flex flex-wrap items-center justify-between gap-3 pt-2">
@@ -311,7 +348,11 @@ export function RoomWaiting({
             aria-disabled={pulling}
             className="btn-glass justify-start py-3 text-sm text-left aria-disabled:opacity-40"
           >
-            <span className="block">{pulling ? 'Добираю…' : 'Ещё 20 игр'}</span>
+            <span className="block">
+              {pulling
+                ? tr(locale, { ru: 'Добираю…', en: 'Dealing more…' })
+                : tr(locale, { ru: 'Ещё 20 игр', en: '20 more games' })}
+            </span>
             {/*
               Карты за первой двадцаткой — заведомо худшие по близости к вкусу
               пати: колода отсортирована, и добор достаёт её хвост. Кнопка,
@@ -320,13 +361,26 @@ export function RoomWaiting({
             */}
             <span className="block text-xs text-faint mt-0.5">
               {pullFailed
-                ? 'Не дошло — проверь связь и нажми ещё раз'
-                : 'Дальше пойдёт то, что мы отложили. И придёт всем сразу'}
+                ? tr(locale, {
+                    ru: 'Не дошло — проверь связь и нажми ещё раз',
+                    en: "Didn't go through — check your connection and tap again",
+                  })
+                : tr(locale, {
+                    ru: 'Дальше пойдёт то, что мы отложили. И придёт всем сразу',
+                    en: 'Next up is what we set aside. Everyone gets it at once',
+                  })}
             </span>
           </button>
         ) : (
+          /* «рядом» — запас игр сверх ваших библиотек (extraPool в lib/group),
+             по-английски «beyond», а не «nearby» о расстоянии. Не шире
+             русской: на 768 строка стоит в ряд с «Leave party» — 372 px
+             против 398 */
           <span className="text-xs text-faint">
-            Игры кончились — мы честно перебрали всё, что нашли у вас и рядом.
+            {tr(locale, {
+              ru: 'Игры кончились — мы честно перебрали всё, что нашли у вас и рядом.',
+              en: 'Out of games — we checked everything in your libraries and beyond.',
+            })}
           </span>
         )}
         <RoomEscapeHatch />
@@ -347,7 +401,7 @@ export function RoomWaiting({
           aria-disabled={leaving}
           className="tap text-sm text-faint hover:text-danger transition-colors cursor-pointer aria-disabled:opacity-40"
         >
-          Выйти из пати
+          {tr(locale, { ru: 'Выйти из пати', en: 'Leave party' })}
         </button>
         {/*
           Отказ выхода и ✕ хоста. Раньше оба молчали: на моргнувшей связи

@@ -4,9 +4,34 @@ import { describe, expect, test } from 'vitest'
 import { VIBE_TAGS } from './mood'
 import { TIME_TAGS } from './recommend'
 import { TAG_PRIOR } from './semantics'
-import { hasTagRu, tagRu } from './tagsru'
+import { hasTagRu, tagLabel, tagRu } from './tagsru'
 import { TAGS_RU_OVERRIDES } from './tagsru.overrides'
 import { TAGS_RU_STEAM } from './tagsru.steam'
+
+describe('tagLabel', () => {
+  test('на английском — сам тег Steam, без пробелов по краям', () => {
+    expect(tagLabel('Roguelike', 'en')).toBe('Roguelike')
+    expect(tagLabel('Dystopian ', 'en')).toBe('Dystopian')
+    expect(tagLabel('Тег без перевода', 'en')).toBe('Тег без перевода')
+  })
+
+  test('на русском — ровно tagRu', () => {
+    for (const tag of ['Roguelike', 'Dystopian ', 'Souls-like', 'Нет такого тега']) {
+      expect(tagLabel(tag, 'ru'), tag).toBe(tagRu(tag))
+    }
+  })
+
+  test('без языка — русский: вызывающий, который язык не прокидывает, получает tagRu', () => {
+    for (const tag of ['Roguelike', 'Dystopian ', 'Character Action Game']) {
+      expect(tagLabel(tag), tag).toBe(tagRu(tag))
+    }
+  })
+
+  test('на английском — без кириллицы для любого тега словаря', () => {
+    const keys = [...Object.keys(TAGS_RU_STEAM), ...Object.keys(TAGS_RU_OVERRIDES)]
+    expect(keys.filter((t) => /[А-Яа-яЁё]/.test(tagLabel(t, 'en')))).toEqual([])
+  })
+})
 
 describe('tagRu', () => {
   test('переводит по английскому ключу', () => {
@@ -62,16 +87,20 @@ describe('tagRu', () => {
  * Перевод держится на том, что его зовут на месте вывода, — и новый экран,
  * нарисовавший meta.tags как есть, вернул бы английские теги, не сломав ни
  * одного теста поведения. Поэтому здесь не поведение, а текст.
+ *
+ * Подпись — tagRu или tagLabel (та же tagRu на русском и сам тег на
+ * английском): файл, переведённый на язык страницы, зовёт tagLabel, и
+ * сторожу всё равно, какой из двух, — лишь бы не голый ключ.
  */
 describe('теги выводятся по-русски', () => {
   const ROOT = path.join(__dirname, '..')
   const WHERE = [
     'components/TagChips.tsx',
     'components/SwipeDeck.tsx',
-    'app/game/[appid]/page.tsx',
-    'app/game/[appid]/opengraph-image.tsx',
-    'app/compat/[steamid]/page.tsx',
-    'app/play/page.tsx',
+    'app/[lang]/game/[appid]/page.tsx',
+    'app/[lang]/game/[appid]/opengraph-image.tsx',
+    'app/[lang]/compat/[steamid]/page.tsx',
+    'app/[lang]/play/page.tsx',
     'lib/landing.ts',
     'lib/llm.ts',
     'lib/jsonld.ts',
@@ -81,7 +110,7 @@ describe('теги выводятся по-русски', () => {
   for (const file of WHERE) {
     test(file, () => {
       const src = fs.readFileSync(path.join(ROOT, file), 'utf8')
-      expect(src, `${file}: тег без tagRu вернулся бы английским`).toMatch(/\btagRu\b/)
+      expect(src, `${file}: тег без tagRu или tagLabel вернулся бы ключом`).toMatch(/\b(tagRu|tagLabel)\b/)
     })
   }
 })

@@ -2,7 +2,8 @@
 
 import { AnimatePresence, m } from 'framer-motion'
 import { MotionMax } from '@/components/motion/MotionMax'
-import { useRouter } from 'next/navigation'
+import { useLocale } from '@/components/LocaleProvider'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { GameCardBody } from '@/components/GameCard'
 import { GameLink } from '@/components/GameLink'
@@ -10,7 +11,7 @@ import { NeedSteam } from '@/components/NeedSteam'
 import { StatusLine } from '@/components/StatusLine'
 import type { GameArtUrls } from '@/lib/art'
 import { Eyebrow } from '@/components/Labels'
-import { plural } from '@/lib/plural'
+import { lp, pl, tr } from '@/lib/i18n'
 import { isNeedSteam } from '@/lib/writer'
 
 export type BannedGame = {
@@ -63,7 +64,8 @@ type FocusTarget = { appid: number } | { shelf: Shelf } | 'empty'
  * открыта: кнопки гаснут, вместо них строка о входе через Steam.
  */
 export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: boolean }) {
-  const router = useRouter()
+  const router = useLocaleRouter()
+  const locale = useLocale()
   /*
    * Снятое — множеством поверх пропа. Плитка уходит сразу, до ответа, а
    * сервер присылает полку без неё только после router.refresh(): до тех пор
@@ -201,7 +203,14 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
   const missed = failed === null ? undefined : items.find((g) => g.appid === failed)
   const miss = (
     <StatusLine
-      text={missed ? `Не вышло — «${missed.name}» осталась на полке. Попробуй ещё раз.` : null}
+      text={
+        missed
+          ? tr(locale, {
+              ru: `Не вышло — «${missed.name}» осталась на полке. Попробуй ещё раз.`,
+              en: `Didn't work — “${missed.name}” is still on the shelf. Try again.`,
+            })
+          : null
+      }
       className="sr-only"
     />
   )
@@ -221,7 +230,7 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
         {miss}
         <section className="mb-12">
           <p ref={emptyLine} tabIndex={-1} className="text-dim text-sm">
-            Всё вернулось в подбор.
+            {tr(locale, { ru: 'Всё вернулось в подбор.', en: "Everything's back in your picks." })}
           </p>
         </section>
       </>
@@ -260,7 +269,9 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
                 /*
                   У каждой кнопки своё имя. Видимый текст один на всю полку, и
                   скринридер зачитывал список из пяти одинаковых «Вернуть в
-                  подбор», не говоря, какая к какой игре.
+                  подбор», не говоря, какая к какой игре. Английское имя
+                  начинается с видимых слов (WCAG 2.5.3, как у «Уже прошёл»):
+                  голосом кнопку зовут тем, что на ней написано.
                 */
                 <button
                   type="button"
@@ -270,17 +281,23 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
                   }}
                   onClick={() => unban(g.appid)}
                   aria-label={
-                    shelf === 'done' ? `Снова предлагать «${g.name}»` : `Вернуть «${g.name}» в подбор`
+                    shelf === 'done'
+                      ? tr(locale, { ru: `Снова предлагать «${g.name}»`, en: `Suggest again: “${g.name}”` })
+                      : tr(locale, { ru: `Вернуть «${g.name}» в подбор`, en: `Back into picks: “${g.name}”` })
                   }
                   className="pill mt-3 self-start"
                 >
-                  {shelf === 'done' ? 'Снова предлагать' : 'Вернуть в подбор'}
+                  {/* Слова глоссария, не шире русских: пилюля стоит под плиткой
+                      в пять колонок */}
+                  {shelf === 'done'
+                    ? tr(locale, { ru: 'Снова предлагать', en: 'Suggest again' })
+                    : tr(locale, { ru: 'Вернуть в подбор', en: 'Back into picks' })}
                 </button>
               )}
               {/* Для глаза: скринридеру отказ уже сказала строка полок (miss) */}
               {failed === g.appid && (
                 <p aria-hidden className="px-3 pb-3 text-[11px] text-danger">
-                  Не вышло — попробуй ещё раз
+                  {tr(locale, { ru: 'Не вышло — попробуй ещё раз', en: "Didn't work — try again" })}
                 </p>
               )}
             </m.div>
@@ -294,11 +311,11 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
     <>
       {miss}
       <div className="flex flex-col gap-12 mb-12">
-        {readOnly && <NeedSteam from="/library" />}
+        {readOnly && <NeedSteam from={lp(locale, '/library')} />}
 
         {hidden.length > 0 && (
           <section aria-labelledby="shelf-hidden">
-            <Eyebrow className="mb-2">Скрытые</Eyebrow>
+            <Eyebrow className="mb-2">{tr(locale, { ru: 'Скрытые', en: 'Hidden' })}</Eyebrow>
             <h2
               id="shelf-hidden"
               ref={(el) => {
@@ -308,10 +325,21 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
               className="font-display text-display-sm"
             >
               <span className="tabular-nums text-ember-text">{hidden.length}</span>{' '}
-              {plural(hidden.length, 'игру', 'игры', 'игр')} больше не предлагаем
+              {pl(locale, hidden.length, {
+                ru: ['игру больше не предлагаем', 'игры больше не предлагаем', 'игр больше не предлагаем'],
+                en: ['game we no longer suggest', 'games we no longer suggest'],
+              })}
             </h2>
             <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
-              Их правда нет ни в подборе, ни в игре дня, ни в пати. Передумаешь — верни обратно.
+              {tr(locale, {
+                ru: 'Их правда нет ни в подборе, ни в игре дня, ни в пати. Передумаешь — верни обратно.',
+                // Число — как у заголовка над абзацем: под «1 game …» строка
+                // про «they» читается ошибкой. Русскому «их» число не мешает
+                en:
+                  hidden.length === 1
+                    ? "It's really gone from your picks, the game of the day and parties. Change your mind? Bring it back."
+                    : "They're really gone from your picks, the game of the day and parties. Change your mind? Bring them back.",
+              })}
             </p>
             {tiles(hidden, 'hidden')}
           </section>
@@ -319,7 +347,7 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
 
         {done.length > 0 && (
           <section aria-labelledby="shelf-done">
-            <Eyebrow className="mb-2">Пройдено</Eyebrow>
+            <Eyebrow className="mb-2">{tr(locale, { ru: 'Пройдено', en: 'Finished' })}</Eyebrow>
             <h2
               id="shelf-done"
               ref={(el) => {
@@ -329,11 +357,20 @@ export function BannedShelf({ games, writer }: { games: BannedGame[]; writer: bo
               className="font-display text-display-sm"
             >
               <span className="tabular-nums text-ember-text">{done.length}</span>{' '}
-              {plural(done.length, 'игра пройдена', 'игры пройдены', 'игр пройдено')}
+              {pl(locale, done.length, {
+                ru: ['игра пройдена', 'игры пройдены', 'игр пройдено'],
+                en: ['game finished', 'games finished'],
+              })}
             </h2>
             <p className="text-dim text-sm mt-1.5 mb-4 max-w-md">
-              Их не предлагаем не потому, что не понравились: они пройдены. Захочешь перепройти —
-              верни.
+              {tr(locale, {
+                ru: 'Их не предлагаем не потому, что не понравились: они пройдены. Захочешь перепройти — верни.',
+                // Число — как у заголовка, по той же причине, что у скрытых
+                en:
+                  done.length === 1
+                    ? "We don't suggest it because you finished it, not because you didn't like it. Want to replay it? Bring it back."
+                    : "We don't suggest them because you finished them, not because you didn't like them. Want to replay one? Bring it back.",
+              })}
             </p>
             {tiles(done, 'done')}
           </section>

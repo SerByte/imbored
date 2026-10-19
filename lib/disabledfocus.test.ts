@@ -239,62 +239,62 @@ describe('disabled не выключает кнопку на время запр
  * Кнопка опознаётся по файлу и выражению, а не по номеру строки (тот же урок,
  * что в tap.test.ts). Проверка — выражение, которое находит сам обработчик и
  * проверку в его голове, до первого запроса. Обработчик бывает в другом
- * файле: у LeaderPick и RoomWaiting он на странице комнаты, у PrivacyHelp —
+ * файле: у LeaderPick и RoomWaiting он на странице комнаты, у PrivacyHelpView —
  * в карточке подключения (onRetry приходит только оттуда, см.
  * lib/privacyhelp.test.ts).
  */
 const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp]> }> = [
   {
-    file: 'app/daily/page.tsx',
+    file: 'app/[lang]/daily/page.tsx',
     expr: 'rerolling',
-    guards: [['app/daily/page.tsx', /const notToday = async \(intent\?: CtxIntent\) => \{\s*if \(rerolling\) return/]],
+    guards: [['app/[lang]/daily/page.tsx', /const notToday = async \(intent\?: CtxIntent\) => \{\s*if \(rerolling\) return/]],
   },
   {
     // все переключатели выдачи и подталкивания идут через reshape
-    file: 'app/play/page.tsx',
+    file: 'app/[lang]/play/page.tsx',
     expr: 'switching',
-    guards: [['app/play/page.tsx', /next\.nudge !== 'different'\s+if \(same \|\| switching\) return/]],
+    guards: [['app/[lang]/play/page.tsx', /next\.nudge !== 'different'\s+if \(same \|\| switching\) return/]],
   },
   {
     // «Попробовать снова», «Подобрать без «похожих»» и «без жанра» — один повтор
-    file: 'app/play/page.tsx',
+    file: 'app/[lang]/play/page.tsx',
     expr: 'retrying',
     guards: [
       [
-        'app/play/page.tsx',
+        'app/[lang]/play/page.tsx',
         /const retry = useCallback\(async \(withSeed: number \| null = askSeed, genreless = false\) => \{\s*if \(retrying\) return/,
       ],
     ],
   },
   {
-    file: 'app/play/page.tsx',
+    file: 'app/[lang]/play/page.tsx',
     expr: 'banning',
-    guards: [['app/play/page.tsx', /onClick=\{async \(\) => \{\s*if \(banning\) return/]],
+    guards: [['app/[lang]/play/page.tsx', /onClick=\{async \(\) => \{\s*if \(banning\) return/]],
   },
   {
     // «Уже прошёл» у строки «Продолжить»
-    file: 'app/play/page.tsx',
+    file: 'app/[lang]/play/page.tsx',
     expr: 'finishing',
-    guards: [['app/play/page.tsx', /const finishCont = async \(\) => \{\s*if \(finishing \|\| !cont\) return/]],
+    guards: [['app/[lang]/play/page.tsx', /const finishCont = async \(\) => \{\s*if \(finishing \|\| !cont\) return/]],
   },
   {
-    file: 'app/explore/page.tsx',
+    file: 'app/[lang]/explore/page.tsx',
     expr: 'dealing',
-    guards: [['app/explore/page.tsx', /const redeal = async \(keyboard: boolean\) => \{\s*if \(dealing\) return/]],
+    guards: [['app/[lang]/explore/page.tsx', /const redeal = async \(keyboard: boolean\) => \{\s*if \(dealing\) return/]],
   },
   {
     // «Попробовать снова» на экране отказа /explore
-    file: 'app/explore/page.tsx',
+    file: 'app/[lang]/explore/page.tsx',
     expr: 'retrying',
-    guards: [['app/explore/page.tsx', /const retry = async \(keyboard: boolean\) => \{\s*if \(retrying\) return/]],
+    guards: [['app/[lang]/explore/page.tsx', /const retry = async \(keyboard: boolean\) => \{\s*if \(retrying\) return/]],
   },
   {
     // «Войти в комнату» и «Демо-друг»
-    file: 'app/room/[id]/page.tsx',
+    file: 'app/[lang]/room/[id]/RoomPage.tsx',
     expr: 'busy',
     guards: [
-      ['app/room/[id]/page.tsx', /async function join\(\) \{\s*if \(busy\) return/],
-      ['app/room/[id]/page.tsx', /async function joinAsDemoFriend\(\) \{\s*if \(busy\) return/],
+      ['app/[lang]/room/[id]/RoomPage.tsx', /async function join\(\) \{\s*if \(busy\) return/],
+      ['app/[lang]/room/[id]/RoomPage.tsx', /async function joinAsDemoFriend\(\) \{\s*if \(busy\) return/],
     ],
   },
   {
@@ -302,7 +302,7 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     expr: 'taking',
     guards: [
       [
-        'app/room/[id]/page.tsx',
+        'app/[lang]/room/[id]/RoomPage.tsx',
         /async function takeLeader\(\) \{\s*const leader = likes\.leader\s*if \(!leader \|\| takingLeader\) return/,
       ],
     ],
@@ -310,32 +310,32 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
   {
     file: 'components/room/RoomWaiting.tsx',
     expr: 'pulling',
-    guards: [['app/room/[id]/page.tsx', /async function pullMore\(\) \{\s*if \(pulling\) return/]],
+    guards: [['app/[lang]/room/[id]/RoomPage.tsx', /async function pullMore\(\) \{\s*if \(pulling\) return/]],
   },
   {
     // «Выйти из пати»; ✕ хоста — тем же обработчиком, см. MemberRoster ниже
     file: 'components/room/RoomWaiting.tsx',
     expr: 'leaving',
-    guards: [['app/room/[id]/page.tsx', /async function removeMember\(memberId\?: string\) \{\s*if \(leaving\) return/]],
+    guards: [['app/[lang]/room/[id]/RoomPage.tsx', /async function removeMember\(memberId\?: string\) \{\s*if \(leaving\) return/]],
   },
   {
     file: 'components/room/MemberRoster.tsx',
     expr: 'removing',
     guards: [
       ['components/room/MemberRoster.tsx', /const remove = \(id: string\) => \{\s*if \(removing \|\| !onRemove\) return/],
-      ['app/room/[id]/page.tsx', /async function removeMember\(memberId\?: string\) \{\s*if \(leaving\) return/],
+      ['app/[lang]/room/[id]/RoomPage.tsx', /async function removeMember\(memberId\?: string\) \{\s*if \(leaving\) return/],
     ],
   },
   {
     // переключатель доски в шапке и плитка «Пустить чужих» — один обработчик
-    file: 'app/room/[id]/page.tsx',
+    file: 'app/[lang]/room/[id]/RoomPage.tsx',
     expr: 'publicBusy',
-    guards: [['app/room/[id]/page.tsx', /async function togglePublic\(\) \{\s*if \(publicBusy\) return/]],
+    guards: [['app/[lang]/room/[id]/RoomPage.tsx', /async function togglePublic\(\) \{\s*if \(publicBusy\) return/]],
   },
   {
     file: 'components/room/AloneInvite.tsx',
     expr: 'publicBusy',
-    guards: [['app/room/[id]/page.tsx', /async function togglePublic\(\) \{\s*if \(publicBusy\) return/]],
+    guards: [['app/[lang]/room/[id]/RoomPage.tsx', /async function togglePublic\(\) \{\s*if \(publicBusy\) return/]],
   },
   {
     // главная кнопка вошедшего, демо без Steam и обе кнопки формы
@@ -348,7 +348,9 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     ],
   },
   {
-    file: 'components/PrivacyHelp.tsx',
+    // кнопка — в универсальной PrivacyHelpView, клиентская PrivacyHelp только
+    // ставит ей язык; onRetry приходит из карточки подключения
+    file: 'components/PrivacyHelpView.tsx',
     expr: 'retrying',
     guards: [['components/landing/ConnectCard.tsx', /function recheckProfile\(\) \{\s*if \(!input \|\| busy !== null\) return/]],
   },
@@ -412,9 +414,9 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
   },
   {
     // «Пустить обратно» после ✕: в пути — ждём ответа, снят — снимать нечего
-    file: 'app/room/[id]/page.tsx',
+    file: 'app/[lang]/room/[id]/RoomPage.tsx',
     expr: 'undoLocked',
-    guards: [['app/room/[id]/page.tsx', /async function unkick\(\) \{\s*if \(!kicked \|\| undoLocked\) return/]],
+    guards: [['app/[lang]/room/[id]/RoomPage.tsx', /async function unkick\(\) \{\s*if \(!kicked \|\| undoLocked\) return/]],
   },
 ]
 
@@ -430,7 +432,7 @@ describe('aria-disabled — не декорация: повтор гасит о�
 
   test('скан видит кнопки с aria-disabled', () => {
     const files = new Set(found.map((f) => f.file))
-    for (const f of ['app/play/page.tsx', 'components/SignOut.tsx', 'components/room/PartyTrivia.tsx']) {
+    for (const f of ['app/[lang]/play/page.tsx', 'components/SignOut.tsx', 'components/room/PartyTrivia.tsx']) {
       expect(files, f).toContain(f)
     }
   })

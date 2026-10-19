@@ -14,28 +14,31 @@ import {
 } from './db'
 import { collapseEditions, editionKey } from './editions'
 import { logSwallowed } from './errlog'
+import { descriptionFor } from './gamedesc'
 import {
   characterTrait,
   entryTrait,
   languageTrait,
   lengthTrait,
+  reviewsLine,
   sessionTrait,
   shownReviews,
   type GameTrait,
 } from './gametraits'
 import { distinctiveTags } from './hook'
+import { fmtDate, fmtNumber, pl, tr, type Locale } from './i18n'
 import { looksLikeJunkName } from './junk'
 import { judgeLiveness, type DeadReason } from './liveness'
 import { claimsNoUpdates, modelTextFlaw, point } from './modeltext'
 import { NEIGHBORS_K } from './neighbors'
 import { isStoredPatch } from './news'
+import { newsTitleOn } from './newspage'
 import { CARD_PATCHES } from './patcharchive'
-import { plural } from './plural'
 import { isEndless } from './recommend'
 import type { ProsCons } from './reviews'
 import { getDb } from './server'
 import { tagStatsFor } from './tagstats'
-import { tagRu } from './tagsru'
+import { tagLabel } from './tagsru'
 import { rarityOf, rarityScale, tagWeightFrom } from './tagweight'
 import { isRussianText } from './textlang'
 import type { GameMeta } from './types'
@@ -106,16 +109,37 @@ export type GamePageData = {
  */
 export type CardNews = Pick<FeedItem, 'appid' | 'gid' | 'title' | 'url' | 'publishedAt' | 'kind' | 'scale' | 'tldr' | 'rank'>
 
-export function cardNews(item: StoredNews): CardNews {
+/**
+ * Строка ленты для островка — с заголовком и пересказом на языке страницы в
+ * полях title и tldr.
+ *
+ * Одно поле на оба языка, а не tldr и tldrEn рядом: островок рисует tldr как
+ * есть, а indexedNewsPath решает по нему же, давать ли ссылку на страницу
+ * патча, — и на /en страница патча идёт в индекс только с английским
+ * пересказом. Русского пересказа на /en нет вовсе (docs/i18n.md, п. 8): нет
+ * английского — нет и блока, а не блок по-русски.
+ *
+ * Заголовок — тем же правилом одним полем: титул поста издатель пишет на
+ * своём языке, а посты опрашиваются с l=russian (lib/news), так что русский
+ * заголовок у них обычен. На /en — newsTitleOn (lib/newspage): titleEn, иначе
+ * сам заголовок, если он английский, иначе «{Game} update» — gameName для него
+ * и нужен. Островок срезает ведущее название игры (stripGameName), и под
+ * названием игры строка читается просто «Update».
+ */
+export function cardNews(item: StoredNews, locale: Locale = 'ru', gameName?: string | null): CardNews {
+  // Английский пересказ кладёт чтение ленты (StoredNews.tldrEn, колонка
+  // tldr_en); нет его (и null из чужих рук) — английская карточка остаётся
+  // без пересказа
+  const tldr = locale === 'en' ? (item.tldrEn ?? undefined) : item.tldr
   return {
     appid: item.appid,
     gid: item.gid,
-    title: item.title,
+    title: newsTitleOn(item, gameName, locale),
     url: item.url,
     publishedAt: item.publishedAt,
     kind: item.kind,
     scale: item.scale,
-    ...(item.tldr !== undefined ? { tldr: item.tldr } : {}),
+    ...(tldr !== undefined ? { tldr } : {}),
     rank: item.rank > 0 ? 1 : 0,
   }
 }
@@ -149,14 +173,25 @@ export function cardNews(item: StoredNews): CardNews {
  * на перегенерацию карточки. Если и после дочитывания патчей не больше
  * восьми, а за двадцатью четырьмя строками ещё что-то лежит, ссылки не будет —
  * архив тогда открыт со страниц патчей («Другие патчи»).
+ *
+ * locale и gameName — для cardNews: заголовок и пересказ на языке страницы.
+ * Отсев от языка не зависит — правило классификатора одно на обе версии.
  */
-async function cardPatches(db: Db, appid: number): Promise<{ items: CardNews[]; more: boolean }> {
+async function cardPatches(
+  db: Db,
+  appid: number,
+  locale: Locale = 'ru',
+  gameName?: string | null,
+): Promise<{ items: CardNews[]; more: boolean }> {
   const head = await getGameNews(db, appid, CARD_PATCHES + 1)
   let kept = head.filter(isStoredPatch)
   if (kept.length < head.length && head.length === CARD_PATCHES + 1) {
     kept = (await getGameNews(db, appid, CARD_PATCHES * 3)).filter(isStoredPatch)
   }
-  return { items: kept.slice(0, CARD_PATCHES).map(cardNews), more: kept.length > CARD_PATCHES }
+  return {
+    items: kept.slice(0, CARD_PATCHES).map((row) => cardNews(row, locale, gameName)),
+    more: kept.length > CARD_PATCHES,
+  }
 }
 
 export type ReviewFacts = {
@@ -482,15 +517,26 @@ async function pageTagStats(db: Db, nowSec: number): Promise<Map<string, number>
  * доля отзывов в кольце. Повторять его здесь значило бы завести второе число,
  * которое разойдётся с первым после очередного замера.
  */
-const DEAD_VERDICT: Record<DeadReason, string> = {
-  'dead-multiplayer': 'Сетевая игра, в которой почти не осталось людей, — матч, скорее всего, не соберётся.',
-  panned: 'Большинство отзывов отрицательные — игроки её не советуют.',
-  'asset-flip': 'Отзывов почти нет — судить о ней пока не по чему.',
-  'solo-only': 'В неё играют только в одиночку — компанию здесь не собрать.',
+const DEAD_VERDICT: Record<Locale, Record<DeadReason, string>> = {
+  ru: {
+    'dead-multiplayer': 'Сетевая игра, в которой почти не осталось людей, — матч, скорее всего, не соберётся.',
+    panned: 'Большинство отзывов отрицательные — игроки её не советуют.',
+    'asset-flip': 'Отзывов почти нет — судить о ней пока не по чему.',
+    'solo-only': 'В неё играют только в одиночку — компанию здесь не собрать.',
+  },
+  en: {
+    'dead-multiplayer': "Hardly anyone plays this online game anymore — you probably won't find a match.",
+    panned: "Most reviews are negative — players don't recommend it.",
+    'asset-flip': "It has almost no reviews — there's nothing to judge it by yet.",
+    'solo-only': "It's single-player only — no playing it with friends.",
+  },
 }
 
 /** Причина неизвестна, а курация всё равно сняла игру с подбора */
-const DEAD_VERDICT_UNKNOWN = 'Из подбора она снята: по нашим данным, сегодня это не лучший выбор.'
+const DEAD_VERDICT_UNKNOWN: Record<Locale, string> = {
+  ru: 'Из подбора она снята: по нашим данным, сегодня это не лучший выбор.',
+  en: "We've taken it out of our picks: our data says it's not the best choice right now.",
+}
 
 /**
  * Есть ли у страницы свежее число, которым проверяется эта причина. Без него
@@ -512,8 +558,11 @@ const SIGNAL_OF: Record<DeadReason, (m: GameMeta) => boolean> = {
  * «почти не осталось людей» была бы ровно той ложью, против которой вердикт и
  * заведён. Если свежие числа с курацией спорят — молчим; если согласны, но по
  * другой причине, — называем ту, что видно на странице.
+ *
+ * nowSec — часы для пульса отзывов (см. ниже); без них свежий месяц не
+ * сверяется. locale — язык фразы, последним, как у остальных функций модуля.
  */
-export function deadVerdict(meta: GameMeta, nowSec?: number): string | null {
+export function deadVerdict(meta: GameMeta, nowSec?: number, locale: Locale = 'ru'): string | null {
   if (meta.alive !== false) return null
   const now = judgeLiveness({
     categories: meta.categories,
@@ -537,9 +586,9 @@ export function deadVerdict(meta: GameMeta, nowSec?: number): string | null {
    * (reviewPulseQueue в lib/db, PULSE_PANNED_TOP в lib/catalogsignals).
    */
   if ((reason ?? stored) === 'panned' && nowSec !== undefined && recovered(meta, nowSec)) return null
-  if (reason) return DEAD_VERDICT[reason]
-  if (!stored) return DEAD_VERDICT_UNKNOWN
-  return SIGNAL_OF[stored](meta) ? null : DEAD_VERDICT[stored]
+  if (reason) return DEAD_VERDICT[locale][reason]
+  if (!stored) return DEAD_VERDICT_UNKNOWN[locale]
+  return SIGNAL_OF[stored](meta) ? null : DEAD_VERDICT[locale][stored]
 }
 
 /** С какой доли положительных за месяц игру больше не зовём разгромленной */
@@ -579,9 +628,9 @@ function freshPulse(meta: GameMeta, nowSec: number): { total: number; percent: n
   return { total, percent: Math.max(0, Math.min(100, Math.round(percent))), at }
 }
 
-/** «7 948 отзывов» — с тем же склонением, что у кольца */
-function reviewsCount(n: number): string {
-  return `${n.toLocaleString('ru-RU')} ${plural(n, 'отзыва', 'отзывов', 'отзывов')}`
+/** «7 948 отзывов» — с тем же склонением, что у кольца; «7,948 reviews» на en */
+function reviewsCount(n: number, locale: Locale): string {
+  return `${fmtNumber(locale, n)} ${pl(locale, n, { ru: ['отзыва', 'отзывов', 'отзывов'], en: ['review', 'reviews'] })}`
 }
 
 /**
@@ -603,28 +652,42 @@ function reviewsCount(n: number): string {
  *
  * Причин («после патча») здесь нет намеренно: связи мы не знаем, а выдумать её
  * — то самое, чего страница себе не позволяет.
+ *
+ * locale — язык строк. На /en строки «На русском» нет — по тому же правилу,
+ * что у languageTrait: мнение русскоязычных игроков — вопрос русскоязычного
+ * читателя, а «на английском» из англоязычной шкалы порогов (reviews_total)
+ * людям не показывается вовсе (см. reviewFacts).
  */
-export function reviewPulse(meta: GameMeta, facts: ReviewFacts | null, nowSec: number): GameTrait[] {
+export function reviewPulse(
+  meta: GameMeta,
+  facts: ReviewFacts | null,
+  nowSec: number,
+  locale: Locale = 'ru',
+): GameTrait[] {
   const out: GameTrait[] = []
   const recent = freshPulse(meta, nowSec)
   if (recent && facts && Math.abs(recent.percent - facts.percent) >= PULSE_MIN_GAP) {
-    const day = new Date(recent.at * 1000).toLocaleDateString('ru-RU', {
-      day: 'numeric',
-      month: 'long',
-      timeZone: 'UTC',
-    })
+    const day = fmtDate(locale, recent.at, { day: 'numeric', month: 'long' })
+    const higher = recent.percent > facts.percent
+    const count = reviewsCount(recent.total, locale)
     out.push({
-      label: `За 30 дней до ${day}`,
-      value: `${recent.percent}% положительных из ${reviewsCount(recent.total)} — ${
-        recent.percent > facts.percent ? 'выше' : 'ниже'
-      }, чем за всё время`,
+      // «through», а не «to»: «30 days to October 8» читается обратным
+      // отсчётом до даты, а здесь — тридцать дней, которые ею кончаются
+      label: tr(locale, { ru: `За 30 дней до ${day}`, en: `30 days through ${day}` }),
+      value: tr(locale, {
+        ru: `${recent.percent}% положительных из ${count} — ${higher ? 'выше' : 'ниже'}, чем за всё время`,
+        // Той же фразой, что кольцо прямо над строкой и глоссарий: «N% of M
+        // reviews are positive» (reviewsLine) — одно число двумя оборотами
+        // читалось бы двумя разными мерками
+        en: `${reviewsLine(recent.percent, recent.total, locale)} — ${higher ? 'higher' : 'lower'} than overall`,
+      }),
     })
   }
   const { reviewsRuTotal: ruTotal, reviewsRuPercent: ruPercent } = meta
-  if (ruTotal !== undefined && ruPercent !== undefined && ruTotal >= RU_MIN_REVIEWS) {
+  if (locale !== 'en' && ruTotal !== undefined && ruPercent !== undefined && ruTotal >= RU_MIN_REVIEWS) {
     out.push({
       label: 'На русском',
-      value: `${Math.max(0, Math.min(100, Math.round(ruPercent)))}% положительных из ${reviewsCount(ruTotal)}`,
+      value: `${Math.max(0, Math.min(100, Math.round(ruPercent)))}% положительных из ${reviewsCount(ruTotal, locale)}`,
     })
   }
   return out
@@ -649,6 +712,23 @@ export { isRussianText }
 const STORE_CLIP_MIN = 40
 
 /**
+ * Описание магазина, годное странице этого языка: русской — только русское,
+ * английской — только английское.
+ *
+ * Английское — descriptionFor (lib/gamedesc): английский слот карточки,
+ * своё описание, если оно правда английское (isEnglishText — не китайское с
+ * «RPG» и не немецкое), или наложение пула других магазинов; иначе
+ * описания нет. Русское — то, что лежит, и только если оно русское: до
+ * прохода крона там бывает английский текст прогрева, а в русском сниппете
+ * он читался бы обрывком чужого языка.
+ */
+function storeDescription(meta: GameMeta, locale: Locale): string | null {
+  const text = descriptionFor(meta, locale)
+  if (!text) return null
+  return locale === 'en' || isRussianText(text) ? text : null
+}
+
+/**
  * meta description карточки игры.
  *
  * Было `имя: 93% положительных отзывов · Action, FPS, Shooter · <первые 120
@@ -661,8 +741,8 @@ const STORE_CLIP_MIN = 40
  *   вердикт мёртвой игре — он и есть ответ на «стоит ли играть»;
  *   доля положительных и число отзывов — те же, что в кольце на странице;
  *   «любят» и «ругают» — парой, см. ниже;
- *   описание магазина — только русское и одно оно обрезается по слову, и то
- *   если остаток не меньше STORE_CLIP_MIN.
+ *   описание магазина — только на языке страницы (storeDescription) и одно
+ *   оно обрезается по слову, и то если остаток не меньше STORE_CLIP_MIN.
  *
  * «Любят» и «Ругают» — пара, а не две независимые фразы. Раньше брались
  * pros[0] и cons[0] по отдельности, и плюс, который не влез, просто
@@ -678,18 +758,27 @@ const STORE_CLIP_MIN = 40
  * одним). Это не плюс, который не влез, а ответ отзывов — у игры с 25%
  * «В основном отрицательные» одна жалоба в сниппете и есть правда, и
  * прятать её значит оставить сниппет без мнения игроков вовсе.
+ *
+ * locale — язык страницы. На /en те же фразы по-английски, а всё, что
+ * приходит готовым текстом (verdict, prosCons), вызывающий отдаёт на языке
+ * страницы: deadVerdict(meta, nowSec, locale) и prosCons из
+ * loadGamePage(appid, locale). Описание магазина на /en — только английское
+ * (storeDescription).
  */
-export function gameDescription({
-  meta,
-  facts,
-  prosCons,
-  verdict,
-}: {
-  meta: GameMeta
-  facts: ReviewFacts | null
-  prosCons: ProsCons | null
-  verdict: string | null
-}): string {
+export function gameDescription(
+  {
+    meta,
+    facts,
+    prosCons,
+    verdict,
+  }: {
+    meta: GameMeta
+    facts: ReviewFacts | null
+    prosCons: ProsCons | null
+    verdict: string | null
+  },
+  locale: Locale = 'ru',
+): string {
   const head = `${meta.name}:`
   let out = head
   const room = () => DESCRIPTION_MAX - out.length - 1
@@ -701,17 +790,18 @@ export function gameDescription({
   }
 
   if (verdict) add(verdict)
-  if (facts) {
-    const total = facts.total.toLocaleString('ru-RU')
-    const noun = plural(facts.total, 'отзыва', 'отзывов', 'отзывов')
-    add(`${facts.percent}% из ${total} ${noun} — положительные.`)
-  }
-  const pros = (prosCons?.pros ?? []).map((t) => `Любят: ${point(t)}.`)
-  const cons = (prosCons?.cons ?? []).map((t) => `Ругают: ${point(t)}.`)
+  if (facts) add(`${reviewsLine(facts.percent, facts.total, locale)}.`)
+  const pros = (prosCons?.pros ?? []).map((t) =>
+    tr(locale, { ru: `Любят: ${point(t)}.`, en: `Loved for: ${point(t)}.` }),
+  )
+  const cons = (prosCons?.cons ?? []).map((t) =>
+    tr(locale, { ru: `Ругают: ${point(t)}.`, en: `Criticized for: ${point(t)}.` }),
+  )
   const proPlaced = pros.some(add)
   if (proPlaced || !pros.length) cons.some(add)
-  if (meta.shortDescription && isRussianText(meta.shortDescription)) {
-    const store = meta.shortDescription.replace(/\s+/g, ' ').trim()
+  const described = storeDescription(meta, locale)
+  if (described) {
+    const store = described.replace(/\s+/g, ' ').trim()
     const text = clip(store, room())
     // Целиком или целой первой фразой — встаёт в любой остаток; обрезанное по
     // слову с многоточием — только в достаточно широкий
@@ -719,7 +809,12 @@ export function gameDescription({
     if (text && (!stub || room() >= STORE_CLIP_MIN)) out += ` ${text}`
   }
 
-  if (out === head) out = `${meta.name} — отзывы, теги и патчноуты на русском.`
+  if (out === head) {
+    out = tr(locale, {
+      ru: `${meta.name} — отзывы, теги и патчноуты на русском.`,
+      en: `${meta.name} — reviews, tags and patch notes at a glance.`,
+    })
+  }
   // Длинное название само по себе может не влезть — режем и его, по слову
   return clip(out, DESCRIPTION_MAX) ?? out.slice(0, DESCRIPTION_MAX)
 }
@@ -733,12 +828,15 @@ export { SESSION_MIN_CONFIDENCE, sessionTrait, type GameTrait } from './gametrai
 
 /**
  * «Чем выделяется» — характерные теги игры (distinctiveTags в lib/hook)
- * русскими подписями. Подпись честная: это теги, которые проставили игроки,
- * а не пересказ. null — строки нет.
+ * подписями на языке страницы (tagLabel). Подпись честная: это теги, которые
+ * проставили игроки, а не пересказ. null — строки нет.
  */
-export function hookTrait(hook: readonly string[] | null): GameTrait | null {
+export function hookTrait(hook: readonly string[] | null, locale: Locale = 'ru'): GameTrait | null {
   if (!hook?.length) return null
-  return { label: 'Чем выделяется', value: hook.map(tagRu).join(', ') }
+  return {
+    label: tr(locale, { ru: 'Чем выделяется', en: 'Stands out for' }),
+    value: hook.map((t) => tagLabel(t, locale)).join(', '),
+  }
 }
 
 /**
@@ -764,16 +862,47 @@ export function hookTrait(hook: readonly string[] | null): GameTrait | null {
 export function gameTraits(
   meta: Pick<GameMeta, 'semantics' | 'categories'> & Partial<Pick<GameMeta, 'tags' | 'ruLang'>>,
   hook: readonly string[] | null,
+  locale: Locale = 'ru',
 ): GameTrait[] {
   const tags = meta.tags ?? {}
   return [
-    hookTrait(hook),
-    sessionTrait(meta),
-    entryTrait({ tags, semantics: meta.semantics }),
-    lengthTrait(meta, { endless: isEndless({ tags, categories: meta.categories }) }),
-    characterTrait(meta),
-    languageTrait(meta),
+    hookTrait(hook, locale),
+    sessionTrait(meta, locale),
+    entryTrait({ tags, semantics: meta.semantics }, locale),
+    lengthTrait(meta, { endless: isEndless({ tags, categories: meta.categories }) }, locale),
+    characterTrait(meta, locale),
+    // на /en строки «Русский» нет вовсе — languageTrait вернёт null
+    languageTrait(meta, locale),
   ].filter((t): t is GameTrait => t !== null)
+}
+
+/**
+ * pros/cons из базы — на языке страницы, или null.
+ *
+ * Английские пункты лежат в той же записи, слотом en (их собирает тот же
+ * вызов модели, что и русские). Наружу — только собранное моделью
+ * (source: 'claude', почему — в loadGamePage), и на /en — только английский
+ * слот: нет его — блока нет, а не русский блок на английской странице
+ * (docs/i18n.md, п. 8).
+ *
+ * На ru слот en срезается: русской странице английские пункты не нужны, а
+ * всё, что отдано странице, уезжает в её RSC-часть и в недельный кэш ISR.
+ * Остальная запись — как лежала, в том же порядке полей.
+ */
+export function prosConsOn(stored: unknown, locale: Locale = 'ru'): ProsCons | null {
+  const row = stored as (ProsCons & { en?: unknown }) | null | undefined
+  if (!row || row.source !== 'claude') return null
+  if (locale === 'en') {
+    const en = row.en as { pros?: unknown; cons?: unknown } | null | undefined
+    const list = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+    const pros = list(en?.pros)
+    const cons = list(en?.cons)
+    return pros.length || cons.length ? { pros, cons, source: 'claude' } : null
+  }
+  if (!('en' in row)) return row
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { en, ...ru } = row
+  return ru
 }
 
 /**
@@ -794,8 +923,14 @@ export function gameTraits(
  * Следствие, с которым надо считаться: игры, до которой очередь ещё не дошла,
  * карточка покажет без скриншотов и без pros/cons. Это правильный компромисс —
  * неполная страница дешевле неограниченного счёта.
+ *
+ * locale — язык страницы: от него зависят только тексты модели — pros/cons
+ * (prosConsOn) и пересказы патчей (cardNews) — и заголовки постов (cardNews:
+ * titleEn, иначе английский заголовок, иначе «{Game} update»). На /en их
+ * английские версии; нет английской — блок пустой (null, пересказа нет), а
+ * не русский.
  */
-export async function loadGamePage(appid: number): Promise<GamePageData | null> {
+export async function loadGamePage(appid: number, locale: Locale = 'ru'): Promise<GamePageData | null> {
   const db = await getDb()
 
   // Строка и оба её блоба — одним чтением: см. докблок getGamePageRow.
@@ -844,12 +979,11 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
   }
 
   const reviewsSummary = строка.reviewsSummary as GamePageData['reviewsSummary']
-  const stored = строка.prosCons as GamePageData['prosCons']
   // Игры студии — параллельно с полкой, а отсев — после неё: строка не
   // повторяет того, что уже стоит в «Похожих». Лимит на одну больше порога —
   // так studioLine узнаёт корпоративный каталог, не читая его целиком
   const [patches, shelf, studioGames] = await Promise.all([
-    cardPatches(db, appid),
+    cardPatches(db, appid, locale, meta.name),
     similarOf(),
     meta.developer?.trim()
       ? gamesByDeveloper(db, meta.developer, STUDIO_MAX_GAMES + 1)
@@ -876,7 +1010,9 @@ export async function loadGamePage(appid: number): Promise<GamePageData | null> 
    * её не показываем тем более.
    */
   const news = patches.items
-  const prosCons = shownProsCons(stored, news, Math.floor(Date.now() / 1000))
+  // Слот своего языка (prosConsOn), а из него — то, что проходит проверку
+  // сегодня (shownProsCons)
+  const prosCons = shownProsCons(prosConsOn(строка.prosCons, locale), news, Math.floor(Date.now() / 1000))
 
   return {
     meta,

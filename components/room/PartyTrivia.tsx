@@ -4,8 +4,11 @@ import { Icon } from '@/components/Icon'
 import { AnimatePresence, m } from 'framer-motion'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GameArt } from '@/components/GameArt'
+import { useLocale } from '@/components/LocaleProvider'
 import { StatusLine } from '@/components/StatusLine'
 import { focusAdrift } from '@/lib/focushandoff'
+import { tr, withLang } from '@/lib/i18n'
+import { langOn, withForeignRuns } from '@/lib/textlang'
 import type { TriviaQuestion } from '@/lib/trivia'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -38,6 +41,7 @@ export function PartyTrivia({
   interruptKey: string
   interruptNote: string
 }) {
+  const locale = useLocale()
   const [open, setOpen] = useState(false)
   const [round, setRound] = useState(0)
   const [questions, setQuestions] = useState<TriviaQuestion[] | null>(null)
@@ -107,12 +111,15 @@ export function PartyTrivia({
   /*
    * try, а не голый await: обрыв сети отклонял промис в пустоту, и панель
    * навсегда оставалась на «Придумываю вопросы…».
+   *
+   * Язык — в адресе (withLang): вопросы и разгадки собирает сервер, и
+   * английской странице он отдаёт их по-английски. Сид от языка не зависит.
    */
   const load = useCallback(
     async (r: number) => {
       setFailed(false)
       try {
-        const res = await fetch(`/api/room/${roomId}/trivia?round=${r}`)
+        const res = await fetch(withLang(`/api/room/${roomId}/trivia?round=${r}`, locale))
         if (!res.ok) throw new Error(`trivia: HTTP ${res.status}`)
         const data = (await res.json()) as { round: number; questions: TriviaQuestion[] }
         setQuestions(data.questions)
@@ -124,7 +131,7 @@ export function PartyTrivia({
         setQuestions([])
       }
     },
-    [roomId],
+    [roomId, locale],
   )
 
   // Нечего показать — блока нет вовсе. Пустая викторина хуже её отсутствия.
@@ -136,8 +143,25 @@ export function PartyTrivia({
   /** Разбор ответа на текущий вопрос; null — ещё не ответили */
   const verdict =
     q && chosen !== null
-      ? `${chosen === q.answer ? 'Ага.' : `Не-а — ${q.options[q.answer].label}.`}${q.reveal ? ` ${q.reveal}` : ''}`
+      ? `${
+          chosen === q.answer
+            ? tr(locale, { ru: 'Ага.', en: 'Yep.' })
+            : tr(locale, {
+                ru: `Не-а — ${q.options[q.answer].label}.`,
+                en: `Nope — ${q.options[q.answer].label}.`,
+              })
+        }${q.reveal ? ` ${q.reveal}` : ''}`
       : null
+  /*
+   * Ники и названия игр во фразах — данные: на /en русский кусок — своим
+   * lang="ru" (withForeignRuns), иначе английский голос читает его по буквам.
+   * Варианты — данные целиком, а вклеенное в вопрос и разгадку сверх них
+   * (название в «Who has more hours in “…”?», третий владелец) сервер
+   * перечисляет в q.runs. На русской странице — те же строки, одним
+   * текстовым узлом.
+   */
+  const runs = q ? [...q.options.map((o) => o.label), ...(q.runs ?? [])] : []
+  const said = verdict && withForeignRuns(locale, verdict, runs)
 
   return (
     <div className="relative mt-auto">
@@ -158,13 +182,20 @@ export function PartyTrivia({
         className="w-full panel-lift glass-hover px-5 py-4 flex items-center justify-between gap-3 text-left cursor-pointer"
       >
         <span className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium">Пока ждём — маленькая викторина</span>
+          <span className="text-sm font-medium">
+            {tr(locale, { ru: 'Пока ждём — маленькая викторина', en: 'Quick trivia while we wait' })}
+          </span>
           <span className="text-xs text-faint">
-            {interrupted ? interruptNote : 'Про ваши библиотеки. На матч не влияет.'}
+            {interrupted
+              ? interruptNote
+              : tr(locale, {
+                  ru: 'Про ваши библиотеки. На матч не влияет.',
+                  en: "About your libraries. Doesn't affect the match.",
+                })}
           </span>
         </span>
         <span className="link-more shrink-0">
-          {open ? 'Свернуть' : 'Играть'}
+          {open ? tr(locale, { ru: 'Свернуть', en: 'Hide' }) : tr(locale, { ru: 'Играть', en: 'Play' })}
           <Icon name="down" size={16} className={open ? 'rotate-180' : ''} />
         </span>
       </button>
@@ -183,7 +214,7 @@ export function PartyTrivia({
             <div className="panel-lift mt-3 p-5 flex flex-col gap-4">
               {questions === null && (
                 <p ref={headRef} tabIndex={-1} className="text-sm text-faint">
-                  Придумываю вопросы…
+                  {tr(locale, { ru: 'Придумываю вопросы…', en: 'Coming up with questions…' })}
                 </p>
               )}
 
@@ -196,17 +227,26 @@ export function PartyTrivia({
               {questions !== null && questions.length === 0 && (
                 <p ref={headRef} tabIndex={-1} className="text-sm text-faint">
                   {failed
-                    ? 'Вопросы не загрузились — попробуй чуть позже.'
+                    ? tr(locale, {
+                        ru: 'Вопросы не загрузились — попробуй чуть позже.',
+                        en: "The questions didn't load — try again a bit later.",
+                      })
                     : round > 0
-                      ? 'Вопросы кончились — все раунды сыграны, а повторяться мы не станем.'
-                      : 'Вопросов не набралось — каталог у нас пока небогатый.'}
+                      ? tr(locale, {
+                          ru: 'Вопросы кончились — все раунды сыграны, а повторяться мы не станем.',
+                          en: "That's all the questions — you've played every round, and we won't repeat ourselves.",
+                        })
+                      : tr(locale, {
+                          ru: 'Вопросов не набралось — каталог у нас пока небогатый.',
+                          en: "Not enough questions — our catalog is still pretty small.",
+                        })}
                 </p>
               )}
 
               {q && (
                 <>
                   <p ref={headRef} id="trivia-q" tabIndex={-1} className="text-sm font-medium">
-                    {q.prompt}
+                    {withForeignRuns(locale, q.prompt, runs)}
                   </p>
 
                   {q.image && (
@@ -234,7 +274,14 @@ export function PartyTrivia({
                       const missed = revealed && !right && i === chosen
                       return (
                         <button
-                          key={o.label}
+                          // Ключ — вопрос и место варианта, а не подпись: у двух
+                          // участников бывает одно имя (две демо-личности — оба
+                          // «Демо-игрок»), и два одинаковых key оставляли в DOM
+                          // лишнюю кнопку прошлого вопроса — она стояла первой в
+                          // сетке каждого следующего и ни на что не отвечала.
+                          // Одинаковых вариантов buildTrivia и так не даёт; ключ
+                          // от вопроса ещё и пересоздаёт кнопки на «Дальше»
+                          key={`${q.id}:${i}`}
                           // aria-disabled, а не disabled: ответ выключает все
                           // варианты разом, и disabled ронял фокус с только
                           // что выбранного в body — с клавиатуры до «Дальше»
@@ -258,7 +305,9 @@ export function PartyTrivia({
                         >
                           {revealed && right && <Icon name="check" size={16} className="shrink-0" />}
                           {missed && <Icon name="close" size={16} className="shrink-0" />}
-                          {o.label}
+                          {/* Ник или название целиком, одним span: кнопка ответа — флекс с
+                              зазором, и кусок посреди подписи стал бы своим элементом */}
+                          {langOn(locale, o.label) ? <span lang="ru">{o.label}</span> : o.label}
                         </button>
                       )
                     })}
@@ -272,12 +321,12 @@ export function PartyTrivia({
                     Сама она sr-only и места в колонке не занимает; глазу разбор
                     показывает ряд ниже.
                   */}
-                  <StatusLine text={verdict} className="sr-only" />
+                  <StatusLine text={said} className="sr-only" />
                   {chosen !== null && (
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       {/* Скринридеру разбор уже сказала строка выше — второй раз не читаем */}
                       <p aria-hidden className="text-xs text-faint">
-                        {verdict}
+                        {said}
                       </p>
                       <button
                         onClick={() => {
@@ -287,7 +336,7 @@ export function PartyTrivia({
                         }}
                         className="btn-glass shrink-0 py-2.5 text-sm"
                       >
-                        Дальше <Icon name="arrow" size={14} />
+                        {tr(locale, { ru: 'Дальше', en: 'Next' })} <Icon name="arrow" size={14} />
                       </button>
                     </div>
                   )}
@@ -297,9 +346,9 @@ export function PartyTrivia({
               {done && (
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p ref={headRef} tabIndex={-1} className="text-sm text-faint">
-                    <span className="tabular-nums">{score}</span> из{' '}
-                    <span className="tabular-nums">{questions.length}</span>. Ну, время
-                    прошло.
+                    <span className="tabular-nums">{score}</span> {tr(locale, { ru: 'из', en: 'of' })}{' '}
+                    <span className="tabular-nums">{questions.length}</span>
+                    {tr(locale, { ru: '. Ну, время прошло.', en: '. Well, it passed the time.' })}
                   </p>
                   <button
                     onClick={() => {
@@ -311,7 +360,7 @@ export function PartyTrivia({
                     }}
                     className="btn-glass py-2.5 text-sm"
                   >
-                    Ещё раунд
+                    {tr(locale, { ru: 'Ещё раунд', en: 'Another round' })}
                   </button>
                 </div>
               )}

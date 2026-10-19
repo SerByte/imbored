@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { memberDone, memberLabel } from '@/lib/room'
 import { getGamesMetaLite, getRoom, roomMembers, roomVotes } from '@/lib/db'
+import { localeFromRequest } from '@/lib/i18n'
 import { checkRate, personalRateId, rateLimitedResponse } from '@/lib/ratelimit'
 import { buildLikes, pickLeader, type LeaderOffer } from '@/lib/roomlikes'
 import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
@@ -71,7 +72,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     votes,
     members: members.map((m) => ({
       steamid: m.steamid,
-      name: memberLabel(id, m.steamid, m.personaName),
+      // Имена «почти совпали» — на языке страницы (withLang): «Demo friend»,
+      // «Player ab12»
+      name: memberLabel(id, m.steamid, m.personaName, localeFromRequest(req)),
     })),
     me: steamid,
     // Только расклады, где ты уже «за», — почему, см. ниже и lib/roomlikes

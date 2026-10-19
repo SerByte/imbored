@@ -1,6 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
+import { tr } from '@/lib/i18n'
+import { langOn, withForeignRuns } from '@/lib/textlang'
 
 const ROW_H = 56
 const VISIBLE = 3 // сколько строк видно выше и ниже центра
@@ -19,6 +22,9 @@ const mod = (n: number, m: number) => ((n % m) + m) % m
  * в reveal, и подмена картинок в барабане превратила бы церемонию в мельтешение.
  *
  * Ember появляется ровно один раз: волосок над и под центральной строкой.
+ *
+ * Названия — данные: на /en русское название встаёт своим lang (langOn) и в
+ * барабане, и в объявлении выбора.
  */
 export function SpinWheel({
   items,
@@ -33,6 +39,7 @@ export function SpinWheel({
   duration?: number
   loops?: number
 }) {
+  const locale = useLocale()
   const n = items.length
   const [pos, setPos] = useState(0)
   const done = useRef(false)
@@ -100,7 +107,13 @@ export function SpinWheel({
         ровно два сообщения.
       */}
       <p role="status" className="sr-only">
-        {landed ? `Выбрана игра: ${items[mod(landOn, n)]}` : 'Выбираем игру…'}
+        {landed
+          ? withForeignRuns(
+              locale,
+              tr(locale, { ru: `Выбрана игра: ${items[mod(landOn, n)]}`, en: `Picked: ${items[mod(landOn, n)]}` }),
+              [items[mod(landOn, n)]],
+            )
+          : tr(locale, { ru: 'Выбираем игру…', en: 'Picking a game…' })}
       </p>
       <div aria-hidden className="absolute inset-0 overflow-hidden">
         {Array.from({ length: VISIBLE * 2 + 1 }, (_, k) => {
@@ -120,6 +133,7 @@ export function SpinWheel({
               }}
             >
               <span
+                lang={langOn(locale, item)}
                 className={`truncate text-xl font-extrabold tracking-tight ${
                   dist < 0.5 ? 'text-ink' : 'text-dim'
                 }`}

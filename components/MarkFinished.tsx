@@ -1,9 +1,11 @@
 'use client'
 
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { useState } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { StatusLine } from '@/components/StatusLine'
 import type { CtxSource } from '@/lib/feedbackctx'
+import { tr } from '@/lib/i18n'
 import { quizHref } from '@/lib/presets'
 import { isNeedSteam } from '@/lib/writer'
 
@@ -33,18 +35,19 @@ export function FinishedNote({
   follow: boolean
   focus?: boolean
 }) {
+  const locale = useLocale()
   return (
     <span
       ref={focus ? grab : undefined}
       tabIndex={focus ? -1 : undefined}
       className="self-center text-sm text-dim outline-none"
     >
-      Пройдено — больше не предложу
+      {tr(locale, { ru: 'Пройдено — больше не предложу', en: "Finished — won't suggest it again" })}
       {follow && (
         <>
           {' · '}
           <Link href={quizHref(null, appid)} className="tap text-ember-text hover:underline">
-            Дальше — в духе «{name}»
+            {tr(locale, { ru: `Дальше — в духе «${name}»`, en: `Next: more like “${name}”` })}
           </Link>
         </>
       )}
@@ -104,6 +107,7 @@ export function MarkFinished({
   className: string
 }) {
   const [state, setState] = useState<'idle' | 'busy' | 'done' | 'failed'>('idle')
+  const locale = useLocale()
 
   async function mark() {
     if (state === 'busy') return
@@ -139,13 +143,20 @@ export function MarkFinished({
           type="button"
           onClick={() => void mark()}
           aria-disabled={state === 'busy'}
-          title="Больше не предлагать. Вернуть можно в библиотеке, на полке «Пройдено»"
+          title={tr(locale, {
+            ru: 'Больше не предлагать. Вернуть можно в библиотеке, на полке «Пройдено»',
+            en: "Don't suggest it again. You can bring it back from the “Finished” shelf in your library",
+          })}
           className={className}
         >
           {/* Имя начинается с видимых слов (WCAG 2.5.3), а игра в нём — для
               полки «Твоих вечеров», где таких кнопок несколько */}
           {state === 'busy' ? (
-            'Отмечаю…'
+            tr(locale, { ru: 'Отмечаю…', en: 'Marking…' })
+          ) : locale === 'en' ? (
+            <>
+              Already finished<span className="sr-only"> “{name}”</span>
+            </>
           ) : (
             <>
               Уже прошёл<span className="sr-only"> «{name}»</span>
@@ -153,8 +164,16 @@ export function MarkFinished({
           )}
         </button>
       )}
+      {/* Отказ — та же строка, что DONE_MISS у героя /play, на обоих языках */}
       <StatusLine
-        text={state === 'failed' ? `Не получилось отметить «${name}» пройденной — нажми ещё раз.` : null}
+        text={
+          state === 'failed'
+            ? tr(locale, {
+                ru: `Не получилось отметить «${name}» пройденной — нажми ещё раз.`,
+                en: `Couldn't mark “${name}” as finished — try again.`,
+              })
+            : null
+        }
         className="basis-full text-sm text-danger"
       />
     </>

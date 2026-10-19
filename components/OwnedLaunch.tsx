@@ -1,10 +1,12 @@
 'use client'
 
 import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { FinishedNote, MarkFinished } from '@/components/MarkFinished'
 import { NeedSteam } from '@/components/NeedSteam'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { focusAdrift } from '@/lib/focushandoff'
+import { lp, tr } from '@/lib/i18n'
 import { ownedNearStore, parseOwnedNear } from '@/lib/ownednear'
 import { forgetPlanned } from '@/lib/planforget'
 import { isNeedSteam, writerStore } from '@/lib/writer'
@@ -89,6 +91,10 @@ const takeLost = (el: HTMLElement | null) => {
  * иначе листался бы «Не то — дальше» молча — без ответа про игру, которую
  * только что запустили.
  *
+ * Адрес страницы для входа — на её языке (lp): steamLoginFor берёт язык из
+ * пути, и вход с /en/game/730 возвращает на английскую версию сайта, а не на
+ * русскую.
+ *
  * near — спросить заодно «Похожее уже есть у тебя» (lib/ownednear): тот же
  * запрос с near=1, а список уходит в ownedNearStore — его рисует
  * components/OwnedNear у «Похожих», ниже по странице. Решает страница: только
@@ -109,6 +115,7 @@ export function OwnedLaunch({
   near?: boolean
   className?: string
 }) {
+  const locale = useLocale()
   const writer = useSyncExternalStore(writerStore.subscribe, writerStore.get, writerStore.server)
   const hasSession = writer !== null
   // appid рядом с ответом: при переходе на соседнюю карточку старое «да» не
@@ -143,7 +150,7 @@ export function OwnedLaunch({
     <>
       <SteamLaunch
         appid={appid}
-        label="Запустить"
+        label={tr(locale, { ru: 'Запустить', en: 'Launch' })}
         mobileLabel={null}
         icon
         className={className}
@@ -198,7 +205,7 @@ export function OwnedLaunch({
           tabIndex={shownDenial === 'mark' ? -1 : undefined}
           className="basis-full outline-none"
         >
-          <NeedSteam from={`/game/${appid}`} why={shownDenial === 'launch' ? 'launch' : 'save'} />
+          <NeedSteam from={lp(locale, `/game/${appid}`)} why={shownDenial === 'launch' ? 'launch' : 'save'} />
         </div>
       )}
     </>

@@ -1,9 +1,11 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
+import { useLocale } from '@/components/LocaleProvider'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { Icon } from '@/components/Icon'
 import type { LibraryFilter } from '@/lib/forgotten'
+import { lp, tr } from '@/lib/i18n'
 import { LIBRARY_QUERY_MAX, libraryHref } from '@/lib/libraryhref'
 
 /** Пауза после последней клавиши: запрос уходит, когда человек перестал печатать */
@@ -43,7 +45,10 @@ const MIN_TYPED = 2
  *    отправляет как есть: это уже просьба, а не пауза.
  */
 export function LibrarySearch({ filter, q }: { filter: LibraryFilter; q: string }) {
-  const router = useRouter()
+  // replace сам ставит префикс языка (useLocaleRouter); форме без JS — свой адрес
+  const router = useLocaleRouter()
+  const locale = useLocale()
+  const label = tr(locale, { ru: 'Найти в библиотеке', en: 'Search your library' })
   const [value, setValue] = useState(q)
   const [pending, startTransition] = useTransition()
   const timer = useRef<number | undefined>(undefined)
@@ -106,7 +111,7 @@ export function LibrarySearch({ filter, q }: { filter: LibraryFilter; q: string 
   return (
     <form
       role="search"
-      action="/library"
+      action={lp(locale, '/library')}
       method="get"
       onSubmit={(e) => {
         e.preventDefault()
@@ -117,7 +122,7 @@ export function LibrarySearch({ filter, q }: { filter: LibraryFilter; q: string 
     >
       {filter !== 'all' && <input type="hidden" name="state" value={filter} />}
       <label htmlFor="library-q" className="sr-only">
-        Найти в библиотеке
+        {label}
       </label>
       <Icon name="search" size={18} className="text-dim" />
       <input
@@ -126,7 +131,7 @@ export function LibrarySearch({ filter, q }: { filter: LibraryFilter; q: string 
         type="search"
         value={value}
         maxLength={LIBRARY_QUERY_MAX}
-        placeholder="Найти в библиотеке"
+        placeholder={label}
         autoComplete="off"
         autoCorrect="off"
         spellCheck={false}

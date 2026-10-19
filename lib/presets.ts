@@ -1,11 +1,35 @@
+import { tr, type Locale } from './i18n'
 import type { Lean } from './mood'
+import { playHref } from './playhref'
 import type { Focus } from './recommend'
 import type { Mood } from './types'
+
+/*
+ * Адреса и разбор параметров (playHref, parseSeedParam, parseGenreParam,
+ * roomSeedOf, ключи комнат) — в lib/playhref: им таблицы пресетов не нужны,
+ * а шапка каждой страницы и lib/destination везли их ради одной функции.
+ * Реэкспорт — чтобы прежние импорты из lib/presets работали как были.
+ */
+export {
+  isRoomPresetKey,
+  parseGenreParam,
+  parseSeedParam,
+  playHref,
+  ROOM_PRESET_KEYS,
+  roomSeedOf,
+  type RoomPresetKey,
+} from './playhref'
 
 /** Вайб-пресеты: состояние одним тапом вместо трёх вопросов (клиент-безопасный модуль) */
 export type VibePreset = {
   key: string
+  /**
+   * Русская подпись — как была: её читают и сторожа, и всё, что пресет
+   * называет по-русски. Подпись на языке страницы — presetLabel.
+   */
   label: string
+  /** Английская подпись — рядом с русской, а не отдельным словарём: так они не разъедутся */
+  en: { label: string }
   emoji: string
   mood: Mood
   /**
@@ -19,6 +43,7 @@ export const VIBE_PRESETS: VibePreset[] = [
   {
     key: 'after-work',
     label: 'После работы, нет сил',
+    en: { label: 'After work, no energy' },
     emoji: '🛋️',
     mood: { time: 'medium', vibe: 'chill', social: 'solo' },
     // «Нет сил» в самом названии — и до сих пор это было только «расслабиться»:
@@ -28,24 +53,28 @@ export const VIBE_PRESETS: VibePreset[] = [
   {
     key: 'sleep',
     label: '30 минут до сна',
+    en: { label: '30 min before bed' },
     emoji: '🌙',
     mood: { time: 'short', vibe: 'chill', social: 'solo' },
   },
   {
     key: 'friday',
     label: 'Пятница с друзьями',
+    en: { label: 'Friday with friends' },
     emoji: '🎉',
     mood: { time: 'long', vibe: 'engaged', social: 'friends' },
   },
   {
     key: 'weekend',
     label: 'Залипнуть на выходные',
+    en: { label: 'Lose the weekend' },
     emoji: '🕳️',
     mood: { time: 'long', vibe: 'engaged', social: 'solo' },
   },
   {
     key: 'quick',
     label: 'Быстрая катка',
+    en: { label: 'Quick round' },
     emoji: '⚡',
     mood: { time: 'short', vibe: 'engaged', social: 'solo' },
   },
@@ -67,10 +96,18 @@ export const VIBE_PRESETS: VibePreset[] = [
  */
 export type RoomPreset = {
   key: string
+  /**
+   * Русское название — как было: оно же уходит в приглашение
+   * (app/room/[id]/invite.ts) и на доску пати (/api/rooms/public), и по нему
+   * пресет находится обратно (roomPresetByLabel). На языке страницы —
+   * presetLabel и presetHint.
+   */
   label: string
   emoji: string
   /** чем вечер отличается — одной строкой под названием */
   hint: string
+  /** Английские название и подсказка — рядом с русскими (глоссарий: катка — round, не match) */
+  en: { label: string; hint: string }
   mood: Mood
 }
 
@@ -80,6 +117,7 @@ export const ROOM_PRESETS: readonly RoomPreset[] = [
     label: 'Весь вечер вместе',
     emoji: '🎉',
     hint: 'Во что можно уйти с головой на пару часов',
+    en: { label: 'All evening together', hint: 'Something to get lost in for a couple of hours' },
     mood: { time: 'long', vibe: 'engaged', social: 'friends' },
   },
   {
@@ -87,6 +125,7 @@ export const ROOM_PRESETS: readonly RoomPreset[] = [
     label: 'Пара быстрых каток',
     emoji: '⚡',
     hint: 'Короткие матчи: зашли, сыграли, разошлись',
+    en: { label: 'A few quick rounds', hint: 'Short rounds: hop in, play, head out' },
     mood: { time: 'short', vibe: 'engaged', social: 'friends' },
   },
   {
@@ -94,6 +133,7 @@ export const ROOM_PRESETS: readonly RoomPreset[] = [
     label: 'Уютно и надолго',
     emoji: '🏡',
     hint: 'Строить, выживать, фармить — без спешки',
+    en: { label: 'Cozy and long', hint: 'Build, survive, farm — no rush' },
     mood: { time: 'long', vibe: 'chill', social: 'friends' },
   },
   {
@@ -101,9 +141,33 @@ export const ROOM_PRESETS: readonly RoomPreset[] = [
     label: 'Спокойно, под разговор',
     emoji: '🛋️',
     hint: 'Лёгкое, чтобы болтать и не напрягаться',
+    en: { label: 'Chill, while we talk', hint: 'Something light to play while you chat' },
     mood: { time: 'medium', vibe: 'chill', social: 'friends' },
   },
 ]
+
+/**
+ * Название пресета на языке страницы — и вайб-пресета, и пресета комнаты.
+ * Русское — то же поле label, что было.
+ */
+export function presetLabel(p: Pick<VibePreset | RoomPreset, 'label' | 'en'>, locale: Locale = 'ru'): string {
+  return tr(locale, { ru: p.label, en: p.en.label })
+}
+
+/** Подсказка пресета комнаты на языке страницы */
+export function presetHint(p: Pick<RoomPreset, 'hint' | 'en'>, locale: Locale = 'ru'): string {
+  return tr(locale, { ru: p.hint, en: p.en.hint })
+}
+
+/**
+ * Пресет комнаты по русскому названию — обратный путь для тех, кто получил
+ * только название: приглашение (lib/roominvite) и доска пати
+ * (/api/rooms/public) отдают label как есть, а показать его надо на языке
+ * страницы. Чужое — null: строка из чужих рук пресетом не становится.
+ */
+export function roomPresetByLabel(label: string | null | undefined): RoomPreset | null {
+  return ROOM_PRESETS.find((p) => p.label === label) ?? null
+}
 
 /** Пресет комнаты по ключу из адреса; чужое и пустое — null */
 export function roomPresetByKey(raw: string | null | undefined): RoomPreset | null {
@@ -201,109 +265,9 @@ export function roomArrival(query: URLSearchParams): { create: RoomPreset | null
   return { create, hint: create ? null : roomPresetByKey(query.get('hint')) }
 }
 
-/** Потолок appid: столбец INTEGER и JSON-массив выдержат больше, но у Steam таких нет */
-const SEED_MAX = 2_147_483_647
-
-/**
- * Игра, в которую зовут, из адреса /room/new?game= — либо null.
- *
- * «Позвать в эту игру» стоит там, где на экране уже есть конкретная игра для
- * компании: выбор, которым поделились (/pick), общие игры на /compat, карточка
- * игры. Раньше все три вели на голый /room/new, и игра терялась по дороге —
- * друзьям уходила ссылка на «выбрать игру на вечер», а «го в X?» писали в чат
- * отдельно.
- *
- * Разбор строгий — только десятичное положительное целое, без нулей впереди и
- * хвостов: адрес приходит из чата и закладок, а через вход он едет в next
- * (roomQuery в lib/destination). Отрицательных нет намеренно: это кураторские
- * игры других магазинов, у них нет ни страницы /game, ни арта Steam для
- * карточки приглашения. Есть ли игра в каталоге и играют ли в неё вместе,
- * решает сервер (roomSeed в lib/roomseed): здесь — только форма.
- */
-export function roomSeedOf(raw: string | null | undefined): number | null {
-  if (!raw || !/^[1-9]\d{0,9}$/.test(raw)) return null
-  const appid = Number(raw)
-  return appid <= SEED_MAX ? appid : null
-}
-
 /** Адрес «Позвать в эту игру» — один на все три места, откуда зовут */
 export function roomSeedHref(appid: number): string {
   return `/room/new?game=${appid}`
-}
-
-/**
- * Адрес выдачи — в одном месте.
- *
- * Собирался в трёх: квиз, карточка главной и /play каждый клеили строку
- * запроса сами, приведением Mood к Record<string, string>. Пока параметров
- * было три, копии совпадали; с осью lean четвёртый параметр добавился бы в
- * одну копию и молча потерялся в другой — пресет «нет сил» с главной вёл бы
- * на выдачу без «нет сил».
- *
- * Порядок параметров — прежний (настроение, roulette, from): адреса, которые
- * уже лежат в истории и закладках, не меняются. lean — в хвост, seed — за ним.
- *
- * seed — «Как «X», но…» с адреса: соседи игры X под это настроение (см.
- * parseSeedParam). Ноль и null в адрес не попадают — это «без затравки».
- *
- * genre — жанр со страницы /games/<slug> (см. parseGenreParam): выдача из
- * игр этого жанра, сначала своих. Последним — за seed, по тому же правилу,
- * что lean: прежние адреса не меняются.
- */
-export function playHref(
-  mood: Mood,
-  opts: {
-    lean?: Lean | null
-    focus?: Focus | null
-    roulette?: boolean
-    seed?: number | null
-    genre?: string | null
-  } = {},
-): string {
-  const q = new URLSearchParams({ time: mood.time, vibe: mood.vibe, social: mood.social })
-  if (opts.roulette) q.set('roulette', '1')
-  if (opts.focus) q.set('from', opts.focus)
-  if (opts.lean) q.set('lean', opts.lean)
-  if (opts.seed) q.set('seed', String(opts.seed))
-  if (opts.genre) q.set('genre', opts.genre)
-  return `/play?${q.toString()}`
-}
-
-/**
- * «Как «X», но…» из адреса — appid игры, на соседей которой сужается выдача.
- *
- * Раньше у затравки адреса не было вовсе: это был шаг по уже показанной
- * выдаче, и «хочу что-то как Hades» оставалось невыполнимым, пока Hades сам
- * не выпадет героем. Теперь в выдачу «в духе X» ведут страница игры, «Уже
- * прошёл» и «Твои вечера» — адресом /quiz?seed= и дальше /play?…&seed=.
- *
- * Разбор строгий, по тому же правилу, что parseSeed на сервере (lib/recommend):
- * ненулевое безопасное целое, отрицательное тоже — у записей чужих магазинов
- * appid меньше нуля. Только запись без мусора: «12abc», «1e3», «+12», «012» и
- * пробелы — null, а не что-то, что Number() из них вытянет. Модуль без
- * зависимостей: его читают лендинг, proxy.ts (через lib/destination) и квиз,
- * и тянуть ради одной проверки движок рекомендаций туда незачем.
- */
-export function parseSeedParam(raw: string | null | undefined): number | null {
-  if (!raw || !/^-?[1-9]\d*$/.test(raw)) return null
-  const n = Number(raw)
-  return Number.isSafeInteger(n) ? n : null
-}
-
-/**
- * Жанр из адреса — адрес страницы жанра (HUB_GENRES в lib/gamehub: «roguelike»,
- * «point-and-click»), а не ключ тега Steam: адреса страниц не меняются
- * никогда, и с ними в адресе нет ни пробелов, ни амперсанда «Point & Click».
- *
- * Здесь — только форма: латиница, цифры и дефисы, не длиннее сорока. Есть
- * ли такая страница, решают те, кому нужен сам жанр, — сервер подбора и
- * квиз (hubTagOf в lib/gamehub). Модуль без зависимостей не тянет ради
- * проверки словарь тридцати жанров в лендинг, proxy.ts и /play — последний
- * стоит у потолка бюджета первой загрузки. Незнакомый адрес доедет до
- * сервера и будет там молча «без жанра», как опечатка в lean.
- */
-export function parseGenreParam(raw: string | null | undefined): string | null {
-  return raw && raw.length <= 40 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(raw) ? raw : null
 }
 
 /**

@@ -1,12 +1,14 @@
-import { revalidatePath, revalidateTag } from 'next/cache'
+import { revalidateTag } from 'next/cache'
 import { NextResponse } from 'next/server'
 import { countUserRows, forgetCardIds, forgetUser, type Db } from '@/lib/db'
 import { logSwallowed } from '@/lib/errlog'
 import { FORGET_IP_LIMIT, FORGET_IP_WINDOW_SEC, forgetCardPaths, forgetSummary } from '@/lib/forget'
 import { FORGET_CONFIRM } from '@/lib/forgetreply'
+import { localeFromRequest } from '@/lib/i18n'
 import { portraitTag } from '@/lib/portraitmodel'
 import { checkRate, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import { readJsonObject } from '@/lib/reqbody'
+import { revalidateSitePath } from '@/lib/revalidate'
 import { clearDeviceCookies, currentSession, getDb, isDemoId, nowSec } from '@/lib/server'
 import { forgetSessionCache } from '@/lib/sessions'
 
@@ -111,7 +113,11 @@ async function limited(db: Db, req: Request): Promise<Response | null> {
   return verdict.ok ? null : rateLimitedResponse(verdict.retryAfterSec)
 }
 
-/** Что хранится — строками для подтверждения (forgetSummary в lib/forget) */
+/**
+ * Что хранится — строками для подтверждения (forgetSummary в lib/forget), на
+ * языке вопроса: кнопка шлёт его в ?lang= (withLang в components/ForgetMe).
+ * Ответ no-store, кэшу язык в адресе не нужен — он нужен словам.
+ */
 export async function GET(req: Request) {
   const gate = await owner(false)
   if (!gate.ok) return gate.response
@@ -119,7 +125,9 @@ export async function GET(req: Request) {
   const deny = await limited(db, req)
   if (deny) return deny
   try {
-    return NextResponse.json(forgetSummary(await countUserRows(db, gate.steamid)), { headers: NO_STORE })
+    return NextResponse.json(forgetSummary(await countUserRows(db, gate.steamid), localeFromRequest(req)), {
+      headers: NO_STORE,
+    })
   } catch (err) {
     logSwallowed('forget:count', err)
     return NextResponse.json({ error: 'failed' }, { status: 503, headers: NO_STORE })
@@ -170,7 +178,7 @@ export async function POST(req: Request) {
   // случае догонит сама, через свой час (lib/forget, forgetCardPaths)
   for (const path of cards) {
     try {
-      revalidatePath(path)
+      revalidateSitePath(path)
     } catch {
       // в лог — нет: в тексте ошибки был бы адрес, а в нём SteamID
     }

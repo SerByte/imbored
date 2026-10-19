@@ -36,30 +36,30 @@ const ROOT = path.join(__dirname, '..')
  * проскочит под чужой причиной.
  */
 const DEFAULT_PREFETCH: Record<string, { links: number; why: string }> = {
-  'app/daily/page.tsx': {
+  'app/[lang]/daily/page.tsx': {
     links: 1,
     why: 'ⓘ у героя «Игры дня» — одна ссылка, по которой и идут: префетч окупается кликом',
   },
-  'app/play/page.tsx': { links: 1, why: 'ⓘ у героя выдачи — одна ссылка на экран' },
-  'app/pick/[id]/page.tsx': { links: 1, why: '«Об игре» у выбора комнаты — одна ссылка' },
+  'app/[lang]/play/page.tsx': { links: 1, why: 'ⓘ у героя выдачи — одна ссылка на экран' },
+  'app/[lang]/pick/[id]/page.tsx': { links: 1, why: '«Об игре» у выбора комнаты — одна ссылка' },
   'components/whatsnew/Cover.tsx': {
     links: 1,
     why: '«Что ещё меняли» у обложки ленты — одна ссылка на самую весомую игру недели',
   },
-  'app/not-found.tsx': {
+  'app/[lang]/not-found.tsx': {
     links: 1,
     why: 'полка 404 — верх каталога (topCatalogGames), он пререндерен и лежит в кэше: записи ISR нет',
   },
-  'app/game/[appid]/news/[gid]/page.tsx': {
+  'app/[lang]/game/[appid]/news/[gid]/page.tsx': {
     links: 2,
     why:
       'страница патча: «назад» в шапке и «Всё об игре» внизу — обе на карточку своей же игры, главный выход со страницы; адрес один, а клиентский кэш префетча ключуется адресом (docs: prefetching.md, Client cache) — запрос тоже один',
   },
-  'app/game/[appid]/news/page.tsx': {
+  'app/[lang]/game/[appid]/news/page.tsx': {
     links: 1,
     why: 'архив обновлений игры: путь над заголовком — назад на карточку своей же игры, главный выход со страницы, как у страницы патча; ссылка одна',
   },
-  'app/explore/page.tsx': {
+  'app/[lang]/explore/page.tsx': {
     links: 1,
     why:
       'полка «Приглянулось» в колоде /explore: её видит один человек, до разворота не больше EXPLORE_SHELF_FOLD плиток, и это игры, которые он только что сам отметил «Интересно» — по ним и идут',
@@ -71,7 +71,7 @@ const DEFAULT_PREFETCH: Record<string, { links: number; why: string }> = {
  * и почему. Ключ — файл, значение — сколько таких плиток в нём.
  */
 const WITHOUT_PENDING: Record<string, { tiles: number; why: string }> = {
-  'app/not-found.tsx': {
+  'app/[lang]/not-found.tsx': {
     tiles: 1,
     why:
       'полка 404 — пререндеренный верх каталога с префетчем: переход мгновенный, и ожидания Next не показывает вовсе. ' +
@@ -200,10 +200,10 @@ describe('ссылки на карточку игры', () => {
     expect(links.length).toBeGreaterThan(5)
     const uses = (file: string) =>
       (code(fs.readFileSync(path.join(ROOT, file), 'utf8')).match(/<GameLink\b/g) ?? []).length
-    expect(uses('app/portrait/[steamid]/page.tsx')).toBe(5)
-    expect(uses('app/portrait/[steamid]/year/page.tsx')).toBe(2)
-    expect(uses('app/compat/[steamid]/page.tsx')).toBe(2)
-    expect(uses('app/game/[appid]/page.tsx')).toBe(1)
+    expect(uses('app/[lang]/portrait/[steamid]/page.tsx')).toBe(5)
+    expect(uses('app/[lang]/portrait/[steamid]/year/page.tsx')).toBe(2)
+    expect(uses('app/[lang]/compat/[steamid]/page.tsx')).toBe(2)
+    expect(uses('app/[lang]/game/[appid]/page.tsx')).toBe(1)
     expect(uses('components/LikedShelf.tsx')).toBe(1)
     expect(uses('components/BannedShelf.tsx')).toBe(1)
     expect(uses('components/whatsnew/PatchRow.tsx')).toBe(2)

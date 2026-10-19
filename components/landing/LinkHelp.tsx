@@ -1,3 +1,4 @@
+import { useLocale } from '@/components/LocaleProvider'
 import { track } from '@/lib/track'
 
 /**
@@ -20,9 +21,12 @@ import { track } from '@/lib/track'
  * поэтому они здесь одни на обе ветки карточки (ProfileForm у гостя и у
  * вошедшего), как шаги приватности в PrivacyHelp.
  *
- * Хуков нет: раскрыта ли панель, держит ProfileForm, а здесь разметка и
- * решение, что делает нажатие (toggleLinkHelp), — и то и другое проверяется
- * в тесте без браузера.
+ * Хуков, кроме языка страницы (useLocale), нет: раскрыта ли панель, держит
+ * ProfileForm, а здесь разметка и решение, что делает нажатие
+ * (toggleLinkHelp), — и то и другое проверяется в тесте без браузера.
+ *
+ * Английские шаги называют пункты клиента Steam так, как их пишет сам
+ * клиент по-английски: «Profile», «Copy Page URL», «Add a Friend».
  */
 
 /** Панель подсказки: на неё указывает aria-controls кнопки */
@@ -37,6 +41,11 @@ export const LINK_HELP_ID = 'profile-link-help'
  * .join-help-word прячется, и от кнопки виден один «?». Имя от этого не
  * меняется, и «Где взять» в нём остаётся для голосового ввода.
  *
+ * По-английски имя по той же причине начинается словами с кнопки: «Where’s
+ * that link?», а не «Where do I find my link?». Голосовой ввод ищет кнопку по
+ * тому, что видно глазом (WCAG 2.5.3), и на «click Where’s that» второе имя
+ * не находилось.
+ *
  * min-w-10 — чтобы одинокий «?» оставался целью для пальца, а не полоской в
  * семь пикселей; на тач-экране .tap добирает зону до 44 — но только наружу, к
  * краю пилюли (.tap-flush-start): слева вплотную поле, и штатные 6 px зоны
@@ -44,16 +53,17 @@ export const LINK_HELP_ID = 'profile-link-help'
  * ссылки. Правый отступ поля ужат до 4 — зона съела бы его целиком.
  */
 export function LinkHelpToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  const en = useLocale() === 'en'
   return (
     <button
       type="button"
-      aria-label="Где взять ссылку?"
+      aria-label={en ? 'Where’s that link?' : 'Где взять ссылку?'}
       aria-expanded={open}
       aria-controls={LINK_HELP_ID}
       onClick={onToggle}
       className="tap tap-flush-start min-w-10 shrink-0 self-stretch rounded-[11px] px-1.5 text-xs font-semibold text-dim transition-colors hover:text-ink aria-expanded:text-ink"
     >
-      <span className="join-help-word">Где взять</span>?
+      <span className="join-help-word">{en ? 'Where’s that' : 'Где взять'}</span>?
     </button>
   )
 }
@@ -76,6 +86,34 @@ const MY_PROFILE_URL = 'https://steamcommunity.com/my'
  * него своя строка — через браузер. Код для друзей годится везде.
  */
 export function LinkHelp({ open }: { open: boolean }) {
+  if (useLocale() === 'en') {
+    return (
+      <div id={LINK_HELP_ID} hidden={!open} className="anim-rise text-sm leading-relaxed text-dim">
+        <ol className="list-decimal list-inside space-y-1">
+          <li>
+            In Steam on your computer: your name at the top → <span className="text-ink">“Profile”</span>
+          </li>
+          <li>
+            Right-click the page → <span className="text-ink">“Copy Page URL”</span> — and paste it here
+          </li>
+        </ol>
+        <p className="mt-2">
+          On a phone: open{' '}
+          <a
+            href={MY_PROFILE_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="tap tap-tight text-ember-text hover:underline"
+          >
+            steamcommunity.com/my
+          </a>{' '}
+          — Steam will show your profile — and copy the address from the browser bar.
+        </p>
+        <p className="mt-2">Or use your friend code — it’s in Steam: “Friends” → “Add a Friend”.</p>
+        <p className="mt-1">A custom URL is the part after /id/ in the link: Steam doesn’t search by profile name.</p>
+      </div>
+    )
+  }
   return (
     <div id={LINK_HELP_ID} hidden={!open} className="anim-rise text-sm leading-relaxed text-dim">
       <ol className="list-decimal list-inside space-y-1">

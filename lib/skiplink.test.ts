@@ -133,7 +133,7 @@ describe('когда досматривать элемент в фокусе', (
 
 describe('подключение', () => {
   const impl = code(read('components/SmoothScrollImpl.tsx'))
-  const layout = read('app/layout.tsx')
+  const layout = read('app/[lang]/layout.tsx')
   const css = read('app/globals.css').replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
 
   test('обработчик якорей переносит фокус', () => {

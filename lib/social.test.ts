@@ -50,13 +50,14 @@ function objectAt(src: string, at: number): string {
 
 describe('превью в мессенджерах', () => {
   test('у корня есть своя карточка — она достаётся всем, у кого нет своей', () => {
-    expect(fs.existsSync(path.join(ROOT, 'app', 'opengraph-image.tsx'))).toBe(true)
+    expect(fs.existsSync(path.join(ROOT, 'app', '[lang]', 'opengraph-image.tsx'))).toBe(true)
   })
 
   test('корень объявляет имя сервиса и язык', () => {
-    const layout = read('app/layout.tsx')
+    const layout = read('app/[lang]/layout.tsx')
     expect(layout).toMatch(/siteName:\s*'imbored'/)
-    expect(layout).toMatch(/locale:\s*'ru_RU'/)
+    // язык — по сегменту [lang]: ru_RU у русской, en_US у английской
+    expect(layout).toMatch(/locale:\s*ogLocale\(locale\)/)
   })
 
   /**
@@ -69,9 +70,10 @@ describe('превью в мессенджерах', () => {
     const offenders: string[] = []
     for (const [file, src] of appFiles()) {
       if (!/\bopenGraph:\s*\{/.test(src)) continue
-      if (file.endsWith(path.join('app', 'layout.tsx'))) continue // корень и есть источник
+      if (file.endsWith(path.join('app', '[lang]', 'layout.tsx'))) continue // корень и есть источник
       for (const m of src.matchAll(/openGraph:\s*\{([\s\S]{0,220}?)\}/g)) {
-        if (!m[1].includes('...OG_SITE')) offenders.push(path.relative(ROOT, file))
+        // ...ogSite(locale) — тот же OG_SITE, но og:locale на языке страницы
+        if (!m[1].includes('...OG_SITE') && !m[1].includes('...ogSite(')) offenders.push(path.relative(ROOT, file))
       }
     }
     expect([...new Set(offenders)], 'openGraph без ...OG_SITE теряет siteName и locale').toEqual([])
@@ -83,7 +85,7 @@ describe('превью в мессенджерах', () => {
    * /privacy или /whatsnew с главной.
    */
   test('корень не раздаёт свой og:url всем подряд', () => {
-    const layout = read('app/layout.tsx')
+    const layout = read('app/[lang]/layout.tsx')
     const at = layout.search(/\bopenGraph:\s*\{/)
     expect(at, 'openGraph в корне не найден').toBeGreaterThan(-1)
     expect(objectAt(layout, at)).not.toMatch(/\burl\b/)
@@ -95,29 +97,40 @@ describe('превью в мессенджерах', () => {
    */
   test('страницы без своей карточки объявляют свой адрес', () => {
     const own: Record<string, string> = {
-      'app/page.tsx': '/',
-      'app/whatsnew/page.tsx': '/whatsnew',
-      'app/games/page.tsx': '/games',
-      'app/privacy/page.tsx': '/privacy',
-      'app/support/page.tsx': '/support',
-      'app/daily/layout.tsx': '/daily',
+      'app/[lang]/page.tsx': '/',
+      'app/[lang]/whatsnew/page.tsx': '/whatsnew',
+      'app/[lang]/games/page.tsx': '/games',
+      'app/[lang]/support/page.tsx': '/support',
+      'app/[lang]/daily/layout.tsx': '/daily',
       // квиз открыт краулеру и идёт в выдачу: canonical сворачивает в него
       // /quiz?from=untouched и прочие хвосты (lib/robots)
-      'app/quiz/layout.tsx': '/quiz',
+      'app/[lang]/quiz/layout.tsx': '/quiz',
     }
+    // Тексты на языке страницы — generateMetadata, который отдаёт ownAddress
+    // со своими title и description (app/[lang]/daily/layout.tsx)
     for (const [file, url] of Object.entries(own)) {
-      expect(read(file), file).toMatch(new RegExp(`export const generateMetadata = ownAddress\\('${url}'`))
+      expect(read(file), file).toMatch(
+        new RegExp(`(?:export const generateMetadata = |export async function generateMetadata\\b[^]*?return )ownAddress\\('${url}'`),
+      )
     }
+    // /privacy: title и description у каждого языка свои, поэтому generateMetadata —
+    // функция, но адрес и картинку даёт тот же ownAddress
+    expect(read('app/[lang]/privacy/page.tsx')).toMatch(/return ownAddress\('\/privacy', \{[^}]*\}\)\(props, parent\)/)
   })
 
   test('у каждого своего openGraph есть свой url и canonical', () => {
     const offenders: string[] = []
     for (const [file, src] of appFiles()) {
-      if (file.endsWith(path.join('app', 'layout.tsx'))) continue
+      if (file.endsWith(path.join('app', '[lang]', 'layout.tsx'))) continue
+      // 404 вне разделов: openGraph корня плюс его карточка (у /_not-found нет
+      // [lang], и файл туда не доходит). Своего адреса у 404 нет и быть не
+      // должно: она под noindex, а og:url и canonical на мусорный адрес — ложь
+      if (file.endsWith(path.join('app', 'global-not-found.tsx'))) continue
       for (const m of src.matchAll(/\bopenGraph:\s*\{/g)) {
         if (!/\burl\b/.test(objectAt(src, m.index))) offenders.push(path.relative(ROOT, file))
       }
-      if (/\bopenGraph:\s*\{/.test(src) && !/alternates:\s*\{\s*canonical\b/.test(src)) {
+      // localeAlternates(locale, url) — canonical на языке страницы и hreflang (lib/site.ts)
+      if (/\bopenGraph:\s*\{/.test(src) && !/alternates:\s*(\{\s*canonical\b|localeAlternates\()/.test(src)) {
         offenders.push(path.relative(ROOT, file))
       }
     }
@@ -125,24 +138,32 @@ describe('превью в мессенджерах', () => {
   })
 
   /**
-   * Файловая метадата приоритетнее объекта metadata. Значит openGraph.images
-   * рядом с opengraph-image.tsx никогда не применится — такие строки не
-   * ломают превью, но врут читающему код, а однажды уже стоили страницы игры
-   * сырого баннера 920×430 вместо карточки.
+   * openGraph.images страницы ВЫТЕСНЯЕТ карточку opengraph-image.tsx: файл
+   * Next берёт, только когда у страницы images нет (mergeStaticMetadata в
+   * next/dist/lib/metadata/resolve-metadata.js). Случайная такая строка тихо
+   * подменяет превью — однажды она уже стоила странице игры сырого баннера
+   * 920×430 вместо карточки.
    */
-  test('там, где есть opengraph-image.tsx, нет мёртвого openGraph.images', () => {
+  test('там, где есть opengraph-image.tsx, нет случайного openGraph.images', () => {
+    // Намеренно — две страницы: на /en та же карточка того же маршрута, но с
+    // английской подписью, а alt у файловой карточки без языка. Next берёт
+    // images своего уровня вместо файла; что они ведут на свою карточку —
+    // page.test.ts рядом с каждой. Именем, а не окном в 300 знаков ниже: оно
+    // пропускало такие страницы случайно
+    const deliberate = new Set(['app/[lang]/game/[appid]/news/[gid]/page.tsx', 'app/[lang]/compat/[steamid]/page.tsx'])
     const offenders: string[] = []
     for (const [file, src] of appFiles()) {
-      if (!/\bopenGraph:\s*\{/.test(src)) continue
+      if (!/openGraph:s*{/.test(src)) continue
+      if (deliberate.has(path.relative(ROOT, file).split(path.sep).join('/'))) continue
       const dir = path.dirname(file)
       const hasFile =
         fs.existsSync(path.join(dir, 'opengraph-image.tsx')) ||
-        fs.existsSync(path.join(ROOT, 'app', 'opengraph-image.tsx'))
+        fs.existsSync(path.join(ROOT, 'app', '[lang]', 'opengraph-image.tsx'))
       if (hasFile && /openGraph:\s*\{[\s\S]{0,300}?images:/.test(src)) {
         offenders.push(path.relative(ROOT, file))
       }
     }
-    expect(offenders, 'images здесь мёртв — картинку даёт opengraph-image.tsx').toEqual([])
+    expect(offenders, 'images здесь подменяет карточку opengraph-image.tsx').toEqual([])
   })
 
   /**

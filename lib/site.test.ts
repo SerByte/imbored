@@ -3,7 +3,17 @@ import path from 'node:path'
 import type { ResolvingMetadata } from 'next'
 import { describe, expect, test } from 'vitest'
 import { DESTINATIONS } from './destinationtext'
-import { OG_SITE, ownAddress } from './site'
+import {
+  localeAlternates,
+  OG_SITE,
+  ogSite,
+  ownAddress,
+  rootCard,
+  SITE_DESCRIPTION,
+  SITE_TITLE,
+  siteDescription,
+  siteTitle,
+} from './site'
 
 /** Родительская метадата в том виде, в каком её отдаёт Next: уже разобранная. */
 function parent(images?: Array<{ url: string }>): ResolvingMetadata {
@@ -30,6 +40,24 @@ describe('ownAddress', () => {
     expect(meta.openGraph?.images).toEqual(ROOT_CARD)
   })
 
+  /**
+   * alt файловой карточки — константа модуля, и она русская (docs/i18n.md,
+   * п. 10). На /en та же карточка переподписывается siteTitle('en'): адрес с
+   * хэшем, размеры и тип — от файла; на русской — те же объекты как есть.
+   */
+  test('на /en корневая карточка — с английской подписью, на русской — как есть', async () => {
+    const card = [{ ...ROOT_CARD[0], alt: SITE_TITLE, type: 'image/png' }]
+    const en = await ownAddress('/quiz')({ params: Promise.resolve({ lang: 'en' }) }, parent(card))
+    expect(en.openGraph?.images).toEqual([{ ...card[0], alt: 'imbored — what to play' }])
+    const ru = await ownAddress('/quiz')({ params: Promise.resolve({ lang: 'ru' }) }, parent(card))
+    expect(ru.openGraph?.images).toEqual(card)
+    expect((ru.openGraph?.images as unknown[])[0]).toBe(card[0])
+    // строка вместо объекта — оборачивается: подписи без объекта не бывает
+    const bare = ['https://imbored.cc/en/opengraph-image?7a1c'] as unknown as Array<{ url: string }>
+    const wrapped = await ownAddress('/')({ params: Promise.resolve({ lang: 'en' }) }, parent(bare))
+    expect(wrapped.openGraph?.images).toEqual([{ url: bare[0], alt: 'imbored — what to play' }])
+  })
+
   test('нет карточки у родителя — нет и пустого images', async () => {
     const meta = await ownAddress('/support')(null, parent())
     expect(meta.openGraph).not.toHaveProperty('images')
@@ -42,6 +70,48 @@ describe('ownAddress', () => {
     expect(meta.openGraph).not.toHaveProperty('title')
     expect(meta.openGraph).not.toHaveProperty('description')
     expect(meta.description).toBe('Одна игра')
+  })
+
+  test('на английском canonical и og:url — английский адрес, hreflang — обе версии', async () => {
+    const en = { params: Promise.resolve({ lang: 'en' }) }
+    const meta = await ownAddress('/privacy', { title: 'Privacy' })(en, parent(ROOT_CARD))
+    expect(meta.alternates?.canonical).toBe('/en/privacy')
+    expect(meta.alternates?.languages).toEqual({ ru: '/privacy', en: '/en/privacy', 'x-default': '/en/privacy' })
+    expect(meta.openGraph).toMatchObject({ siteName: 'imbored', locale: 'en_US', url: '/en/privacy' })
+    const home = await ownAddress('/')(en, parent())
+    expect(home.alternates?.canonical).toBe('/en')
+    expect(home.openGraph).toMatchObject({ url: '/en' })
+  })
+
+  test('русская страница — адрес без префикса и те же hreflang', async () => {
+    const meta = await ownAddress('/quiz')({ params: Promise.resolve({ lang: 'ru' }) }, parent())
+    expect(meta.alternates?.canonical).toBe('/quiz')
+    expect(meta.alternates?.languages).toEqual({ ru: '/quiz', en: '/en/quiz', 'x-default': '/en/quiz' })
+    expect(meta.openGraph).toMatchObject({ locale: 'ru_RU', url: '/quiz' })
+  })
+
+  test('имя, обещание и общая часть openGraph — на языке страницы', () => {
+    expect(siteTitle('ru')).toBe(SITE_TITLE)
+    expect(siteTitle('en')).toBe('imbored — what to play')
+    expect(siteDescription('ru')).toBe(SITE_DESCRIPTION)
+    expect(siteDescription('en')).toMatch(/^Tell us how much time/)
+    expect(ogSite('ru')).toEqual(OG_SITE)
+    expect(ogSite('en')).toEqual({ siteName: 'imbored', locale: 'en_US' })
+    expect(localeAlternates('en', '/game/730').canonical).toBe('/en/game/730')
+  })
+
+  test('rootCard: страница без своего адреса на /en получает английскую подпись, на русской — ничего', async () => {
+    const card = [{ ...ROOT_CARD[0], alt: SITE_TITLE }]
+    const en = await rootCard({ params: Promise.resolve({ lang: 'en' }) }, parent(card))
+    expect(en).toEqual({
+      openGraph: { siteName: 'imbored', locale: 'en_US', type: 'website', images: [{ ...card[0], alt: 'imbored — what to play' }] },
+    })
+    // своего og:url нет: адрес — дело ownAddress
+    expect(en.openGraph).not.toHaveProperty('url')
+    expect(await rootCard({ params: Promise.resolve({ lang: 'ru' }) }, parent(card))).toEqual({})
+    expect(await rootCard({ params: Promise.resolve({ lang: 'en' }) }, parent())).toEqual({})
+    // тест страницы зовёт generateMetadata без parent — карточки нет, но и падения нет
+    expect(await rootCard({ params: Promise.resolve({ lang: 'en' }) })).toEqual({})
   })
 
   test('свои alternates страницы не теряются, canonical — всегда свой', async () => {
@@ -72,7 +142,7 @@ describe('обещание продукта одно', () => {
     for (const rel of [
       'components/landing/scenes/Money.tsx',
       'lib/destination.ts',
-      'app/play/layout.tsx',
+      'app/[lang]/play/layout.tsx',
       'app/manifest.ts',
     ]) {
       expect(visible(rel), rel).not.toMatch(/пять карточек|Подборк|из бэклога, заброшенного или нового/)

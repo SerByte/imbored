@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   assembleHub,
+  facetCopy,
   facetPath,
   HUB_FACETS,
   HUB_FETCH,
@@ -13,6 +14,7 @@ import {
   hubFacetOf,
   hubPath,
   hubTagOf,
+  hubTitle,
   playsAgainst,
   inGenre,
   primaryGenre,
@@ -100,6 +102,40 @@ describe('страницы жанров', () => {
   test('заголовок — по-русски и с большой буквы', () => {
     for (const tag of HUB_TAGS) expect(HUB_GENRES[tag].title, tag).toMatch(/^[А-ЯЁA-Z]/)
     expect(HUB_PAGE).toBeGreaterThanOrEqual(HUB_SHELF)
+  })
+
+  test('hubTitle без языка и на ru — ровно русский заголовок', () => {
+    for (const tag of HUB_TAGS) {
+      expect(hubTitle(tag), tag).toBe(HUB_GENRES[tag].title)
+      expect(hubTitle(tag, 'ru'), tag).toBe(HUB_GENRES[tag].title)
+    }
+  })
+
+  test('английский заголовок — у каждого жанра свой, с большой буквы и без кириллицы', () => {
+    const titles = HUB_TAGS.map((tag) => hubTitle(tag, 'en'))
+    for (const [i, title] of titles.entries()) {
+      expect(title, HUB_TAGS[i]).toMatch(/^[A-Z]/)
+      expect(title, HUB_TAGS[i]).not.toMatch(/[А-Яа-яЁё]/)
+      // не голый ключ тега: заголовок — множественным числом, как жанр ищут
+      expect(title, HUB_TAGS[i]).not.toBe(HUB_TAGS[i])
+    }
+    expect(new Set(titles).size).toBe(titles.length)
+  })
+
+  test('английский — множественным числом, аббревиатуры заглавными', () => {
+    expect(hubTitle('Roguelike', 'en')).toBe('Roguelikes')
+    expect(hubTitle('Souls-like', 'en')).toBe('Soulslikes')
+    expect(hubTitle('Metroidvania', 'en')).toBe('Metroidvanias')
+    expect(hubTitle('Open World', 'en')).toBe('Open-world games')
+    expect(hubTitle('City Builder', 'en')).toBe('City builders')
+    expect(hubTitle('JRPG', 'en')).toBe('JRPGs')
+    expect(hubTitle('CRPG', 'en')).toBe('CRPGs')
+  })
+
+  test('тег без страницы — сам ключ на обоих языках', () => {
+    expect(hubTitle('Indie')).toBe('Indie')
+    expect(hubTitle('Indie', 'en')).toBe('Indie')
+    expect(hubTitle('constructor', 'en')).toBe('constructor')
   })
 })
 
@@ -298,6 +334,34 @@ describe('подборки по факту: /games/coop, /games/split-screen, /g
     expect(short.basis).toContain('по тегам и разобранным отзывам')
     expect(short.basis).not.toMatch(/сессия по отзывам/)
     expect(hubFacetOf('free')!.query).toEqual({ kind: 'free' })
+  })
+
+  test('facetCopy без языка и на ru — ровно русские поля', () => {
+    for (const f of HUB_FACETS) {
+      const ru = { title: f.title, heading: f.heading, label: f.label, basis: f.basis }
+      expect(facetCopy(f), f.slug).toEqual(ru)
+      expect(facetCopy(f, 'ru'), f.slug).toEqual(ru)
+    }
+  })
+
+  test('по-английски — те же правила: с заглавной, heading с title, основание со строчной и без кириллицы', () => {
+    const titles = HUB_FACETS.map((f) => facetCopy(f, 'en').title)
+    for (const f of HUB_FACETS) {
+      const en = facetCopy(f, 'en')
+      expect(en.title, f.slug).toMatch(/^[A-Z0-9]/)
+      expect(en.heading.startsWith(en.title), f.slug).toBe(true)
+      expect(en.label, f.slug).toMatch(/^[A-Z0-9]/)
+      // основание — продолжение фразы «40 games — …», со строчной и с точкой в конце
+      expect(en.basis, f.slug).toMatch(/^[a-z].{40,}\.$/)
+      expect(JSON.stringify(en), f.slug).not.toMatch(/[А-Яа-яЁё]/)
+      // английское название подборки не совпадает с английским заголовком жанра
+      for (const tag of HUB_TAGS) expect(en.title, `${f.slug}/${tag}`).not.toBe(hubTitle(tag, 'en'))
+    }
+    expect(new Set(titles).size).toBe(titles.length)
+    // минуты — теги, уточнённые отзывами, и по-английски не «per reviews»
+    const short = facetCopy(hubFacetOf('short')!, 'en').basis
+    expect(short).toContain('judging by tags and analyzed player reviews')
+    expect(short).not.toMatch(/per reviews/)
   })
 })
 

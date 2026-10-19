@@ -1,6 +1,6 @@
 'use client'
 
-import { useLinkStatus } from 'next/link'
+import { useLinkStatus } from '@/components/Link'
 
 /**
  * Плитка игры, по которой уже нажали, а /game ещё не приехала.

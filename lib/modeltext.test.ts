@@ -226,6 +226,74 @@ describe('claimsNoUpdates', () => {
     ]
     for (const s of other) expect(claimsNoUpdates(s), s).toBe(false)
   })
+
+  /*
+   * Слот en — те же минусы по-английски (pros_en/cons_en): на /en/game/730
+   * «Developers don't update the game» стоял бы над теми же восемью патчами.
+   * Фикстуры — зеркало русских выше плюс то, что английский строит иначе.
+   */
+  test('английский слот: то же утверждение своими словами', () => {
+    const claims = [
+      "Developers don't update the game and abandoned its development",
+      'The game was abandoned by the developers',
+      'Abandoned by the developers',
+      'No new updates',
+      'No updates for a long time',
+      'Updates stopped long ago',
+      "The game hasn't been updated in a long time",
+      'Old game, never updated by the publisher after release',
+      'No updates',
+      'Developers dropped support',
+      'Developers abandoned the project',
+      'The developer ended support for the game, no updates',
+      'Stopped supporting it',
+      'The game is no longer updated',
+      "The project hasn't been updated since 2019",
+      "The game is outdated, hasn't been updated since 2023",
+      'Outdated game, not updated since 2023',
+      'Developers have stopped updating the game',
+      'Devs don’t update the game anymore',
+      'Support has ended',
+      'Development has stopped',
+      'Nobody updates the game anymore',
+      'The game feels abandoned',
+    ]
+    for (const s of claims) expect(claimsNoUpdates(s), s).toBe(true)
+  })
+
+  test('английский слот: минус про другое — не про обновления', () => {
+    const other = [
+      'Updates break the balance',
+      'Updates are frequent but break the balance',
+      'Frequent updates reset progress',
+      'Abandoned locations are repetitive',
+      "Doesn't support a controller",
+      'No controller support',
+      'Not much content',
+      'The story was abandoned halfway',
+      'The campaign is buggy, incomplete and not updated alongside multiplayer',
+      'Ancient graphics, not updated in years',
+      // платформа, а не игра
+      'Developers stopped supporting macOS and Linux',
+      'Dropped support for Windows 7',
+      // не подлежащее: части игры и «в игре»
+      "Maps aren't updated, players get bored",
+      "Anticheat isn't updated, cheaters in every game",
+      "The shop isn't updated, skins are too expensive for players",
+      "The game's maps haven't been updated in years",
+      "Custom content isn't updated",
+      "The game is good, maps aren't updated",
+      'Game modes are not updated',
+      // определение перед словом — про геймпад, моды и карты, а не про игру
+      'Controller support was dropped',
+      'Mod development has stopped',
+      'Map updates have stopped',
+      'The anticheat stopped updating',
+      // пустой онлайн — не про патчи
+      'Dead game, nobody online',
+    ]
+    for (const s of other) expect(claimsNoUpdates(s), s).toBe(false)
+  })
 })
 
 describe('пункты одной строкой', () => {

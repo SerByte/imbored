@@ -34,15 +34,17 @@ const flat = (src: string) => src.replace(/\s+/g, '')
 const PRESSED_TITLE = 'Зашло — нажми, чтобы снять'
 
 describe('«Зашло» у героя снимается тем же нажатием', () => {
-  const play = flat(read('app/play/page.tsx'))
-  const daily = flat(read('app/daily/page.tsx'))
+  const play = flat(read('app/[lang]/play/page.tsx'))
+  const daily = flat(read('app/[lang]/daily/page.tsx'))
 
   test('/play: нажатое сердце снимает «Зашло» через lib/unlike из куска героя, отказ — строкой под героем', () => {
     expect(play).toContain(flat('const heartOn = liked.has(pick.appid)'))
     // Не пришёл кусок (деплой сменил хеш, а вкладка старая) — не мёртвое
     // нажатие: та же строка под героем говорит, что делать
     expect(play).toContain(
-      flat("if (heartOn) return void heroTail().then((t) => t.undoLike('play', pick, setLiked, setHeroMiss), () => setHeroMiss('Обнови страницу'))"),
+      flat(
+        "if (heartOn) return void heroTail().then((t) => t.undoLike('play', pick, setLiked, setHeroMiss, locale), () => setHeroMiss(tr(locale, { ru: 'Обнови страницу', en: 'Reload the page' })))",
+      ),
     )
     // Кусок — тот, что уже грузит «Сыграю вечером»: своего загрузчика /play не заводит
     expect(play).not.toContain(flat("import('@/lib/unlike')"))
@@ -66,7 +68,8 @@ describe('«Зашло» у героя снимается тем же нажат
   })
 
   test('/daily: нажатое сердце снимает «Зашло», отказ — строкой под кнопками героя', () => {
-    expect(daily).toContain(flat("liked.has(hero.appid) ? void undoLike('daily', hero, setLiked, setRerollMiss) : like()"))
+    // Язык страницы — в отказ: иначе строка «Не вышло снять…» на /en по-русски
+    expect(daily).toContain(flat("liked.has(hero.appid) ? void undoLike('daily', hero, setLiked, setRerollMiss, locale) : like()"))
     // «Зацепило» при горящем сердце его не снимает: like() молчит на повтор,
     // его зовёт и ответ на вопрос после запуска
     expect(daily).toMatch(/constlike=\(intent\?:CtxIntent\)=>\{forgetLaunch\(hero\.appid\)if\(liked\.has\(hero\.appid\)\)return/)
@@ -74,14 +77,22 @@ describe('«Зашло» у героя снимается тем же нажат
   })
 
   test('имя кнопки не меняется с нажатием, обратимость — в подсказке', () => {
-    for (const [file, code, on] of [
-      ['app/play/page.tsx', play, 'heartOn'],
-      ['app/daily/page.tsx', daily, 'liked.has(hero.appid)'],
-    ] as const) {
-      expect(code, file).toContain(flat('aria-pressed={' + on + '}'))
-      expect(code, file).toContain(flat('title={' + on + " ? '" + PRESSED_TITLE + "' : 'Зашло'}"))
-      expect(code, file).toContain(flat('<span className="sr-only">Зашло</span>'))
-    }
+    // /play — на языке страницы: те же подписи парами tr, английская — своя
+    expect(play).toContain(flat('aria-pressed={heartOn}'))
+    expect(play).toContain(
+      flat(
+        "title={ heartOn ? tr(locale, { ru: '" +
+          PRESSED_TITLE +
+          "', en: 'Liked it — tap to undo' }) : tr(locale, { ru: 'Зашло', en: 'Liked it' }) }",
+      ),
+    )
+    expect(play).toContain(flat(`<span className="sr-only">{tr(locale, { ru: 'Зашло', en: 'Liked it' })}</span>`))
+    // /daily говорит на языке страницы (tr): русская ветка — те же слова
+    const on = 'liked.has(hero.appid)'
+    expect(daily).toContain(flat('aria-pressed={' + on + '}'))
+    expect(daily).toContain(flat('ru: ' + on + " ? '" + PRESSED_TITLE + "' : 'Зашло',"))
+    expect(daily).toContain(flat('en: ' + on + " ? 'Liked it — tap to undo' : 'Liked it',"))
+    expect(daily).toContain(flat(`<span className="sr-only">{tr(locale, { ru: 'Зашло', en: 'Liked it' })}</span>`))
   })
 
   /*
@@ -110,7 +121,7 @@ describe('«Зашло» у героя снимается тем же нажат
 })
 
 describe('«Мимо» в колоде /explore возвращается', () => {
-  const page = read('app/explore/page.tsx')
+  const page = read('app/[lang]/explore/page.tsx')
   const code = flat(page)
   const deck = read('components/SwipeDeck.tsx')
 
@@ -222,7 +233,13 @@ describe('«Мимо» в колоде /explore возвращается', () =>
     const btn = code.slice(code.indexOf('constundoButton=lastSkip&&('), code.indexOf('</button>)', code.indexOf('constundoButton=')))
     expect(btn).toContain(flat(`onClick={(e) => undo(e.detail === 0)}`))
     expect(btn).toContain('max-w-full')
-    expect(btn).toContain(flat('<span className="min-w-0 truncate">Вернуть «{lastSkip.name}»</span>'))
+    // Подпись — на языке страницы (tr), одним шаблоном на язык; русское
+    // название на /en — своим lang (withForeignRuns, lib/flownames.test.ts)
+    expect(btn).toContain(
+      flat(
+        '<span className="min-w-0 truncate">{withForeignRuns(locale, tr(locale, { ru: `Вернуть «${lastSkip.name}»`, en: `Bring back “${lastSkip.name}”` }), [lastSkip.name],)}</span>',
+      ),
+    )
   })
 
   /*

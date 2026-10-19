@@ -2,7 +2,9 @@
 
 import { useEffect, useId, useState, useSyncExternalStore } from 'react'
 import { Icon } from '@/components/Icon'
-import { MUTES, muteStore, muteSummary, unkeyDeal, type MuteKey } from '@/lib/mutetags'
+import { useLocale } from '@/components/LocaleProvider'
+import { tr } from '@/lib/i18n'
+import { MUTES, muteLabel, muteStore, muteSummary, unkeyDeal, type MuteKey } from '@/lib/mutetags'
 
 /**
  * «Не предлагать: хорроры, VR, ранний доступ…» — на квизе (lib/mutetags.ts).
@@ -21,8 +23,12 @@ import { MUTES, muteStore, muteSummary, unkeyDeal, type MuteKey } from '@/lib/mu
  * Нажатие пишет сразу, без «Сохранить»: чипс — сам себе ответ, как ось
  * «хочется» на /play. И гасит ключ выдачи на устройстве (unkeyDeal): «Назад»
  * не вернёт пятёрку, собранную до фильтра.
+ *
+ * Язык — из контекста страницы (useLocale): подписи чипсов и сводка — через
+ * muteLabel / muteSummary, а MUTES даёт только ключи и порядок.
  */
 export function MuteTags() {
+  const locale = useLocale()
   const mutes = useSyncExternalStore(muteStore.subscribe, muteStore.get, muteStore.server)
   const [open, setOpen] = useState(false)
   const id = useId()
@@ -49,7 +55,14 @@ export function MuteTags() {
         onClick={() => setOpen(!open)}
         className="tap inline-flex max-w-full items-center gap-1.5 text-xs text-faint transition-colors hover:text-ink"
       >
-        <span className="truncate">{mutes.length ? `Не предлагать: ${muteSummary(mutes)}` : 'Чего не предлагать'}</span>
+        <span className="truncate">
+          {mutes.length
+            ? tr(locale, {
+                ru: `Не предлагать: ${muteSummary(mutes)}`,
+                en: `Don't suggest: ${muteSummary(mutes, locale)}`,
+              })
+            : tr(locale, { ru: 'Чего не предлагать', en: 'What not to suggest' })}
+        </span>
         <Icon name={open ? 'up' : 'down'} size={14} />
       </button>
       {/* В разметке всегда, свёрнутое — через hidden: aria-controls кнопки
@@ -59,7 +72,11 @@ export function MuteTags() {
       <div id={id} hidden={!open} className="flex flex-col items-center gap-3">
         {/* Имя группы — тот же вопрос, что на свёрнутой строке: фокус на
             чипсе без него читался бы голым «Хорроры, переключатель» */}
-        <div role="group" aria-label="Не предлагать" className="flex flex-wrap justify-center gap-2">
+        <div
+          role="group"
+          aria-label={tr(locale, { ru: 'Не предлагать', en: "Don't suggest" })}
+          className="flex flex-wrap justify-center gap-2"
+        >
           {MUTES.map((p) => (
             <button
               key={p.key}
@@ -72,13 +89,15 @@ export function MuteTags() {
                  настоящий, и .tap со своей вылезающей зоной здесь не нужен */
               className="pill min-h-11 py-3"
             >
-              {p.label}
+              {muteLabel(p.key, locale)}
             </button>
           ))}
         </div>
         <p className="max-w-md text-xs leading-relaxed text-faint">
-          По тегам Steam: игра уходит из подбора, игры дня и «Полистать», если такой тег среди её
-          главных. Помнит этот браузер, выход стирает.
+          {tr(locale, {
+            ru: 'По тегам Steam: игра уходит из подбора, игры дня и «Полистать», если такой тег среди её главных. Помнит этот браузер, выход стирает.',
+            en: 'By Steam tags: a game drops out of your picks, the game of the day and Browse if the tag is one of its main ones. Saved in this browser; signing out clears it.',
+          })}
         </p>
       </div>
     </div>

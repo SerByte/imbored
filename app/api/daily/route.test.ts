@@ -913,3 +913,138 @@ describe('/api/daily: крупный патч с последнего заход
     expect(warn.mock.calls.map((c) => String(c[0])).join(' ')).toContain('cards:comeback-patches')
   })
 })
+
+/**
+ * /en/daily: тот же отбор и та же запись дня, а слова — на языке запроса
+ * (?lang=en, withLang на странице). Запись одна на steamid и на оба языка:
+ * отбор пишет основу причины сразу по-русски и по-английски, и заход с
+ * другого языка отбор не повторяет. Названия игр в тестовой базе русские
+ * («Игра 10») — кириллица ищется в причине без них.
+ */
+describe('/api/daily?lang=en', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+  const bare = (text: string) => text.replace(/Игра \d+/g, '')
+  type Hero = { appid: number; source: string; reason: string; share?: { text: string; sig: string; lang?: string } }
+  type Body = { pick: Hero; dateLabel: string }
+
+  test('одна запись на оба языка: английские причина и дата, русские — прежние', async () => {
+    await seedLibrary(db, [10, 11, 12, 13], Math.floor(NOON_MSK / 1000))
+    const res = await get('?lang=en')
+    expect(res.status).toBe(200)
+    const en = (await res.json()) as Body
+    expect(en.dateLabel).toBe('September 23')
+    expect(en.pick.reason).toBeTruthy()
+    expect(bare(en.pick.reason)).not.toMatch(CYRILLIC)
+    // «Отправить другу» — английская основа под английской подписью: русской
+    // ссылке она не подходит (lib/pickshare)
+    const share = en.pick.share!
+    expect(share.lang).toBe('en')
+    expect(en.pick.reason.startsWith(share.text)).toBe(true)
+    const fields = { steamid: STEAMID, appid: en.pick.appid, source: en.pick.source, text: share.text }
+    expect(pickShareOk(sessionSecret(), { ...fields, lang: 'en' }, share.sig)).toBe(true)
+    expect(pickShareOk(sessionSecret(), fields, share.sig)).toBe(false)
+
+    const stored = (await getDailyPick(db, STEAMID, '2026-09-23')) as { reasonBase: string; en?: { reasonBase: string } }
+    expect(stored.en?.reasonBase).toBe(share.text)
+    expect(bare(stored.reasonBase)).toMatch(CYRILLIC)
+
+    // Русский заход в ту же запись — та же игра, русские слова, без пометки языка
+    const ru = (await (await get()).json()) as Body
+    expect(ru.pick.appid).toBe(en.pick.appid)
+    expect(ru.dateLabel).toBe('23 сентября')
+    expect(ru.pick.reason.startsWith(stored.reasonBase)).toBe(true)
+    expect(ru.pick.share).not.toHaveProperty('lang')
+    expect(await countRows(db, 'daily_picks')).toBe(1)
+  })
+
+  test('запись до английской версии: на /en ни причины, ни «Отправить другу», русская цела', async () => {
+    const now = Math.floor(NOON_MSK / 1000)
+    await upsertGamesMeta(db, [meta(30, TAGS.slice(0, 3), now)], now)
+    const reasonBase = 'У тебя в «Игра 30» уже 40 ч — вернись и проверь, как она сейчас.'
+    await saveDailyPick(
+      db,
+      STEAMID,
+      '2026-09-23',
+      {
+        pick: { appid: 30, name: 'Игра 30', source: 'comeback' },
+        shelf: [],
+        hoursPlayed: 40,
+        reasonBase,
+        sharedTags: [],
+        via: null,
+        hideUrgency: false,
+        alt: null,
+      },
+      now,
+    )
+    const en = (await (await get('?lang=en&cached=1')).json()) as Body
+    expect(en.pick.appid).toBe(30)
+    expect(en.pick.reason).toBe('')
+    expect(en.pick.share).toBeUndefined()
+    const ru = (await (await get('?cached=1')).json()) as Body
+    expect(ru.pick.reason).toBe(reasonBase)
+    expect(ru.pick.share?.text).toBe(reasonBase)
+  })
+
+  describe('крупный патч — только из английского пересказа', () => {
+    const DAY = 86_400
+    const STALE = 640
+
+    async function setup(tldrEn: string | undefined): Promise<void> {
+      const steamid = await signInAs(db, 'openid')
+      const now = Math.floor(NOON_MSK / 1000)
+      await upsertGamesMeta(db, [meta(STALE, TAGS.slice(0, 3), now)], now)
+      await saveLibrarySnapshot(db, steamid, [{ ...game(STALE, 40), lastPlayed: now - 200 * DAY }], now)
+      await upsertNewsItems(
+        db,
+        [
+          {
+            appid: STALE,
+            gid: 'major',
+            title: 'Обновление',
+            url: `https://store.steampowered.com/news/app/${STALE}/view/1`,
+            publishedAt: now - 30 * DAY,
+            kind: 'patch',
+            scale: 'major',
+            blocks: [{ kind: 'p', runs: [{ text: 'правки' }] }],
+            bodyHash: 'h1',
+            rank: 5000,
+          },
+        ],
+        now,
+      )
+      await setNewsDigest(
+        db,
+        STALE,
+        'major',
+        { tldr: 'Добавили новый биом и переделали бои с боссами', scale: 'major', ...(tldrEn ? { tldrEn } : {}) },
+        now,
+      )
+    }
+
+    test('есть английский пересказ — факт в причине writer-сессии на /en', async () => {
+      await setup('Added a new biome and reworked the boss fights')
+      const en = (await (await get('?lang=en')).json()) as Body
+      expect(en.pick.appid).toBe(STALE)
+      expect(en.pick.reason).toContain('Since you last played, a major update came out')
+      expect(en.pick.reason).toContain('new biome')
+      expect(bare(en.pick.reason)).not.toMatch(CYRILLIC)
+      // По ссылке — основа без факта, как и по-русски
+      expect(en.pick.share!.text).not.toContain('Since you last played')
+      // Русская причина той же записи — с русским пересказом
+      const ru = (await (await get()).json()) as Body
+      expect(ru.pick.reason).toContain(PATCH_SINCE_LEAD)
+    })
+
+    test('английского пересказа нет — на /en прежняя фраза, русский пересказ не протекает', async () => {
+      await setup(undefined)
+      const en = (await (await get('?lang=en')).json()) as Body
+      expect(en.pick.appid).toBe(STALE)
+      expect(en.pick.reason).not.toContain('Since you last played')
+      expect(en.pick.reason).toContain("go back and see what it's like now")
+      expect(bare(en.pick.reason)).not.toMatch(CYRILLIC)
+      const ru = (await (await get()).json()) as Body
+      expect(ru.pick.reason).toContain(PATCH_SINCE_LEAD)
+    })
+  })
+})

@@ -649,6 +649,40 @@ describe('строка статуса', () => {
       'Ничего не нашлось. Русское название есть не у каждой игры — попробуй как в Steam, латиницей',
     )
   })
+
+  test('по-английски — те же случаи целыми фразами', () => {
+    expect(searchStatus('ready', '', found(0), 'en')).toBe('')
+    expect(searchStatus('loading', 'port', found(0), 'en')).toBe('Loading the catalog…')
+    expect(searchStatus('failed', '', found(0), 'en')).toBe(
+      "Couldn't load the catalog — check your connection and try again",
+    )
+    expect(searchStatus('ready', 'x', found(1), 'en')).toBe('Found 1 game')
+    expect(searchStatus('ready', 'x', found(3), 'en')).toBe('Found 3 games')
+    expect(searchStatus('ready', 'x', found(21), 'en')).toBe('Found 21 games, showing the first 8')
+    expect(searchStatus('ready', 'a', found(5_816), 'en')).toBe('Found 5,816 games, showing the first 8')
+    expect(searchStatus('ready', 'цшесрук', found(2, 2, 'witcher'), 'en')).toBe('Found 2 games for “witcher”')
+    expect(searchStatus('ready', 'zzz', found(0), 'en')).toBe('Nothing found')
+    expect(searchStatus('ready', 'ведьмак', found(0), 'en')).toBe(
+      'Nothing found. Not every game has a Russian title — try the Steam name in Latin letters',
+    )
+  })
+
+  test('английская строка без кириллицы для латинского запроса', () => {
+    for (const status of [
+      searchStatus('failed', '', found(0), 'en'),
+      searchStatus('loading', 'port', found(0), 'en'),
+      searchStatus('ready', 'portal', found(0), 'en'),
+      searchStatus('ready', 'portal', found(12), 'en'),
+      searchStatus('ready', 'цшесрук', found(2, 2, 'witcher'), 'en'),
+    ]) {
+      expect(status).not.toMatch(/[А-Яа-яЁё]/)
+    }
+  })
+
+  test('без языка — русская строка, как была', () => {
+    expect(searchStatus('ready', 'x', found(21))).toBe(searchStatus('ready', 'x', found(21), 'ru'))
+    expect(searchStatus('ready', 'a', found(5_816))).toBe('Нашлось 5816 игр, вот первые 8')
+  })
 })
 
 /*
@@ -690,10 +724,14 @@ describe('окно поиска — комбобокс по шаблону ARIA'
     }
   }
 
+  /** Имя элемента: строкой или парой языков tr(locale, { ru, en }) — обе непустые */
+  const NAMED = /aria-label=(?:"[^"]+"|\{tr\(locale, \{ ru: '[^']+', en: '[^']+' \}\)\})/
+
   test('окно — модальный диалог с именем', () => {
     const dialog = openingTag('div', 'role="dialog"')
     expect(dialog).toContain('aria-modal="true"')
-    expect(dialog).toMatch(/aria-label="[^"]+"/)
+    // имя — строкой или парой языков (tr): на /en окно называется по-английски
+    expect(dialog).toMatch(NAMED)
   })
 
   test('поле — комбобокс, связанный со списком, с выбранной строкой через activedescendant', () => {
@@ -713,7 +751,7 @@ describe('окно поиска — комбобокс по шаблону ARIA'
   test('список — listbox с тем id, на который указывает поле', () => {
     const list = openingTag('div', 'role="listbox"')
     expect(list).toContain('id={listId}')
-    expect(list).toMatch(/aria-label="[^"]+"/)
+    expect(list).toMatch(NAMED)
   })
 
   test('строки — option, выбор объявлен, из обхода Tab вынуты', () => {
@@ -743,5 +781,17 @@ describe('окно поиска — комбобокс по шаблону ARIA'
   test('нашлось по русскому названию — оно в строке вторым рядом', () => {
     const row = src.slice(src.indexOf('<GameLink'), src.indexOf('</GameLink>'))
     expect(row).toMatch(/\{g\.alias && /)
+  })
+
+  /*
+   * На /en русское название — чужой текст: без lang="ru" английский голос
+   * скринридера читает «Ведьмак 3: Дикая Охота» по-английски (WCAG 3.1.2), а
+   * прогон i18n-audit считает его забытым переводом. На русской странице
+   * атрибута нет — русская разметка не меняется.
+   */
+  test('русское название на /en помечено lang="ru"', () => {
+    const row = src.slice(src.indexOf('<GameLink'), src.indexOf('</GameLink>'))
+    const alias = row.slice(row.indexOf('{g.alias && '))
+    expect(alias.slice(0, alias.indexOf('{g.alias}'))).toMatch(/<span lang=\{locale === 'en' \? 'ru' : undefined\}/)
   })
 })

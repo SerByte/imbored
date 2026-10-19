@@ -1,8 +1,9 @@
 'use client'
 
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { usePathname } from 'next/navigation'
 import { useSyncExternalStore, type ComponentProps } from 'react'
+import { splitLocale } from '@/lib/i18n'
 import { lastMoodStore, pickHrefNow, pickHrefServer, QUIZ_HREF } from '@/lib/lastmood'
 
 /**
@@ -18,10 +19,13 @@ import { lastMoodStore, pickHrefNow, pickHrefServer, QUIZ_HREF } from '@/lib/las
  * туда же, где человек уже стоит, то есть не делал бы ничего. Подсветка
  * активного пункта от адреса не зависит — её считают шапка и нижняя панель по
  * своим спискам, через lib/nav (isNavActive).
+ *
+ * Язык в адресе не в счёт (splitLocale): /en/play — тот же подбор, а префикс
+ * к адресу ссылки ставит components/Link.
  */
 export function PickLink(props: Omit<ComponentProps<typeof Link>, 'href'>) {
   const remembered = useSyncExternalStore(lastMoodStore.subscribe, pickHrefNow, pickHrefServer)
-  const pathname = usePathname() ?? ''
-  const inFlow = pathname === '/quiz' || pathname === '/play'
+  const { path } = splitLocale(usePathname() ?? '')
+  const inFlow = path === '/quiz' || path === '/play'
   return <Link {...props} href={inFlow ? QUIZ_HREF : remembered} />
 }

@@ -33,11 +33,11 @@ describe('модули не едут в первую загрузку ради �
     // без этого сторож ниже мог бы быть зелёным вхолостую
     expect(note).toContain('lib/destination.ts')
     expect(note, 'тексты лендинга — 1.8 КБ кириллицы в чанке записки').not.toContain('lib/destinationtext.ts')
-    expect(files('app/layout.tsx'), 'тексты лендинга — в каждой странице').not.toContain('lib/destinationtext.ts')
+    expect(files('app/[lang]/layout.tsx'), 'тексты лендинга — в каждой странице').not.toContain('lib/destinationtext.ts')
   })
 
   test('квиз читает метку прогрева, но не разбор сохранённой выдачи', () => {
-    const quiz = files('app/quiz/page.tsx')
+    const quiz = files('app/[lang]/quiz/page.tsx')
     expect(quiz).toContain('lib/warmmark.ts')
     for (const heavy of ['lib/playcache.ts', 'lib/playflow.ts', 'lib/eveningplan.ts']) {
       expect(quiz, `${heavy} снова в первой загрузке /quiz`).not.toContain(heavy)
@@ -67,7 +67,7 @@ describe('модули не едут в первую загрузку ради �
         expect(got, `${heavy} снова в ${island}`).not.toContain(heavy)
       }
     }
-    const daily = files('app/daily/page.tsx')
+    const daily = files('app/[lang]/daily/page.tsx')
     expect(daily).toContain('lib/planforget.ts')
     expect(daily, 'lib/playcache.ts в первой загрузке /daily').not.toContain('lib/playcache.ts')
   })
@@ -79,8 +79,8 @@ describe('модули не едут в первую загрузку ради �
   })
 
   test('правило «где взять игру» — только у комнаты', () => {
-    expect(files('app/room/[id]/page.tsx')).toContain('lib/storelink.ts')
-    for (const page of ['app/play/page.tsx', 'app/daily/page.tsx', 'app/library/page.tsx']) {
+    expect(files('app/[lang]/room/[id]/page.tsx')).toContain('lib/storelink.ts')
+    for (const page of ['app/[lang]/play/page.tsx', 'app/[lang]/daily/page.tsx', 'app/[lang]/library/page.tsx']) {
       expect(files(page), page).not.toContain('lib/storelink.ts')
     }
   })
@@ -91,7 +91,7 @@ describe('модули не едут в первую загрузку ради �
    * dynamic() в любом статически достижимом модуле вернул бы его целиком.
    */
   test('next/dynamic не в первой загрузке /play, /daily и /library', () => {
-    for (const page of ['app/play/page.tsx', 'app/daily/page.tsx', 'app/library/page.tsx']) {
+    for (const page of ['app/[lang]/play/page.tsx', 'app/[lang]/daily/page.tsx', 'app/[lang]/library/page.tsx']) {
       const { packages } = reach(path.join(ROOT, page))
       expect(packages.get('next/dynamic'), `${page}: next/dynamic вернулся`).toBeUndefined()
     }

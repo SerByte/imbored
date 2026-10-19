@@ -118,8 +118,8 @@ describe('лайтбокс модальный на деле', () => {
   })
 
   test('кадр листается кнопками и свайпом', () => {
-    expect(src).toContain('aria-label="Предыдущий кадр"')
-    expect(src).toContain('aria-label="Следующий кадр"')
+    expect(src).toContain("aria-label={tr(locale, { ru: 'Предыдущий кадр'")
+    expect(src).toContain("aria-label={tr(locale, { ru: 'Следующий кадр'")
     expect(src).toMatch(/onPointerUp=/)
     expect(src).toContain('swipeStep(')
   })
@@ -215,7 +215,7 @@ describe('лайтбокс тёмный в обеих темах и не лез�
   })
 
   test('смена кадра озвучивается строкой, а «2/6» от скринридера спрятан', () => {
-    expect(src).toMatch(/<StatusLine text=\{`Кадр \$\{index \+ 1\} из \$\{images\.length\}`\}/)
+    expect(src).toMatch(/<StatusLine\s+text=\{tr\(locale, \{ ru: `Кадр \$\{index \+ 1\} из \$\{images\.length\}`/)
     expect(src, 'видимый счётчик голосом звучит дробью').toMatch(
       /<span\s+aria-hidden\s+className="[^"]*"\s*>\s*\{index \+ 1\}\/\{images\.length\}/,
     )

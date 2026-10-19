@@ -558,7 +558,7 @@ describe('гость наверняка', () => {
     }
     // Сам поиск не пустой: оба известных входа нашлись
     expect(callers).toEqual(
-      expect.arrayContaining(['app/room/[id]/page.tsx', 'components/landing/ConnectCard.tsx']),
+      expect.arrayContaining(['app/[lang]/room/[id]/RoomPage.tsx', 'components/landing/ConnectCard.tsx']),
     )
   })
 })

@@ -1,11 +1,13 @@
 'use client'
 
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { Icon, type IconName } from '@/components/Icon'
 import { LinkPending } from '@/components/LinkPending'
+import { useLocale } from '@/components/LocaleProvider'
 import { PickLink } from '@/components/PickLink'
+import { tr } from '@/lib/i18n'
 import { isNavActive, navPrefetch } from '@/lib/nav'
 
 /**
@@ -28,20 +30,38 @@ import { isNavActive, navPrefetch } from '@/lib/nav'
  * к выдаче под прошлое настроение (components/PickLink.tsx). href остаётся
  * /quiz и по-прежнему решает подсветку: адрес ссылки зависит от устройства,
  * а то, где человек находится, — нет.
+ *
+ * Английские подписи — короткие формы глоссария (docs/i18n.md) для панели.
+ * Замер на 360 (колонка 72 px, 11 px): Daily 26 против 48 у «Игры дня»,
+ * Pick 22 / 41, Party 28 / 26 (на два пикселя шире «Пати», в колонке 72
+ * это ничто), New 23 / 34. У библиотеки — «Library» (36), а не «My games»
+ * из глоссария: тот вышел 53 px — шире «Мои игры» (51).
+ *
+ * Переключателя языка здесь нет: пять колонок по 72 px на 360 заняты
+ * целиком, а меню или шторки, где он встал бы сам собой, у панели нет. Он
+ * живёт в подвале — до него на телефоне докручивается любая страница
+ * (отступ под панель у #smooth-content, app/[lang]/layout.tsx).
  */
 const ITEMS = [
-  { href: '/daily', label: 'Игра дня', icon: 'calendar' },
-  { href: '/quiz', label: 'Подбор', icon: 'spark', also: ['/play'], pick: true },
-  { href: '/rooms', label: 'Пати', icon: 'users', also: ['/room'] },
-  { href: '/whatsnew', label: 'Новое', icon: 'news' },
+  { href: '/daily', label: { ru: 'Игра дня', en: 'Daily' }, icon: 'calendar' },
+  { href: '/quiz', label: { ru: 'Подбор', en: 'Pick' }, icon: 'spark', also: ['/play'], pick: true },
+  { href: '/rooms', label: { ru: 'Пати', en: 'Party' }, icon: 'users', also: ['/room'] },
+  { href: '/whatsnew', label: { ru: 'Новое', en: 'New' }, icon: 'news' },
   // «Мои игры», а не «Игры»: голое «Игры» читалось как каталог — а каталог
   // на сайте есть: «Каталог» в шапке и «Игры по жанрам» (/games) в подвале.
   // По длине как «Игра дня», в колонку на 360px влезает.
-  { href: '/library', label: 'Мои игры', icon: 'grid' },
-] satisfies Array<{ href: string; label: string; icon: IconName; also?: string[]; pick?: boolean }>
+  { href: '/library', label: { ru: 'Мои игры', en: 'Library' }, icon: 'grid' },
+] satisfies Array<{
+  href: string
+  label: { ru: string; en: string }
+  icon: IconName
+  also?: string[]
+  pick?: boolean
+}>
 
 export function MobileNav() {
   const pathname = usePathname() ?? ''
+  const locale = useLocale()
   const activeIndex = ITEMS.findIndex((i) => isNavActive(pathname, i.href, 'also' in i ? i.also : []))
 
   const rowRef = useRef<HTMLDivElement>(null)
@@ -111,7 +131,7 @@ export function MobileNav() {
     <nav
       // То же имя, что у меню в шапке: это одно меню, на телефоне оно здесь,
       // на десктопе там, и на экране всегда ровно одно из двух
-      aria-label="Разделы"
+      aria-label={tr(locale, { ru: 'Разделы', en: 'Sections' })}
       // site-tabbar — метка для globals.css: на странице, тёмной целиком
       // (главная, /whatsnew, церемония матча), панель берёт токены зоны, как
       // подвал, а не стоит молочной полосой под тёмным (lib/chrome.test.ts)
@@ -168,7 +188,7 @@ export function MobileNav() {
               <>
                 <Icon name={item.icon} size={18} strokeWidth={i === activeIndex ? 2.2 : 1.8} />
                 <span data-label>
-                  <LinkPending>{item.label}</LinkPending>
+                  <LinkPending>{tr(locale, item.label)}</LinkPending>
                 </span>
               </>
             ),

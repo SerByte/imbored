@@ -19,7 +19,7 @@
 import { fetchAppDetails, fetchStoreLanguages, fetchStoreMedia, mergeMeta } from './catalog'
 import { sliceClock } from './cron'
 import {
-  claimPageEnrichBatch,
+  claimPageEnrich,
   gamesMissingPlayed,
   gamesMissingRuLang,
   getCatalogMeta,
@@ -35,6 +35,7 @@ import {
   upsertSemantics,
   type Db,
 } from './db'
+import { enBackfillLeft, takeEnBackfillBudget } from './enbackfill'
 import { logSwallowed } from './errlog'
 import { cardRowPrint } from './gamecache'
 import { claudeProsCons, isPersistentOutage, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
@@ -124,6 +125,50 @@ export const PROS_CONS_MIN_REVIEWS = 5
  */
 export const MAX_BLOCKED_RUN = 3
 
+/** Списки одного языка — то, из чего состоит слот en */
+type ProsConsLists = { pros: string[]; cons: string[] }
+
+/**
+ * Что отдаёт пересказ отзывов — договор с claudeProsCons (lib/llm): русские
+ * списки и английский слот тем же вызовом. en: null — английский не вышел,
+ * нет поля — прежний договор, английского не просили. Необязательность —
+ * ради заглушек тестов в старой форме { pros, cons }.
+ */
+export type ProsConsFn = (
+  gameName: string,
+  reviews: Parameters<typeof claudeProsCons>[1],
+  budgetMs?: number,
+) => Promise<(ProsConsLists & { en?: ProsConsLists | null }) | null>
+
+/**
+ * Pros/cons в pros_cons_json: русские списки и маркер, как раньше, и
+ * английский слот en — только у собранного моделью и только целым.
+ */
+type StoredProsCons = ProsCons & { en?: ProsConsLists }
+
+/**
+ * Английский слот, если он целый: два списка строк и хоть одна непустая.
+ * Иначе слота нет вовсе — /en блок не покажет, а очередь (redoEnglish)
+ * вернёт карточку за ним позже.
+ */
+function englishSlot(raw: unknown): ProsConsLists | null {
+  if (!raw || typeof raw !== 'object') return null
+  const { pros, cons } = raw as Record<string, unknown>
+  const list = (v: unknown) =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : null
+  const p = list(pros)
+  const c = list(cons)
+  if (!p || !c || (!p.length && !c.length)) return null
+  return { pros: p, cons: c }
+}
+
+/**
+ * Имя игры для промпта, когда appdetails не ответил, а строки с именем нет.
+ * Не «Игра 730»: пересказ пишется на двух языках, и русская заглушка
+ * доезжала бы в английский. App N — так же называет заглушки прогрев.
+ */
+const neutralName = (appid: number) => `App ${appid}`
+
 export type PageSliceResult = {
   claimed: number
   /** Карточек, получивших отметку в очереди: удачную или «сходили впустую» */
@@ -173,7 +218,7 @@ export async function runPageSlice(
     fetchMediaFn?: typeof fetchStoreMedia
     /** сырой ответ appreviews — один на вердикт, pros/cons и семантику */
     fetchReviewsRawFn?: typeof fetchReviewsRaw
-    prosConsFn?: typeof claudeProsCons
+    prosConsFn?: ProsConsFn
     /** подменяется в тестах: сбой семантики не имеет права ронять карточку */
     semanticsFn?: typeof deriveSemantics
     /**
@@ -191,7 +236,7 @@ export async function runPageSlice(
   const details = opts.fetchDetails ?? fetchAppDetails
   const mediaOf = opts.fetchMediaFn ?? fetchStoreMedia
   const reviewsOf = opts.fetchReviewsRawFn ?? fetchReviewsRaw
-  const prosConsOf = opts.prosConsFn ?? claudeProsCons
+  const prosConsOf: ProsConsFn = opts.prosConsFn ?? claudeProsCons
   const semanticsOf = opts.semanticsFn ?? deriveSemantics
   const log = opts.onProgress ?? (() => {})
 
@@ -216,10 +261,28 @@ export async function runPageSlice(
   // причине её нет, пока модель недавно отказала, — см. PAGE_REDO_PAUSE_SEC.
   const llmDownAt = useClaude ? Number(await getCatalogMeta(db, LLM_DOWN_KEY)) || null : null
   const redoHeuristic = useClaude && (llmDownAt === null || now - llmDownAt >= PAGE_REDO_PAUSE_SEC)
-  const targets = await claimPageEnrichBatch(db, now - PAGE_MAX_AGE_SEC, limit, {
+  /*
+   * Английский слот у пересказов модели, собранных до английской версии, —
+   * та же пересборка, только у карточек 'claude' без $.en (redoEnglish в
+   * claimPageEnrich, своей долей пачки). Под тем же условием, что и
+   * эвристика, и ещё под долей догона (lib/enbackfill): выбрана — такие
+   * карточки не перезабирают, иначе срез ходил бы за ними в Steam ради
+   * модели, звать которую нельзя.
+   */
+  const redoEnglish = redoHeuristic && (await enBackfillLeft(db, now))
+  /*
+   * englishOnly — карточки, взятые одной английской пересборкой: только их
+   * вызов модели и есть догон. Протухшая карточка или повтор пустого похода
+   * без английского слота — русская работа, и платит она общим бюджетом, как
+   * до английской версии: иначе при выключенной доле (LLM_EN_BACKFILL_DAILY=0)
+   * или выбранной за день русский пересказ модели не обновлялся бы вовсе, а
+   * page_at уводил бы его ещё на полгода.
+   */
+  const { appids: targets, englishOnly } = await claimPageEnrich(db, now - PAGE_MAX_AGE_SEC, limit, {
     maxTries: PAGE_MAX_TRIES,
     redoHeuristic,
     redoBefore: now - PAGE_REDO_AFTER_SEC,
+    redoEnglish,
   })
 
   /*
@@ -228,9 +291,17 @@ export async function runPageSlice(
    * неделю (lib/gamecache). Сбой чтения срез не роняет — без отпечатков роуту
    * просто нечего сбросить, и карточки доедут по сроку кэша.
    */
+  /*
+   * Заодно с отпечатками — то, что срезу нужно знать о карточке до похода:
+   * имя (промпт модели, если appdetails не ответит).
+   */
+  const прежние = new Map<number, { name: string }>()
   const отпечатки = async (): Promise<Map<number, string> | null> => {
     try {
       const rows = await getGamePageRows(db, targets)
+      for (const [appid, row] of rows) {
+        if (!прежние.has(appid)) прежние.set(appid, { name: row.meta.name })
+      }
       return new Map([...rows].map(([appid, row]) => [appid, cardRowPrint(row, now)]))
     } catch (err) {
       logSwallowed('pagejob:prints', err)
@@ -310,7 +381,8 @@ export async function runPageSlice(
    * ниже её не считают. Без медиа карточка наполняется как раньше.
    */
   try {
-    const media = await mediaOf(targets)
+    // description: английское описание тем же походом — для /en (lib/gamedesc)
+    const media = await mediaOf(targets, { description: true })
     withTrailers = [...media.values()].filter((m) => m.trailer).length
     await setGamesMedia(
       db,
@@ -357,6 +429,11 @@ export async function runPageSlice(
       const merged = mergeMeta(existing, fresh)
       // теги из GetItems точнее, чем из appdetails: не даём их перетереть
       if (existing && Object.keys(existing.tags).length) merged.tags = existing.tags
+      // Английский слот — тоже из GetItems (пачка медиа выше ходит
+      // по-английски), а не из appdetails: тот просит l=russian, и его
+      // английский текст — лишь запасной текст магазина там, где перевода
+      // нет. Слить его можно только в пустой слот
+      if (existing?.shortDescriptionEn) merged.shortDescriptionEn = existing.shortDescriptionEn
 
       // Цена в этом ответе только что из магазина — датируем замер, иначе
       // скидка приедет и тут же будет отброшена как «неизвестной свежести».
@@ -425,7 +502,7 @@ export async function runPageSlice(
        * прошлого прогона остался бы на месте и держал ту же петлю.
        */
       const thin = useful.length < PROS_CONS_MIN_REVIEWS
-      let prosCons: ProsCons | null = thin
+      let prosCons: StoredProsCons | null = thin
         ? { ...h, source: 'thin' }
         : h.pros.length || h.cons.length
           ? { ...h, source: 'reviews' }
@@ -447,16 +524,41 @@ export async function runPageSlice(
        * source === 'reviews', — через PAGE_REDO_AFTER_SEC.
        */
       const бюджет = opts.deadlineAt - Date.now()
-      if (useClaude && !claudeDown && !thin && бюджет >= LLM_MIN_BUDGET_MS && !llmCapped) {
+      /*
+       * Карточка, взятая одной английской пересборкой (englishOnly), — это
+       * догон: вызов ради английского, и платит он долей догона
+       * (lib/enbackfill), а не общим бюджетом напрямую. Доля выбрана — модель
+       * не зовём: русский пересказ модели эвристика всё равно не затрёт
+       * (setGameJson), и карточка вернётся за английским через срок
+       * пересборки.
+       */
+      const догон = englishOnly.has(appid)
+      let callModel = useClaude && !claudeDown && !thin && бюджет >= LLM_MIN_BUDGET_MS && !llmCapped
+      if (callModel) {
         // Бюджет берётся на каждый вызов: между началом среза и этой карточкой
         // его могли выбрать подбор и пересказы
-        if (!(await takeLlmBudget(db, now))) llmCapped = true
+        const take = догон
+          ? await takeEnBackfillBudget(db, now)
+          : (await takeLlmBudget(db, now))
+            ? 'ok'
+            : 'capped'
+        if (take === 'capped') llmCapped = true
+        callModel = take === 'ok'
       }
-      if (useClaude && !claudeDown && !thin && бюджет >= LLM_MIN_BUDGET_MS && !llmCapped) {
+      if (callModel) {
         try {
-          const fromClaude = await prosConsOf(fresh?.name ?? `Игра ${appid}`, useful, бюджет)
+          const name = fresh?.name ?? прежние.get(appid)?.name ?? neutralName(appid)
+          const fromClaude = await prosConsOf(name, useful, бюджет)
           if (fromClaude && (fromClaude.pros.length || fromClaude.cons.length)) {
-            prosCons = { ...fromClaude, source: 'claude' }
+            // Тот же порядок ключей, что и раньше, — английский слот в хвост
+            // и только целым (englishSlot): битого слота нет вовсе
+            const en = englishSlot(fromClaude.en)
+            prosCons = {
+              pros: fromClaude.pros,
+              cons: fromClaude.cons,
+              source: 'claude',
+              ...(en ? { en } : {}),
+            }
             viaClaude++
           }
         } catch (e) {

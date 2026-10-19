@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { EXCLUDE_MAX, NUDGE_LABEL, NUDGES, parseExclude, parseNudge, planNudge } from './nudge'
+import { EXCLUDE_MAX, NUDGE_LABEL, nudgeLabel, NUDGES, parseExclude, parseNudge, planNudge } from './nudge'
 import type { Mood } from './types'
 
 describe('parseNudge', () => {
@@ -13,6 +13,14 @@ describe('parseNudge', () => {
   test('у каждого подталкивания своя подпись, и они не повторяются', () => {
     const labels = NUDGES.map((n) => NUDGE_LABEL[n])
     expect(new Set(labels).size).toBe(NUDGES.length)
+  })
+
+  test('по-английски — подписи глоссария, тоже без повторов', () => {
+    const labels = NUDGES.map((n) => nudgeLabel(n, 'en'))
+    expect(labels).toEqual(['Shorter', 'Calmer', 'Familiar', 'More story', 'Something else'])
+    expect(new Set(labels).size).toBe(NUDGES.length)
+    for (const l of labels) expect(l).not.toMatch(/[А-Яа-яЁё]/)
+    for (const n of NUDGES) expect(nudgeLabel(n)).toBe(NUDGE_LABEL[n])
   })
 })
 

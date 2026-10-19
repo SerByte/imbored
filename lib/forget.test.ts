@@ -1,8 +1,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { createElement, Fragment } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
+import { COPY } from '../app/[lang]/privacy/page.copy'
 import { FORGET_TABLES, type ForgetReport } from './db'
-import { FORGET_LABELS, forgetCardPaths, forgetSummary } from './forget'
+import { FORGET_LABELS, FORGET_LABELS_EN, forgetCardPaths, forgetSummary } from './forget'
+import type { Locale } from './i18n'
 
 /**
  * Что человек видит перед «Удалить всё обо мне» и что сбрасывается после.
@@ -19,6 +23,15 @@ const ME = '76561198000000001'
 /** Счёт, где у каждой таблицы списка по n строк */
 const report = (n: number, over: Record<string, number> = {}): ForgetReport =>
   FORGET_TABLES.map((table) => ({ table, rows: over[table] ?? n }))
+
+/** Раздел /privacy видимым текстом — из текста страницы (page.copy.tsx), на нужном языке */
+function policySection(locale: Locale, n: string): string {
+  const body = COPY[locale].sections.find((s) => s.n === n)?.body
+  return renderToStaticMarkup(createElement(Fragment, null, body))
+    .replace(/<[^>]+>/g, '')
+    .replace(/&#x27;/g, "'")
+    .replace(/\s+/g, ' ')
+}
 
 /** Строка подтверждения про отметку удаления */
 const MARK_LINE =
@@ -99,7 +112,7 @@ describe('отметка удаления — одними словами вез
   const places: Array<[string, string]> = [
     ['подтверждение', MARK_LINE],
     ['главная', source('components/landing/HeroNotice.tsx')],
-    ['/privacy', source('app/privacy/page.tsx')],
+    ['/privacy', policySection('ru', '06')],
   ]
 
   test.each(places)('%s: что остаётся, зачем и на сколько', (_, text) => {
@@ -109,6 +122,81 @@ describe('отметка удаления — одними словами вез
     expect(text).toMatch(/пускают|впускать/)
     // на сколько: сама, через год и месяц
     expect(text).toMatch(/через год и месяц/i)
+  })
+})
+
+/**
+ * Тот же вопрос «Удалить всё?» по-английски: те же строки, в том же порядке
+ * и с теми же числами — меняются только слова.
+ */
+describe('forgetSummary по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+  /** Строка про отметку удаления по-английски */
+  const MARK_LINE_EN =
+    'Only a marker will remain: your SteamID and the time of deletion. It keeps old sign-ins on other devices from getting back in, and it erases itself after a year and a month.'
+
+  test('у английских подписей те же ключи и то же «не показывать», что у русских', () => {
+    expect(Object.keys(FORGET_LABELS_EN).sort()).toEqual(Object.keys(FORGET_LABELS).sort())
+    for (const [table, label] of Object.entries(FORGET_LABELS)) {
+      expect(FORGET_LABELS_EN[table] === null, table).toBe(label === null)
+    }
+  })
+
+  test('что хранится — те же строки и числа; число с разрядами', () => {
+    const { items } = forgetSummary(
+      report(0, { users: 1, library_snapshots: 3, feedback: 1240, wishlists: 1, sessions: 2, room_votes: 12, room_members: 4 }),
+      'en',
+    )
+    expect(items).toEqual([
+      'Steam profile: name, avatar and portrait',
+      'Library snapshots — 3',
+      'Wishlist',
+      "Ratings, hidden games, swipes and tonight's plans — 1,240",
+      'Room memberships and votes',
+      'Sign-in records — 2',
+    ])
+    // по-русски число — как было, без разрядов
+    expect(forgetSummary(report(0, { feedback: 1240 })).items).toEqual([
+      'Оценки, скрытые игры, свайпы и планы на вечер — 1240',
+    ])
+  })
+
+  test('последствия — те же случаи и тот же порядок, что по-русски', () => {
+    expect(forgetSummary(report(0), 'en').effects).toEqual(["You'll be signed out on all devices.", MARK_LINE_EN])
+    const all = forgetSummary(report(1), 'en').effects
+    expect(all).toEqual([
+      'Links to your portrait and year in review will stop working.',
+      'Pick links you sent will stop working.',
+      "We can't take back previews of these links that messaging apps have already saved.",
+      'Rooms you host will close for everyone in them.',
+      'Comparisons will disappear for the people you compared with, too.',
+      'Your RSS link will stop working.',
+      "You'll be signed out on all devices.",
+      MARK_LINE_EN,
+    ])
+    expect(all).toHaveLength(forgetSummary(report(1)).effects.length)
+  })
+
+  test('ни буквы кириллицы ни в одной строке', () => {
+    const { items, effects } = forgetSummary(report(5), 'en')
+    expect(items.length).toBeGreaterThan(0)
+    for (const line of [...items, ...effects]) expect(line, line).not.toMatch(CYRILLIC)
+  })
+
+  /*
+   * Те же три факта об отметке, что у русской строки выше, — во всех трёх
+   * местах: вопрос «Удалить всё?», строка «всё удалено» на главной
+   * (HeroNotice) и /privacy, раздел 06.
+   */
+  const source = (rel: string) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').replace(/\s+/g, ' ')
+  test.each([
+    ['confirmation', MARK_LINE_EN],
+    ['home', source('components/landing/HeroNotice.tsx')],
+    ['/privacy', policySection('en', '06')],
+  ])('%s: what stays, why and for how long', (_, text) => {
+    expect(text).toContain('SteamID and the time of deletion')
+    expect(text).toMatch(/getting back in|let .* back in/)
+    expect(text).toMatch(/after a year and a month/i)
   })
 })
 
@@ -134,7 +222,7 @@ describe('forgetCardPaths', () => {
         }
       }
     }
-    for (const dir of ['app/portrait', 'app/compat', 'app/pick', 'app/room']) walk(dir)
+    for (const dir of ['app/[lang]/portrait', 'app/[lang]/compat', 'app/[lang]/pick', 'app/[lang]/room']) walk(dir)
     return out
   }
 
@@ -144,7 +232,7 @@ describe('forgetCardPaths', () => {
     const paths = forgetCardPaths(ME, { picks: ['mepick234567'], rooms: ['MYROOM'] })
     for (const file of files) {
       const url = file
-        .replace(/^app/, '')
+        .replace(/^app\/\[lang\]/, '')
         .replace(/\/(?:route|page)\.tsx?$/, '')
         .replace(/\.tsx?$/, '')
         .replace('[steamid]', ME)

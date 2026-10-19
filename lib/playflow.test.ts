@@ -230,6 +230,24 @@ describe('switchLine', () => {
   test('сессия кончилась — молчим: страница уже уходит на вход', () => {
     expect(switchLine({ miss: 'gone' })).toBeNull()
   })
+
+  test('по-английски — тот же срок и та же честность про выдачу', () => {
+    expect(switchLine({ miss: 'limited', waitSec: 60 }, 'en')).toBe('Too many tries — try again in 1 minute')
+    expect(switchLine({ miss: 'limited', waitSec: 150 }, 'en')).toBe('Too many tries — try again in 3 minutes')
+    expect(switchLine({ miss: 'limited', waitSec: 7 }, 'en')).toBe('Too many tries — try again in 1 minute')
+    expect(switchLine({ miss: 'limited', waitSec: null }, 'en')).toBe('Too many tries — try again a bit later')
+    expect(switchLine({ miss: 'failed', code: null }, 'en')).toBe("Couldn't switch — your picks are unchanged")
+    expect(switchLine({ miss: 'failed', code: 'nocandidates' }, 'en')).toBe('Nothing fits that — your picks are unchanged')
+    expect(switchLine({ miss: 'failed', code: 'muted' }, 'en')).toBe('Nothing fits that — your picks are unchanged')
+    expect(switchLine({ miss: 'gone' }, 'en')).toBeNull()
+    for (const m of [
+      { miss: 'limited', waitSec: 600 },
+      { miss: 'limited', waitSec: null },
+      { miss: 'failed', code: 'x' },
+    ] as const) {
+      expect(switchLine(m, 'en'), JSON.stringify(m)).not.toMatch(/[А-Яа-яЁё]/)
+    }
+  })
 })
 
 describe('afterBan', () => {
@@ -309,6 +327,30 @@ describe('экран выгорания', () => {
       expect(burnoutInvite(o).match(/просто/gi) ?? [], String(o)).toHaveLength(1)
     }
   })
+
+  // Те же три правила по-английски: зовёт туда же, куда кнопка; выход
+  // «закрыть Steam» есть всегда; одно just на абзац
+  test('по-английски — целые фразы по тем же правилам', () => {
+    expect(burnoutInvite('cozy', 'en')).toBe(
+      "You could spend 20 minutes in something cozy… or just close Steam, and that's a win too.",
+    )
+    expect(burnoutInvite('continue', 'en')).toBe(
+      "You could keep playing what you're into right now… or just close Steam, and that's a win too.",
+    )
+    expect(burnoutInvite('familiar', 'en')).toBe(
+      "You could slip back into something familiar for a bit… or just close Steam, and that's a win too.",
+    )
+    expect(burnoutInvite(null, 'en')).toBe("You could just close Steam, and that's a win too.")
+    for (const o of ['familiar', 'continue', null] as const) {
+      expect(burnoutInvite(o, 'en'), String(o)).not.toMatch(/cozy|20 minutes/)
+    }
+    for (const o of ['familiar', 'continue', 'cozy', null] as const) {
+      const line = burnoutInvite(o, 'en')
+      expect(line, String(o)).toMatch(/close Steam, and that's a win too\.$/)
+      expect(line.match(/\bjust\b/gi) ?? [], String(o)).toHaveLength(1)
+      expect(line, String(o)).not.toMatch(/[А-Яа-яЁё]/)
+    }
+  })
 })
 
 /**
@@ -317,7 +359,7 @@ describe('экран выгорания', () => {
  * половину состояния — ровно то, что здесь чинили.
  */
 describe('/play применяет новую выдачу одной функцией', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'app', 'play', 'page.tsx'), 'utf8')
+  const src = fs.readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'play', 'page.tsx'), 'utf8')
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
 
   test('поля выдачи пишутся в одном месте', () => {
@@ -345,7 +387,7 @@ describe('/play применяет новую выдачу одной функц
     // Окно — с запасом на проверки между ответом и выдачей (уход со страницы,
     // «Подобрать заново» за время запроса, разбор отказа)
     for (const { i } of calls) {
-      expect(lines.slice(i, i + 14).join('\n'), `app/play/page.tsx:${i + 1}`).toContain('applyDeal(')
+      expect(lines.slice(i, i + 14).join('\n'), `app/[lang]/play/page.tsx:${i + 1}`).toContain('applyDeal(')
     }
   })
 
@@ -363,7 +405,7 @@ describe('/play применяет новую выдачу одной функц
  * вернёт, выглядит безобидно и проходит все тесты поведения.
  */
 describe('/play: пути вокруг выдачи', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'app', 'play', 'page.tsx'), 'utf8')
+  const src = fs.readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'play', 'page.tsx'), 'utf8')
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
   /** Кусок кода от первого from до первого to после него */
   const between = (from: string, to: string) => {
@@ -509,7 +551,7 @@ describe('/play: пути вокруг выдачи', () => {
     expect(refresh).toContain('nudge: keptNudge')
     expect(refresh).toContain('setSwitching(true)')
     expect(refresh).toContain('finally')
-    expect(refresh).toContain('setHeroMiss(switchLine(got))')
+    expect(refresh).toContain('setHeroMiss(switchLine(got, locale))')
   })
 
   /*
@@ -677,7 +719,7 @@ describe('/play: пути вокруг выдачи', () => {
     const fin = code.slice(code.indexOf('const finishCont = async'), code.indexOf('const contFocus = useCallback('))
     expect(fin).not.toContain('setBanFailed')
     expect(fin).toContain('setContFailed(c.appid)')
-    expect(code).toContain('text={contFailed === cont.appid ? DONE_MISS(cont.name) : null}')
+    expect(code).toContain('text={contFailed === cont.appid ? DONE_MISS(cont.name, locale) : null}')
   })
 
   /*
@@ -691,12 +733,19 @@ describe('/play: пути вокруг выдачи', () => {
    * и в отказе: тот же приём, что у components/MarkFinished.
    */
   test('обе «Уже прошёл» называют свою игру — и в имени кнопки, и в отказе', () => {
-    expect(code).toMatch(/const DONE_MISS = \(name: string\) =>\s*`Не получилось отметить «\$\{name\}» пройденной — нажми ещё раз\.`/)
+    // Отказ — парой на язык страницы (tr), слова — те же, что у MarkFinished
+    expect(code).toMatch(
+      /const DONE_MISS = \(name: string, locale: Locale\) =>\s*tr\(locale, \{\s*ru: `Не получилось отметить «\$\{name\}» пройденной — нажми ещё раз\.`,\s*en: `Couldn't mark “\$\{name\}” as finished — try again\.`,/,
+    )
     expect(code).toContain('Уже прошёл<span className="sr-only"> «{pick.name}»</span>')
     expect(code).toContain('Уже прошёл<span className="sr-only"> «{cont.name}»</span>')
+    // На /en русское название в имени кнопки — своим lang (lib/playnames.test.ts)
+    expect(code).toContain('Already finished<span lang={langOn(locale, pick.name)} className="sr-only"> “{pick.name}”</span>')
+    expect(code).toContain('Already finished<span lang={langOn(locale, cont.name)} className="sr-only"> “{cont.name}”</span>')
     // голой подписи без игры не осталось ни у одной
     expect(code).not.toContain("'Уже прошёл'")
-    expect(code).toMatch(/banFailed !== pick\.appid\s*\? null\s*: finished\s*\? DONE_MISS\(pick\.name\)/)
+    expect(code).not.toContain("'Already finished'")
+    expect(code).toMatch(/banFailed !== pick\.appid\s*\? null\s*: finished\s*\? DONE_MISS\(pick\.name, locale\)/)
   })
 
   /*
@@ -749,7 +798,7 @@ describe('/play: пути вокруг выдачи', () => {
    */
   test('у подталкиваний своя видимая подпись', () => {
     expect(code).toMatch(/aria-labelledby="play-nudge-label"/)
-    expect(code).toMatch(/<span id="play-nudge-label"[^>]*>\s*Подправить выдачу:/)
+    expect(code).toMatch(/<span id="play-nudge-label"[^>]*>\s*\{tr\(locale, \{ ru: 'Подправить выдачу:', en: 'Tweak picks:' \}\)\}/)
     expect(code).not.toMatch(/aria-label="Подправить выдачу"/)
   })
 
@@ -760,11 +809,17 @@ describe('/play: пути вокруг выдачи', () => {
    */
   test('«Скрыть насовсем» видно под пальцем, и имя кнопки начинается с этих слов', () => {
     const ban = between('aria-disabled={banning}', '</button>')
-    expect(ban).toMatch(/pointer-coarse:inline[^>]*>\s*\{banning \? 'Скрываю…' : 'Скрыть насовсем'\}/)
+    // Подписи — парами на язык страницы (tr), и у английской то же правило
+    expect(ban).toMatch(
+      /pointer-coarse:inline[^>]*>\s*\{banning\s*\? tr\(locale, \{ ru: 'Скрываю…', en: 'Hiding…' \}\)\s*: tr\(locale, \{ ru: 'Скрыть насовсем', en: 'Hide for good' \}\)\}/,
+    )
     const names = ban.match(/'Скры[^']*'/g) ?? []
     expect(names.length).toBeGreaterThanOrEqual(4)
     for (const name of names) expect(name).toMatch(/^'Скры(ть насовсем|ваю)/)
     expect(ban).toContain("'Скрыть насовсем: больше никогда не показывать эту игру'")
+    const namesEn = ban.match(/en: 'Hid[^']*'/g) ?? []
+    expect(namesEn.length).toBeGreaterThanOrEqual(4)
+    for (const name of namesEn) expect(name).toMatch(/^en: 'Hid(e for good|ing)/)
   })
 
   /*

@@ -38,7 +38,7 @@ describe('охват линта', { timeout: 30_000 }, () => {
    * остался бы зелёным.
    */
   test('код продукта по-прежнему линтуется', async () => {
-    for (const rel of ['lib/db.ts', 'app/layout.tsx', 'components/Footer.tsx', 'scripts/sync-news.ts']) {
+    for (const rel of ['lib/db.ts', 'app/[lang]/layout.tsx', 'components/Footer.tsx', 'scripts/sync-news.ts']) {
       expect(await ignored(rel), rel).toBe(false)
     }
   })

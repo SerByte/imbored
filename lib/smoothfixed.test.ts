@@ -34,7 +34,7 @@ const ROOT = path.join(__dirname, '..')
  */
 const OUTSIDE: Array<{ file: string; why: string }> = [
   {
-    file: 'app/layout.tsx',
+    file: 'app/[lang]/layout.tsx',
     why: 'шапка, нижняя панель и ссылка «к содержанию» — прямые дети <body>, обёртка начинается ниже',
   },
   {
@@ -130,7 +130,7 @@ describe('фиксированные слои под плавной прокру
    * выше останется зелёным и будет охранять несуществующее ограничение.
    */
   test('обёртка смузера на месте', () => {
-    const layout = fs.readFileSync(path.join(ROOT, 'app', 'layout.tsx'), 'utf8')
+    const layout = fs.readFileSync(path.join(ROOT, 'app', '[lang]', 'layout.tsx'), 'utf8')
     expect(layout, 'без #smooth-wrapper ScrollSmoother не заводится').toContain('id="smooth-wrapper"')
     expect(layout, 'без #smooth-content двигать нечего').toContain('id="smooth-content"')
   })

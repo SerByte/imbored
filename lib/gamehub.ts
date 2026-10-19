@@ -25,6 +25,7 @@
  */
 import type { FacetQuery, SimilarGame } from './db'
 import { VERSUS_TAGS } from './gametraits'
+import type { Locale } from './i18n'
 
 /**
  * Полки хаба в порядке показа — английскими ключами тегов, как они лежат в
@@ -113,6 +114,62 @@ export const HUB_GENRES: Readonly<Record<string, { slug: string; title: string }
   Racing: { slug: 'racing', title: 'Гонки' },
 }
 
+/**
+ * Заголовки страниц жанров по-английски — тем же правилом, что русские:
+ * множественным числом, как жанр ищут («roguelikes», «city builders»), а не
+ * подписью тега в единственном (tagLabel даёт «Roguelike»).
+ *
+ * Sentence case, но аббревиатуры остаются заглавными (JRPGs, CRPGs, RTS):
+ * поэтому заголовок нигде не приводится к строчным целиком — и в пути над
+ * названием игры, и в крошках он стоит как есть. Слаги и ключи HUB_GENRES
+ * общие для обоих языков: адрес /en/games/roguelike — тот же раздел.
+ */
+const HUB_TITLES_EN: Readonly<Record<string, string>> = {
+  'Open World': 'Open-world games',
+  'Souls-like': 'Soulslikes',
+  Metroidvania: 'Metroidvanias',
+  Roguelike: 'Roguelikes',
+  'Hack and Slash': 'Hack-and-slash games',
+  FPS: 'First-person shooters',
+  Stealth: 'Stealth games',
+  'Immersive Sim': 'Immersive sims',
+  'Action RPG': 'Action RPGs',
+  JRPG: 'JRPGs',
+  CRPG: 'CRPGs',
+  'Visual Novel': 'Visual novels',
+  'Point & Click': 'Point-and-click adventures',
+  Detective: 'Detective games',
+  Puzzle: 'Puzzle games',
+  Horror: 'Horror games',
+  Survival: 'Survival games',
+  Sandbox: 'Sandbox games',
+  'City Builder': 'City builders',
+  'Colony Sim': 'Colony sims',
+  Automation: 'Automation games',
+  'Grand Strategy': 'Grand strategy games',
+  RTS: 'Real-time strategy games',
+  'Turn-Based Tactics': 'Turn-based tactics games',
+  'Tower Defense': 'Tower defense games',
+  Deckbuilding: 'Deckbuilders',
+  'Farming Sim': 'Farming sims',
+  Cozy: 'Cozy games',
+  Platformer: 'Platformers',
+  Racing: 'Racing games',
+}
+
+/**
+ * Заголовок страницы жанра на языке страницы: «Рогалики» / «Roguelikes».
+ *
+ * Для ru — ровно HUB_GENRES[tag].title. Тег без своей страницы — сам ключ:
+ * сюда приходят только теги, прошедшие hubTagOf или primaryGenre, и пустая
+ * строка в заголовке была бы хуже честного ключа. hasOwn — ключ из данных.
+ */
+export function hubTitle(tag: string, locale: Locale = 'ru'): string {
+  if (!Object.hasOwn(HUB_GENRES, tag)) return tag
+  if (locale === 'en') return Object.hasOwn(HUB_TITLES_EN, tag) ? HUB_TITLES_EN[tag] : tag
+  return HUB_GENRES[tag].title
+}
+
 /** Адрес страницы жанра; null — у тега нет своей страницы */
 export function hubPath(tag: string): string | null {
   // hasOwn — ключ тега приходит из данных, и «constructor» не должен найти прототип
@@ -186,7 +243,18 @@ export type HubFacet = {
    * «что есть у вас обоих». Одиночным подборкам — свой выход, как у жанров.
    */
   party: boolean
+  /**
+   * Тексты по-английски — рядом с русскими, а не отдельным словарём (как у
+   * VIBE_PRESETS в lib/presets): так они не разъедутся. Правила те же: title —
+   * с заглавной и множественным числом, heading начинается с title, basis —
+   * продолжение фразы «40 games — …», со строчной и с точкой. Русские поля
+   * остаются как были; на языке страницы их отдаёт facetCopy.
+   */
+  en: FacetCopy
 }
+
+/** Тексты подборки на одном языке — то, что facetCopy отдаёт странице */
+export type FacetCopy = Pick<HubFacet, 'title' | 'heading' | 'label' | 'basis'>
 
 /**
  * Подборки в порядке показа. Категории Steam — числами, как их отдаёт
@@ -210,6 +278,13 @@ export const HUB_FACETS: readonly HubFacet[] = [
     query: { kind: 'categories', ids: [9, 38] },
     drop: 'versus',
     party: true,
+    en: {
+      title: 'Co-op games',
+      heading: 'Co-op games — what to play with a friend',
+      label: 'With a friend',
+      basis:
+        'marked “Co-op” or “Online Co-op” on Steam, except the ones where player tags lean more toward competition: MOBAs and esports shooters are marked co-op on Steam too, but there you play against each other.',
+    },
   },
   {
     slug: 'split-screen',
@@ -220,6 +295,13 @@ export const HUB_FACETS: readonly HubFacet[] = [
       'с отметкой Steam «Общий/разделённый экран»: вдвоём за одним компьютером, второй геймпад — и вперёд. И вместе, и друг против друга.',
     query: { kind: 'categories', ids: [24, 37, 39] },
     party: true,
+    en: {
+      title: 'Two-player games on one PC',
+      heading: 'Two-player games on one PC — shared or split screen',
+      label: 'Split screen',
+      basis:
+        'marked “Shared/Split Screen” on Steam: two of you at one computer, grab a second controller and go. Both co-op and head-to-head.',
+    },
   },
   {
     slug: 'free',
@@ -229,6 +311,12 @@ export const HUB_FACETS: readonly HubFacet[] = [
     basis: 'те, что Steam отдаёт бесплатно: скачать и играть, без покупки.',
     query: { kind: 'free' },
     party: false,
+    en: {
+      title: 'Free games',
+      heading: 'Free games on Steam — the best, by reviews',
+      label: 'Free',
+      basis: 'ones that are free on Steam: download and play, no purchase needed.',
+    },
   },
   {
     slug: 'short',
@@ -246,6 +334,16 @@ export const HUB_FACETS: readonly HubFacet[] = [
     query: { kind: 'session', belowMinutes: SHORT_SESSION_MIN },
     drop: 'match',
     party: false,
+    // Тот же довод по-английски: «judging by tags and … reviews», а не «per
+    // reviews» — так глоссарий передаёт «по отзывам» (docs/i18n.md), а минуты
+    // здесь не мнение игроков
+    en: {
+      title: '20-minute games',
+      heading: '20-minute games — when you only have time for one sitting',
+      label: '20 minutes',
+      basis:
+        'ones where a single sitting runs about twenty minutes, judging by tags and analyzed player reviews. That’s how long you play at a time, not how long the game takes to finish — and there are no matches here you can’t drop halfway.',
+    },
   },
 ]
 
@@ -257,6 +355,16 @@ export function hubFacetOf(slug: string): HubFacet | null {
 /** Адрес страницы подборки — тот же сегмент, что у жанров */
 export function facetPath(facet: HubFacet): string {
   return `/games/${facet.slug}`
+}
+
+/**
+ * Тексты подборки на языке страницы: заголовок, <title>, пилюля и основание
+ * списка. Для ru — ровно русские поля HUB_FACETS, как было.
+ */
+export function facetCopy(facet: HubFacet, locale: Locale = 'ru'): FacetCopy {
+  if (locale === 'en') return facet.en
+  const { title, heading, label, basis } = facet
+  return { title, heading, label, basis }
 }
 
 /** Теги, в которых играют вместе против игры */

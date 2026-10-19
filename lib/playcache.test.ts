@@ -122,6 +122,18 @@ describe('playCacheKey', () => {
     expect(KEY).toBe('medium.chill.solo|||')
   })
 
+  // Хранилище вкладки одно на /play и /en/play: переключатель языка ведёт на
+  // тот же запрос, и выдача с русскими причинами не должна встать на
+  // английскую страницу
+  test('язык страницы меняет ключ; русский ключ — прежний', () => {
+    const base = { mood: NEUTRAL_MOOD, focus: null, roulette: false, lean: null } as const
+    expect(playCacheKey({ ...base, locale: 'ru' })).toBe(KEY)
+    expect(playCacheKey({ ...base, locale: 'en' })).toBe('medium.chill.solo||||en')
+    expect(playCacheKey({ ...base, locale: 'en' })).not.toBe(KEY)
+    expect(playCacheKey({ ...base, seed: 620, locale: 'en' })).toBe('medium.chill.solo||||620|en')
+    expect(playCacheKey({ ...base, seed: 620, locale: 'en' })).not.toBe(playCacheKey({ ...base, seed: 620 }))
+  })
+
   // /play?…&genre= — рогалики со страницы жанра: ни обычная выдача, ни
   // «похожие на X» на их место не встают, и жанр с затравкой не путаются
   test('жанр с адреса меняет ключ; без него ключ прежний', () => {
@@ -131,6 +143,15 @@ describe('playCacheKey', () => {
     expect(genred).not.toBe(playCacheKey({ ...base, genre: 'cozy' }))
     expect(playCacheKey({ ...base, seed: 620, genre: 'roguelike' })).not.toBe(playCacheKey({ ...base, seed: 620 }))
     expect(playCacheKey({ ...base, genre: null })).toBe(KEY)
+  })
+
+  // Жанр и язык — разные части ключа: рогалики с /en/games не встают на место
+  // русских рогаликов, а язык, как и без жанра, идёт последним
+  test('жанр и язык вместе: язык последней частью', () => {
+    const base = { mood: NEUTRAL_MOOD, focus: null, roulette: false, lean: null } as const
+    expect(playCacheKey({ ...base, genre: 'roguelike', locale: 'en' })).toBe('medium.chill.solo||||g:roguelike|en')
+    expect(playCacheKey({ ...base, genre: 'roguelike', locale: 'ru' })).toBe(playCacheKey({ ...base, genre: 'roguelike' }))
+    expect(playCacheKey({ ...base, seed: 620, genre: 'roguelike', locale: 'en' })).toBe('medium.chill.solo||||620|g:roguelike|en')
   })
 })
 
@@ -200,7 +221,7 @@ describe('parsePlayCache', () => {
   })
 
   test('карточка без региона цены (версия 1) не узнаётся: у её ценника нет валюты', () => {
-    expect(PLAY_CACHE_VERSION).toBe(2)
+    expect(PLAY_CACHE_VERSION).toBe(3)
     const e = entry()
     const bare = (p: PlayPick) => {
       const rest: Record<string, unknown> = { ...p }
@@ -210,6 +231,12 @@ describe('parsePlayCache', () => {
     }
     const v1 = { ...e, v: 1, deal: { ...e.deal, picks: e.deal.picks.map(bare) } }
     expect(parsePlayCache(JSON.parse(JSON.stringify(v1)))).toBeNull()
+  })
+
+  // Версия 2 своего языка не знает: ключ без языка она получала и на /en/play
+  test('запись без языка (версия 2) не узнаётся', () => {
+    expect(parsePlayCache({ ...entry(), v: 2 })).toBeNull()
+    expect(parsePlayCache(entry())).not.toBeNull()
   })
 
   test('одна битая карточка — вся запись мимо', () => {

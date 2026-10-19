@@ -19,6 +19,7 @@ import {
   ensureMeta,
   parseStoreDescriptions,
   resetTagDictCache,
+  englishDescription,
 } from './catalog'
 import type { GameMeta } from './types'
 
@@ -1056,5 +1057,121 @@ describe('регион запросов к магазину', () => {
     }
     expect(parseAppDetails(rub, 620)).not.toHaveProperty('priceFinal')
     expect(parseAppDetails(APPDETAILS_RESPONSE, 620)?.priceFinal).toBe(499)
+  })
+})
+
+/**
+ * Английское описание — свой слот (shortDescriptionEn), а не потеря.
+ *
+ * Прогрев ходит в GetItems по-английски, и правило «русское не заменяется
+ * нерусским» его текст раньше просто выбрасывало. Для /en это самый частый
+ * и дешёвый источник английского описания, и теперь он ложится рядом.
+ */
+describe('описание по-английски', () => {
+  const РУС = 'Более двух десятилетий Counter-Strike служит примером'
+  const АНГ = 'For over two decades, Counter-Strike has offered'
+  const с = (over: Partial<GameMeta> = {}): GameMeta => ({
+    appid: 730,
+    name: 'Counter-Strike 2',
+    tags: { FPS: 100 },
+    genres: [],
+    categories: [1],
+    ...over,
+  })
+
+  test('прогрев с английским: русское остаётся, английское — в своём слоте', () => {
+    const merged = mergeMeta(с({ shortDescription: РУС }), с({ shortDescription: АНГ }))
+    expect(merged.shortDescription).toBe(РУС)
+    expect(merged.shortDescriptionEn).toBe(АНГ)
+    expect(/[А-Яа-яЁё]/.test(merged.shortDescriptionEn!)).toBe(false)
+  })
+
+  test('новая запись с английским описанием получает слот сразу', () => {
+    expect(mergeMeta(null, с({ shortDescription: АНГ })).shortDescriptionEn).toBe(АНГ)
+    // русское описание слота не создаёт: английского в нём нет
+    expect(mergeMeta(null, с({ shortDescription: РУС }))).not.toHaveProperty('shortDescriptionEn')
+  })
+
+  test('appdetails по-русски не стирает английский слот', () => {
+    const merged = mergeMeta(с({ shortDescription: АНГ, shortDescriptionEn: АНГ }), с({ shortDescription: РУС }))
+    expect(merged).toMatchObject({ shortDescription: РУС, shortDescriptionEn: АНГ })
+  })
+
+  test('текст студии не по-английски в слот не идёт', () => {
+    expect(mergeMeta(null, с({ shortDescription: '反恐精英：全球攻势的续作。' }))).not.toHaveProperty(
+      'shortDescriptionEn',
+    )
+  })
+
+  test('русское описание с латинскими именами — не английское, и слот оно не затирает', () => {
+    // appdetails ходит с l=russian, и его русский текст по большинству букв
+    // бывает латиницей: названия, студии, режимы. Раньше такое описание
+    // ложилось в английский слот поверх настоящего и уезжало на /en
+    const латинские = [
+      "Tom Clancy's Rainbow Six® Siege X — тактический шутер.",
+      'Warhammer 40,000: Space Marine 2 — экшен от Saber Interactive и Focus Entertainment.',
+      'Counter-Strike 2: Free-to-play, Premier, CS Rating и новые карты.',
+    ]
+    for (const text of латинские) {
+      expect(englishDescription(text), text).toBeUndefined()
+      const merged = mergeMeta(с({ shortDescription: РУС, shortDescriptionEn: АНГ }), с({ shortDescription: text }))
+      expect(merged.shortDescriptionEn, text).toBe(АНГ)
+    }
+  })
+
+  test('китайский, японский, корейский и немецкий текст студии — не английский', () => {
+    const чужие = [
+      '一款以三国为背景的 RPG 游戏，支持 Steam 创意工坊。',
+      'これはアクションRPGです。Steam版。',
+      '한국어 MMORPG 게임 PvP',
+      'Ein düsteres Abenteuer in einer Welt voller Gefahren und Geheimnisse.',
+      'Una aventura épica en un mundo abierto lleno de peligros y secretos.',
+    ]
+    for (const text of чужие) {
+      expect(englishDescription(text), text).toBeUndefined()
+      expect(mergeMeta(с({ shortDescription: РУС }), с({ shortDescription: text })), text).not.toHaveProperty(
+        'shortDescriptionEn',
+      )
+      const media = parseStoreMedia({
+        response: { store_items: [{ appid: 99, visible: true, basic_info: { short_description: text } }] },
+      })
+      expect(media.get(99)?.shortDescriptionEn, text).toBeUndefined()
+    }
+    // а английский с именами собственными — английский
+    expect(englishDescription('Explore the sunny metropolis of Los Santos with your crew.')).toBe(
+      'Explore the sunny metropolis of Los Santos with your crew.',
+    )
+  })
+
+  test('крон карточек просит описание тем же походом за медиа, доливка — нет', async () => {
+    const requests: Array<Record<string, unknown>> = []
+    const fetchFn = (async (url: string) => {
+      const input = new URL(String(url)).searchParams.get('input_json') ?? '{}'
+      requests.push((JSON.parse(input) as { data_request: Record<string, unknown> }).data_request)
+      const body = {
+        response: {
+          store_items: [
+            { appid: 730, visible: true, basic_info: { short_description: ` ${АНГ} ` } },
+            { appid: 10, visible: true, basic_info: { short_description: РУС } },
+          ],
+        },
+      }
+      return new Response(JSON.stringify(body), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const got = await fetchStoreMedia([730, 10], { fetchFn, description: true })
+    expect(requests[0]).toEqual({
+      include_screenshots: true,
+      include_trailers: true,
+      include_supported_languages: true,
+      include_basic_info: true,
+    })
+    // описание — единственная находка у 730, и ради неё строка есть
+    expect(got.get(730)).toEqual({ shortDescriptionEn: АНГ })
+    // русский текст в английский слот не идёт — и записывать игре нечего
+    expect(got.has(10)).toBe(false)
+
+    await fetchStoreMedia([730], { fetchFn })
+    expect(requests[1]).not.toHaveProperty('include_basic_info')
   })
 })

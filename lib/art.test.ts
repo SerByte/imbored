@@ -203,7 +203,7 @@ describe('SHELF_RAIL_SIZES', () => {
   })
 
   test('каждый ряд .shelf-rail берёт её, а не своё число', () => {
-    for (const file of [path.join('app', 'games', 'page.tsx'), path.join('components', 'Evenings.tsx')]) {
+    for (const file of [path.join('app', '[lang]', 'games', 'page.tsx'), path.join('components', 'Evenings.tsx')]) {
       const src = read(file)
       expect(src, `${file}: ряд .shelf-rail пропал — поправь список`).toContain('shelf-rail')
       expect(src, `${file}: sizes капсулы ряда — только SHELF_RAIL_SIZES`).toMatch(/sizes=\{SHELF_RAIL_SIZES\}/)

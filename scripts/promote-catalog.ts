@@ -31,7 +31,13 @@ import {
   setIngestStatus,
   upsertGameMeta,
 } from '../lib/db'
-import { fetchStoreDescriptions, fetchStoreItems, fetchTagDictionary, mergeMeta } from '../lib/catalog'
+import {
+  englishDescription,
+  fetchStoreDescriptions,
+  fetchStoreItems,
+  fetchTagDictionary,
+  mergeMeta,
+} from '../lib/catalog'
 // Проекция тегов в game_tags — общая с картой жанров (lib/gamehub primaryGenre)
 import { storedTagWeights } from '../lib/gamehub'
 import { openDb } from './opendb'
@@ -161,7 +167,16 @@ async function main() {
    *
    * Проход дешёвый: один include-флаг вместо шести. Осечка не фатальна —
    * остаётся английское описание, то есть ровно то, что было до правки.
+   *
+   * Английское основного прохода при этом не выбрасывается: до русской
+   * перезаписи оно уходит в shortDescriptionEn — им говорит /en
+   * (descriptionFor в lib/gamedesc). Только если оно правда английское: у
+   * части игр в английском поле магазина текст на языке студии.
    */
+  for (const m of metas) {
+    const en = englishDescription(m.shortDescription)
+    if (en && !m.shortDescriptionEn) m.shortDescriptionEn = en
+  }
   if (metas.length) {
     console.log(`\nописания на языке сайта для ${metas.length} игр…`)
     const ru = await withRetry('описания', () =>

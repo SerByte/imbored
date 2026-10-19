@@ -2,11 +2,12 @@
 
 import { useGSAP } from '@gsap/react'
 import gsap from 'gsap'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { useCallback, useRef } from 'react'
 import { ClickSpark } from '@/components/ClickSpark'
 import { EchoTitle } from '@/components/EchoTitle'
 import { GameArt } from '@/components/GameArt'
+import { useLocale } from '@/components/LocaleProvider'
 import { LogoMark } from '@/components/Logo'
 import { Magnet } from '@/components/Magnet'
 import { SplitHeading } from '@/components/SplitHeading'
@@ -16,6 +17,7 @@ import { MatchShare } from '@/components/room/MatchShare'
 import type { GameArtUrls } from '@/lib/art'
 import type { Discount } from '@/lib/discount'
 import { focusAdrift } from '@/lib/focushandoff'
+import { tr } from '@/lib/i18n'
 import { matchByLeader } from '@/lib/room'
 import { STORE_LABEL } from '@/lib/stores'
 
@@ -66,6 +68,7 @@ export function MatchCeremony({
   takeFocus?: boolean
 }) {
   const scope = useRef<HTMLDivElement>(null)
+  const locale = useLocale()
   /*
    * Матч, взятый лидером голосов (app/api/room/[id]/leader): все отсвайпали,
    * единогласия не было, и комната согласилась на игру, за которую не меньше
@@ -152,8 +155,17 @@ export function MatchCeremony({
 
         {/* Призраков ровно столько, сколько людей в комнате: голоса схлопываются
             в одно слово — буквальная картинка того, что сейчас произошло. */}
+        {/*
+          По-английски «Agreed!» и «It's a match!» (глоссарий): призраки
+          EchoTitle — копии слова, и фраза не длиннее русской строки
+          display-lg на телефоне.
+        */}
         <EchoTitle
-          text={byLeader ? 'Договорились!' : 'Это матч!'}
+          text={
+            byLeader
+              ? tr(locale, { ru: 'Договорились!', en: 'Agreed!' })
+              : tr(locale, { ru: 'Это матч!', en: "It's a match!" })
+          }
           ghosts={byLeader ? (forCount ?? memberCount) : memberCount}
           className="font-display text-display-lg"
           headRef={titleRef}
@@ -161,12 +173,22 @@ export function MatchCeremony({
 
         <p className="text-dim">
           {byLeader ? (
-            <>
-              Не единогласно, но <span className="tabular-nums text-ink">{forCount}</span>{' '}
-              из <span className="tabular-nums text-ink">{memberCount}</span> за — играете в:
-            </>
+            locale === 'en' ? (
+              <>
+                Not unanimous, but <span className="tabular-nums text-ink">{forCount}</span>{' '}
+                of <span className="tabular-nums text-ink">{memberCount}</span> said yes — you&apos;re playing:
+              </>
+            ) : (
+              <>
+                Не единогласно, но <span className="tabular-nums text-ink">{forCount}</span>{' '}
+                из <span className="tabular-nums text-ink">{memberCount}</span> за — играете в:
+              </>
+            )
           ) : (
-            'Все в комнате хотят играть в одно и то же:'
+            tr(locale, {
+              ru: 'Все в комнате хотят играть в одно и то же:',
+              en: 'Everyone in the room wants to play the same thing:',
+            })
           )}
         </p>
 
@@ -225,7 +247,17 @@ export function MatchCeremony({
                 rel="noreferrer"
                 className="btn-ember px-8 py-3"
               >
-                Открыть в {STORE_LABEL[game.store ?? ''] ?? 'магазине'}
+                {/* Подпись целиком по языку: «Open in Epic Games», а магазин без
+                    метки — «Open store page», не «Open in store» (lib/storelink) */}
+                {locale === 'en' ? (
+                  STORE_LABEL[game.store ?? ''] ? (
+                    `Open in ${STORE_LABEL[game.store ?? '']}`
+                  ) : (
+                    'Open store page'
+                  )
+                ) : (
+                  <>Открыть в {STORE_LABEL[game.store ?? ''] ?? 'магазине'}</>
+                )}
               </a>
             ) : game.ownedByMe === true ? (
               <SteamLaunch
@@ -240,7 +272,7 @@ export function MatchCeremony({
                 rel="noreferrer"
                 className="btn-ember px-8 py-3"
               >
-                Открыть в Steam
+                {tr(locale, { ru: 'Открыть в Steam', en: 'Open in Steam' })}
               </a>
             )}
           </Magnet>
@@ -266,13 +298,18 @@ export function MatchCeremony({
           ниже CTA: главное здесь по-прежнему «играть в то, о чём договорились».
         */}
         <div data-beat="foot" className="flex flex-col items-center gap-3">
-          <p className="text-xs text-faint">Зови всех в войс — договорились же.</p>
+          <p className="text-xs text-faint">
+            {tr(locale, {
+              ru: 'Зови всех в войс — договорились же.',
+              en: 'Get everyone on voice — you agreed, after all.',
+            })}
+          </p>
           <div className="flex flex-wrap justify-center gap-x-6">
             <Link href="/room/new" className="tap text-sm text-dim hover:text-ink transition-colors">
-              Новая комната
+              {tr(locale, { ru: 'Новая комната', en: 'New room' })}
             </Link>
             <Link href="/rooms" className="tap text-sm text-dim hover:text-ink transition-colors">
-              К списку пати
+              {tr(locale, { ru: 'К списку пати', en: 'All parties' })}
             </Link>
           </div>
         </div>

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { ANSWER_VALUES, answerLabel, moodCaption, STEPS } from './quiz'
+import { ANSWER_VALUES, answerLabel, moodCaption, STEPS, STEPS_BY_LOCALE, stepsFor } from './quiz'
 import type { Mood } from './types'
 
 describe('STEPS', () => {
@@ -58,5 +58,45 @@ describe('moodCaption', () => {
   test('полностью битое настроение даёт пустую строку, а не мусор', () => {
     const mood = { time: 'a', vibe: 'b', social: 'c' } as unknown as Mood
     expect(moodCaption(mood)).toBe('')
+  })
+})
+
+/*
+ * Английский квиз — тот же кортеж: оси, значения и порядок общие, у языка
+ * только слова. Ударное слово своё, и оно обязано быть словом оси.
+ */
+describe('квиз по-английски', () => {
+  const EN = stepsFor('en')
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('те же оси, те же значения, тот же порядок', () => {
+    expect(EN.map((s) => s.key)).toEqual(STEPS.map((s) => s.key))
+    expect(EN.map((s) => s.options.map((o) => o.value))).toEqual(STEPS.map((s) => s.options.map((o) => o.value)))
+    expect(stepsFor()).toBe(STEPS)
+    expect(STEPS_BY_LOCALE.ru).toBe(STEPS)
+  })
+
+  test('ударное слово — это слово оси: time, vibe, Solo', () => {
+    const stressed = EN.map((s) => s.question.split(' ')[s.stress])
+    expect(stressed).toEqual(['time?', 'vibe?', 'Solo'])
+  })
+
+  test('подпись рельса короче вопроса, и кириллицы нет нигде', () => {
+    for (const step of EN) {
+      expect(step.axis.length).toBeLessThan(step.question.length)
+      for (const text of [step.axis, step.question, ...step.options.flatMap((o) => [o.label, o.hint])]) {
+        expect(text).not.toMatch(CYRILLIC)
+      }
+    }
+  })
+
+  test('подписи ответов и строка настроения', () => {
+    for (const value of ANSWER_VALUES) expect(answerLabel(value, 'en')).toBeTruthy()
+    expect(answerLabel('banana', 'en')).toBeNull()
+    expect(moodCaption({ time: 'medium', vibe: 'chill', social: 'solo' }, 'en')).toBe('A few hours · Unwind · Solo')
+    expect(moodCaption({ time: 'long', vibe: 'engaged', social: 'friends' }, 'en')).toBe(
+      'All evening · Lock in · With friends',
+    )
+    expect(moodCaption({ time: 'short', vibe: 'x', social: 'solo' } as unknown as Mood, 'en')).toBe('Under an hour · Solo')
   })
 })

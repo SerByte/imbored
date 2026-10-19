@@ -290,6 +290,85 @@ describe('отказ входа помнит пати и ?next', () => {
 })
 
 /**
+ * Вход, начатый на английской странице, на ней и кончается.
+ *
+ * Гостя с /en/library разворачивает на /en?next=%2Flibrary, он жмёт «Sign in
+ * with Steam» — и раньше после Steam попадал на русскую /library: ни старт,
+ * ни возврат языка не знали.
+ */
+describe('язык входа', () => {
+  /** Старт по ссылке со своей страницы: Referer того же хоста */
+  async function startFrom(page: string, query: string) {
+    const res = await startLogin(
+      new NextRequest(`${BASE}/api/auth/steam${query}`, { headers: { host: 'imbored.test', referer: `${BASE}${page}` } }),
+    )
+    const steam = new URL(res.headers.get('location') ?? '')
+    return { returnTo: steam.searchParams.get('openid.return_to') ?? '', cookie: res.cookies.get('imbored_oidc') }
+  }
+
+  test('с английской страницы язык едет через Steam, и возврат ведёт на английскую', async () => {
+    const { returnTo, cookie } = await startFrom('/en?next=%2Flibrary', '?next=%2Flibrary')
+    expect(new URL(returnTo).searchParams.get('lang')).toBe('en')
+    const res = await fromSteam(returnTo, cookie?.value ?? '')
+    expect(res.headers.get('location')).toBe(`${BASE}/en/library`)
+    expect(res.cookies.get('imbored_session')?.value).toBe('подписанная-сессия')
+  })
+
+  /**
+   * С сессией ни страна, ни язык браузера «/» не уводят (lib/homelocale.ts), и
+   * вошедшего с английской версии ведёт на неё кука — та же, что у
+   * переключателя в подвале.
+   */
+  test('вход с английской версии пишет куку lang=en, с русской — нет', async () => {
+    const en = await startFrom('/en/library', '?next=%2Flibrary')
+    const lang = (await fromSteam(en.returnTo, en.cookie?.value ?? '')).cookies.get('lang')
+    expect(lang?.value).toBe('en')
+    expect(lang?.path).toBe('/')
+    expect(lang?.maxAge).toBe(31_536_000)
+    expect(lang?.httpOnly).toBeFalsy()
+
+    const ru = await startFrom('/library', '?next=%2Flibrary')
+    expect(new URL(ru.returnTo).searchParams.has('lang')).toBe(false)
+    const res = await fromSteam(ru.returnTo, ru.cookie?.value ?? '')
+    expect(res.headers.get('location')).toBe(`${BASE}/library`)
+    expect(res.cookies.get('lang')).toBeUndefined()
+  })
+
+  test('отказ — английский лендинг, и назначение на месте', async () => {
+    const { returnTo } = await startFrom('/en/room/ABC123', '?join=ABC123')
+    const res = await fromSteam(returnTo, null)
+    const landing = new URL(res.headers.get('location') ?? '')
+    expect(landing.pathname).toBe('/en')
+    expect(landing.searchParams.get('error')).toBe('auth')
+    expect(landing.searchParams.get('join')).toBe('ABC123')
+  })
+
+  test('без пати и назначения — английский квиз', async () => {
+    const { returnTo, cookie } = await startFrom('/en', '')
+    expect((await fromSteam(returnTo, cookie?.value ?? '')).headers.get('location')).toBe(`${BASE}/en/quiz`)
+  })
+
+  test('?lang= в адресе важнее Referer, а чужой Referer не в счёт', async () => {
+    const explicit = await startFrom('/library', '?lang=en')
+    expect(new URL(explicit.returnTo).searchParams.get('lang')).toBe('en')
+    const res = await startLogin(
+      new NextRequest(`${BASE}/api/auth/steam`, { headers: { host: 'imbored.test', referer: 'https://evil.example/en/x' } }),
+    )
+    const returnTo = new URL(res.headers.get('location') ?? '').searchParams.get('openid.return_to') ?? ''
+    expect(new URL(returnTo).searchParams.has('lang')).toBe(false)
+  })
+
+  test('переезд на канонический хост язык не теряет', async () => {
+    const hop = await startLogin(
+      new NextRequest('https://imbored-git-xyz.vercel.app/api/auth/steam?next=%2Flibrary', {
+        headers: { host: 'imbored-git-xyz.vercel.app', referer: 'https://imbored-git-xyz.vercel.app/en' },
+      }),
+    )
+    expect(hop.headers.get('location')).toBe(`${BASE}/api/auth/steam?next=%2Flibrary&lang=en`)
+  })
+})
+
+/**
  * Проглоченное — не значит невидимое.
  *
  * Все отказы ниже человек видит как ?error=steam, и для него это правильно.

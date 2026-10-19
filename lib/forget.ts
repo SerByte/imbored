@@ -1,4 +1,5 @@
 import type { ForgetReport } from './db'
+import { fmtNumber, tr, type Locale } from './i18n'
 import { roomCardPath } from './roomcard'
 
 /**
@@ -51,6 +52,33 @@ export const FORGET_LABELS: Readonly<Record<string, Label>> = {
   rate_limits: null,
 }
 
+/**
+ * Английские подписи тех же таблиц — близнец FORGET_LABELS: те же ключи и
+ * то же «не показывать» (null). Число и порядок строк решает русский список,
+ * здесь — только слова; расхождение ключей роняет lib/forget.test.ts.
+ */
+const ROOMS_PART_EN = 'Room memberships and votes'
+export const FORGET_LABELS_EN: Readonly<Record<string, string | null>> = {
+  users: 'Steam profile: name, avatar and portrait',
+  library_snapshots: 'Library snapshots',
+  library_baselines: 'Yearly library checkpoints',
+  wishlists: 'Wishlist',
+  feedback: "Ratings, hidden games, swipes and tonight's plans",
+  outcomes: 'Records of how much you played after a pick',
+  daily_picks: 'Games of the day',
+  shared_picks: 'Pick links you sent to friends',
+  compat_views: 'Compatibility checks',
+  feed_links: 'Private RSS link',
+  rooms: 'Rooms you host',
+  room_members: ROOMS_PART_EN,
+  room_votes: ROOMS_PART_EN,
+  room_kicks: ROOMS_PART_EN,
+  room_deck: null,
+  sessions: 'Sign-in records',
+  forget_marks: null,
+  rate_limits: null,
+}
+
 export type ForgetSummary = {
   /** Что хранится — строка на вид данных, только непустые */
   items: string[]
@@ -58,14 +86,22 @@ export type ForgetSummary = {
   effects: string[]
 }
 
-export function forgetSummary(report: ForgetReport): ForgetSummary {
+/**
+ * locale — язык, на котором человек читает вопрос «Удалить всё?» (роут берёт
+ * его из ?lang=). Что показать и в каком порядке, решает счёт и русский
+ * список; язык решает только слова.
+ */
+export function forgetSummary(report: ForgetReport, locale: Locale = 'ru'): ForgetSummary {
   const rows = new Map(report.map((r) => [r.table, r.rows]))
   const n = (table: string) => rows.get(table) ?? 0
 
   const items: string[] = []
   for (const [table, label] of Object.entries(FORGET_LABELS)) {
     if (!label || n(table) === 0) continue
-    const line = label.counted ? `${label.text} — ${n(table)}` : label.text
+    const text = tr(locale, { ru: label.text, en: FORGET_LABELS_EN[table] ?? label.text })
+    // По-русски число как было, без разрядов; по-английски — «1,240»
+    const count = tr(locale, { ru: String(n(table)), en: fmtNumber(locale, n(table)) })
+    const line = label.counted ? `${text} — ${count}` : text
     if (!items.includes(line)) items.push(line)
   }
 
@@ -75,20 +111,43 @@ export function forgetSummary(report: ForgetReport): ForgetSummary {
   // чем делает, — SteamID в отметке удаления жил ещё год и месяц, а человек
   // узнавал о нём разве что из запроса данных
   const effects: string[] = []
-  if (n('library_snapshots') > 0) effects.push('Портрет и итоги года по твоей ссылке перестанут открываться.')
-  if (n('shared_picks') > 0) effects.push('Ссылки на выбор, которые ты отправлял, перестанут открываться.')
-  if (n('library_snapshots') > 0 || n('shared_picks') > 0) {
-    effects.push('Превью этих ссылок, которые уже сохранили мессенджеры, отозвать мы не можем.')
+  const say = (v: { ru: string; en: string }) => effects.push(tr(locale, v))
+  if (n('library_snapshots') > 0) {
+    say({
+      ru: 'Портрет и итоги года по твоей ссылке перестанут открываться.',
+      en: 'Links to your portrait and year in review will stop working.',
+    })
   }
-  if (n('rooms') > 0) effects.push('Комнаты, где ты хост, закроются для всех, кто в них.')
-  if (n('compat_views') > 0) effects.push('Сравнения пропадут и у тех, с кем ты сравнивался.')
-  if (n('feed_links') > 0) effects.push('Ссылка на RSS перестанет работать.')
-  effects.push('Ты выйдешь на всех устройствах.')
+  if (n('shared_picks') > 0) {
+    say({
+      ru: 'Ссылки на выбор, которые ты отправлял, перестанут открываться.',
+      en: 'Pick links you sent will stop working.',
+    })
+  }
+  if (n('library_snapshots') > 0 || n('shared_picks') > 0) {
+    say({
+      ru: 'Превью этих ссылок, которые уже сохранили мессенджеры, отозвать мы не можем.',
+      en: "We can't take back previews of these links that messaging apps have already saved.",
+    })
+  }
+  if (n('rooms') > 0) {
+    say({ ru: 'Комнаты, где ты хост, закроются для всех, кто в них.', en: 'Rooms you host will close for everyone in them.' })
+  }
+  if (n('compat_views') > 0) {
+    say({
+      ru: 'Сравнения пропадут и у тех, с кем ты сравнивался.',
+      en: 'Comparisons will disappear for the people you compared with, too.',
+    })
+  }
+  if (n('feed_links') > 0) say({ ru: 'Ссылка на RSS перестанет работать.', en: 'Your RSS link will stop working.' })
+  say({ ru: 'Ты выйдешь на всех устройствах.', en: "You'll be signed out on all devices." })
   // Отметка удаления (forget_marks в lib/db) встаёт всегда — те же три факта,
-  // что на главной (HeroNotice) и в /privacy: что, зачем, на сколько
-  effects.push(
-    'Останется только отметка — SteamID и время удаления: по ней старые входы на других устройствах больше не пускают. Через год и месяц она сотрётся сама.',
-  )
+  // что на главной (HeroNotice) и в /privacy: что, зачем, на сколько. На обоих
+  // языках: английская строка говорит то же самое, и её сторожит тот же тест
+  say({
+    ru: 'Останется только отметка — SteamID и время удаления: по ней старые входы на других устройствах больше не пускают. Через год и месяц она сотрётся сама.',
+    en: "Only a marker will remain: your SteamID and the time of deletion. It keeps old sign-ins on other devices from getting back in, and it erases itself after a year and a month.",
+  })
   return { items, effects }
 }
 

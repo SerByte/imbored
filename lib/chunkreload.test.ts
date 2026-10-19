@@ -1,4 +1,4 @@
-import { createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
+import { createElement, isValidElement, type ComponentProps, type ReactElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { isChunkLoadError } from './clienterr'
@@ -32,6 +32,14 @@ vi.mock('@/lib/clienterr', async (importOriginal) => ({
 vi.mock('react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react')>()),
   useEffect: () => {},
+  // язык аварийного экрана — из адреса (app/global-error.tsx); при прямом
+  // вызове компонента хук отдаёт снимок браузера как есть
+  useSyncExternalStore: (_subscribe: unknown, get: () => unknown) => get(),
+  // язык границы app/[lang]/error.tsx — из контекста (useLocale). Значение
+  // берётся из того гнезда контекста, куда его кладёт react-dom/server
+  // (_currentValue2: первое гнездо — у клиентского react-dom); при прямом
+  // вызове компонента там значение по умолчанию — русский, как без провайдера
+  useContext: (context: { _currentValue2: unknown }) => context._currentValue2,
 }))
 
 afterEach(() => {
@@ -86,7 +94,7 @@ function findButton(node: ReactNode, label: RegExp): ReactElement<{ onClick: () 
 
 describe('экраны ошибки и отказ чанка', () => {
   const screens = [
-    ['app/error.tsx', () => import('@/app/error')],
+    ['app/[lang]/error.tsx', () => import('@/app/[lang]/error')],
     ['app/global-error.tsx', () => import('@/app/global-error')],
   ] as const
 
@@ -118,5 +126,55 @@ describe('экраны ошибки и отказ чанка', () => {
     button!.props.onClick()
     expect(retry).toHaveBeenCalledTimes(1)
     expect(reload).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Граница под корневым layout берёт язык из его провайдера: на /en экран и
+ * обе его кнопки — по-английски, «На главную» ведёт на английскую главную.
+ */
+describe('граница ошибок на языке страницы', () => {
+  test('под провайдером en — по-английски, без кириллицы', async () => {
+    vi.stubGlobal('window', { location: { reload, href: 'https://imbored.cc/en/play' } })
+    const { default: Screen } = await import('@/app/[lang]/error')
+    const { LocaleProvider } = await import('@/components/LocaleProvider')
+    const en = (error: Error) =>
+      renderToStaticMarkup(
+        createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, createElement(Screen, { error, retry: vi.fn() })),
+      )
+    const stale = en(turbopackChunk())
+    expect(stale).toContain('Something broke')
+    expect(stale).toContain('Reload page')
+    expect(stale).toContain('href="/en"')
+    expect(stale).not.toMatch(/[А-Яа-яЁё]/)
+    const plain = en(new TypeError('boom'))
+    expect(plain).toContain('Try again')
+    expect(plain).toContain('Back to home')
+    expect(plain).not.toMatch(/[А-Яа-яЁё]/)
+  })
+})
+
+/**
+ * Аварийный экран стоит вместо корневого layout, и языка из сегмента у него
+ * нет — он берёт его из адреса в браузере (app/global-error.tsx).
+ */
+describe('аварийный экран на языке адреса', () => {
+  test('на /en/… — по-английски, со ссылкой на английскую главную', async () => {
+    vi.stubGlobal('window', { location: { reload, href: 'https://imbored.cc/en/play', pathname: '/en/play' } })
+    const { default: Screen } = await import('@/app/global-error')
+    const html = renderToStaticMarkup(createElement(Screen, { error: turbopackChunk(), retry: vi.fn() }))
+    expect(html).toContain('lang="en"')
+    expect(html).toContain('Reload the page')
+    expect(html).toContain('href="/en"')
+    expect(html).not.toContain('Обновить страницу')
+  })
+
+  test('на русском адресе — по-русски, как было', async () => {
+    vi.stubGlobal('window', { location: { reload, href: 'https://imbored.cc/play', pathname: '/play' } })
+    const { default: Screen } = await import('@/app/global-error')
+    const html = renderToStaticMarkup(createElement(Screen, { error: new TypeError('boom'), retry: vi.fn() }))
+    expect(html).toContain('lang="ru"')
+    expect(html).toContain('Попробовать снова')
+    expect(html).toContain('href="/"')
   })
 })

@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { SkelStatus } from '@/components/SkelStatus'
 
 /**
  * Ячейка каркаса страницы.
@@ -39,13 +40,13 @@ export function Skel({
  * Она и объявляет загрузку для скринридера — один раз на экран. Сами ячейки
  * aria-hidden: сорок «изображений-заглушек» подряд — это не информация, а шум,
  * и озвучивать их вместо одного «Загрузка» хуже, чем молчать.
+ *
+ * Подпись — на языке страницы, поэтому сама рамка — клиентский островок
+ * SkelStatus: серверному компоненту язык дал бы только next/root-params, а
+ * его импорт роняет любой тест, который тронет этот файл (lib/i18n-server).
  */
 export function SkelPage({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div role="status" aria-label="Загрузка" className={className}>
-      {children}
-    </div>
-  )
+  return <SkelStatus className={className}>{children}</SkelStatus>
 }
 
 /**

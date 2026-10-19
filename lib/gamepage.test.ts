@@ -11,6 +11,7 @@ import {
   type Db,
 } from './db'
 import {
+  cardNews,
   DESCRIPTION_MAX,
   deadVerdict,
   gameDescription,
@@ -20,6 +21,7 @@ import {
   loadGamePage,
   nearGames,
   pickSimilar,
+  prosConsOn,
   PULSE_MIN_GAP,
   PULSE_MIN_RECENT,
   PULSE_SHOW_MAX_AGE_SEC,
@@ -305,6 +307,40 @@ describe('loadGamePage', () => {
     expect((await loadGamePage(730))?.prosCons?.cons).toEqual(prosCons.cons)
 
     await upsertNewsItems(db, [{ ...patch, gid: '2', publishedAt: nowSec - 5 * 86_400 }], nowSec)
+    expect((await loadGamePage(730))?.prosCons?.cons).toEqual(['Много читеров'])
+  })
+
+  /*
+   * /en читает слот en, и сверка со свежим патчем обязана работать и там:
+   * иначе тот же минус пропадал с /game/730 и оставался на /en/game/730 — в
+   * блоке, в meta description («Criticized for: …») и на карточке.
+   */
+  test('и на /en: английский минус «не обновляют» над свежим патчем не стоит', async () => {
+    const db = await withDb()
+    await addGame(db, 730)
+    const en = { pros: ['Precise gunplay'], cons: ["Developers don't update the game and abandoned its development", 'Lots of cheaters'] }
+    await setGameJson(db, 730, 'pros_cons_json', {
+      pros: ['Точная стрельба'],
+      cons: ['Разработчики не обновляют игру и забросили её развитие', 'Много читеров'],
+      source: 'claude' as const,
+      en,
+    })
+    const nowSec = Math.floor(Date.now() / 1000)
+    const patch = {
+      appid: 730,
+      title: 'Update',
+      url: 'https://store.steampowered.com/news/app/730/view/1',
+      kind: 'patch' as const,
+      scale: 'hotfix' as const,
+      blocks: [{ kind: 'p' as const, runs: [{ text: 'fixes' }] }],
+      bodyHash: 'h',
+      rank: 0,
+    }
+    await upsertNewsItems(db, [{ ...patch, gid: '1', publishedAt: nowSec - 200 * 86_400 }], nowSec)
+    expect((await loadGamePage(730, 'en'))?.prosCons?.cons).toEqual(en.cons)
+
+    await upsertNewsItems(db, [{ ...patch, gid: '2', publishedAt: nowSec - 5 * 86_400 }], nowSec)
+    expect((await loadGamePage(730, 'en'))?.prosCons?.cons).toEqual(['Lots of cheaters'])
     expect((await loadGamePage(730))?.prosCons?.cons).toEqual(['Много читеров'])
   })
 })
@@ -1488,5 +1524,361 @@ describe('studioLine', () => {
     expect((await loadGamePage(1))?.studio).toBeNull()
     await db.execute('UPDATE games SET alive = 0 WHERE appid = 13')
     expect((await loadGamePage(1))?.studio?.games).toHaveLength(STUDIO_SHOWN)
+  })
+})
+
+/** Ни одной русской буквы: английская строка не должна протекать русским словом */
+const CYRILLIC = /[А-Яа-яЁё]/
+
+describe('английская карточка', () => {
+  const dead = (over: Partial<GameMeta>) =>
+    meta(1, { name: 'Dirty Bomb', alive: false, signalsAt: NOW, categories: [1, 36], ...over })
+
+  test('вердикт мёртвой игре — по-английски, на каждую причину', () => {
+    expect(deadVerdict(dead({ deadReason: 'dead-multiplayer' }), NOW, 'en')).toBe(
+      "Hardly anyone plays this online game anymore — you probably won't find a match.",
+    )
+    expect(deadVerdict(dead({ deadReason: 'panned', categories: [2], reviewsPercent: 31, reviewsTotal: 5_000 }), NOW, 'en')).toBe(
+      "Most reviews are negative — players don't recommend it.",
+    )
+    expect(deadVerdict(dead({ deadReason: 'asset-flip', categories: [2] }), NOW, 'en')).toBe(
+      "It has almost no reviews — there's nothing to judge it by yet.",
+    )
+    expect(deadVerdict(dead({}), NOW, 'en')).toBe("We've taken it out of our picks: our data says it's not the best choice right now.")
+    // правило то же: свежие числа спорят с курацией — молчим на обоих языках
+    expect(deadVerdict(dead({ deadReason: 'dead-multiplayer', ccu: 2_400 }), NOW, 'en')).toBeNull()
+    expect(deadVerdict(meta(1), NOW, 'en')).toBeNull()
+    // без языка — русская фраза, как была
+    expect(deadVerdict(dead({ deadReason: 'dead-multiplayer' }))).toMatch(/почти не осталось людей/)
+  })
+
+  const ENGLISH =
+    'THE NEW FANTASY ACTION RPG. Rise, Tarnished, and be guided by grace to brandish the power of the Elden Ring and become an Elden Lord in the Lands Between.'
+  const RUSSIAN =
+    'Новая фэнтезийная ролевая игра. Восстань, погасший, и отправляйся в путь по Междуземью, чтобы стать повелителем Элдена.'
+  const facts = { percent: 93, total: 700_012, label: null }
+  const prosCons = {
+    pros: ['A huge open world you want to explore!'],
+    cons: ['PC performance.'],
+    source: 'claude' as const,
+  }
+
+  test('meta description — те же фразы по-английски, описание магазина — только нерусское', () => {
+    const d = gameDescription({ meta: meta(1245620, { name: 'ELDEN RING', shortDescription: ENGLISH }), facts, prosCons, verdict: null }, 'en')
+    expect(d.length).toBeLessThanOrEqual(DESCRIPTION_MAX)
+    expect(d.startsWith('ELDEN RING: 93% of 700,012 reviews are positive. Loved for: A huge open world you want to explore.')).toBe(true)
+    expect(d).toContain('Criticized for: PC performance.')
+    expect(d).not.toMatch(CYRILLIC)
+    // русское описание на английскую страницу не идёт
+    const ru = gameDescription({ meta: meta(1, { name: 'ELDEN RING', shortDescription: RUSSIAN }), facts, prosCons: null, verdict: null }, 'en')
+    expect(ru).toBe('ELDEN RING: 93% of 700,012 reviews are positive.')
+    // а английское — идёт, по слову
+    const en = gameDescription({ meta: meta(1, { name: 'ELDEN RING', shortDescription: ENGLISH }), facts: null, prosCons: null, verdict: null }, 'en')
+    expect(en.startsWith('ELDEN RING: THE NEW FANTASY ACTION RPG.')).toBe(true)
+  })
+
+  /*
+   * Описание на /en — descriptionFor (lib/gamedesc): английский слот карточки
+   * сильнее своего русского, немецкое описание английским не считается, у
+   * игры другого магазина английское живёт в наложении. Русская страница —
+   * как была: только русское описание.
+   */
+  test('описание магазина на /en — английский слот, а не нерусское вообще', () => {
+    const slot = meta(1245620, { name: 'ELDEN RING', shortDescription: RUSSIAN, shortDescriptionEn: ENGLISH })
+    const en = gameDescription({ meta: slot, facts: null, prosCons: null, verdict: null }, 'en')
+    expect(en.startsWith('ELDEN RING: THE NEW FANTASY ACTION RPG.')).toBe(true)
+    expect(en).not.toMatch(CYRILLIC)
+    expect(gameDescription({ meta: slot, facts: null, prosCons: null, verdict: null })).toBe(`ELDEN RING: ${RUSSIAN}`)
+    const GERMAN = 'Das neue Fantasy-Action-Rollenspiel. Erhebe dich, Befleckter, und lass dich von der Gnade leiten.'
+    const de = gameDescription({ meta: meta(1, { name: 'X', shortDescription: GERMAN }), facts: null, prosCons: null, verdict: null }, 'en')
+    expect(de).toBe('X — reviews, tags and patch notes at a glance.')
+    const lol = meta(-106, { name: 'League of Legends', shortDescription: 'Та самая MOBA. Бесплатно.' })
+    expect(gameDescription({ meta: lol, facts: null, prosCons: null, verdict: null }, 'en')).toBe(
+      'League of Legends: The MOBA everyone knows. Free to play.',
+    )
+    // русская страница английский слот не берёт и английского текста не ставит
+    expect(gameDescription({ meta: meta(1, { name: 'X', shortDescription: ENGLISH }), facts: null, prosCons: null, verdict: null })).toBe(
+      'X — отзывы, теги и патчноуты на русском.',
+    )
+  })
+
+  test('один отзыв — «1 review is», сказать нечего — общая фраза', () => {
+    const one = gameDescription({ meta: meta(1, { name: 'X' }), facts: { percent: 100, total: 1, label: null }, prosCons: null, verdict: null }, 'en')
+    expect(one).toBe('X: 100% of 1 review is positive.')
+    const empty = gameDescription({ meta: meta(1, { name: 'X', shortDescription: RUSSIAN }), facts: null, prosCons: null, verdict: null }, 'en')
+    expect(empty).toBe('X — reviews, tags and patch notes at a glance.')
+  })
+
+  test('вердикт идёт первым и на английском', () => {
+    const verdict = deadVerdict(dead({ deadReason: 'dead-multiplayer' }), NOW, 'en')
+    const d = gameDescription({ meta: meta(1, { name: 'Dirty Bomb' }), facts: { percent: 76, total: 90_000, label: null }, prosCons: null, verdict }, 'en')
+    expect(d).toBe("Dirty Bomb: Hardly anyone plays this online game anymore — you probably won't find a match. 76% of 90,000 reviews are positive.")
+  })
+
+  test('«Чем выделяется» — Stands out for, ключами Steam', () => {
+    expect(hookTrait(['Automation', 'Base Building'], 'en')).toEqual({
+      label: 'Stands out for',
+      value: 'Automation, Base Building',
+    })
+    // без языка — русскими подписями, как было
+    expect(hookTrait(['Automation'])).toEqual({ label: 'Чем выделяется', value: tagRu('Automation') })
+  })
+
+  test('строки фактов — все по-английски, строки «Русский» нет', () => {
+    const s: GameSemantics = {
+      v: 1,
+      axes: { challenge: 20, complexity: 50, pace: 50 },
+      session: { bucket: 'short', minutes: 20, canStopAnytime: false },
+      timeToFun: { bucket: 'fast', hours: 0.4 },
+      confidence: 0.8,
+      n: 40,
+      basis: 'tags+reviews',
+    }
+    const traits = gameTraits({ categories: [2], semantics: s, tags: { Automation: 100 }, ruLang: 3 }, ['Automation'], 'en')
+    expect(traits.map((t) => t.label)).toEqual(['Stands out for', 'Session', 'Ramp-up', 'Feel'])
+    expect(JSON.stringify(traits)).not.toMatch(CYRILLIC)
+    // по-русски строка языка на месте
+    expect(gameTraits({ categories: [2], semantics: s, tags: { Automation: 100 }, ruLang: 3 }, ['Automation']).map((t) => t.label)).toContain(
+      'Русский',
+    )
+  })
+})
+
+describe('pros/cons на языке страницы', () => {
+  const both = {
+    pros: ['красиво'],
+    cons: ['дорого'],
+    source: 'claude' as const,
+    en: { pros: ['Gorgeous'], cons: ['Pricey'] },
+  }
+
+  test('на /en — английский слот, на ru — русские пункты без слота', () => {
+    expect(prosConsOn(both, 'en')).toEqual({ pros: ['Gorgeous'], cons: ['Pricey'], source: 'claude' })
+    expect(prosConsOn(both, 'ru')).toEqual({ pros: ['красиво'], cons: ['дорого'], source: 'claude' })
+    expect(prosConsOn(both)).not.toHaveProperty('en')
+  })
+
+  test('нет английского слота — на /en блока нет, а не русский блок', () => {
+    const ru = { pros: ['красиво'], cons: ['дорого'], source: 'claude' as const }
+    expect(prosConsOn(ru, 'en')).toBeNull()
+    expect(prosConsOn({ ...ru, en: null }, 'en')).toBeNull()
+    expect(prosConsOn({ ...ru, en: { pros: [], cons: [] } }, 'en')).toBeNull()
+    // без слота русская запись отдаётся как лежит — тем же объектом
+    expect(prosConsOn(ru)).toBe(ru)
+  })
+
+  test('эвристика не отдаётся ни на одном языке', () => {
+    const heuristic = { pros: ['x'], cons: [], source: 'reviews' as const, en: { pros: ['x'], cons: [] } }
+    expect(prosConsOn(heuristic, 'en')).toBeNull()
+    expect(prosConsOn(heuristic, 'ru')).toBeNull()
+    expect(prosConsOn(null, 'en')).toBeNull()
+  })
+
+  test('loadGamePage(appid, en) читает английский слот из той же записи', async () => {
+    const db = await withDb()
+    await addGame(db, 21)
+    await setGameJson(db, 21, 'pros_cons_json', both)
+    expect((await loadGamePage(21, 'en'))?.prosCons).toEqual({ pros: ['Gorgeous'], cons: ['Pricey'], source: 'claude' })
+    expect((await loadGamePage(21))?.prosCons).toEqual({ pros: ['красиво'], cons: ['дорого'], source: 'claude' })
+    await addGame(db, 22)
+    await setGameJson(db, 22, 'pros_cons_json', { pros: ['красиво'], cons: [], source: 'claude' })
+    expect((await loadGamePage(22, 'en'))?.prosCons).toBeNull()
+  })
+})
+
+describe('пересказ патча на карточке — на языке страницы', () => {
+  const post = {
+    appid: 730,
+    gid: '1',
+    title: 'Release Notes for 9/25/2026',
+    url: 'https://store.steampowered.com/news/app/730/view/1',
+    publishedAt: NOW,
+    kind: 'patch' as const,
+    scale: 'major' as const,
+    blocks: [],
+    bodyHash: 'h',
+    rank: 50,
+    tldr: 'Поправили баланс AWP.',
+  }
+
+  test('на /en — английский пересказ в том же поле tldr', () => {
+    expect(cardNews({ ...post, tldrEn: 'AWP rebalanced.' } as typeof post, 'en').tldr).toBe('AWP rebalanced.')
+  })
+
+  test('нет английского — пересказа нет вовсе, а не русский', () => {
+    const out = cardNews(post, 'en')
+    expect(out).not.toHaveProperty('tldr')
+    expect(cardNews({ ...post, tldrEn: null } as typeof post, 'en')).not.toHaveProperty('tldr')
+    // по-русски — как было
+    expect(cardNews(post).tldr).toBe('Поправили баланс AWP.')
+    expect(cardNews(post)).toEqual(cardNews(post, 'ru'))
+    expect(cardNews(post).rank).toBe(1)
+  })
+
+  test('заголовок на /en — titleEn, иначе английский заголовок, иначе «{Game} update»', () => {
+    const ruPost = { ...post, title: 'Обновление 1.5: новая карта', tldrEn: 'Adds a new map.' }
+    expect(cardNews({ ...ruPost, titleEn: 'Update 1.5: a new map' }, 'en', 'Counter-Strike 2')).toMatchObject({
+      title: 'Update 1.5: a new map',
+      tldr: 'Adds a new map.',
+    })
+    // общий заголовок — с номером версии из заголовка издателя (patchToken)
+    const generic = cardNews(ruPost, 'en', 'Counter-Strike 2')
+    expect(generic.title).toBe('Counter-Strike 2 update 1.5')
+    expect(cardNews({ ...ruPost, title: 'Обновление: новая карта' }, 'en', 'Counter-Strike 2').title).toBe(
+      'Counter-Strike 2 update',
+    )
+    expect(JSON.stringify(generic)).not.toMatch(CYRILLIC)
+    // английский заголовок издателя — как есть
+    expect(cardNews(post, 'en', 'Counter-Strike 2').title).toBe('Release Notes for 9/25/2026')
+    // по-русски — заголовок издателя, перевод не читается
+    expect(cardNews({ ...ruPost, titleEn: 'Update 1.5: a new map' }, 'ru', 'Counter-Strike 2').title).toBe(
+      'Обновление 1.5: новая карта',
+    )
+    expect(cardNews({ ...ruPost, titleEn: 'Update 1.5: a new map' }).title).toBe('Обновление 1.5: новая карта')
+  })
+})
+
+/*
+ * Правки цикла 3 на английской карточке: пульс отзывов, «разгромленная, но за
+ * месяц хвалят», пара плюсов в сниппете, матч только против людей, отсев
+ * ленты патчей и проверка пунктов модели при чтении — те же правила, только
+ * английскими строками.
+ */
+describe('английская карточка: пульс, пара плюсов, лента и матч', () => {
+  // 3 октября 2023 UTC — дата замера в подписи
+  const AT = Date.UTC(2023, 9, 3, 12) / 1000
+  const ring = { percent: 97, total: 309_180, label: 'Overwhelmingly Positive' }
+
+  test('пульс за месяц — по-английски, строки «На русском» на /en нет', () => {
+    const m = meta(1, {
+      reviewsRecentTotal: 7948,
+      reviewsRecentPercent: 71,
+      reviewsRecentAt: AT,
+      reviewsRuTotal: 16_893,
+      reviewsRuPercent: 96,
+    })
+    expect(reviewPulse(m, ring, AT + 86_400, 'en')).toEqual([
+      { label: '30 days through October 3', value: '71% of 7,948 reviews are positive — lower than overall' },
+    ])
+    expect(reviewPulse({ ...m, reviewsRecentPercent: 95 }, { ...ring, percent: 80 }, AT, 'en')[0].value).toMatch(
+      /— higher than overall$/,
+    )
+    expect(JSON.stringify(reviewPulse(m, ring, AT, 'en'))).not.toMatch(CYRILLIC)
+    expect(reviewPulse(meta(1, { reviewsRuTotal: 16_893, reviewsRuPercent: 96 }), ring, AT, 'en')).toEqual([])
+    // без языка — как было, обе строки по-русски
+    expect(reviewPulse(m, ring, AT + 86_400)).toEqual([
+      { label: 'За 30 дней до 3 октября', value: '71% положительных из 7 948 отзывов — ниже, чем за всё время' },
+      { label: 'На русском', value: '96% положительных из 16 893 отзывов' },
+    ])
+  })
+
+  test('разгромленная, но за месяц её хвалят — молчим и на английском', () => {
+    const panned = meta(1, {
+      name: 'X',
+      alive: false,
+      signalsAt: NOW,
+      deadReason: 'panned',
+      categories: [2],
+      reviewsPercent: 31,
+      reviewsTotal: 5_000,
+      reviewsRecentTotal: 120,
+      reviewsRecentPercent: 82,
+      reviewsRecentAt: NOW - 86_400,
+    })
+    expect(deadVerdict(panned, NOW, 'en')).toBeNull()
+    expect(deadVerdict(panned, undefined, 'en')).toBe("Most reviews are negative — players don't recommend it.")
+  })
+
+  describe('«Loved for» и «Criticized for» — пара и по-английски', () => {
+    const name = 'DARK SOULS™ II: Scholar of the First Sin'
+    const facts = { percent: 84, total: 132_477, label: null }
+    const head = `${name}: 84% of 132,477 reviews are positive.`
+    const LONG_PRO = 'A huge amount of content and ways to play through it for every taste out there'
+    const PRO = 'Deep stat system and character builds'
+    const CON = 'Enemies love ambushes and group fights'
+
+    test('первый плюс не влез — берётся следующий, а не одна жалоба', () => {
+      const d = gameDescription(
+        { meta: meta(335300, { name }), facts, prosCons: { pros: [LONG_PRO, PRO], cons: [CON], source: 'claude' }, verdict: null },
+        'en',
+      )
+      expect(d).toBe(`${head} Loved for: ${PRO}.`)
+    })
+
+    test('ни один плюс не влез — жалоба без плюса в сниппет не идёт', () => {
+      const d = gameDescription(
+        { meta: meta(335300, { name }), facts, prosCons: { pros: [LONG_PRO], cons: [CON], source: 'claude' }, verdict: null },
+        'en',
+      )
+      expect(d).toBe(head)
+    })
+
+    test('плюсов нет вовсе — жалоба встаёт одна', () => {
+      const d = gameDescription(
+        {
+          meta: meta(1, { name: 'X' }),
+          facts: { percent: 25, total: 900, label: null },
+          prosCons: { pros: [], cons: [CON], source: 'claude' },
+          verdict: null,
+        },
+        'en',
+      )
+      expect(d).toBe(`X: 25% of 900 reviews are positive. Criticized for: ${CON}.`)
+    })
+  })
+
+  test('матч — только против людей, и по-английски', () => {
+    const s = semantics({ minutes: 35 })
+    // Dota 2: PvP-категории нет, матч выдают теги
+    expect(
+      sessionTrait({ categories: [1, 9], tags: { 'Free to Play': 3010, MOBA: 1019, eSports: 598 }, semantics: s }, 'en'),
+    ).toEqual({ label: 'Match', value: '~35 min' })
+    // кооп-кампания на двоих — заход, а не матч
+    expect(
+      sessionTrait({ categories: [1, 9, 38, 39, 24], tags: { 'Co-op': 1486, 'Story Rich': 468 }, semantics: s }, 'en'),
+    ).toEqual({ label: 'Session', value: '~40 min' })
+  })
+
+  test('лента патчей на /en — тот же отсев, заголовок «{Game} update»', async () => {
+    const db = await withDb()
+    await addGame(db, 13)
+    const post = (gid: string, title: string, publishedAt: number) => ({
+      appid: 13,
+      gid,
+      title,
+      url: `https://store.steampowered.com/news/app/13/view/${gid}`,
+      publishedAt,
+      kind: 'patch' as const,
+      scale: 'major' as const,
+      blocks: [{ kind: 'p' as const, runs: [{ text: 'Исправлен вылет при загрузке.' }] }],
+      bodyHash: `h${gid}`,
+      rank: 5000,
+    })
+    await upsertNewsItems(
+      db,
+      [post('1', 'Патч 2.31', NOW - 200), post('2', 'Marathon: дорожная карта обновлений на 2026 год', NOW - 100)],
+      NOW,
+    )
+    const page = await loadGamePage(13, 'en')
+    expect(page?.news.map((n) => n.gid)).toEqual(['1'])
+    // «Патч 2.31» — номер версии общий заголовок сохраняет
+    expect(page?.news[0].title).toBe('Игра 13 update 2.31')
+    expect(page?.newsMore).toBe(false)
+  })
+
+  test('битые пункты английского слота на страницу не идут', async () => {
+    const db = await withDb()
+    await addGame(db, 51)
+    await setGameJson(db, 51, 'pros_cons_json', {
+      pros: ['Атмосферные уровни'],
+      cons: ['Короткая кампания'],
+      source: 'claude',
+      en: { pros: ["Fair difficulty, well tuned'],", 'Atmospheric levels'], cons: ['Short campaign'] },
+    })
+    expect((await loadGamePage(51, 'en'))?.prosCons).toEqual({
+      pros: ['Atmospheric levels'],
+      cons: ['Short campaign'],
+      source: 'claude',
+    })
   })
 })

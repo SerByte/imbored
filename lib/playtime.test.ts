@@ -62,7 +62,7 @@ describe('playtimeHidden', () => {
 })
 
 /**
- * Строка «Похоже, Steam скрывает твоё время…» берёт шаг из PrivacyHelp, а не
+ * Строка «Похоже, Steam скрывает твоё время…» берёт шаг из PrivacyHelpView, а не
  * пишет свою копию: название галочки — слово из чужого интерфейса, и если
  * Steam его поменяет, правка должна быть одна.
  */
@@ -87,22 +87,24 @@ describe('строка о скрытом времени', () => {
     const hits = files.flatMap((f) =>
       code(f).includes('Всегда скрывать общее время игры') ? [f] : [],
     )
-    expect(hits).toEqual(['components/PrivacyHelp.tsx'])
+    // Шаг живёт в универсальной PrivacyHelpView: клиентская PrivacyHelp —
+    // только обёртка с языком из контекста, своих слов у неё нет
+    expect(hits).toEqual(['components/PrivacyHelpView.tsx'])
   })
 
   test('/play и /library показывают строку при скрытом времени', () => {
-    expect(code('app/play/page.tsx')).toMatch(/timeHidden && \(\s*<div[^>]*>\s*<PlaytimeHiddenNote/)
-    expect(code('app/library/page.tsx')).toMatch(/timeHidden && <PlaytimeHiddenNote/)
+    expect(code('app/[lang]/play/page.tsx')).toMatch(/timeHidden && \(\s*<div[^>]*>\s*<PlaytimeHiddenNote/)
+    expect(code('app/[lang]/library/page.tsx')).toMatch(/timeHidden && <PlaytimeHiddenNote/)
   })
 
   // Пилюля квиза и строка ожидания рисуются раньше ответа сервера: признак им
   // приносит устройство. Пишут его выдача и прогрев, гасит выход
   test('признак на устройстве: пишет /play, читают квиз и строка ожидания, гасит выход', () => {
-    const play = code('app/play/page.tsx')
+    const play = code('app/[lang]/play/page.tsx')
     expect(play).toContain('timeHiddenStore.set(deal.playtimeHidden ? true : null)')
     expect(play).toContain('timeHiddenStore.set(p.library.timeHidden ? true : null)')
-    expect(play).toMatch(/timeHiddenStore\.fresh\(\)\s*\?\s*'Ищу в твоей библиотеке…'/)
-    expect(code('app/quiz/page.tsx')).toMatch(/timeHidden \? 'Из своей библиотеки' : 'Ни разу не запускал'/)
+    expect(play).toMatch(/timeHiddenStore\.fresh\(\)\s*\?\s*tr\(locale, \{ ru: 'Ищу в твоей библиотеке…'/)
+    expect(code('app/[lang]/quiz/page.tsx')).toMatch(/timeHidden \? 'Из своей библиотеки' : 'Ни разу не запускал'/)
     expect(code('components/SignOut.tsx')).toContain('timeHiddenStore.set(null)')
   })
 })
@@ -136,13 +138,15 @@ describe('playedShort', () => {
    */
   test('портрет, /compat и плитки /library подписывают часы через неё, а не «{hours} ч»', () => {
     const ROOT = path.join(__dirname, '..')
-    const portrait = fs.readFileSync(path.join(ROOT, 'app/portrait/[steamid]/page.tsx'), 'utf8')
-    const compat = fs.readFileSync(path.join(ROOT, 'app/compat/[steamid]/page.tsx'), 'utf8')
-    const library = fs.readFileSync(path.join(ROOT, 'app/library/page.tsx'), 'utf8')
-    expect(portrait).toContain('{playedShort(g.minutes)}')
+    const portrait = fs.readFileSync(path.join(ROOT, 'app/[lang]/portrait/[steamid]/page.tsx'), 'utf8')
+    const compat = fs.readFileSync(path.join(ROOT, 'app/[lang]/compat/[steamid]/page.tsx'), 'utf8')
+    const library = fs.readFileSync(path.join(ROOT, 'app/[lang]/library/page.tsx'), 'utf8')
+    // Вторым аргументом страница передаёт свой язык (playedShort(minutes, locale)) —
+    // сторож про то, ЧЕМ подписаны часы, а не про то, на каком языке
+    expect(portrait).toMatch(/\{playedShort\(g\.minutes(?:,\s*\w+)?\)\}/)
     expect(portrait).not.toMatch(/g\.hours\.toLocaleString\('ru-RU'\)\} ч/)
-    expect(compat).toMatch(/playedShort\(m\)/)
-    expect(library).toContain('{playedShort(g.playtimeForever)}')
+    expect(compat).toMatch(/playedShort\(m(?:,\s*\w+)?\)/)
+    expect(library).toMatch(/\{playedShort\(g\.playtimeForever(?:,\s*\w+)?\)\}/)
     expect(library).not.toMatch(/`\$\{hours\} ч`/)
     expect(library).not.toMatch(/\} мин`/)
   })
@@ -198,5 +202,43 @@ describe('timeHiddenStore', () => {
     timeHiddenStore.set(null)
     expect(data).toEqual({})
     expect(timeHiddenStore.fresh()).toBeNull()
+  })
+})
+
+/** Английская версия: те же пороги, сокращения из глоссария, разряды по-английски */
+describe('playedShort и playedWords по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('playedShort: «min» и «h», тысячи через запятую', () => {
+    expect(playedShort(20, 'en')).toBe('20 min')
+    expect(playedShort(29, 'en')).toBe('29 min')
+    expect(playedShort(30, 'en')).toBe('1 h')
+    expect(playedShort(6000, 'en')).toBe('100 h')
+    expect(playedShort(1234 * 60, 'en')).toBe('1,234 h')
+    expect(playedShort(0, 'en')).toBe('0 h')
+  })
+
+  test('playedWords: одна минута и один час — в единственном, ноль — во множественном', () => {
+    expect(playedWords(1, 'en')).toBe('1 minute')
+    expect(playedWords(25, 'en')).toBe('25 minutes')
+    expect(playedWords(30, 'en')).toBe('1 hour')
+    expect(playedWords(3 * 60, 'en')).toBe('3 hours')
+    expect(playedWords(1235 * 60, 'en')).toBe('1,235 hours')
+    expect(playedWords(0, 'en')).toBe('0 hours')
+  })
+
+  test('ни одной русской буквы и не шире русской подписи в колонке', () => {
+    for (const m of [0, 1, 20, 29, 30, 90, 6000, 1234 * 60, 99_999 * 60]) {
+      expect(playedShort(m, 'en'), String(m)).not.toMatch(CYRILLIC)
+      expect(playedWords(m, 'en'), String(m)).not.toMatch(CYRILLIC)
+      expect(playedShort(m, 'en').length, String(m)).toBeLessThanOrEqual(playedShort(m).length)
+    }
+  })
+
+  test('явный ru — та же строка, что без языка', () => {
+    for (const m of [0, 1, 25, 30, 1234 * 60]) {
+      expect(playedShort(m, 'ru')).toBe(playedShort(m))
+      expect(playedWords(m, 'ru')).toBe(playedWords(m))
+    }
   })
 })

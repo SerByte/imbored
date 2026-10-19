@@ -1,4 +1,5 @@
 import { editionKey } from './editions'
+import { tr, type Locale } from './i18n'
 import {
   buildTagProfile,
   isMultiplayerMeta,
@@ -38,7 +39,7 @@ export type GroupCard = {
   tags: string[]
   store?: string
   storeUrl?: string
-  /** Подпись под названием — только у закреплённой первой карты (PINNED_REASON) */
+  /** Подпись под названием — только у закреплённой первой карты (pinnedReason) */
   reason?: string
 }
 
@@ -49,8 +50,25 @@ export type GroupCard = {
  * Серёга» соврало бы, когда Серёга уже ушёл. Вторая фраза — чтобы карта не
  * читалась решением, принятым за всех: это предложение, и «не хочу» по нему
  * ведёт в обычную колоду, а не в тупик.
+ *
+ * По-английски «не хочу» — это кнопка «Pass» (глоссарий колоды пати), и
+ * подпись говорит её словом. Строка стоит в две строки карточки
+ * (line-clamp-2 в SwipeDeck), и английская в них укладывается.
+ *
+ * И без «you»: карту видит и хост, который комнату из этой игры и собрал, —
+ * «the one you were invited to» ему соврало бы, его никто не звал. Русское
+ * «звали» безлично и годится обоим; английская говорит о самой пати
+ * («Party ABC123» в шапке комнаты), а не о том, кто кого позвал.
  */
-export const PINNED_REASON = 'В неё и звали. Не хочется — дальше обычная колода'
+export function pinnedReason(locale: Locale = 'ru'): string {
+  return tr(locale, {
+    ru: 'В неё и звали. Не хочется — дальше обычная колода',
+    en: 'The game this party is for. Pass, and the usual deck is next',
+  })
+}
+
+/** Русская подпись — для тех, кто сверял её константой до перевода */
+export const PINNED_REASON = pinnedReason('ru')
 
 /**
  * Колода для свайп-матча пати: сначала общие мультиплеерные игры,
@@ -86,6 +104,10 @@ export const PINNED_REASON = 'В неё и звали. Не хочется — �
  * библиотеке, ни в пуле. Нет меты — нет и карты, колода прежняя. limit
  * считает и её, и колода на больший limit по-прежнему продолжает меньшую:
  * первая карта первая в каждом раунде.
+ *
+ * locale — язык подписи закреплённой карты (pinnedReason), и только её:
+ * состав и порядок колоды от языка не зависят — участники одной комнаты
+ * голосуют за одни и те же карты, на каком бы языке ни смотрели.
  */
 export function buildGroupDeck(args: {
   members: GroupMember[]
@@ -96,6 +118,7 @@ export function buildGroupDeck(args: {
   tagWeight?: TagWeight | null
   mood?: Mood | null
   pinned?: number | null
+  locale?: Locale
 }): GroupCard[] {
   const {
     members,
@@ -106,6 +129,7 @@ export function buildGroupDeck(args: {
     tagWeight = null,
     mood = null,
     pinned = null,
+    locale = 'ru',
   } = args
   if (!members.length) return []
 
@@ -215,5 +239,5 @@ export function buildGroupDeck(args: {
   }
 
   cards.sort((a, b) => Number(b.ownedByAll) - Number(a.ownedByAll) || b.score - a.score)
-  return (lead ? [{ ...lead, reason: PINNED_REASON }, ...cards] : cards).slice(0, limit)
+  return (lead ? [{ ...lead, reason: pinnedReason(locale) }, ...cards] : cards).slice(0, limit)
 }

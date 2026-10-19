@@ -1,8 +1,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
-import { PrivacyHelp } from '../components/PrivacyHelp'
+import { LocaleProvider } from '../components/LocaleProvider'
+import { PlaytimeHiddenNote, PrivacyHelp } from '../components/PrivacyHelp'
+import * as View from '../components/PrivacyHelpView'
+import { LOCALES, type Locale } from './i18n'
 
 /**
  * «Я открыл — проверить» в панели скрытой библиотеки.
@@ -20,9 +24,17 @@ const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 const code = (src: string) =>
   src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 
-// Вызовом, а не createElement: хуков у панели нет, а у createElement с
-// пропсами, где всё необязательно, TS не находит перегрузки
+// Вызовом, а не createElement: у самой PrivacyHelp хуков нет (язык читает
+// панель под ней), а у createElement с пропсами, где всё необязательно, TS не
+// находит перегрузки
 const html = (props: Parameters<typeof PrivacyHelp>[0] = {}) => renderToStaticMarkup(PrivacyHelp(props))
+/** То же на /en: язык — из контекста страницы, как его ставит корневой layout */
+const htmlEn = (props: Parameters<typeof PrivacyHelp>[0] = {}) =>
+  renderToStaticMarkup(createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, PrivacyHelp(props))).replace(
+    /&#x27;/g,
+    "'",
+  )
+const CYRILLIC = /[А-Яа-яЁё]/
 
 describe('панель скрытой библиотеки', () => {
   test('без действия — прежний последний шаг и никакой кнопки', () => {
@@ -64,6 +76,85 @@ describe('панель скрытой библиотеки', () => {
   })
 })
 
+/*
+ * Шаги описывают чужой интерфейс, поэтому по-английски — подписи английского
+ * клиента Steam дословно: человек ищет глазами ровно эти слова. И шаг
+ * по-прежнему называет кнопку её настоящим именем.
+ */
+describe('панель скрытой библиотеки по-английски', () => {
+  test('шаги — словами английского Steam, кнопка — тем же именем, что в шаге', () => {
+    const out = htmlEn({ retryHref: '/api/auth/steam?next=%2Flibrary&lang=en' })
+    expect(out).toContain('“Game details” → <span class="text-ink">Public</span>')
+    expect(out).toContain('Uncheck “Always keep my total playtime private even if users can see my game details”')
+    expect(out).toContain('Come back here and press “Done — check again”')
+    expect(out).toMatch(/<a href="\/api\/auth\/steam\?next=%2Flibrary&amp;lang=en"[^>]*>Done — check again<\/a>/)
+    expect(out).not.toMatch(CYRILLIC)
+  })
+
+  test('без действия, повтор ссылки и проверка — без русских слов', () => {
+    expect(htmlEn()).toContain('Come back here and try again')
+    expect(htmlEn({ onRetry: () => {}, retrying: true })).toMatch(/<button type="button"[^>]*>Checking…<\/button>/)
+    for (const props of [{}, { onRetry: () => {} }, { onRetry: () => {}, retrying: true }]) {
+      expect(htmlEn(props)).not.toMatch(CYRILLIC)
+    }
+  })
+
+  test('строка о скрытом времени — тот же шаг и ссылка на подключение на /en', () => {
+    const out = renderToStaticMarkup(createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, createElement(PlaytimeHiddenNote)))
+    expect(out).toContain('Looks like Steam is hiding your playtime')
+    expect(out).toContain('Uncheck “Always keep my total playtime private even if users can see my game details”')
+    expect(out).toMatch(/<a [^>]*href="\/en\?reconnect=1"[^>]*>reconnect your library<\/a>/)
+    expect(out).not.toMatch(CYRILLIC)
+  })
+})
+
+/*
+ * Серверная /library рисует панель и строку о скрытом времени из
+ * components/PrivacyHelpView с языком страницы пропом — так они снова
+ * рендерятся на сервере и не едут в её клиентский бандл. Клиентские экраны
+ * зовут обёртку components/PrivacyHelp с языком из контекста. Разметка у них
+ * обязана быть одной: иначе один и тот же отказ Steam читался бы на /library
+ * и на /play по-разному, а русская страница перестала бы быть прежней.
+ */
+describe('панель: серверная View с языком пропом = клиентская обёртка в контексте', () => {
+  const inContext = (locale: Locale, el: ReturnType<typeof createElement>) =>
+    renderToStaticMarkup(createElement(LocaleProvider, { locale } as ComponentProps<typeof LocaleProvider>, el))
+
+  test.each(LOCALES)('%s: без действия, вход через Steam, повтор поля и проверка', (locale) => {
+    const variants: Array<Parameters<typeof PrivacyHelp>[0]> = [
+      {},
+      { retryHref: '/api/auth/steam?next=%2Flibrary' },
+      { onRetry: () => {} },
+      { onRetry: () => {}, retrying: true },
+    ]
+    for (const props of variants) {
+      // View — без провайдера: язык ей приходит только пропом
+      const server = renderToStaticMarkup(View.PrivacyHelp({ ...props, locale }))
+      expect(server, JSON.stringify(props)).toBe(inContext(locale, PrivacyHelp(props)))
+    }
+    expect(renderToStaticMarkup(View.PrivacyHelp({ locale }))).toContain(
+      locale === 'en' ? 'Steam is hiding your library' : 'Библиотека скрыта настройками Steam',
+    )
+  })
+
+  /*
+   * Ссылку «подключи заново» в строке рисует Link: префикс языка он ставит
+   * сам, по контексту страницы. Поэтому и серверная View здесь — в том же
+   * контексте, как на настоящей странице под корневым layout; текст и шаг она
+   * берут из пропа.
+   */
+  test.each(LOCALES)('%s: строка о скрытом времени', (locale) => {
+    for (const props of [{}, { className: 'mb-10 max-w-2xl' }]) {
+      expect(inContext(locale, createElement(View.PlaytimeHiddenNote, { ...props, locale }))).toBe(
+        inContext(locale, createElement(PlaytimeHiddenNote, props)),
+      )
+    }
+    expect(inContext(locale, createElement(View.PlaytimeHiddenNote, { locale }))).toContain(
+      locale === 'en' ? 'Looks like Steam is hiding your playtime' : 'Похоже, Steam скрывает твоё время в играх',
+    )
+  })
+})
+
 describe('каждое место панели даёт ей проверку', () => {
   /** Открывающие теги <PrivacyHelp …> по всему коду продукта */
   function tags(): Array<{ file: string; tag: string }> {
@@ -87,10 +178,10 @@ describe('каждое место панели даёт ей проверку', 
 
   test('обход находит все пять мест', () => {
     expect(tags().map((t) => t.file).sort()).toEqual([
-      'app/daily/page.tsx',
-      'app/explore/page.tsx',
-      'app/library/page.tsx',
-      'app/play/page.tsx',
+      'app/[lang]/daily/page.tsx',
+      'app/[lang]/explore/page.tsx',
+      'app/[lang]/library/page.tsx',
+      'app/[lang]/play/page.tsx',
       'components/landing/ConnectCard.tsx',
     ])
   })
@@ -107,10 +198,10 @@ describe('каждое место панели даёт ей проверку', 
    * навязывается — у неё своя дверь «Подключить заново».
    */
   test.each([
-    ['app/play/page.tsx', 'readOnly ? undefined : steamLoginFor(`/play?${search}`)'],
-    ['app/daily/page.tsx', "readOnly ? undefined : steamLoginFor('/daily')"],
-    ['app/explore/page.tsx', "readOnly ? undefined : steamLoginFor('/explore')"],
-    ['app/library/page.tsx', "session && isWriter(session) ? steamLoginFor('/library') : undefined"],
+    ['app/[lang]/play/page.tsx', 'readOnly ? undefined : steamLoginFor(lp(locale, `/play?${search}`))'],
+    ['app/[lang]/daily/page.tsx', "readOnly ? undefined : steamLoginFor(lp(locale, '/daily'))"],
+    ['app/[lang]/explore/page.tsx', "readOnly ? undefined : steamLoginFor(lp(locale, '/explore'))"],
+    ['app/[lang]/library/page.tsx', "session && isWriter(session) ? steamLoginFor(lp(locale, '/library')) : undefined"],
   ])('%s: проверка — вход через Steam обратно сюда', (file, expr) => {
     const tag = tags().find((t) => t.file === file)?.tag ?? ''
     expect(tag).toContain(`retryHref={${expr}}`)
@@ -135,8 +226,9 @@ describe('каждое место панели даёт ей проверку', 
     expect(card, 'повтор нажатия во время проверки не шлёт второй запрос').toMatch(
       /function recheckProfile\(\) \{\s*if \(!input \|\| busy !== null\) return/,
     )
+    // язык входа добавляет withLang поверх того же адреса
     expect(card, 'steamHref везёт join, compat и next').toMatch(
-      /const steamHref = joinTarget\s*\?\s*`\/api\/auth\/steam\?join=/,
+      /const steamHref = withLang\(\s*joinTarget\s*\?\s*`\/api\/auth\/steam\?join=/,
     )
   })
 })

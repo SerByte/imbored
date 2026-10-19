@@ -1,19 +1,20 @@
 'use client'
 
 import { m, useReducedMotion, useScroll, useTransform } from 'framer-motion'
-import Link from 'next/link'
+import Link from '@/components/Link'
 import { useRef } from 'react'
 import { BlurBand } from '@/components/BlurBand'
 import { CountNumber } from '@/components/CountNumber'
 import { GameArt } from '@/components/GameArt'
+import { useLocale } from '@/components/LocaleProvider'
 import { SplitHeading } from '@/components/SplitHeading'
 import type { FeedItem } from '@/lib/db'
 import { dateLabel } from '@/lib/freshness'
 import type { FeedMeta } from '@/lib/whatsnewfeed'
 import { byline } from '@/lib/byline'
+import { pl, tr } from '@/lib/i18n'
 import { newsPath } from '@/lib/newspage'
-import { plural } from '@/lib/plural'
-import { textLang } from '@/lib/textlang'
+import { textLangOn } from '@/lib/textlang'
 import { freshness } from './format'
 import { useNow } from './Now'
 import { Eyebrow, MetaLine } from '@/components/Labels'
@@ -34,6 +35,10 @@ import { Icon } from '@/components/Icon'
  * Слои строго порядком разметки, без z-index: арт → скрим → BlurBand → зерно →
  * контент. Это правило проекта, и нарушать его нельзя — с z-index полоса
  * размытия поднимается над текстом и мылит заголовок.
+ *
+ * item.title, item.tldr и label приходят уже на языке страницы — их собирает
+ * сервер (app/[lang]/whatsnew/page.tsx, rowOn): на /en заголовок патча —
+ * newsTitleOn, пересказ — только английский.
  */
 export function Cover({
   item,
@@ -47,10 +52,11 @@ export function Cover({
   nowSec: number
   /** правок в патче; считается на сервере — тело сюда больше не едет */
   changes: number
-  /** «в популярных играх» — какую из лент читает человек; без вкладок не нужна */
+  /** «в популярных играх» — какую из лент читает человек, на языке страницы; без вкладок не нужна */
   label?: string
 }) {
   const ref = useRef<HTMLElement>(null)
+  const locale = useLocale()
   const reduced = useReducedMotion()
   const now = useNow(nowSec)
 
@@ -76,7 +82,7 @@ export function Cover({
   const textY = useTransform(scrollYProgress, [0, 1], ['0%', '32%'])
   const textFade = useTransform(scrollYProgress, [0, 0.75], [1, 0])
 
-  const name = meta?.name ?? `Игра ${item.appid}`
+  const name = meta?.name ?? tr(locale, { ru: `Игра ${item.appid}`, en: `Game ${item.appid}` })
 
   const studio = byline(meta?.developer, meta?.releaseYear)
   const published = new Date(item.publishedAt * 1000)
@@ -149,7 +155,7 @@ export function Cover({
                 и после перехода это единственное указание, куда ты попал. */}
             <Eyebrow as="h1" tone="dim" className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1">
               <span aria-hidden className="h-px w-10 bg-rule" />
-              Что нового
+              {tr(locale, { ru: 'Что нового', en: "What's new" })}
               {/* Метка ленты — вторая ступень того же надзаголовка: трекинг
                   уже, чтобы она читалась приложением к нему, а не вторым равным. */}
               {/* Точка — своим флекс-элементом: внутри метки слева от неё
@@ -166,7 +172,7 @@ export function Cover({
             </Eyebrow>
 
             <MetaLine as="p" className="mb-4">
-              {freshness(item.publishedAt, now)}
+              {freshness(item.publishedAt, now, locale)}
               {studio ? <span className="text-ink/50"> · {studio}</span> : null}
             </MetaLine>
 
@@ -179,9 +185,10 @@ export function Cover({
             </SplitHeading>
 
             {/* Заголовок патча — текст издателя, обычно английский: lang
-                по большинству букв, как у строк ленты (lib/textlang) */}
+                по большинству букв, как у строк ленты (lib/textlang); на /en
+                чужой — русский */}
             <p
-              lang={textLang(item.title, name)}
+              lang={textLangOn(locale, item.title, name)}
               className="mt-5 max-w-xl text-lg font-medium leading-snug text-ink/90 md:text-xl"
             >
               {item.title}
@@ -195,7 +202,7 @@ export function Cover({
               <dl className="mt-8 flex flex-wrap gap-x-10 gap-y-4">
                 {meta?.ccu ? (
                   <div className="flex flex-col-reverse">
-                    <dt className="lib-stat-label">играют прямо сейчас</dt>
+                    <dt className="lib-stat-label">{tr(locale, { ru: 'играют прямо сейчас', en: 'playing right now' })}</dt>
                     <dd className="lib-stat">
                       <CountNumber value={meta.ccu} delay={320} />
                     </dd>
@@ -204,7 +211,10 @@ export function Cover({
                 {changes > 0 ? (
                   <div className="flex flex-col-reverse">
                     <dt className="lib-stat-label">
-                      {plural(changes, 'правка', 'правки', 'правок')} в патче
+                      {pl(locale, changes, {
+                        ru: ['правка в патче', 'правки в патче', 'правок в патче'],
+                        en: ['change in this patch', 'changes in this patch'],
+                      })}
                     </dt>
                     <dd className="lib-stat">
                       <CountNumber value={changes} delay={420} />
@@ -219,10 +229,13 @@ export function Cover({
                   раскрытием: обложка не повторяется в ленте. Прочитать его
                   целиком можно только на его собственной странице. */}
               <Link href={newsPath(item.appid, item.gid)} className="btn-ember px-6 py-3">
-                Читать патч
+                {tr(locale, { ru: 'Читать патч', en: 'Read the patch' })}
               </Link>
+              {/* Английская подпись короче «What else changed»: на 360 px та
+                  не вставала в ряд с кнопкой и уходила второй строкой, а
+                  русская стоит в одну */}
               <Link href={`/game/${item.appid}`} className="tap link-more">
-                Что ещё меняли
+                {tr(locale, { ru: 'Что ещё меняли', en: 'More patches' })}
                 <Icon name="arrow" size={16} />
               </Link>
             </div>
@@ -258,7 +271,7 @@ export function Cover({
               />
               <MetaLine as="figcaption" className="mt-2">
                 {/* Зона зафиксирована в dateLabel — см. lib/freshness. */}
-                <time dateTime={published.toISOString()}>{dateLabel(item.publishedAt)}</time>
+                <time dateTime={published.toISOString()}>{dateLabel(item.publishedAt, { locale })}</time>
               </MetaLine>
             </m.figure>
           ) : null}

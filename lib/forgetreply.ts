@@ -1,8 +1,11 @@
+import { tr, type Locale } from './i18n'
+
 /**
  * Ответы /api/forget — как их читает «Удалить всё обо мне»
  * (components/ForgetMe).
  *
- * Отдельным модулем без импортов, как lib/signoutreply: компонент тестом не
+ * Отдельным модулем без импортов, кроме чистого lib/i18n (его компонент и
+ * так везёт через useLocaleRouter), как lib/signoutreply: компонент тестом не
  * нажать, а от разбора здесь зависит, уйдёт ли человек с экрана со словами
  * «всё удалено». Уходить так можно только по ответу самого роута — { ok:
  * true }. Обрыв, чужая страница ошибки, пятисотка платформы — не «удалено»,
@@ -88,23 +91,49 @@ export async function forgetReply(res: Response): Promise<ForgetOutcome> {
  * оговоркой, а не «всё удалено». Уходить со словами «всё удалено» можно только
  * по { ok: true } (шапка), а «входа нет» бывает и после «Выйти на всех
  * устройствах», нажатого в другом месте.
+ *
+ * locale — язык экрана. По-английски оговорки те же: «looks like», а не
+ * «done», и обе причины пропавшего входа.
  */
 export function forgetMissLine(
   miss: Exclude<ForgetMiss, 'needsteam'> | 'unknown',
   step: 'ask' | 'erase',
   lost: boolean,
+  locale: Locale = 'ru',
 ): string {
-  if (miss === 'ratelimited') return 'Слишком много попыток с этого адреса — попробуй через час.'
+  if (miss === 'ratelimited') {
+    return tr(locale, {
+      ru: 'Слишком много попыток с этого адреса — попробуй через час.',
+      en: 'Too many tries from this address — try again in an hour.',
+    })
+  }
   if (miss === 'gone') {
     if (lost) {
-      return 'Похоже, удаление уже прошло: ответ на прошлое нажатие не дошёл, а вход больше не действует. Обнови страницу.'
+      return tr(locale, {
+        ru: 'Похоже, удаление уже прошло: ответ на прошлое нажатие не дошёл, а вход больше не действует. Обнови страницу.',
+        en: "Looks like the deletion already went through: the response to your last attempt never arrived, and you're no longer signed in. Reload the page.",
+      })
     }
     return step === 'erase'
-      ? 'Вход уже не действует: удаление уже прошло или ты вышел на всех устройствах. Обнови страницу.'
-      : 'Вход уже не действует — обнови страницу.'
+      ? tr(locale, {
+          ru: 'Вход уже не действует: удаление уже прошло или ты вышел на всех устройствах. Обнови страницу.',
+          en: "You're no longer signed in: either the deletion already went through or you signed out everywhere. Reload the page.",
+        })
+      : tr(locale, {
+          ru: 'Вход уже не действует — обнови страницу.',
+          en: "You're no longer signed in — reload the page.",
+        })
   }
-  if (miss === 'unknown') return 'Не удалось узнать, прошло ли удаление, — нажми ещё раз.'
+  if (miss === 'unknown') {
+    return tr(locale, {
+      ru: 'Не удалось узнать, прошло ли удаление, — нажми ещё раз.',
+      en: "Couldn't tell whether the deletion went through — try again.",
+    })
+  }
   return step === 'ask'
-    ? 'Не получилось узнать, что хранится, — нажми ещё раз.'
-    : 'Не получилось удалить — нажми ещё раз.'
+    ? tr(locale, {
+        ru: 'Не получилось узнать, что хранится, — нажми ещё раз.',
+        en: "Couldn't load what we store — try again.",
+      })
+    : tr(locale, { ru: 'Не получилось удалить — нажми ещё раз.', en: "Couldn't delete it — try again." })
 }

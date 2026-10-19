@@ -23,8 +23,11 @@
  * ссылке его ни записать, ни прочитать не может; демо-библиотека чужая, и
  * «вечером» у неё не наступает.
  *
- * Модуль клиентский, без импортов: срок, форма и подписи; база — в lib/db.ts.
+ * Модуль клиентский: срок, форма и подписи; база — в lib/db.ts. Из импортов —
+ * только чистый lib/i18n ради подписи на языке страницы.
  */
+
+import { tr, type Locale } from './i18n'
 
 /**
  * Сколько план ждёт: полтора дня. Поставил утром — сыграешь вечером; ночью —
@@ -80,9 +83,13 @@ export function parseEveningPlan(raw: unknown): EveningPlan | null {
 /**
  * Что было сказано — словами самого нажатия: «поставил на загрузку» и
  * «отложил на вечер» — разные обещания себе, и строка не должна их путать.
+ * По-английски — теми же словами, что у кнопок (глоссарий: Start the
+ * download, Saved for tonight).
  */
-export function planLine(plan: Pick<EveningPlan, 'name' | 'intent'>): string {
-  return plan.intent === 'install' ? `Ставил «${plan.name}» на загрузку` : `Отложил «${plan.name}» на вечер`
+export function planLine(plan: Pick<EveningPlan, 'name' | 'intent'>, locale: Locale = 'ru'): string {
+  return plan.intent === 'install'
+    ? tr(locale, { ru: `Ставил «${plan.name}» на загрузку`, en: `You started downloading “${plan.name}”` })
+    : tr(locale, { ru: `Отложил «${plan.name}» на вечер`, en: `You saved “${plan.name}” for tonight` })
 }
 
 /**

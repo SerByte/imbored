@@ -103,7 +103,7 @@ describe('палитра вне CSS', () => {
   })
 
   test('границы ошибок используют retry, а не reset', () => {
-    for (const file of ['app/error.tsx', 'app/global-error.tsx']) {
+    for (const file of ['app/[lang]/error.tsx', 'app/global-error.tsx']) {
       const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8')
       const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
       expect(code, `${file}: reset перерисовывает без повторного запроса`).not.toMatch(

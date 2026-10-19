@@ -83,6 +83,49 @@ describe('forgetMissLine: отказ словами', () => {
   })
 })
 
+/*
+ * По-английски — те же различия: «неизвестно» не звучит как «не получилось»,
+ * пропавший вход называет обе причины, оборванное удаление — с оговоркой.
+ */
+describe('forgetMissLine по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('каждый случай — дословно', () => {
+    expect(forgetMissLine('ratelimited', 'erase', true, 'en')).toBe(
+      'Too many tries from this address — try again in an hour.',
+    )
+    expect(forgetMissLine('gone', 'erase', true, 'en')).toBe(
+      "Looks like the deletion already went through: the response to your last attempt never arrived, and you're no longer signed in. Reload the page.",
+    )
+    expect(forgetMissLine('gone', 'erase', false, 'en')).toBe(
+      "You're no longer signed in: either the deletion already went through or you signed out everywhere. Reload the page.",
+    )
+    expect(forgetMissLine('gone', 'ask', false, 'en')).toBe("You're no longer signed in — reload the page.")
+    expect(forgetMissLine('unknown', 'erase', false, 'en')).toBe(
+      "Couldn't tell whether the deletion went through — try again.",
+    )
+    expect(forgetMissLine('failed', 'ask', false, 'en')).toBe("Couldn't load what we store — try again.")
+    expect(forgetMissLine('failed', 'erase', false, 'en')).toBe("Couldn't delete it — try again.")
+  })
+
+  test('обрыв — «неизвестно», а не «не получилось»; оборванное — «looks like» на обоих шагах', () => {
+    expect(forgetMissLine('unknown', 'erase', true, 'en')).not.toContain("Couldn't delete")
+    for (const step of ['ask', 'erase'] as const) {
+      expect(forgetMissLine('gone', step, true, 'en'), step).toMatch(/^Looks like the deletion already went through/)
+    }
+  })
+
+  test('ни буквы кириллицы', () => {
+    for (const miss of ['ratelimited', 'gone', 'failed', 'unknown'] as const) {
+      for (const step of ['ask', 'erase'] as const) {
+        for (const lost of [true, false]) {
+          expect(forgetMissLine(miss, step, lost, 'en')).not.toMatch(CYRILLIC)
+        }
+      }
+    }
+  })
+})
+
 describe('forgetPreviewReply: что хранится', () => {
   test('списки строк — ok, всё прочее — failed', async () => {
     expect(await forgetPreviewReply(json({ items: ['Снимки библиотеки — 3'], effects: ['Ты выйдешь на всех устройствах.'] }))).toEqual({

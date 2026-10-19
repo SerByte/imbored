@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createSharedPick, findSharedPick, getGamesMetaLite } from '@/lib/db'
+import { isLocale, type Locale } from '@/lib/i18n'
 import { newPickId, pickShareOk } from '@/lib/pickshare'
 import { checkRatesInOrder, clientIp, rateLimitedResponse } from '@/lib/ratelimit'
 import { readJsonObject } from '@/lib/reqbody'
@@ -32,11 +33,19 @@ export async function POST(req: Request) {
   if (!writer.ok) return writer.response
   const { steamid } = writer
 
-  const body = parseSharePickBody(await readJsonObject(req))
-  if (!body) return NextResponse.json({ error: 'badinput' }, { status: 400 })
+  const raw = await readJsonObject(req)
+  const body = parseSharePickBody(raw)
+  /*
+   * Язык текста — из тела, рядом с подписью, а не из адреса запроса: подпись
+   * покрывает и его (lib/pickshare), так что английский текст не запишется
+   * русским и наоборот, как бы ни назвал язык адрес. Нет поля — русский, как
+   * у подписей до английской версии; чужое значение — мусор, а не «русский».
+   */
+  const lang: Locale | null = raw.lang === undefined ? 'ru' : isLocale(raw.lang) ? raw.lang : null
+  if (!body || !lang) return NextResponse.json({ error: 'badinput' }, { status: 400 })
   const { appid, source, kind, text, sig } = body
   // Подпись устарела (сменили секрет) или чужая — страница предложит обновить выдачу
-  if (!pickShareOk(sessionSecret(), { steamid, appid, source, text }, sig)) {
+  if (!pickShareOk(sessionSecret(), { steamid, appid, source, text, lang }, sig)) {
     return NextResponse.json({ error: 'badsig' }, { status: 403 })
   }
 
@@ -58,13 +67,13 @@ export async function POST(req: Request) {
   }
 
   const reason = cleanReason(text)
-  const same = await findSharedPick(db, steamid, appid, kind, reason, now - SHARED_PICK_REUSE_SEC)
+  const same = await findSharedPick(db, steamid, appid, kind, reason, now - SHARED_PICK_REUSE_SEC, lang)
   if (same) return NextResponse.json({ id: same })
 
   for (let i = 0; i < ID_TRIES; i++) {
     const id = newPickId()
     try {
-      await createSharedPick(db, { id, createdBy: steamid, appid, source, kind, reason }, now)
+      await createSharedPick(db, { id, createdBy: steamid, appid, source, kind, reason, lang }, now)
       return NextResponse.json({ id })
     } catch (err) {
       // Совпал первичный ключ — редкость 2^-59, но пробуем другой id

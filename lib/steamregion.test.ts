@@ -143,3 +143,70 @@ describe('сторож: клиентский код не зовёт priceRegion'
     expect(files.filter(([, src]) => /\bpriceRegion\s*\(/.test(src)).map(([f]) => f)).toEqual([])
   })
 })
+
+/**
+ * Английская версия показывает те же цены того же региона — регион один на
+ * развёртывание. Поэтому подпись называет его прямо, а не «your region»:
+ * регион читателя сервис не знает.
+ */
+describe('по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('formatPrice: знак перед числом, разряды запятой, центы — только когда есть', () => {
+    expect(formatPrice(5999, 'us', { locale: 'en' })).toBe('$59.99')
+    expect(formatPrice(6000, 'us', { locale: 'en' })).toBe('$60')
+    expect(formatPrice(5999, 'us', { whole: true, locale: 'en' })).toBe('$60')
+    expect(formatPrice(199_900, 'ru', { locale: 'en' })).toBe('₽1,999')
+    expect(formatPrice(199_950, 'ru', { locale: 'en' })).toBe('₽1,999.50')
+    expect(formatPrice(4_150_049, 'ru', { whole: true, locale: 'en' })).toBe('₽41,500')
+    expect(formatPrice(0, 'ru', { locale: 'en' })).toBe('₽0')
+  })
+
+  test('кэш форматтеров различает языки: русский вызов после английского — снова русский', () => {
+    expect(formatPrice(5999, 'us', { locale: 'en' })).toBe('$59.99')
+    expect(formatPrice(5999, 'us')).toBe(`59,99${NB}$`)
+    expect(formatPrice(5999, 'us', { locale: 'en' })).toBe('$59.99')
+  })
+
+  test('каждая валюта таблицы проходит Intl и по-английски', () => {
+    for (const cc of Object.keys(STEAM_REGIONS)) {
+      expect(formatPrice(123_456, cc, { locale: 'en' }), cc).toMatch(/1,234\.56/)
+      expect(formatPrice(123_400, cc, { whole: true, locale: 'en' }), cc).toMatch(/1,234(?!\.)/)
+    }
+  })
+
+  test('подписи называют регион развёртывания прямо', () => {
+    expect(priceWhere('ru', 'en')).toBe('price on Russian Steam')
+    expect(notSold('ru', 'en')).toBe('not sold on Russian Steam')
+    expect(notSoldShort('ru', 'en')).toBe('not on Russian Steam')
+    expect(byPrices('ru', 'en')).toBe('at Russian Steam prices')
+    expect(priceWhere('us', 'en')).toBe('price on US Steam')
+    expect(byPrices('us', 'en')).toBe('at US Steam prices')
+    // неизвестный регион — как у русских подписей, LEGACY_PRICE_CC
+    expect(priceWhere('мусор', 'en')).toBe('price on US Steam')
+  })
+
+  test('у каждого региона есть английское прилагательное, без кириллицы и без «your»', () => {
+    for (const [cc, r] of Object.entries(STEAM_REGIONS)) {
+      expect(r.en, cc).toMatch(/^[A-Z][A-Za-z]+$/)
+      for (const label of [priceWhere(cc, 'en'), notSold(cc, 'en'), notSoldShort(cc, 'en'), byPrices(cc, 'en')]) {
+        expect(label, cc).not.toMatch(CYRILLIC)
+        expect(label, cc).not.toMatch(/\byour\b/i)
+      }
+    }
+  })
+
+  test('короткая подпись для чипа колоды не длиннее русской там, где сервис живёт', () => {
+    // ru — регион развёртывания, us — прежний (LEGACY_PRICE_CC). Буквы
+    // кириллицы шире латиницы, так что равная длина в символах — запас
+    for (const cc of ['ru', 'us']) {
+      expect(notSoldShort(cc, 'en').length, cc).toBeLessThanOrEqual(notSoldShort(cc).length)
+    }
+  })
+
+  test('явный ru — те же строки, что без языка', () => {
+    expect(formatPrice(199_900, 'ru', { locale: 'ru' })).toBe(formatPrice(199_900, 'ru'))
+    expect(priceWhere('ru', 'ru')).toBe(priceWhere('ru'))
+    expect(byPrices('us', 'ru')).toBe(byPrices('us'))
+  })
+})

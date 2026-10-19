@@ -1,9 +1,9 @@
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import { MuteTags } from '../components/MuteTags'
 import { CONTENT_WARNING_TAGS } from './hook'
-import { CARD_TAGS, cookieValue, MUTE_COOKIE, muteCookie, MUTES, muteSummary, parseMutes } from './mutetags'
+import { CARD_TAGS, cookieValue, MUTE_COOKIE, muteCookie, muteLabel, MUTES, muteSummary, parseMutes } from './mutetags'
 import { topTags } from './recommend'
 import type { GameMeta } from './types'
 
@@ -68,6 +68,34 @@ describe('muteSummary', () => {
   test('посреди фразы — со строчной, аббревиатуры — как есть', () => {
     expect(muteSummary(parseMutes('horror.vr.early.mmo'))).toBe('хорроры, VR, ранний доступ, MMO')
   })
+
+  test('по-английски — то же правило: со строчной, аббревиатуры как есть', () => {
+    expect(muteSummary(parseMutes('horror.vr.early.mmo'), 'en')).toBe('horror, VR, early access, MMO')
+    expect(muteSummary(parseMutes('gore.pvp'), 'en')).toBe('gore and violence, competitive')
+  })
+})
+
+describe('muteLabel', () => {
+  test('по-английски — у каждого набора своя подпись, sentence case, без кириллицы', () => {
+    const labels = MUTES.map((p) => muteLabel(p.key, 'en'))
+    expect(labels).toEqual([
+      'Horror',
+      'VR',
+      'Early access',
+      'Explicit',
+      'Gore and violence',
+      'Anime',
+      'Hardcore',
+      'Competitive',
+      'MMO',
+    ])
+    expect(new Set(labels).size).toBe(labels.length)
+    for (const l of labels) expect(l).not.toMatch(/[А-Яа-яЁё]/)
+  })
+
+  test('по умолчанию — русская подпись набора', () => {
+    for (const p of MUTES) expect(muteLabel(p.key)).toBe(p.label)
+  })
 })
 
 describe('наборы', () => {
@@ -122,5 +150,21 @@ describe('MuteTags', () => {
     expect(out).toContain(`<div id="${controls}" hidden=""`)
     // чипсы — внутри неё, а не где-то рядом
     expect(out.slice(out.indexOf(`id="${controls}"`))).toContain('aria-pressed="false"')
+  })
+})
+
+/*
+ * /en/quiz: та же панель словами глоссария — «Don't suggest». Язык — из
+ * контекста страницы (LocaleProvider), пропса нет; чипсы подписывает
+ * muteLabel, MUTES даёт только ключи.
+ */
+describe('MuteTags по-английски', () => {
+  test('свёрнутая строка, имя группы и чипсы — без кириллицы', async () => {
+    const { LocaleProvider } = await import('../components/LocaleProvider')
+    const out = renderToStaticMarkup(createElement(LocaleProvider, { locale: 'en' } as ComponentProps<typeof LocaleProvider>, createElement(MuteTags)))
+    expect(out).toContain('What not to suggest')
+    expect(out).toContain('aria-label="Don&#x27;t suggest"')
+    for (const p of MUTES) expect(out).toContain(`>${muteLabel(p.key, 'en')}</button>`)
+    expect(out).not.toMatch(/[А-Яа-яЁё]/)
   })
 })

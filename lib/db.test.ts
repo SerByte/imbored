@@ -36,6 +36,7 @@ import {
   getMajorFeedHead,
   getRssFeedForApps,
   getUnsummarized,
+  getUnsummarizedEn,
   latestMajorPatchSince,
   PATCH_SINCE_MAX,
   pruneNewsForApp,
@@ -50,6 +51,7 @@ import {
   setGameDescriptions,
   setGamesMedia,
   setNewsDigest,
+  setNewsDigestEn,
   sitemapNews,
   sitemapPatchArchives,
   TLDR_FLAW_SWEEP_KEY,
@@ -3727,6 +3729,46 @@ describe('вердикт модели «не патч» (scale = none)', () => {
     expect((await getGameNews(db, 730)).map((n) => n.gid)).toEqual(['1'])
     expect((await getUnsummarized(db)).map((n) => n.gid)).toEqual(['1'])
   })
+
+  test('английский слот вердикт не держит: ни строкой патча на /en, ни в догоне', async () => {
+    // Английский от прежнего пересказа (уборка битых снимает только русский)
+    // остался бы английской строкой патча у поста, который не патч. Вердикт
+    // снимает и его, что бы модель ни написала в tldrEn, и в догон запись не
+    // встаёт: её русский пересказ пустой
+    const db = await freshDb()
+    await upsertNewsItems(db, [newsItem({ scale: null, title: 'Дорожная карта' })], NOW)
+    await setNewsDigest(
+      db,
+      730,
+      '1',
+      { tldr: 'Добавлен режим.', scale: 'major', tldrEn: 'Added a mode.', titleEn: 'Roadmap' },
+      NOW,
+    )
+    await db.execute("UPDATE news_items SET tldr = NULL, tldr_at = NULL, tldr_tries = 0 WHERE gid = '1'")
+    await setNewsDigest(
+      db,
+      730,
+      '1',
+      { tldr: 'Планы на сезон 5.', scale: 'none', tldrEn: 'Season 5 plans.', titleEn: 'Roadmap' },
+      NOW + 10,
+    )
+
+    const page = await getNewsPage(db, 730, '1')
+    expect(page?.item).toMatchObject({ kind: 'news', scale: null })
+    expect(page?.item.tldrEn).toBeUndefined()
+    expect(page?.item.titleEn).toBeUndefined()
+    expect(await getUnsummarizedEn(db)).toEqual([])
+    expect(await sitemapNews(db, NOW - 86_400, 10, 'en')).toEqual([])
+    expect(await freshlyDigestedPatches(db, NOW - 86_400, 0, 10, 'en')).toEqual([])
+    expect(await latestMajorPatchSince(db, [[730, NOW - 100]], 'en')).toEqual(new Map())
+    // попытка английского не засчитана: переводить было нечего
+    const row = (await db.execute("SELECT tldr, tldr_en, tldr_en_tries FROM news_items WHERE gid = '1'")).rows[0]
+    expect({ tldr: row?.tldr, tldrEn: row?.tldr_en, tries: Number(row?.tldr_en_tries) }).toEqual({
+      tldr: '',
+      tldrEn: null,
+      tries: 1,
+    })
+  })
 })
 
 describe('лента не даёт одной игре себя захватить', () => {
@@ -5030,6 +5072,156 @@ describe('версия схемы', () => {
   })
 
   /*
+   * Английская версия сайта (docs/i18n.md) — v13, поверх цикла 3: тот уехал на
+   * прод с версией 12 и отметкой состава своих колонок, а номер 10, который
+   * английская ветка занимала до слияния, там уже прочитан как «доведено».
+   * Поэтому её колонки и индексы — отдельным шагом, и сторожатся оба пути:
+   * свежая база получает всё сразу, прод на v12 — ровно английские ALTER и
+   * индексы, без единого падающего запроса и без потери живых строк.
+   */
+  describe('английские слоты v13', () => {
+    const EN_COLUMNS = [
+      'games.short_description_en',
+      'news_items.tldr_en',
+      'news_items.tldr_en_at',
+      'news_items.tldr_en_tries',
+      'news_items.title_en',
+      'news_items.blocks_en_json',
+      'shared_picks.lang',
+    ]
+    // порядок — как в SCHEMA_CATALOG: в нём предпросмотр их и называет
+    const EN_INDEXES = ['idx_news_en_digest', 'idx_news_en_major', 'idx_games_page_en']
+    const columnName = ([table, col]: readonly [string, string]) => `${table}.${col.split(' ')[0]}`
+
+    async function indexesOf(db: Db): Promise<Set<string>> {
+      const res = await db.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
+      return new Set(res.rows.map((r) => String(r.name)))
+    }
+
+    /**
+     * Прод после цикла 3: версия 12, отметка состава — его колонки без
+     * английских, английских колонок и индексов нет, строки живут.
+     */
+    async function prodV12(): Promise<Db> {
+      const db = await freshDb()
+      await upsertGameMeta(db, { ...META, appid: 292030, name: 'The Witcher 3: Wild Hunt' }, NOW)
+      await upsertNewsItems(db, [newsItem()], NOW)
+      await setNewsDigest(db, 730, '1', { tldr: 'Починили вылет.', scale: 'major' }, NOW)
+      await createSharedPick(
+        db,
+        { id: 'abcdefghjkmn', createdBy: 'a', appid: 620, source: 'owned', kind: 'play', reason: 'Потому что' },
+        NOW,
+      )
+      await db.executeMultiple(`
+        DROP INDEX idx_news_en_digest;
+        DROP INDEX idx_news_en_major;
+        DROP INDEX idx_games_page_en;
+        ALTER TABLE games DROP COLUMN short_description_en;
+        ALTER TABLE news_items DROP COLUMN tldr_en;
+        ALTER TABLE news_items DROP COLUMN tldr_en_at;
+        ALTER TABLE news_items DROP COLUMN tldr_en_tries;
+        ALTER TABLE news_items DROP COLUMN title_en;
+        ALTER TABLE news_items DROP COLUMN blocks_en_json;
+        ALTER TABLE shared_picks DROP COLUMN lang;`)
+      await setCatalogMeta(db, 'schema_v', '12')
+      await setCatalogMeta(
+        db,
+        'schema_cols',
+        ADDED_COLUMNS.map(columnName)
+          .filter((name) => !EN_COLUMNS.includes(name))
+          .sort()
+          .join(','),
+      )
+      return db
+    }
+
+    test('английских колонок в списке ровно семь, и все они — в ADDED_COLUMNS', () => {
+      // Сторож самого теста: колонку добавили, а сюда не вписали — путь с v12
+      // её бы не проверил
+      expect(ADDED_COLUMNS.map(columnName).filter((name) => EN_COLUMNS.includes(name)).sort()).toEqual(
+        [...EN_COLUMNS].sort(),
+      )
+    })
+
+    test('свежая база получает английские колонки, индексы и версию 13 сразу', async () => {
+      const db = createClient({ url: ':memory:' })
+      await migrateDb(db)
+
+      const cols = await columnsOf(db)
+      for (const name of EN_COLUMNS) expect(cols.has(name), name).toBe(true)
+      const idx = await indexesOf(db)
+      for (const name of EN_INDEXES) expect(idx.has(name), name).toBe(true)
+      expect(await getCatalogMeta(db, 'schema_v')).toBe('13')
+      const marker = String(await getCatalogMeta(db, 'schema_cols')).split(',')
+      for (const name of EN_COLUMNS) expect(marker, name).toContain(name)
+      expect(await pendingMigrations(db, {})).toEqual([])
+    })
+
+    test('предпросмотр прода на v12 называет ровно английский шаг', async () => {
+      const db = await prodV12()
+      expect(await pendingMigrations(db, {})).toEqual([
+        ...EN_INDEXES.map((name) => `новый индекс: ${name}`),
+        ...ADDED_COLUMNS.map(columnName)
+          .filter((name) => EN_COLUMNS.includes(name))
+          .map((name) => `новая колонка: ${name}`),
+        'версия схемы: v12 → v13',
+      ])
+    })
+
+    test('прод на v12 получает ровно английские ALTER и индексы, живые строки читаются как были', async () => {
+      const db = await prodV12()
+      const { spy, calls } = recording(db)
+      await migrateDb(spy)
+
+      // ни одного заведомо падающего ALTER и ни одной колонки цикла 3 заново
+      const alters = calls.filter(isAlter)
+      expect(alters.filter((c) => c.failed)).toEqual([])
+      expect(alters.map((c) => c.sql)).toEqual(
+        ADDED_COLUMNS.filter((c) => EN_COLUMNS.includes(columnName(c))).map(
+          ([table, col]) => `ALTER TABLE ${table} ADD COLUMN ${col}`,
+        ),
+      )
+      const cols = await columnsOf(db)
+      for (const name of EN_COLUMNS) expect(cols.has(name), name).toBe(true)
+      const idx = await indexesOf(db)
+      for (const name of EN_INDEXES) expect(idx.has(name), name).toBe(true)
+      // версия и отметка — до 13 и со всеми колонками обеих веток
+      expect(await getCatalogMeta(db, 'schema_v')).toBe('13')
+      const marker = String(await getCatalogMeta(db, 'schema_cols')).split(',')
+      for (const name of ADDED_COLUMNS.map(columnName)) expect(marker, name).toContain(name)
+      expect(await pendingMigrations(db, {})).toEqual([])
+
+      // Живые строки: пересказ на месте и встаёт в английский догон, выбор,
+      // которым поделились до английской версии, — русский
+      expect((await getGameNews(db, 730))[0]).toMatchObject({ tldr: 'Починили вылет.' })
+      expect((await getGameNews(db, 730))[0]).not.toHaveProperty('tldrEn')
+      expect((await getUnsummarizedEn(db)).map((n) => n.gid)).toEqual(['1'])
+      expect((await getSharedPick(db, 'abcdefghjkmn', 0))?.lang).toBe('ru')
+      // и пишутся по-английски: апсерт каталога и английский пересказ
+      await upsertGameMeta(db, { ...META, appid: 292030, shortDescriptionEn: 'Open-world RPG.' }, NOW + 10)
+      expect((await getGameMeta(db, 292030))?.shortDescriptionEn).toBe('Open-world RPG.')
+      await setNewsDigestEn(db, 730, '1', { tldrEn: 'Fixed a crash.' }, NOW + 10)
+      expect((await getGameNews(db, 730))[0]).toMatchObject({ tldr: 'Починили вылет.', tldrEn: 'Fixed a crash.' })
+
+      // и второй старт уже ничего не доводит
+      const again = recording(db)
+      await migrateDb(again.spy)
+      expect(again.calls.map((c) => c.kind)).toEqual(['multiple', 'multiple', 'execute', 'multiple'])
+    })
+
+    test('прод на v12 под превью колонки получает, а версию и отметку не пишет', async () => {
+      // Версию и отметку ставит только прод после мержа — см. migrateDb
+      const db = await prodV12()
+      await migrateDb(db, { VERCEL_ENV: 'preview' })
+
+      const cols = await columnsOf(db)
+      for (const name of EN_COLUMNS) expect(cols.has(name), name).toBe(true)
+      expect(await getCatalogMeta(db, 'schema_v')).toBe('12')
+      expect(String(await getCatalogMeta(db, 'schema_cols')).split(',')).not.toContain('news_items.tldr_en')
+    })
+  })
+
+  /*
    * Две ветки подняли версию до одного числа, каждая со своими колонками
    * (восьмой круг: name_ru здесь, reviews_* в fix/w8-prices-reviews), и git
    * слил одинаковые строки молча. Первая уехала на прод отдельным деплоем и
@@ -5117,8 +5309,8 @@ describe('версия схемы', () => {
     // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
     // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
     expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
-      version: 12,
-      columns: 50,
+      version: 13,
+      columns: 57,
     })
   })
 })
@@ -6485,6 +6677,8 @@ describe('выбор, которым поделились (/pick/<id>)', () => {
       kind: 'play',
       reason: 'Вечер на головоломки.',
       createdAt: NOW,
+      // язык ссылки — поле SharedPick с v13; без него при записи — русский
+      lang: 'ru',
     })
     expect(await getSharedPick(db, 'abcdefghjkmn', NOW + 1)).toBeNull()
     expect(await getSharedPick(db, 'nosuchpick23', 0)).toBeNull()

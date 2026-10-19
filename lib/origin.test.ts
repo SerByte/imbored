@@ -122,13 +122,31 @@ describe('proxy.ts', () => {
     expect(passed(call('GET', `${BASE}/api/news`, { 'sec-fetch-site': 'cross-site' }))).toBe(true)
   })
 
-  test('прокси стоит на всём /api и на хабах, остальные страницы не трогает', () => {
-    expect(config.matcher).toEqual(['/api/:path*', ...GUEST_BOUNCE])
+  test('прокси стоит на всём /api и на хабах обоих языков, остальные страницы не трогает', () => {
+    // строки — /api и хабы; единственная запись-объект — первый вход на «/»
+    // (её условия стережёт lib/homelocale.test.ts)
+    expect(config.matcher.filter((m) => typeof m === 'string')).toEqual(['/api/:path*', ...GUEST_BOUNCE])
+    expect(config.matcher.filter((m) => typeof m !== 'string').map((m) => m.source)).toEqual(['/'])
+    expect(GUEST_BOUNCE).toEqual(['/library', '/compat', '/portrait', '/en/library', '/en/compat', '/en/portrait'])
     for (const url of ['/api/connect', '/api/auth/logout', '/api/room/ABC123/vote', ...GUEST_BOUNCE]) {
       expect(unstable_doesMiddlewareMatch({ config, url }), url).toBe(true)
     }
-    // личные страницы по ссылке из чата прокси не будят вовсе
-    for (const url of ['/', '/play', '/room/ABC123', '/game/730', '/compat/76561197960287930', '/portrait/76561197960287930']) {
+    // личные страницы по ссылке из чата прокси не будят вовсе, а главную —
+    // без заголовков документа (префетч логотипа, краулер, скрипт) тоже:
+    // прокси на «/» — только первый вход браузера (lib/homelocale.ts)
+    for (const url of [
+      '/',
+      '/?next=%2Fplay',
+      '/play',
+      '/en',
+      '/en/play',
+      '/room/ABC123',
+      '/game/730',
+      '/compat/76561197960287930',
+      '/portrait/76561197960287930',
+      '/en/compat/76561197960287930',
+      '/en/portrait/76561197960287930',
+    ]) {
       expect(unstable_doesMiddlewareMatch({ config, url }), url).toBe(false)
     }
   })
@@ -146,6 +164,15 @@ describe('proxy.ts', () => {
     }
     expect(call('GET', `${BASE}/compat`).headers.get('location')).toBe(`${BASE}/?next=%2Fcompat`)
     expect(call('GET', `${BASE}/portrait`).headers.get('location')).toBe(`${BASE}/?next=%2Fportrait`)
+  })
+
+  test('гость на английском хабе — на английский лендинг', () => {
+    for (const hub of ['library', 'compat', 'portrait']) {
+      const res = call('GET', `${BASE}/en/${hub}`)
+      expect(res.status, hub).toBe(307)
+      expect(res.headers.get('location'), hub).toBe(`${BASE}/en?next=%2F${hub}`)
+    }
+    expect(passed(call('GET', `${BASE}/en/library`, { cookie: `${SESSION_COOKIE}=token` }))).toBe(true)
   })
 
   test('разворот остаётся на адресе запроса: превью не улетает на прод', () => {

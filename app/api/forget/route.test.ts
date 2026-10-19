@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { routePaths } from '@/lib/i18n'
 import {
   countUserRows,
   createRoom,
@@ -154,6 +155,29 @@ describe('/api/forget: что хранится', () => {
     expect(body.effects).toContain('Ты выйдешь на всех устройствах.')
     expect(await stored(ME)).toBe(before)
   })
+
+  /*
+   * Вопрос «Удалить всё?» на /en: кнопка шлёт ?lang=en (withLang в
+   * components/ForgetMe), и список приходит по-английски — те же строки и
+   * числа, без единой русской буквы.
+   */
+  test('?lang=en — тот же список по-английски', async () => {
+    await signIn(db, ME, { verified: true })
+    await seed(ME)
+    const ru = (await (await preview()).json()) as { items: string[]; effects: string[] }
+
+    const res = await GET(new Request('http://localhost/api/forget?lang=en'))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control') ?? '').toContain('no-store')
+    const body = (await res.json()) as { items: string[]; effects: string[] }
+    expect(body.items).toContain('Steam profile: name, avatar and portrait')
+    expect(body.items).toContain('Library snapshots — 1')
+    expect(body.items).toContain('Rooms you host — 1')
+    expect(body.effects).toContain("You'll be signed out on all devices.")
+    expect(body.items).toHaveLength(ru.items.length)
+    expect(body.effects).toHaveLength(ru.effects.length)
+    for (const line of [...body.items, ...body.effects]) expect(line, line).not.toMatch(/[А-Яа-яЁё]/)
+  })
 })
 
 describe('/api/forget: удаление', () => {
@@ -269,7 +293,7 @@ describe('/api/forget: удаление', () => {
         `/compat/${ME}/opengraph-image`,
         '/pick/mepick234567/opengraph-image',
         '/room/MYROOM/opengraph-image',
-      ]),
+      ].flatMap(routePaths)),
     )
     // Модель портрета — немедленно, а не «отдать устаревшее и пересобрать»
     expect(revalidated.tags).toEqual([[portraitTag(ME), { expire: 0 }]])

@@ -26,7 +26,7 @@ const WINDOW = ['components/CatalogSearch.tsx', 'lib/catalogsearch.ts', 'lib/cat
 describe('поиск по каталогу — чанком, а не в каждой странице', () => {
   test('обход доходит до кнопки от корневого лэйаута', () => {
     // Без этого сторожа ниже могли бы быть зелёными потому, что обход сломан
-    expect([...reach(path.join(ROOT, 'app', 'layout.tsx')).files].map(rel)).toContain(
+    expect([...reach(path.join(ROOT, 'app', '[lang]', 'layout.tsx')).files].map(rel)).toContain(
       'components/SearchLauncher.tsx',
     )
   })
@@ -38,7 +38,7 @@ describe('поиск по каталогу — чанком, а не в кажд
    * не отличает. Клиентское у неё — эта же кнопка, и она проверена.
    */
   test('окно и его модули статически недостижимы ни из кнопки, ни из лэйаута', () => {
-    for (const entry of [LAUNCHER, path.join(ROOT, 'app', 'layout.tsx')]) {
+    for (const entry of [LAUNCHER, path.join(ROOT, 'app', '[lang]', 'layout.tsx')]) {
       const files = [...reach(entry).files].map(rel)
       expect(
         files.filter((f) => WINDOW.includes(f)),
@@ -58,16 +58,26 @@ describe('поиск по каталогу — чанком, а не в кажд
    * невидимым (докблок SearchLauncher). Модуль островка (components/lazyIsland)
    * сюда не идёт: в первой загрузке он есть, только пока его везут оболочки
    * лэйаута (закулисье и записка), и вес кнопки от них зависеть не должен.
+   *
+   * Второе такое же — язык страницы (components/LocaleProvider и lib/i18n с
+   * его lib/plural): имя кнопки на /en английское. Их везёт сам корневой
+   * лэйаут — провайдер языка и ссылки (components/Link).
    */
-  test('кнопка тянет только React, значок и отчёт об отказе', () => {
+  test('кнопка тянет только React, значок, отчёт об отказе и язык страницы', () => {
     const { files, packages } = reach(LAUNCHER)
     expect([...files].map(rel).sort()).toEqual([
       'components/Icon.tsx',
+      'components/LocaleProvider.tsx',
       'components/SearchLauncher.tsx',
       'lib/clienterr.ts',
       'lib/errlog.ts',
+      'lib/i18n.ts',
+      'lib/plural.ts',
     ])
     expect([...packages.keys()]).toEqual(['react'])
+    // язык — «бесплатный», только пока его правда везёт корневой лэйаут
+    const layout = [...reach(path.join(ROOT, 'app', '[lang]', 'layout.tsx')).files].map(rel)
+    expect(layout).toEqual(expect.arrayContaining(['components/LocaleProvider.tsx', 'lib/i18n.ts', 'lib/plural.ts']))
     // «бесплатное» — только пока их правда везёт instrumentation-client
     const boot = [...reach(path.join(ROOT, 'instrumentation-client.ts')).files].map(rel)
     expect(boot).toEqual(expect.arrayContaining(['lib/clienterr.ts', 'lib/errlog.ts']))

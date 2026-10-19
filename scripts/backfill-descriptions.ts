@@ -3,6 +3,7 @@
  *
  *   npm run catalog:descriptions -- --limit=6000
  *   npm run catalog:descriptions -- --dry
+ *   npm run catalog:descriptions -- --lang=en    английские — для /en
  *
  * Зачем отдельный скрипт, а не флаг у promote-catalog: тот берёт игры,
  * «которых ещё нет в пуле», и по построению не возвращается к уже залитым.
@@ -18,11 +19,19 @@
  *
  * Пишет ОДНУ колонку и не трогает updated_at — см. докблок
  * setGameDescriptions о том, почему поднимать lastmod на весь каталог нельзя.
+ *
+ * --lang=en — то же для английской колонки (short_description_en): её
+ * наполняют прогрев и крон карточек, но первые — раз в две недели, а второй —
+ * по очереди, и до /en-версии карточек без английского описания много.
+ * Отбор — тем же правилом, каким /en описание показывает (englishDescription
+ * в lib/catalog): доливаем, где английского нет, и пишем только английское —
+ * текст студии на другом языке в английскую колонку не ляжет.
  */
 
-import { gameDescriptions, setGameDescriptions } from '../lib/db'
-import { fetchStoreDescriptions } from '../lib/catalog'
+import { englishDescription, fetchStoreDescriptions } from '../lib/catalog'
 import { hasCyrillic } from '../lib/cyrillic'
+import { gameDescriptions, setGameDescriptions } from '../lib/db'
+import type { Locale } from '../lib/i18n'
 import { openDb } from './opendb'
 
 const STORE_BATCH = 200
@@ -38,16 +47,17 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 async function main() {
   const limit = Number(arg('limit') ?? 6000)
   const dry = has('dry')
+  const lang: Locale = arg('lang') === 'en' ? 'en' : 'ru'
   const db = await openDb()
 
-  const all = await gameDescriptions(db, limit)
+  const all = await gameDescriptions(db, limit, lang)
   // Хоть одна русская буква — описание уже на языке сайта. Класс букв общий с
   // заливкой и прогревом (lib/cyrillic): что здесь считается русским, то там
-  // и берегут от перезаписи.
-  const target = all.filter((g) => !hasCyrillic(g.description))
-  console.log(
-    `в пуле: ${all.length}, уже на русском: ${all.length - target.length}, доливаем: ${target.length}`,
-  )
+  // и берегут от перезаписи. Английское — по правилу показа на /en
+  const done = (text: string | null) => (lang === 'en' ? Boolean(englishDescription(text)) : hasCyrillic(text))
+  const target = all.filter((g) => !done(g.description))
+  const уже = lang === 'en' ? 'уже по-английски' : 'уже на русском'
+  console.log(`в пуле: ${all.length}, ${уже}: ${all.length - target.length}, доливаем: ${target.length}`)
   if (dry) {
     console.log('--dry: ничего не пишем')
     return
@@ -60,7 +70,10 @@ async function main() {
     const chunk = target.slice(i, i + STORE_BATCH)
     let got: Map<number, string> | null = null
     try {
-      got = await fetchStoreDescriptions(chunk.map((g) => g.appid))
+      got = await fetchStoreDescriptions(
+        chunk.map((g) => g.appid),
+        lang === 'en' ? { language: 'english' } : {},
+      )
     } catch (err) {
       // Осечка батча не фатальна: остаётся то, что было, и следующий прогон
       // попробует снова. Ронять проход на пяти тысячах игр незачем.
@@ -68,11 +81,15 @@ async function main() {
     }
     if (got) {
       const rows = chunk
-        .map((g) => ({ appid: g.appid, description: got.get(g.appid) ?? '' }))
+        .map((g) => {
+          const text = got.get(g.appid) ?? ''
+          // В английскую колонку — только английское: см. докблок
+          return { appid: g.appid, description: lang === 'en' ? (englishDescription(text) ?? '') : text }
+        })
         // Пустое описание не пишем: это стёрло бы то, что уже есть.
         .filter((r) => r.description && r.description !== '')
       пусто += chunk.length - rows.length
-      обновлено += await setGameDescriptions(db, rows)
+      обновлено += await setGameDescriptions(db, rows, lang)
     }
     console.log(`  ${Math.min(i + STORE_BATCH, target.length)}/${target.length}`)
     if (i + STORE_BATCH < target.length) await sleep(STORE_PACE_MS)

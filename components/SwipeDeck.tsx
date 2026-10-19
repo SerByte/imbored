@@ -12,6 +12,7 @@ import { MotionMax } from '@/components/motion/MotionMax'
 import { useEffect, useEffectEvent, useRef, useState, type Ref } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { Icon } from '@/components/Icon'
+import { useLocale } from '@/components/LocaleProvider'
 import { PlayersNow } from '@/components/PlayersNow'
 import type { GameArtUrls } from '@/lib/art'
 import {
@@ -24,8 +25,10 @@ import {
 } from '@/lib/deckvote'
 import type { Discount } from '@/lib/discount'
 import type { GameTrait } from '@/lib/gametraits'
+import { tr, type Locale } from '@/lib/i18n'
 import { formatPrice, notSoldShort } from '@/lib/steamregion'
-import { tagRu } from '@/lib/tagsru'
+import { tagLabel } from '@/lib/tagsru'
+import { langOn, withForeignRuns } from '@/lib/textlang'
 
 export type DeckCard = {
   appid: number
@@ -68,13 +71,34 @@ export type DeckCard = {
 /**
  * Подписи голосов. В пати — «Играем!» и «Не хочу»: это голос за вечер вместе.
  * В колоде исследователя играть никто не обещает — там «Интересно» и «Мимо».
+ *
+ * По-английски — «I'm in» и «Pass» (глоссарий docs/i18n.md): кнопки делят
+ * ряд пополам, и подпись не шире русской. Колода исследователя приносит свои
+ * подписи сама, на своём языке.
  */
 export type DeckLabels = { yes: string; no: string }
 
-const PARTY_LABELS: DeckLabels = { yes: 'Играем!', no: 'Не хочу' }
+const PARTY_LABELS = {
+  ru: { yes: 'Играем!', no: 'Не хочу' },
+  en: { yes: "I'm in", no: 'Pass' },
+} satisfies Record<Locale, DeckLabels>
 
 const EASE = [0.22, 1, 0.36, 1] as const
 const DEPTH = 3 // сколько карточек видно в стопке
+
+/**
+ * Сессия одной фразой — правило sessionPhrase из lib/gametraits, но без её
+ * импорта: модуль тянет за собой семантику и правила длины (lib/semantics,
+ * lib/entry, lib/liveness), и колода везла бы их в первую загрузку комнаты и
+ * /explore ради трёх строк. По-русски — прежняя склейка «матч ~15 мин»,
+ * по-английски — «~15 min matches», «all-evening sessions». Что фразы
+ * совпадают с sessionPhrase, сторожит lib/partyen.test.ts.
+ */
+function sessionLine(trait: GameTrait, locale: Locale): string {
+  if (locale !== 'en') return `${trait.label.toLowerCase()} ${trait.value}`
+  const noun = trait.label.toLowerCase() === 'match' ? 'matches' : 'sessions'
+  return trait.value === 'all evening' ? `all-evening ${noun}` : `${trait.value} ${noun}`
+}
 
 type Fly = 'left' | 'right' | null
 
@@ -169,6 +193,7 @@ function TopCard({
    * работать сразу, не дожидаясь конца чужой анимации.
    */
   const present = useIsPresent()
+  const locale = useLocale()
   const noRef = useRef<HTMLButtonElement>(null)
   const yesRef = useRef<HTMLButtonElement>(null)
 
@@ -277,7 +302,13 @@ function TopCard({
 
       <div className="relative mt-auto p-5 flex flex-col gap-2.5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <h2 className="font-display text-display-sm">{card.name}</h2>
+          {/* Название — данные: на /en русское («Смута») помечено lang="ru",
+              как под обложкой полки (GameCardName), иначе английский голос
+              читает его по буквам (WCAG 3.1.2). На русской странице атрибута
+              нет, как не было (langOn) */}
+          <h2 lang={langOn(locale, card.name)} className="font-display text-display-sm">
+            {card.name}
+          </h2>
           {/*
             ФАКТ ПРО «ВСЕХ» — НЕ ФАКТ, ПОКА ЧЕЛОВЕК ОДИН.
             Колода открыта и в одиночку: голоса копятся заранее, чтобы к
@@ -294,7 +325,7 @@ function TopCard({
             alone ? null : (
               <span className="inline-flex items-center gap-1 rounded-full bg-ok/15 text-ok px-3 py-1 text-xs font-semibold">
                 <Icon name="check" size={12} />
-                Есть у всех
+                {tr(locale, { ru: 'Есть у всех', en: 'Everyone owns it' })}
               </span>
             )
           ) : (
@@ -302,20 +333,30 @@ function TopCard({
               {/* text-info вместо sky-300: на светлой теме tailwind-цвет давал
                   1.52:1, то есть подпись была практически невидима */}
               <span className="rounded-full bg-info/10 text-info px-3 py-1 text-xs">
-                {alone ? 'Нет в твоей библиотеке' : `Нет у: ${card.missingFor.join(', ')}`}
+                {/* ники — тоже данные: русский на /en — своим lang (withForeignRuns) */}
+                {alone
+                  ? tr(locale, { ru: 'Нет в твоей библиотеке', en: 'Not in your library' })
+                  : withForeignRuns(
+                      locale,
+                      tr(locale, {
+                        ru: `Нет у: ${card.missingFor.join(', ')}`,
+                        en: `Not owned by: ${card.missingFor.join(', ')}`,
+                      }),
+                      card.missingFor,
+                    )}
                 {/* Порядок — как в PriceTag. «Нет в российском Steam» первым,
                     даже раньше «бесплатно»: бесплатную игру, которую магазин
                     региона не показывает, из него не взять. «Бесплатно» —
                     раньше цены: иначе у CS2 здесь стояла цена Prime — « · $15»
                     за бесплатную игру */}
                 {card.unsold && card.priceCc
-                  ? ` · ${notSoldShort(card.priceCc)}`
+                  ? ` · ${notSoldShort(card.priceCc, locale)}`
                   : card.isFree
-                    ? ' · бесплатно'
+                    ? tr(locale, { ru: ' · бесплатно', en: ' · free' })
                     : typeof card.priceFinal === 'number' && card.priceFinal > 0 && card.priceCc
-                      ? ` · ${formatPrice(card.priceFinal, card.priceCc, { whole: true })}`
+                      ? ` · ${formatPrice(card.priceFinal, card.priceCc, { whole: true, locale })}`
                       : card.store
-                        ? ' · бесплатно/вне Steam'
+                        ? tr(locale, { ru: ' · бесплатно/вне Steam', en: ' · free/outside Steam' })
                         : ''}
               </span>
               {/* Скидка отдельной плашкой, а не внутри синей: там один токен
@@ -328,7 +369,12 @@ function TopCard({
             </span>
           )}
         </div>
-        {card.reason && <p className="text-sm text-ink/80 leading-relaxed line-clamp-2 md:line-clamp-3">{card.reason}</p>}
+        {/* в причине — те же названия («130 h in “Смута”», ориентир via), и lang у них тот же */}
+        {card.reason && (
+          <p className="text-sm text-ink/80 leading-relaxed line-clamp-2 md:line-clamp-3">
+            {withForeignRuns(locale, card.reason, [card.name, card.via?.name])}
+          </p>
+        )}
         {/* для вечера вместе онлайн — самый важный факт: есть ли с кем играть;
             второй — сколько уйдёт на заход: «успеем до ночи?». Обёртка —
             только когда есть что в неё положить: пустая заняла бы в колонке
@@ -336,17 +382,13 @@ function TopCard({
         {(typeof card.ccu === 'number' || card.session) && (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
             <PlayersNow ccu={card.ccu ?? null} ccuAt={card.ccuAt} nowSec={nowSec} />
-            {card.session && (
-              <span className="text-dim">
-                {card.session.label.toLowerCase()} {card.session.value}
-              </span>
-            )}
+            {card.session && <span className="text-dim">{sessionLine(card.session, locale)}</span>}
           </div>
         )}
         {card.tags.length > 0 && (
           // Строкой через точку, как жанры под названием у стриминга;
           // ключи английские, подпись русская — см. lib/tagsru.ts
-          <p className="text-sm text-dim line-clamp-1 md:line-clamp-2">{card.tags.map((t) => tagRu(t)).join(' · ')}</p>
+          <p className="text-sm text-dim line-clamp-1 md:line-clamp-2">{card.tags.map((t) => tagLabel(t, locale)).join(' · ')}</p>
         )}
         <div className="grid grid-cols-2 gap-3 mt-1.5">
           {/* detail === 0 — щелчок без мыши: Enter, пробел или скринридер */}
@@ -381,7 +423,7 @@ export function SwipeDeck({
   votedCount,
   deckTotal,
   alone = false,
-  labels = PARTY_LABELS,
+  labels: ownLabels,
   nowSec,
   initialFocus = null,
 }: {
@@ -407,6 +449,8 @@ export function SwipeDeck({
    */
   initialFocus?: 'yes' | 'no' | null
 }) {
+  const locale = useLocale()
+  const labels = ownLabels ?? PARTY_LABELS[locale]
   // Куда улетает верхняя карточка — и кнопкой, и жестом.
   const [flyOut, setFlyOut] = useState<Fly>(null)
   const [focusOn, setFocusOn] = useState<'yes' | 'no' | null>(initialFocus)
@@ -540,7 +584,8 @@ export function SwipeDeck({
           живая область, вставленная вместе с текстом, звучит не везде.
         */}
         <p role="status" aria-live="polite" className="sr-only">
-          {deckCardLine(pos, top.name)}
+          {/* название в строке — с тем же lang, что у заголовка карты */}
+          {withForeignRuns(locale, deckCardLine(pos, top.name, locale), [top.name])}
         </p>
 
         {/* Числитель зажат знаменателем — почему, см. deckPosition в lib/deckvote */}

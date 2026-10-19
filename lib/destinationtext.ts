@@ -1,4 +1,5 @@
 import type { DestinationPath } from './destination'
+import { splitLocale, tr, type Locale } from './i18n'
 import { parseMood } from './mood'
 import { moodCaption } from './quiz'
 
@@ -65,6 +66,74 @@ export const DESTINATIONS: Readonly<Record<string, Destination>> = {
 } satisfies Record<DestinationPath, Destination>
 
 /**
+ * Те же тексты английского лендинга — тем же satisfies: адрес без текста
+ * или текст без адреса не соберутся и здесь. Кнопка так же называет
+ * действие: по-английски это повелительное наклонение (Open, See, Find…),
+ * и слова — из глоссария (Find a game, Browse, Get the link, Create a room).
+ *
+ * Кнопка — подпись главной кнопки карточки входа (ConnectCard), и она не
+ * шире русской: замер шрифтом кнопки (Manrope 800, 16 px) — «Показать игру
+ * дня» 146 px, «Show the game of the day» было 198, «See today's game» —
+ * 134; «Собрать портрет» 136, «Build your portrait» было 140, «Get your
+ * portrait» — 129. Остальные и так уже русских.
+ */
+const DESTINATIONS_EN = {
+  '/library': {
+    promise:
+      'Connect Steam and see your whole library as one wall: what you abandoned, what you never launched, and what it all cost.',
+    action: 'Open your library',
+  },
+  '/daily': {
+    promise: "The game of the day comes from your own library — connect Steam and it'll show up.",
+    action: "See today's game",
+  },
+  '/play': {
+    promise: "One game for how you feel, from your own library — connect Steam and we'll pick it.",
+    action: 'Find a game',
+  },
+  '/explore': {
+    promise: "A deck from your library and the store — browse, no strings attached. Connect Steam and we'll deal it.",
+    action: 'Browse games',
+  },
+  '/portrait': {
+    promise: 'Your player portrait is built from your library and your playtime — connect Steam.',
+    action: 'Get your portrait',
+  },
+  '/compat': {
+    promise: 'Connect Steam and get a link to compare tastes with anyone.',
+    action: 'Get the link',
+  },
+  '/room/new': {
+    // «ваших» — всех в комнате, а не одного гостя: «all your libraries»
+    // читалось как несколько библиотек у него самого, и «connect yours» спорило
+    promise: "A room is built from everyone's libraries — connect yours and we'll create it.",
+    action: 'Create a room',
+  },
+  '/whatsnew': {
+    promise:
+      "Connect Steam and “What's new” will show patches for your games. Once you sign in with Steam, you can get them in a feed reader via a private link.",
+    action: 'Open the feed',
+  },
+} satisfies Record<DestinationPath, Destination>
+
+/** Тексты лендинга на языке страницы; DESTINATIONS — русские, как были */
+export function destinations(locale: Locale = 'ru'): Readonly<Record<string, Destination>> {
+  return tr<Readonly<Record<string, Destination>>>(locale, { ru: DESTINATIONS, en: DESTINATIONS_EN })
+}
+
+/**
+ * Тексты места назначения по адресу — с языком или без: '/en/play?…' и
+ * '/play' — одна выдача. Ключ списка — путь без языка, а адрес из ?next=
+ * бывает и английским (destinationUrl его сохраняет). null — не место.
+ */
+export function destinationFor(url: string | null, locale: Locale = 'ru'): Destination | null {
+  if (!url) return null
+  const { path } = splitLocale(url.split('?', 1)[0])
+  // hasOwn, а не in: у объекта есть наследованные toString и __proto__
+  return Object.hasOwn(DESTINATIONS, path) ? destinations(locale)[path] : null
+}
+
+/**
  * Что сказать над заголовком лендинга про место, куда человек шёл: url —
  * адрес из ?next=, уже проверенный destinationUrl (lib/destination). null —
  * говорить нечего.
@@ -81,11 +150,15 @@ export const DESTINATIONS: Readonly<Record<string, Destination>> = {
  * запускал» (from) настроение выбирают за него — кубиком и дефолтом, — и
  * «запомнили» про то, чего он не говорил, было бы неправдой. Им, как и
  * неполному настроению, — общее обещание выдачи.
+ *
+ * Адрес бывает и с языком ('/en/play?…', см. destinationUrl): место
+ * узнаётся по пути без префикса. Текст — на языке страницы (locale), а
+ * настроение — подписями английского квиза, теми же, что он нажимал.
  */
-export function destinationPromise(url: string | null): string | null {
+export function destinationPromise(url: string | null, locale: Locale = 'ru'): string | null {
   if (!url) return null
   const cut = url.indexOf('?')
-  const path = cut < 0 ? url : url.slice(0, cut)
+  const { path } = splitLocale(cut < 0 ? url : url.slice(0, cut))
   // hasOwn, а не in: у объекта есть наследованные toString и __proto__
   if (!Object.hasOwn(DESTINATIONS, path)) return null
   const q = new URLSearchParams(cut < 0 ? '' : url.slice(cut + 1))
@@ -93,8 +166,10 @@ export function destinationPromise(url: string | null): string | null {
     path === '/play' && !q.has('roulette') && !q.has('from')
       ? parseMood({ time: q.get('time'), vibe: q.get('vibe'), social: q.get('social') })
       : null
-  const said = mood ? moodCaption(mood) : ''
-  return said
-    ? `${said} — запомнили. Остался последний шаг: подключи Steam, и выберем одну игру из твоей библиотеки.`
-    : DESTINATIONS[path].promise
+  const said = mood ? moodCaption(mood, locale) : ''
+  if (!said) return destinations(locale)[path].promise
+  return tr(locale, {
+    ru: `${said} — запомнили. Остался последний шаг: подключи Steam, и выберем одну игру из твоей библиотеки.`,
+    en: `${said} — got it. One last step: connect Steam and we'll pick one game from your library.`,
+  })
 }

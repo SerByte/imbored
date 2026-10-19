@@ -151,7 +151,7 @@ describe('догрузки комнаты ждут видимой вкладки
   const ROOT = path.join(__dirname, '..')
   /** Комментарии гасятся: докблоки страницы цитируют сами правила */
   const room = fs
-    .readFileSync(path.join(ROOT, 'app', 'room', '[id]', 'page.tsx'), 'utf8')
+    .readFileSync(path.join(ROOT, 'app', '[lang]', 'room', '[id]', 'RoomPage.tsx'), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 

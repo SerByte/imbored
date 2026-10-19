@@ -1,4 +1,4 @@
-import { revalidatePath } from 'next/cache'
+import { revalidateSitePath } from './revalidate'
 
 /**
  * Адрес карточки комнаты в мессенджере — тот, под которым её кэширует ISR
@@ -40,7 +40,7 @@ export function roomCardPath(roomId: string): string {
  */
 export function forgetRoomCard(
   roomId: string,
-  revalidate: (path: string) => void = revalidatePath,
+  revalidate: (path: string) => void = revalidateSitePath,
 ): void {
   try {
     revalidate(roomCardPath(roomId))

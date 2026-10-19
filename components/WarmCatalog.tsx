@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { queuePrepare } from '@/lib/warmup'
 
 /**
@@ -10,7 +10,7 @@ import { queuePrepare } from '@/lib/warmup'
  * подбора — например зайти сразу в библиотеку, где без метаданных не будет обложек.
  */
 export function WarmCatalog({ enabled }: { enabled: boolean }) {
-  const router = useRouter()
+  const router = useLocaleRouter()
   const started = useRef(false)
 
   useEffect(() => {

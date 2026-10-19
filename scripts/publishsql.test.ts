@@ -461,3 +461,39 @@ describe('публикация каталога: русский язык', () =>
     expect(list).toContain("'ru_lang'")
   })
 })
+
+describe('публикация каталога: английское описание', () => {
+  const cols = ['appid', 'name', 'short_description_en', 'updated_at'] as const
+
+  /** Облако с английским описанием `было`, поверх — локальная строка с `едет` */
+  async function заливаем(было: string | null, едет: string | null) {
+    const db = await createDb(':memory:')
+    await db.execute({
+      sql: `INSERT INTO games (${cols.join(', ')}) VALUES (1, 'Game', ?, 0)`,
+      args: [было],
+    })
+    await db.execute({
+      sql: `INSERT INTO games (${cols.join(', ')}) VALUES (1, 'Game', ?, 1)
+            ON CONFLICT(appid) DO UPDATE SET ${buildSetList(cols)}`,
+      args: [едет],
+    })
+    return (await db.execute('SELECT short_description_en AS d FROM games')).rows[0].d
+  }
+
+  test('пустое локальное облачное не затирает — его привезли прогрев и крон карточек', async () => {
+    expect(await заливаем(АНГ, null)).toBe(АНГ)
+    expect(await заливаем(АНГ, '')).toBe(АНГ)
+  })
+
+  test('непустое локальное едет: промоут ходит в магазин по-английски', async () => {
+    expect(await заливаем(null, АНГ)).toBe(АНГ)
+    expect(await заливаем('Old English text', АНГ)).toBe(АНГ)
+  })
+
+  test('каталог старше колонки едет без неё; заливка её везёт', () => {
+    expect(presentCols(cols, new Set(['appid', 'name', 'updated_at']))).toEqual(['appid', 'name', 'updated_at'])
+    const src = readFileSync('scripts/publish-catalog.ts', 'utf8')
+    const list = src.slice(src.indexOf('const COLS = ['), src.indexOf('] as const', src.indexOf('const COLS = [')))
+    expect(list).toContain("'short_description_en'")
+  })
+})

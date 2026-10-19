@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { assignEdges, EDGE_BADGE, EDGE_LINE, edgeLine, PICK_EDGES, type EdgeItem } from './badges'
+import { assignEdges, EDGE_BADGE, EDGE_LINE, edgeBadge, edgeLine, PICK_EDGES, type EdgeItem } from './badges'
 import { neutralParts } from './recommend'
 import type { ScoreParts } from './types'
 
@@ -48,6 +48,43 @@ describe('подписи преимуществ', () => {
     expect(edgeLine('taste', false)).toBe(EDGE_LINE.taste)
     for (const e of PICK_EDGES.filter((x) => x !== 'taste')) {
       expect(edgeLine(e, true)).toBe(EDGE_LINE[e])
+    }
+  })
+})
+
+/*
+ * Английская версия плитки и героя — те же правила: одиннадцать знаков у
+ * бейджа (латиница уже кириллицы того же кегля, так что знаки — запас, а
+ * не впритык), бейдж короче фразы, подписи не повторяются.
+ */
+describe('подписи преимуществ по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+
+  test('бейджи по глоссарию и не длиннее одиннадцати знаков', () => {
+    expect(PICK_EDGES.map((e) => edgeBadge(e, 'en'))).toEqual(['Your taste', 'Mood match', 'Underrated'])
+    for (const e of PICK_EDGES) {
+      expect(edgeBadge(e, 'en').length, e).toBeLessThanOrEqual(11)
+      expect(edgeBadge(e, 'en').length, e).toBeLessThan(edgeLine(e, false, 'en').length)
+      expect(edgeBadge(e, 'en'), e).not.toMatch(CYRILLIC)
+      expect(edgeLine(e, false, 'en'), e).not.toMatch(CYRILLIC)
+      expect(edgeLine(e, true, 'en'), e).not.toMatch(CYRILLIC)
+    }
+    expect(new Set(PICK_EDGES.map((e) => edgeBadge(e, 'en'))).size).toBe(PICK_EDGES.length)
+  })
+
+  test('фразы героя — целиком, и скрытое время меняет только вкус', () => {
+    expect(edgeLine('taste', false, 'en')).toBe("Of all these picks, it's the closest to what you play.")
+    expect(edgeLine('taste', true, 'en')).toBe("Of all these picks, it's the closest to what's in your library.")
+    expect(edgeLine('mood', true, 'en')).toBe('Of all these picks, it fits this mood best.')
+    expect(edgeLine('underrated', false, 'en')).toBe(
+      'Not many people know it, but almost everyone who played it loves it.',
+    )
+  })
+
+  test('по умолчанию — русские карты, как были', () => {
+    for (const e of PICK_EDGES) {
+      expect(edgeBadge(e)).toBe(EDGE_BADGE[e])
+      expect(edgeLine(e, false)).toBe(EDGE_LINE[e])
     }
   })
 })

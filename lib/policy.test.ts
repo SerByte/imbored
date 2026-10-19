@@ -1,7 +1,12 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { createElement, Fragment, isValidElement, type ReactNode } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
+import PrivacyPage from '../app/[lang]/privacy/page'
+import { COPY, type PolicyCopy } from '../app/[lang]/privacy/page.copy'
+import { LOCALES, type Locale } from './i18n'
 
 /**
  * Сторож даты политики.
@@ -11,59 +16,173 @@ import { describe, expect, test } from 'vitest'
  * ничего, а врёт — причём в документе, весь смысл которого в том, что ему
  * можно верить.
  *
- * Забыть тут легко и естественно: правят один абзац, дата стоит на семьдесят
- * строк выше и в поле зрения не попадает.
+ * Забыть тут легко и естественно: правят один абзац, а дата стоит в другом
+ * конце файла и в поле зрения не попадает.
  *
- * Поэтому тест снимает отпечаток с ПРОЗЫ страницы — с того, что человек
- * читает глазами, — и сравнивает с записанным ниже. Классы оформления,
- * перестановка разметки и комментарии в отпечаток не входят: переверстать
- * страницу можно свободно, а переписать текст — только вместе с датой.
+ * Поэтому тест снимает отпечаток с ПРОЗЫ политики — с того, что человек
+ * читает глазами, — и сравнивает с записанным ниже. Текст живёт в
+ * app/[lang]/privacy/page.copy.tsx, по объекту на язык (COPY), но отпечаток
+ * снимается не с COPY, а с того, что рисует сама страница на каждом языке:
+ * с её видимого текста и подписей (aria-label, title, alt, placeholder) и с
+ * title и description из COPY.meta. Слово, вписанное прямо в page.tsx мимо
+ * COPY, читатель видит так же — значит, и сторож обязан его видеть. Классы
+ * оформления, перестановка вёрстки и комментарии в отпечаток не входят:
+ * переверстать страницу можно свободно, а переписать текст — только вместе с
+ * датой своего языка.
  *
- * Когда прогон упал: правка текста была намеренной — обнови UPDATED в
- * app/privacy/page.tsx и подставь сюда новый отпечаток из сообщения об ошибке.
+ * Когда прогон упал: правка текста была намеренной — обнови COPY[язык].updated
+ * в app/[lang]/privacy/page.copy.tsx, дату здесь и подставь новый отпечаток из
+ * сообщения об ошибке. Правка русского существа — правка и английского текста
+ * (и его даты): перевод обязан говорить то же самое.
  */
 
-const PAGE = path.join(__dirname, '..', 'app', 'privacy', 'page.tsx')
+const PAGE = path.join(__dirname, '..', 'app', '[lang]', 'privacy', 'page.tsx')
 
-/** Отпечаток прозы, действительный для даты ниже. */
-const DIGEST = 'b4bb8757e0865cb5'
+/** Отпечаток прозы каждого языка и дата, для которой он действителен. Дата дублируется, чтобы тест видел смену. */
+const LOCKS: Record<Locale, { digest: string; updated: string }> = {
+  ru: { digest: 'c5a7545ec0e0132d', updated: '19 октября 2026' },
+  en: { digest: '0e4b61c313d77e3d', updated: 'October 19, 2026' },
+}
 
-/** Та же дата, что и в UPDATED на странице. Дублируется, чтобы тест видел смену. */
-const UPDATED = '12 октября 2026'
+/** Видимый текст куска JSX: абзацы — строками, разметка и сущности HTML — прочь */
+function textOf(node: ReactNode): string {
+  return renderToStaticMarkup(createElement(Fragment, null, node))
+    .replace(/<\/(?:p|li|div|h\d)>/g, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+}
 
 /**
- * Видимый текст страницы: строки-ответы, заголовки разделов и текстовые узлы
- * JSX. Комментарии вырезаются первыми — иначе отпечаток ловил бы объяснение
- * правки вместо самой правки.
+ * Проза языка в COPY — все строки и видимый текст всех абзацев, по порядку
+ * ключей. Обходом, а не списком полей: новое поле с текстом попадёт в
+ * проверки ниже само. Без даты.
  */
-function prose(src: string): string {
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[^\n]*\/\/[^\n]*$/gm, '')
+function prose(copy: PolicyCopy): string {
   const chunks: string[] = []
-  for (const m of code.matchAll(/\b(?:title|answer)=["']([^"']+)["']/g)) chunks.push(m[1])
-  for (const m of code.matchAll(/>([^<>{}]*[А-Яа-яЁё][^<>{}]*)[<{]/g)) chunks.push(m[1])
-  for (const m of code.matchAll(/^\s*'([^']*[А-Яа-яЁё][^']*)',?\s*$/gm)) chunks.push(m[1])
+  const walk = (v: unknown, key?: string): void => {
+    if (key === 'updated') return
+    if (typeof v === 'string') chunks.push(v)
+    else if (isValidElement(v)) chunks.push(textOf(v))
+    else if (Array.isArray(v)) for (const x of v) walk(x)
+    else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walk(x, k)
+  }
+  walk(copy)
   return chunks
+    .flatMap((s) => s.split('\n'))
     .map((s) => s.replace(/\s+/g, ' ').trim())
     .filter(Boolean)
     .join('\n')
 }
 
-describe('политика конфиденциальности', () => {
-  const src = fs.readFileSync(PAGE, 'utf8')
+/** Страница политики на языке — тем же вызовом, что делает Next */
+const renderPage = (locale: Locale) =>
+  PrivacyPage({ params: Promise.resolve({ lang: locale }), searchParams: Promise.resolve({}) })
 
-  test('на странице стоит дата обновления', () => {
-    expect(src).toContain(`const UPDATED = '${UPDATED}'`)
-    expect(src).toContain('Обновлено {UPDATED}')
+/**
+ * Проза, которую рисует страница языка: видимый текст и текстовые подписи
+ * разметки — тем же рендером, что у читателя, — и без даты: отпечаток
+ * действителен ДЛЯ неё. Заголовок вкладки и описание для поиска — из
+ * COPY.meta: их отдаёт generateMetadata (вызов держит lib/social.test.ts).
+ */
+async function pageProse(locale: Locale): Promise<string> {
+  const copy = COPY[locale]
+  const page = await renderPage(locale)
+  const labels = [...renderToStaticMarkup(page).matchAll(/\s(?:aria-label|title|alt|placeholder)="([^"]*)"/g)].map(
+    (m) => m[1],
+  )
+  return [copy.meta.title, copy.meta.description, ...labels, textOf(page).split(copy.updated).join('')]
+    .flatMap((s) => s.split('\n'))
+    .map((s) => s.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
+/** Раздел политики по номеру — видимым текстом: ответ и абзацы */
+function sectionText(locale: Locale, n: string): string {
+  const s = COPY[locale].sections.find((x) => x.n === n)
+  expect(s, `раздел ${n} (${locale})`).toBeDefined()
+  return `${textOf(s?.answer)}\n${textOf(s?.body)}`.replace(/\s+/g, ' ')
+}
+
+describe.each(LOCALES)('политика конфиденциальности: %s', (locale) => {
+  test('на странице стоит дата обновления', async () => {
+    expect(COPY[locale].updated).toBe(LOCKS[locale].updated)
+    // и страница её показывает — сразу за «Обновлено»
+    expect(fs.readFileSync(PAGE, 'utf8')).toMatch(/\{copy\.updatedLead\}\s*\{copy\.updated\}/)
+    expect(textOf(await renderPage(locale))).toContain(`${COPY[locale].updatedLead}${COPY[locale].updated}`)
   })
 
-  test('текст политики не менялся в обход даты', () => {
-    const text = prose(src)
-    expect(text.length, 'проза не извлеклась — проверь prose()').toBeGreaterThan(1500)
+  test('текст политики не менялся в обход даты', async () => {
+    const text = await pageProse(locale)
+    expect(text.length, 'проза не извлеклась — проверь pageProse()').toBeGreaterThan(1500)
     const digest = crypto.createHash('sha256').update(text).digest('hex').slice(0, 16)
     expect(
       digest,
-      `текст политики изменился. Если правка намеренная — обнови UPDATED в app/privacy/page.tsx и подставь сюда ${digest}`,
-    ).toBe(DIGEST)
+      `текст политики (${locale}) изменился. Если правка намеренная — обнови COPY.${locale}.updated в app/[lang]/privacy/page.copy.tsx, дату в LOCKS и подставь сюда ${digest}`,
+    ).toBe(LOCKS[locale].digest)
+  })
+})
+
+/*
+ * Перевод юридического текста — раздел в раздел и абзац в абзац: пропавший
+ * абзац английской версии — это обещание, которого англоязычный читатель не
+ * получил. Сверяется форма, слова — отпечатком выше.
+ */
+describe('английская политика — та же, что русская', () => {
+  const paragraphs = (node: ReactNode) => (renderToStaticMarkup(createElement(Fragment, null, node)).match(/<p[\s>]/g) ?? []).length
+
+  test('те же разделы, те же абзацы, те же пункты «читаем / не читаем»', () => {
+    const shape = (l: Locale) => ({
+      sections: COPY[l].sections.map((s) => [s.n, paragraphs(s.body)]),
+      reads: COPY[l].reads.length,
+      skips: COPY[l].skips.length,
+    })
+    expect(shape('en')).toEqual(shape('ru'))
+  })
+
+  test('ни буквы кириллицы', async () => {
+    // и в COPY.en, и в том, что рисует /en/privacy: слово мимо COPY — тоже
+    for (const text of [prose(COPY.en), await pageProse('en')]) {
+      expect(text.match(/[^\n]*[А-Яа-яЁё][^\n]*/g) ?? []).toEqual([])
+    }
+  })
+
+  /*
+   * Кнопки и разделы, которые проза называет, — теми же словами, что на
+   * английских экранах (глоссарий docs/i18n.md): человек ищет на странице
+   * ровно то слово, которое прочёл здесь. Апостроф в прозе — типографский.
+   */
+  test('названия кнопок — словами английских экранов', () => {
+    const text = prose(COPY.en).replace(/’/g, "'")
+    for (const label of [
+      'Liked it',
+      'Not it',
+      'Into it',
+      'Skip',
+      'Browse',
+      'Send to a friend',
+      'Play tonight on PC',
+      'Delete everything about me',
+      'Your evenings',
+      "What's new",
+      "Where's that?",
+      'Launch',
+      'Share',
+      'Download card',
+    ]) {
+      expect(text, label).toContain(`“${label}”`)
+    }
+  })
+
+  test('числа и сроки — те же, что по-русски', () => {
+    for (const n of ['01', '02', '03', '04', '05', '06', '07', '08']) {
+      const digits = (l: Locale) => sectionText(l, n).match(/\d+/g) ?? []
+      expect(digits('en'), n).toEqual(digits('ru'))
+    }
   })
 })
 
@@ -85,26 +204,32 @@ describe('политика конфиденциальности', () => {
  * раздела 06 и сюда. Потолок в памяти инстанса (memoryGate) в базе не лежит, и
  * политике о нём говорить нечего.
  */
-const BY_STEAMID: Record<string, string> = {
-  recommend: 'подбор',
-  daily: 'игра дня',
-  explore: '«Полистать»',
-  prepare: 'разбор библиотеки',
-  feedback: 'оценки',
-  outcome: 'ответы «как тебе?»',
-  'pick-share': 'ссылки на выбор',
-  'room-vote': 'голоса',
-  'room-deck': 'колода',
-  'room-leader': 'остальные действия в пати',
-  'room-likes': 'остальные действия в пати',
-  'room-trivia': 'остальные действия в пати',
-  'room-public': 'остальные действия в пати',
-  feedlink: 'выпуск ссылки на RSS',
-  feedrss: 'сколько раз ридер забирал ленту',
+const BY_STEAMID: Record<string, Record<Locale, string>> = {
+  recommend: { ru: 'подбор', en: 'picks' },
+  daily: { ru: 'игра дня', en: 'the game of the day' },
+  explore: { ru: '«Полистать»', en: '“Browse”' },
+  prepare: { ru: 'разбор библиотеки', en: 'reading your library' },
+  feedback: { ru: 'оценки', en: 'ratings' },
+  outcome: { ru: 'ответы «как тебе?»', en: 'answers to “How is it?”' },
+  'pick-share': { ru: 'ссылки на выбор', en: 'pick links' },
+  'room-vote': { ru: 'голоса', en: 'votes' },
+  'room-deck': { ru: 'колода', en: 'the deck' },
+  'room-leader': { ru: 'остальные действия в пати', en: 'other party actions' },
+  'room-likes': { ru: 'остальные действия в пати', en: 'other party actions' },
+  'room-trivia': { ru: 'остальные действия в пати', en: 'other party actions' },
+  'room-public': { ru: 'остальные действия в пати', en: 'other party actions' },
+  feedlink: { ru: 'выпуск ссылки на RSS', en: 'issuing an RSS link' },
+  feedrss: { ru: 'сколько раз ридер забирал ленту', en: 'how many times a reader fetched the feed' },
   // Счёт — по SteamID хозяина портрета, а не открывшего: стережёт пересборку
-  portrait: 'Пересборка текста портрета считается по SteamID того, чей он',
+  portrait: {
+    ru: 'Пересборка текста портрета считается по SteamID того, чей он',
+    en: 'Rebuilding the portrait text is counted against the SteamID of the person it belongs to',
+  },
   // Квота демо на умные объяснения — суточная, длиннее прочих окон
-  'llm-demo': 'у демо-профиля счётчик подборов с умными объяснениями — не дольше суток',
+  'llm-demo': {
+    ru: 'у демо-профиля счётчик подборов с умными объяснениями — не дольше суток',
+    en: 'for the demo profile, the counter for picks with smart explanations lasts up to a day',
+  },
 }
 
 const ROOT = path.join(__dirname, '..')
@@ -130,27 +255,24 @@ function rateGates(): Array<{ file: string; bucket: string; id: string }> {
   return gates
 }
 
-/** Абзац раздела 06 про SteamID — от «по твоему SteamID» до уборки, текстом без разметки */
-function steamidPart(src: string): string {
-  const from = src.indexOf('n="06"')
-  const to = src.indexOf('n="07"')
-  expect(from, 'раздел 06').toBeGreaterThan(-1)
-  expect(to, 'раздел 07').toBeGreaterThan(from)
-  const text = src
-    .slice(from, to)
-    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
-    .replace(/\{' '\}/g, ' ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/\s+/g, ' ')
-  const start = text.indexOf('по твоему SteamID')
-  expect(start, '«по твоему SteamID» в разделе 06').toBeGreaterThan(-1)
-  const end = text.indexOf('ближайшей уборкой', start)
-  expect(end, 'уборка после «по твоему SteamID»').toBeGreaterThan(start)
+/** Где в разделе 06 начинается и кончается часть про SteamID — на каждом языке */
+const STEAMID_PART: Record<Locale, { from: string; to: string; session: string }> = {
+  ru: { from: 'по твоему SteamID', to: 'ближайшей уборкой', session: 'номер этой сессии' },
+  en: { from: 'by your SteamID', to: 'next cleanup', session: 'the number of that session' },
+}
+
+/** Абзац раздела 06 про SteamID — от «по твоему SteamID» до уборки, видимым текстом */
+function steamidPart(locale: Locale): string {
+  const text = sectionText(locale, '06')
+  const { from, to } = STEAMID_PART[locale]
+  const start = text.indexOf(from)
+  expect(start, `«${from}» в разделе 06`).toBeGreaterThan(-1)
+  const end = text.indexOf(to, start)
+  expect(end, `уборка после «${from}»`).toBeGreaterThan(start)
   return text.slice(start, end)
 }
 
 describe('раздел 06: что считается по SteamID', () => {
-  const src = fs.readFileSync(PAGE, 'utf8')
   const gates = rateGates()
 
   test('сторож видит потолки: и по адресу, и по SteamID', () => {
@@ -159,11 +281,11 @@ describe('раздел 06: что считается по SteamID', () => {
     expect(gates.find((g) => g.bucket === 'feedback')?.id).toBe('steamid')
   })
 
-  test('каждый потолок по SteamID назван в абзаце про SteamID', () => {
+  test.each(LOCALES)('%s: каждый потолок по SteamID назван в абзаце про SteamID', (locale) => {
     const bySteamid = [...new Set(gates.filter((g) => /steamid|personalRateId\(/i.test(g.id)).map((g) => g.bucket))]
     expect(bySteamid.sort()).toEqual(Object.keys(BY_STEAMID).sort())
-    const part = steamidPart(src)
-    for (const [bucket, word] of Object.entries(BY_STEAMID)) expect(part, bucket).toContain(word)
+    const part = steamidPart(locale)
+    for (const [bucket, word] of Object.entries(BY_STEAMID)) expect(part, bucket).toContain(word[locale])
   })
 
   /*
@@ -171,8 +293,8 @@ describe('раздел 06: что считается по SteamID', () => {
    * чужой со ссылкой на профиль тратил бы потолок владельца. Политика обязана
    * назвать и это: в базе лежит не один SteamID.
    */
-  test('у потолков по personalRateId сказано про номер сессии', () => {
+  test.each(LOCALES)('%s: у потолков по personalRateId сказано про номер сессии', (locale) => {
     expect(gates.some((g) => g.id.startsWith('personalRateId('))).toBe(true)
-    expect(steamidPart(src)).toContain('номер этой сессии')
+    expect(steamidPart(locale)).toContain(STEAMID_PART[locale].session)
   })
 })

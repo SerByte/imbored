@@ -1,11 +1,37 @@
 import { NextResponse } from 'next/server'
 import { loginCarry } from '@/lib/destination'
+import { DEFAULT_LOCALE, localeFromRequest, splitLocale, type Locale } from '@/lib/i18n'
 import { browserHost } from '@/lib/origin'
 import { clientIp, memoryGate } from '@/lib/ratelimit'
 import { OIDC_COOKIE, appBaseUrl, nowSec, oidcCookieOptions } from '@/lib/server'
 import { RETURN_PATH, buildSteamLoginUrl, newLoginState } from '@/lib/steam-openid'
 import { recordTelemetryLater } from '@/lib/telemetry'
 import { eventKey } from '@/lib/track'
+
+/**
+ * Язык, на котором человек нажал «Войти через Steam»: ?lang= в адресе, иначе
+ * путь своей же страницы из Referer (/en/library → en), иначе русский.
+ *
+ * Ссылок на вход два десятка, и все — голые <a href="/api/auth/steam…">,
+ * собранные в том числе на сервере, где языка ссылки не знает никто, кроме
+ * страницы. Referer со своей страницы браузер шлёт целиком —
+ * Referrer-Policy сайта strict-origin-when-cross-origin (lib/csp.ts), — и
+ * язык страницы в нём уже есть. Чужой Referer не в счёт.
+ *
+ * Язык едет через Steam в return_to (?lang=en), и возврат ведёт на страницу
+ * того же языка, а не на русскую (app/api/auth/steam/return).
+ */
+function loginLocale(req: Request): Locale {
+  if (new URL(req.url).searchParams.has('lang')) return localeFromRequest(req)
+  const referer = req.headers.get('referer')
+  if (!referer) return DEFAULT_LOCALE
+  try {
+    const from = new URL(referer)
+    return from.hostname === browserHost(req.headers) ? splitLocale(from.pathname).locale : DEFAULT_LOCALE
+  } catch {
+    return DEFAULT_LOCALE
+  }
+}
 
 export async function GET(req: Request) {
   /*
@@ -16,6 +42,8 @@ export async function GET(req: Request) {
    * поэтому в возврат не может попасть чужой адрес.
    */
   const query = loginCarry(new URL(req.url).searchParams)
+  const locale = loginLocale(req)
+  if (locale !== DEFAULT_LOCALE) query.set('lang', locale)
   const base = appBaseUrl()
 
   /*

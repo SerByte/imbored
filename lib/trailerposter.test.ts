@@ -51,7 +51,7 @@ describe('постер трейлера', () => {
   })
 
   test('карточка игры отдаёт телефону маленький первый скриншот', () => {
-    const page = fs.readFileSync(path.join(__dirname, '..', 'app', 'game', '[appid]', 'page.tsx'), 'utf8')
+    const page = fs.readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'game', '[appid]', 'page.tsx'), 'utf8')
     expect(page).toMatch(/smallPoster=\{meta\.screenshots\?\.\[0\] \? shotUrl\(meta\.screenshots\[0\], 'small'\) : undefined\}/)
   })
 })

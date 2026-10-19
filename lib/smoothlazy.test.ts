@@ -30,8 +30,8 @@ import { code, reach, rel, ROOT } from './testing/importgraph'
 const isGsap = (spec: string) => spec === 'gsap' || spec.startsWith('gsap/') || spec.startsWith('@gsap/')
 
 describe('gsap не в начальном наборе каждой страницы', () => {
-  const layout = reach(path.join(ROOT, 'app', 'layout.tsx'))
-  const landing = reach(path.join(ROOT, 'app', 'page.tsx'))
+  const layout = reach(path.join(ROOT, 'app', '[lang]', 'layout.tsx'))
+  const landing = reach(path.join(ROOT, 'app', '[lang]', 'page.tsx'))
 
   test('обход графа доходит до входа плавной прокрутки — от главной', () => {
     // Без этого сторож ниже мог бы быть зелёным потому, что обход сломан
@@ -72,7 +72,7 @@ describe('gsap не в начальном наборе каждой страни
       for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
         const p = path.join(dir, e.name)
         if (e.isDirectory()) walk(p)
-        else if (e.name === 'page.tsx' && p !== path.join(ROOT, 'app', 'page.tsx')) pages.push(p)
+        else if (e.name === 'page.tsx' && p !== path.join(ROOT, 'app', '[lang]', 'page.tsx')) pages.push(p)
       }
     }
     walk(path.join(ROOT, 'app'))

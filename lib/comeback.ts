@@ -1,3 +1,4 @@
+import type { Locale } from './i18n'
 import type { LibraryTileState } from './recommend'
 import type { CandidateSource, LibraryGame } from './types'
 
@@ -46,6 +47,26 @@ import type { CandidateSource, LibraryGame } from './types'
  */
 export const PATCH_SINCE_LEAD = 'С твоего последнего захода вышло крупное обновление'
 
+/**
+ * Та же вводная на обоих языках (глоссарий docs/i18n.md).
+ *
+ * Это не только текст, но и метка: shareText (lib/sharedpick.ts) узнаёт по
+ * началу предложения факт о патче и вырезает его из публичной ссылки. Поэтому
+ * английская вводная — неизменный префикс: название игры (« for “Shapez”: »,
+ * по глоссарию) и пересказ patchSentence ставит только ПОСЛЕ неё, и
+ * startsWith узнаёт её всегда.
+ * Проверке нужны обе сразу — причина в ссылке бывает на любом языке.
+ */
+export const PATCH_SINCE_LEADS = {
+  ru: PATCH_SINCE_LEAD,
+  en: 'Since you last played, a major update came out',
+} as const satisfies Record<Locale, string>
+
+/** Вводная факта на языке страницы: причина на /play и подсказка метки «обновлялась» на /library */
+export function patchSinceLead(locale: Locale = 'ru'): string {
+  return PATCH_SINCE_LEADS[locale]
+}
+
 /*
  * Срок в пересказе. Схема дайджеста зовёт крупным и сезон, и ивент с новым
  * контентом, а промпт дайджеста сроков не запрещает: «Хэллоуинский сезон с
@@ -61,8 +82,64 @@ const DAY_MONTH = /(?<![\d.])\d{1,2}\.(?:0[1-9]|1[0-2])(?![\d.])/
 const DEADLINE_WORDS =
   /(?<![а-яё])(?:до\s+\d|только\s+до|до\s+конца|успе[йвт]|осталось|остаётся|заканчива|законч|ограниченн|временн|последн(?:ий|ие|яя)\s+(?:шанс|дн))/i
 
-/** Несёт ли пересказ патча срок — тогда он не повод, а «успей» */
-export function patchHasDeadline(tldr: string): boolean {
+/*
+ * Тот же срок в английском пересказе (tldr_en): на /en он уходит в причину
+ * тем же patchSentence, и «until November 5» давит там так же, как «до 5
+ * ноября». Логика та же — грубо и с запасом, — но у английского свои ловушки.
+ *
+ * Месяцы — с заглавной и без /i: «march» и «may» в английском — обычные
+ * слова («you may now trade»). May и сокращения считаются сроком только
+ * рядом с числом дня: «May 3», «3rd of May», «Nov 5».
+ *
+ * Числовая дата «11/05» — только там, где она не может быть дробью. Голое
+ * «M/D» здесь ловило «урон снижен на 1/3» и «3/4 перков» — в балансных
+ * патчах дроби на каждом шагу, а от даты на письме их не отличить. Поэтому
+ * датой считается: полная дата с годом («11/05/2026»), диапазон через тире
+ * («10/25–11/05» — дробей диапазоном не пишут) и дата после слова, которое
+ * дробь не предваряет («through 11/5», «on 11/5», «starting 10/25»). «by» и
+ * «from» в этом списке нет: «reduced by 1/3» и «cut from 1/2 to 1/3» — дроби,
+ * а «by Friday» ловят дни недели. «until 11/5» и «ends 11/5» ловятся и так —
+ * словом.
+ *
+ * Слова — только те, что говорят о конце: «ends», а не «end» и не голое
+ * «ending» («a new ending» — сюжетный патч, а не срок), и не «never ends» и
+ * «ends up» — это про баг и сюжет. Дальше «until», «last chance», «hurry»,
+ * «limited-time», «N days left»; «ending» — только в сочетаниях, которыми
+ * сюжет не описывают: «ending soon», «ending on…». «temporary» ловит и
+ * «temporary fix» — как русское «временн» ловит «временный фикс»: лишний
+ * отказ дешевле. Дни недели — после слова срока («through Sunday», «by
+ * Friday»), «this weekend only», «wraps up» и «for three days only» — те же
+ * «только до» и «заканчивается», что у русского.
+ */
+const MONTH_EN =
+  /\b(?:January|February|March|April|June|July|August|September|October|November|December)\b|\bMay\s+\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?May\b|\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\.?\s+\d{1,2}\b/
+const MD = String.raw`(?<![\d./])(?:0?[1-9]|1[0-2])\/(?:0?[1-9]|[12]\d|3[01])`
+const DATE_EN = new RegExp(
+  String.raw`${MD}\/(?:\d{4}|\d{2})(?![\d/])|${MD}\s?[–—-]\s?${MD}(?![\d/])|\b(?:through|thru|on|starting|before)\s+(?:the\s+)?${MD}(?![\d/])`,
+  'i',
+)
+const WEEKDAY_EN = String.raw`(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day`
+const DEADLINE_WORDS_EN = new RegExp(
+  String.raw`\b(?:until|till|(?<!\bnever\s+)ends(?!\s+up\b)|expires?|limited[-\s]time|time[-\s]limited|for\s+a\s+limited|last\s+chance|hurry|don'?t\s+miss|while\s+(?:it|they|supplies|stocks?)\s+lasts?|(?:days?|weeks?|hours?)\s+left|temporary` +
+    String.raw`|ending\s+(?:soon|on|in|this|next|tomorrow|today|tonight)|wraps?\s+up|(?:this|next)\s+(?:weekend|week|month)\s+only|(?:weekend|week|month|days?|weeks?|hours?)\s+only` +
+    String.raw`|(?:through|thru|by|before|this|next|on)\s+${WEEKDAY_EN}|(?:on|until|by|through|before)\s+the\s+\d{1,2}(?:st|nd|rd|th))\b`,
+  'i',
+)
+
+/**
+ * Несёт ли пересказ патча срок — тогда он не повод, а «успей».
+ *
+ * locale — язык пересказа, и правила — только его. Русский путь — прежние
+ * три правила до буквы: английские на русском тексте не безвредны, как
+ * казалось. Цифры у языков общие («урон снижен на 1/3» читалось датой), а
+ * латиница в русском пересказе — обычное дело: «режим Until Dawn», «ивент
+ * Last Chance», персонаж June. Всё это гасило факт о патче и в русской
+ * причине, и в русском промпте. Английскому тексту русские правила тоже ни к
+ * чему: кириллицы в нём нет (patchSentence и claudePicks не берут такой
+ * пересказ на 'en'), а «5.11» по-английски — чаще версия, чем дата.
+ */
+export function patchHasDeadline(tldr: string, locale: Locale = 'ru'): boolean {
+  if (locale === 'en') return MONTH_EN.test(tldr) || DATE_EN.test(tldr) || DEADLINE_WORDS_EN.test(tldr)
   return MONTH_GEN.test(tldr) || DAY_MONTH.test(tldr) || DEADLINE_WORDS.test(tldr)
 }
 

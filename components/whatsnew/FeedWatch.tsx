@@ -1,7 +1,8 @@
 'use client'
 
 import { AnimatePresence, m, useReducedMotion } from 'framer-motion'
-import { useRouter } from 'next/navigation'
+import { useLocale } from '@/components/LocaleProvider'
+import { useLocaleRouter } from '@/components/useLocaleRouter'
 import { useEffect, useState, useTransition } from 'react'
 import {
   afterProbe,
@@ -14,7 +15,7 @@ import {
   shouldProbe,
 } from '@/lib/feedpoll'
 import { Portal } from '@/components/Portal'
-import { plural } from '@/lib/plural'
+import { pl, tr } from '@/lib/i18n'
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
@@ -32,6 +33,9 @@ const EASE = [0.22, 1, 0.36, 1] as const
  * с новыми keys, счётчик схлопывается в ноль сам, и чистить нечего. А если
  * обновление не доехало — keys те же, плашка на месте, число верное. Ни
  * оптимистичной записи, ни гонки, ни эффекта-уборщика.
+ *
+ * Плашка-тост узкая и по центру под шапкой: английская подпись не длиннее
+ * русской («3 new updates» короче «3 новых обновления»).
  */
 export function FeedWatch({
   keys,
@@ -46,7 +50,8 @@ export function FeedWatch({
 }) {
   const [head, setHead] = useState<FeedHead | null>(null)
   const [pending, startTransition] = useTransition()
-  const router = useRouter()
+  const router = useLocaleRouter()
+  const locale = useLocale()
   const reduced = useReducedMotion()
 
   useEffect(() => {
@@ -107,8 +112,8 @@ export function FeedWatch({
   const есть = Boolean(n) || flipped
 
   const label = flipped
-    ? 'Лента обновилась'
-    : `${n} ${plural(n, 'новое обновление', 'новых обновления', 'новых обновлений')}`
+    ? tr(locale, { ru: 'Лента обновилась', en: 'Feed updated' })
+    : `${n} ${pl(locale, n, { ru: ['новое обновление', 'новых обновления', 'новых обновлений'], en: ['new update', 'new updates'] })}`
 
   /*
    * Живая область стоит ВСЕГДА, а внутрь неё приезжает плашка.
@@ -157,7 +162,7 @@ export function FeedWatch({
             className="pointer-events-auto flex items-center gap-2 rounded-full border border-rule bg-bg/90 px-4 py-2 text-sm font-semibold text-ink shadow-lg backdrop-blur transition-opacity hover:opacity-80 aria-disabled:opacity-60"
           >
             <span aria-hidden className="h-2 w-2 rounded-full bg-ember anim-pulse-dot" />
-            {pending ? 'Обновляю…' : label}
+            {pending ? tr(locale, { ru: 'Обновляю…', en: 'Updating…' }) : label}
           </m.button>
           ) : null}
         </AnimatePresence>

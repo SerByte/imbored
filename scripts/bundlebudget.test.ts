@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { checkBudget, type Budget } from './bundlebudget'
+import { budgetRoute, checkBudget, prerenderedAs, type Budget } from './bundlebudget'
 
 const K = 1024
 
@@ -31,6 +31,45 @@ describe('checkBudget', () => {
   test('статический маршрут, выпавший из пререндера, — ошибка', () => {
     const v = checkBudget([], budget, ['/about'])
     expect(v.notStatic).toEqual(['/'])
+  })
+
+  /**
+   * Страницы живут в app/[lang]: Next пишет /[lang]/play, а ключи бюджета —
+   * прежние. Без нормализации каждая строка бюджета стала бы «устаревшей», а
+   * каждый маршрут получил бы общий потолок.
+   */
+  test('маршруты под [lang] сверяются с прежними ключами', () => {
+    const v = checkBudget(
+      [
+        { route: '/[lang]/play', firstLoadUncompressedJsBytes: 701 * K },
+        { route: '/[lang]', firstLoadUncompressedJsBytes: 10 * K },
+        { route: '/[lang]/gone', firstLoadUncompressedJsBytes: 10 * K },
+        { route: '/_not-found', firstLoadUncompressedJsBytes: 10 * K },
+      ],
+      budget,
+      ['/ru', '/en'],
+    )
+    expect(v.over).toEqual([{ route: '/play', kb: 701, limitKb: 700 }])
+    expect(v.stale).toEqual([])
+    expect(v.rows.map((r) => r.route).sort()).toEqual(['/', '/_not-found', '/gone', '/play'])
+  })
+
+  test('главная статична, только если пререндерены оба языка', () => {
+    expect(checkBudget([], budget, ['/ru', '/en']).notStatic).toEqual([])
+    expect(checkBudget([], budget, ['/ru']).notStatic).toEqual(['/'])
+    expect(checkBudget([], budget, ['/en']).notStatic).toEqual(['/'])
+    // голый «/» больше не пререндерится вовсе — это не статика
+    expect(checkBudget([], budget, ['/']).notStatic).toEqual(['/'])
+    expect(checkBudget([], { ...budget, static: ['/privacy'] }, ['/ru/privacy', '/en/privacy']).notStatic).toEqual([])
+  })
+
+  test('ключ бюджета и адреса пререндера', () => {
+    expect(budgetRoute('/[lang]')).toBe('/')
+    expect(budgetRoute('/[lang]/game/[appid]')).toBe('/game/[appid]')
+    expect(budgetRoute('/_not-found')).toBe('/_not-found')
+    expect(budgetRoute('/[language]')).toBe('/[language]')
+    expect(prerenderedAs('/')).toEqual(['/ru', '/en'])
+    expect(prerenderedAs('/quiz')).toEqual(['/ru/quiz', '/en/quiz'])
   })
 })
 

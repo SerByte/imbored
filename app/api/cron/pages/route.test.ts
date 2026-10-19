@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { routePaths } from '@/lib/i18n'
 import { linksToday, runChain } from '@/lib/chain'
 import { CRON_JOBS } from '@/lib/cron'
 import { acquireLease, getCatalogMeta, setCatalogMeta, STEAM_LEASE, upsertGameMeta, type Db } from '@/lib/db'
@@ -104,7 +105,7 @@ describe('/api/cron/pages', () => {
     }))
     expect((await ask()).status).toBe(202)
     await settled()
-    expect(revalidated).toEqual(['/game/730', '/game/570'])
+    expect(revalidated).toEqual(['/game/730', '/game/570'].flatMap(routePaths))
     // В отметку — число, а не список: итог звена лежит в *_last_slice целиком
     const mark = JSON.parse((await getCatalogMeta(db, CRON_JOBS.pages.lastKey)) ?? '{}') as Record<string, unknown>
     expect(mark).not.toHaveProperty('cards')
@@ -132,7 +133,7 @@ describe('/api/cron/pages', () => {
     await settled()
 
     expect(order).toEqual(['догон', 'срез'])
-    expect([...revalidated].sort()).toEqual(['/game/440', '/game/570', '/game/730'])
+    expect([...revalidated].sort()).toEqual(['/game/440', '/game/570', '/game/730'].flatMap(routePaths).sort())
     const mark = JSON.parse((await getCatalogMeta(db, CRON_JOBS.pages.lastKey)) ?? '{}') as Record<string, unknown>
     expect(mark).toMatchObject({
       русский: 2,
@@ -172,7 +173,7 @@ describe('/api/cron/pages', () => {
 
     // Следующее звено идёт по настоящей пустой базе, и сбросить ему нечего:
     // эти адреса — от звена, чей срез упал
-    expect([...revalidated].sort()).toEqual(['/game/570', '/game/730'])
+    expect([...revalidated].sort()).toEqual(['/game/570', '/game/730'].flatMap(routePaths).sort())
   })
 
   test('скидка, погасшая с прошлого запуска, — карточка в перегенерацию, и один раз', async () => {
@@ -198,7 +199,7 @@ describe('/api/cron/pages', () => {
     )
     expect((await ask()).status).toBe(202)
     await settled()
-    expect(revalidated).toEqual(['/game/620'])
+    expect(revalidated).toEqual(routePaths('/game/620'))
     expect(await getCatalogMeta(db, DEALS_SWEPT_KEY)).toBe(String(T0))
 
     // Следующий запуск через час: эта скидка уже пройдена

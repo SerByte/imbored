@@ -1,5 +1,8 @@
+'use client'
+
 import type { CSSProperties, ReactNode } from 'react'
-import { OTHER_STORE_GENRE, OTHER_STORE_OF } from '@/lib/storecover'
+import { useLocale } from '@/components/LocaleProvider'
+import { OTHER_STORE_OF, otherStoreGenre } from '@/lib/storecover'
 import { STORE_LABEL, STORE_TINT, STORE_TINT_DEFAULT } from '@/lib/stores'
 
 /**
@@ -21,6 +24,10 @@ import { STORE_LABEL, STORE_TINT, STORE_TINT_DEFAULT } from '@/lib/stores'
  *
  * Магазин и жанр — из lib/storecover, а не из пула lib/otherstores: обложка
  * едет в первую загрузку почти каждого маршрута, а пул — карточки целиком.
+ * Жанр — на языке страницы (otherStoreGenre): подпись видна глазу, и на /en
+ * «Королевская битва» поверх обложки была бы русским словом на английской
+ * странице. Модуль клиентский ради useLocale — его и так зовут только
+ * клиентские GameArt и герои /play и /daily.
  */
 export function TypeCover({
   appid,
@@ -36,9 +43,10 @@ export function TypeCover({
   /** Подложка под свечением — размытый арт игры-ориентира */
   children?: ReactNode
 }) {
+  const locale = useLocale()
   const store = OTHER_STORE_OF[appid]
   const tint = (store && STORE_TINT[store]) || STORE_TINT_DEFAULT
-  const genre = OTHER_STORE_GENRE[appid]
+  const genre = otherStoreGenre(appid, locale)
   return (
     <div
       aria-hidden

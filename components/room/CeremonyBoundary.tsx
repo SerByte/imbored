@@ -1,8 +1,10 @@
 'use client'
 
 import { Component, type ReactNode, useCallback } from 'react'
+import { useLocale } from '@/components/LocaleProvider'
 import { focusAdrift } from '@/lib/focushandoff'
 import { clientErrorCode, reportClientError } from '@/lib/clienterr'
+import { tr } from '@/lib/i18n'
 import { matchByLeader } from '@/lib/room'
 import { storeLink } from '@/lib/storelink'
 
@@ -80,6 +82,9 @@ export class CeremonyBoundary extends Component<
  * матч, взятый лидером голосов, — не «все хотят одного и того же», и
  * запасной экран не возвращает эту неправду ровно тогда, когда церемония не
  * пришла.
+ *
+ * Язык — useLocale здесь, а не в границе: граница — класс, хуков у неё нет,
+ * и пропом через неё язык ехал бы только ради этого экрана.
  */
 export function CeremonyFallback({
   game,
@@ -96,23 +101,37 @@ export function CeremonyFallback({
     },
     [takeFocus],
   )
+  const locale = useLocale()
   const forCount = game.forCount ?? null
   const byLeader = matchByLeader(forCount, memberCount)
-  const link = storeLink(game)
+  const link = storeLink(game, locale)
   return (
     <div className="flex-1 flex items-center justify-center px-5 py-24">
       <div className="max-w-md w-full panel-lift p-8 text-center flex flex-col items-center gap-5">
         <h1 ref={head} tabIndex={-1} className="font-display text-display-sm">
-          {byLeader ? 'Договорились' : 'Это матч'}: «{game.name}»
+          {locale === 'en' ? (
+            `${byLeader ? 'Agreed' : "It's a match"}: “${game.name}”`
+          ) : (
+            <>
+              {byLeader ? 'Договорились' : 'Это матч'}: «{game.name}»
+            </>
+          )}
         </h1>
         <p className="text-dim text-sm leading-relaxed">
           {byLeader
-            ? `Не единогласно, но ${forCount} из ${memberCount} за. Праздничный экран не загрузился — а игра выбрана, зови всех в войс.`
-            : 'Праздничный экран не загрузился, но договорились вы по-настоящему — зови всех в войс.'}
+            ? tr(locale, {
+                ru: `Не единогласно, но ${forCount} из ${memberCount} за. Праздничный экран не загрузился — а игра выбрана, зови всех в войс.`,
+                en: `Not unanimous, but ${forCount} of ${memberCount} said yes. The celebration screen didn't load — but the game is picked, so get everyone on voice.`,
+              })
+            : tr(locale, {
+                ru: 'Праздничный экран не загрузился, но договорились вы по-настоящему — зови всех в войс.',
+                en: "The celebration screen didn't load, but the match is real — get everyone on voice.",
+              })}
         </p>
         {link && (
           <a href={link.href} target="_blank" rel="noreferrer" className="btn-ember is-block py-3">
-            Открыть в {link.where}
+            {/* По-английски подпись целиком (open): «Open in Steam» не склеить из «в …» */}
+            {locale === 'en' ? link.open : <>Открыть в {link.where}</>}
           </a>
         )}
         <button
@@ -120,7 +139,7 @@ export function CeremonyFallback({
           onClick={() => window.location.reload()}
           className="tap text-sm text-dim hover:text-ink transition-colors"
         >
-          Обновить страницу
+          {tr(locale, { ru: 'Обновить страницу', en: 'Reload page' })}
         </button>
       </div>
     </div>

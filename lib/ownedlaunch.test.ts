@@ -18,7 +18,7 @@ const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/
 
 describe('кнопка запуска', () => {
   test('страница игры не рисует запуск сама — только через OwnedLaunch', () => {
-    const page = code(read('app', 'game', '[appid]', 'page.tsx'))
+    const page = code(read('app', '[lang]', 'game', '[appid]', 'page.tsx'))
     expect(page).not.toMatch(/<SteamLaunch\b/)
     expect(page).toMatch(/<OwnedLaunch\b/)
   })
@@ -53,7 +53,7 @@ describe('кнопка запуска', () => {
     expect(tail, 'своя копия строки «Пройдено» вернулась в OwnedLaunch').not.toContain('Пройдено — больше не предложу')
     expect(src).toContain('done: d.done === true')
     expect(tail).toContain('from="game"')
-    const page = code(read('app', 'game', '[appid]', 'page.tsx'))
+    const page = code(read('app', '[lang]', 'game', '[appid]', 'page.tsx'))
     expect(page).toMatch(/<OwnedLaunch[^>]*finishable=\{!isReplayable\(meta\)\}/)
   })
 
@@ -77,7 +77,7 @@ describe('кнопка запуска', () => {
     // строка — своей ветвью после кнопки, а не правкой ветви кнопки (её форму держит тест выше)
     expect(tail).toMatch(/\{shownDenial && \(\s*<div\b/)
     expect(tail).toMatch(
-      /<NeedSteam from=\{`\/game\/\$\{appid\}`\} why=\{shownDenial === 'launch' \? 'launch' : 'save'\} \/>/,
+      /<NeedSteam from=\{lp\(locale, `\/game\/\$\{appid\}`\)\} why=\{shownDenial === 'launch' \? 'launch' : 'save'\} \/>/,
     )
     // строка — только этой игре и только пока сессия правда не пишет
     expect(src).toMatch(/const shownDenial = denied\?\.appid === appid && writer !== true \? denied\.how : null/)
@@ -112,7 +112,7 @@ describe('кнопка запуска', () => {
     expect(div).toContain('className="basis-full outline-none"')
     expect(div).not.toMatch(/\border-/)
     // ряд, в котором она стоит, — тот самый: OwnedLaunch до YouTube и «Позвать»
-    const page = code(read('app', 'game', '[appid]', 'page.tsx'))
+    const page = code(read('app', '[lang]', 'game', '[appid]', 'page.tsx'))
     const owned = page.indexOf('<OwnedLaunch')
     expect(owned).toBeGreaterThan(-1)
     expect(owned).toBeLessThan(page.indexOf('Обзоры на YouTube'))
@@ -129,7 +129,7 @@ describe('кнопка запуска', () => {
     const tail = src.slice(src.indexOf('!owns.owned) return null'))
     expect(tail).toContain('follow={follow}')
     expect(tail).not.toMatch(/\sfollow\s/)
-    const page = code(read('app', 'game', '[appid]', 'page.tsx'))
+    const page = code(read('app', '[lang]', 'game', '[appid]', 'page.tsx'))
     expect(page).toMatch(/<OwnedLaunch[^>]*follow=\{data\.similar\.length > 0\}/)
     expect(page).toMatch(/\{data\.similar\.length > 0 && \(\s*<Link href=\{quizHref\(null, appid\)\}/)
   })
@@ -166,7 +166,7 @@ describe('кнопка запуска', () => {
   })
 
   test('правило остановки под героем /play стоит на том же признаке, что и кнопка', () => {
-    const src = code(read('app', 'play', 'page.tsx'))
+    const src = code(read('app', '[lang]', 'play', 'page.tsx'))
     const at = src.indexOf('stopRuleLine(')
     expect(at).toBeGreaterThan(-1)
     const tag = src.slice(src.lastIndexOf('<m.p', at), at)
@@ -184,8 +184,8 @@ describe('кнопка запуска', () => {
     expect(tonight).toMatch(/className="pointer-fine:hidden\b/)
     expect(tonight, 'обещание только тому, чьё нажатие запишется').toMatch(/writer !== true \|\| demo\) return null/)
 
-    const play = code(read('app', 'play', 'page.tsx'))
-    const at = play.indexOf('{planLine(planRow)}')
+    const play = code(read('app', '[lang]', 'play', 'page.tsx'))
+    const at = play.indexOf('{planLine(planRow, locale)}')
     expect(at).toBeGreaterThan(-1)
     // строка плана — LaunchRow с fineOnly, а fineOnly — это тот самый признак
     expect(play.slice(play.lastIndexOf('<LaunchRow', at), at)).toMatch(/\bfineOnly\b/)
@@ -204,7 +204,7 @@ describe('кнопка запуска', () => {
     expect(launch).toContain("onClick?.('steam')")
     expect(launch).toContain("onClick?.('store')")
 
-    const play = code(read('app', 'play', 'page.tsx'))
+    const play = code(read('app', '[lang]', 'play', 'page.tsx'))
     expect(play).toMatch(/const launchIntent = \(via: LaunchVia\): CtxIntent => \(via === 'store' \? 'store' : 'launch'\)/)
     // герой и «Продолжить» — обе ветки SteamLaunch, обе пишут по ветке
     expect(play).toMatch(/onClick=\{\(via\) =>\s*void sendFeedback\(pick\.appid, 'launched', undefined, ctxOf\(pick, heroFrom, launchIntent\(via\)\)\)/)
@@ -217,7 +217,7 @@ describe('кнопка запуска', () => {
     expect(play, 'запуск «Продолжить» с общим intent launch вернулся').not.toMatch(/ctxOf\(null, 'continue', 'launch'\)/)
     expect([...play.matchAll(/ctxOf\(null, 'continue', launchIntent\(via\)\)/g)]).toHaveLength(2)
 
-    const daily = code(read('app', 'daily', 'page.tsx'))
+    const daily = code(read('app', '[lang]', 'daily', 'page.tsx'))
     expect(daily).toMatch(/onClick=\{\(via\) =>[\s\S]{0,240}ctxOf\(hero, via === 'store' \? 'store' : 'launch'\)/)
   })
 
@@ -228,11 +228,11 @@ describe('кнопка запуска', () => {
    * героем или «Продолжить» (planBeside).
    */
   test('строка плана на /play: не дублирует экран и уходит вместе с планом', () => {
-    const play = code(read('app', 'play', 'page.tsx'))
+    const play = code(read('app', '[lang]', 'play', 'page.tsx'))
     expect(play).toMatch(/const planRow = roulette \? null : planBeside\(plan, \[pick\.appid, cont\?\.appid\]\)/)
     expect(play).toMatch(/if \(r\.ok && closesPlan\(action, reason, ctx\?\.intent\)\) \{\s*setPlan\(\(p\) => \(p\?\.appid === appid \? null : p\)\)/)
     // кнопка строки уходит вместе с ней — фокус заранее к герою, а не в body
-    const row = play.slice(play.indexOf('{planRow && ('), play.indexOf('{planLine(planRow)}'))
+    const row = play.slice(play.indexOf('{planRow && ('), play.indexOf('{planLine(planRow, locale)}'))
     expect(row).toMatch(/onLaunch=\{\(\) => \{\s*focusHero\(true\)/)
   })
 
@@ -246,7 +246,7 @@ describe('кнопка запуска', () => {
    * игру как раз до вечера. Помнится только записанный план.
    */
   test('«Не то — дальше» у только что отложенного героя план не закрывает', () => {
-    const play = code(read('app', 'play', 'page.tsx'))
+    const play = code(read('app', '[lang]', 'play', 'page.tsx'))
     expect(play).toMatch(
       /if \(r\.ok && writesPlan\(action, ctx\?\.intent\)\) setPlanned\(\(a\) => \(a\.includes\(appid\) \? a : \[\.\.\.a, appid\]\)\)/,
     )
@@ -273,7 +273,7 @@ describe('кнопка запуска', () => {
    * отложенного героя после «Назад» не зовёт отложить его второй раз.
    */
   test('отложенные на вечер переживают «Подробнее» → «Назад» вместе с выдачей', () => {
-    const play = code(read('app', 'play', 'page.tsx'))
+    const play = code(read('app', '[lang]', 'play', 'page.tsx'))
     expect(play).not.toMatch(/\bplannedHere\b/)
     expect(play).toMatch(/const \[planned, setPlanned\] = useState<number\[\]>\(\[\]\)/)
     // запись выдачи несёт список и пишется заново, когда он меняется
@@ -304,7 +304,7 @@ describe('кнопка запуска', () => {
     const lazy = code(read('components', 'TonightLazy.tsx'))
     expect(lazy).toMatch(/lazyIsland\(\(\) => loadTonight\(\)\.catch\(/)
     expect(lazy).toMatch(/loadTonight\(\)\.catch\(\(\) => null\)/)
-    for (const page of [['app', 'play', 'page.tsx'], ['app', 'daily', 'page.tsx']]) {
+    for (const page of [['app', '[lang]', 'play', 'page.tsx'], ['app', '[lang]', 'daily', 'page.tsx']]) {
       const src = code(read(...page))
       // Рядом с островком /play берёт из того же модуля heroTail — загрузчик
       // того же куска для снятия «Зашло» (components/HeroTail), поэтому имя
@@ -332,7 +332,7 @@ describe('кнопка запуска', () => {
     expect(launch).toMatch(/onLaunch=\{plans\.includes\(item\.appid\) \? \(\) => closePlan\(item\.appid\) : undefined\}/)
     expect(launch).not.toMatch(/\bonClick=/)
     expect(src).toContain("ctx: { source: 'library', slot: 'plan', intent: 'launch' }")
-    const page = code(read('app', 'library', 'page.tsx'))
+    const page = code(read('app', '[lang]', 'library', 'page.tsx'))
     expect(page).toMatch(
       /writer && !isDemoId\(steamid\)\s*\? livePlanAppids\(db, steamid, nowSec\(\)\)\.catch\(\(\) => new Set<number>\(\)\)\s*: new Set<number>\(\)/,
     )
@@ -358,7 +358,7 @@ describe('кнопка запуска', () => {
    * сливаются в список, только если она того же человека.
    */
   test('отложенные на вечер переживают и смену настроения', () => {
-    const play = code(read('app', 'play', 'page.tsx'))
+    const play = code(read('app', '[lang]', 'play', 'page.tsx'))
     const run = play.slice(play.indexOf('async function run()'), play.indexOf('if (warmIsFresh(mark, viewer, Date.now()))'))
     // одни и те же баны и для выдачи, и для списка без неё
     expect(run).toMatch(/const back = restoreDeal\(entry, \{ key: cacheKey, viewer, nowMs: Date\.now\(\), banned \}\)/)
@@ -392,14 +392,14 @@ describe('кнопка запуска', () => {
     expect(close).toMatch(/if \(await isNeedSteam\(r\)\) setDenied\(true\)\s*else if \(r\.ok\) forgetPlanned\(appid\)/)
 
     // у «Игры дня» — тем же правилом, что сервер: магазин под пальцем и «Зашло» план не закрывают
-    const daily = code(read('app', 'daily', 'page.tsx'))
+    const daily = code(read('app', '[lang]', 'daily', 'page.tsx'))
     const send = daily.slice(daily.indexOf('async function sendFeedback('), daily.indexOf('export default function DailyPage'))
     expect(send).toMatch(/else if \(r\.ok && closesPlan\(action, reason, ctx\.intent\)\) forgetPlanned\(appid\)/)
 
     for (const src of [owned, evenings, daily]) {
       expect(src).toContain("import { forgetPlanned } from '@/lib/planforget'")
     }
-    const play = code(read('app', 'play', 'page.tsx'))
+    const play = code(read('app', '[lang]', 'play', 'page.tsx'))
     expect(play).toMatch(/const entry = playCacheStore\.fresh\(\)/)
     expect(play).not.toMatch(/playCacheStore\.get\(\)/)
   })

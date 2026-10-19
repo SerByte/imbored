@@ -222,3 +222,63 @@ describe('валюта суммы бэклога', () => {
     expect(backlogEquivalent(4_150_000, 'gb', '76561198000000000')).toBeNull()
   })
 })
+
+/**
+ * Английская версия шутки — та же строка таблицы: выбор единицы от языка не
+ * зависит, и читатель /en видит то же число, что и читатель русской страницы.
+ */
+describe('backlogEquivalent по-английски', () => {
+  const CYRILLIC = /[А-Яа-яЁё]/
+  const seeds = Array.from({ length: 80 }, (_, i) => `7656119800000${3000 + i}`)
+
+  test('то же число у обоих языков, фраза — своя, с местом под число', () => {
+    for (const [minor, cc] of [
+      [107_300, 'us'],
+      [4_150_000, 'ru'],
+      [12_000_000, 'ru'],
+      [900_000, 'us'],
+    ] as const) {
+      for (const seed of seeds) {
+        const ru = backlogEquivalent(minor, cc, seed)
+        const en = backlogEquivalent(minor, cc, seed, 'en')
+        expect(en?.count, `${minor} ${cc} ${seed}`).toBe(ru?.count)
+        if (!en) continue
+        expect(en.text).toContain('{n}')
+        expect(en.text).toMatch(/^That's \{n\} /)
+        expect(en.text).not.toMatch(CYRILLIC)
+        expect(en.text).not.toMatch(/\{n\}\s*$/)
+      }
+    }
+  })
+
+  test('каждой русской шутке — своя английская: таблицы одной длины', () => {
+    // $1073 — в границы попадают семь долларовых единиц из восьми (кроме Steam Deck)
+    const pairs = new Map<string, string>()
+    for (const seed of Array.from({ length: 400 }, (_, i) => `seed-${i}`)) {
+      const ru = backlogEquivalent(107_300, 'us', seed)
+      const en = backlogEquivalent(107_300, 'us', seed, 'en')
+      if (ru && en) pairs.set(ru.text, en.text)
+    }
+    const en = new Set(pairs.values())
+    expect(pairs.size).toBe(7)
+    // разные русские шутки — разные английские, а не одна на всех
+    expect(en.size).toBe(pairs.size)
+  })
+
+  test('точные фразы для одной единицы', () => {
+    const burger = seeds
+      .map((s) => [backlogEquivalent(4_150_000, 'ru', s), backlogEquivalent(4_150_000, 'ru', s, 'en')] as const)
+      .find(([ru]) => ru?.text.includes('бургер'))
+    expect(burger?.[1]).toEqual({ count: 118, text: "That's {n} burgers, and you'd finish every one." })
+    // шаурма по-английски — буррито: шутка про еду, которую доедают
+    const wrap = seeds
+      .map((s) => [backlogEquivalent(4_150_000, 'ru', s), backlogEquivalent(4_150_000, 'ru', s, 'en')] as const)
+      .find(([ru]) => ru?.text.includes('шаурм'))
+    expect(wrap?.[1]?.text).toBe("That's {n} burritos, and not one of them would wait for “someday”.")
+  })
+
+  test('без своей таблицы и вне границ — null на обоих языках', () => {
+    expect(backlogEquivalent(4_150_000, 'kz', '76561198000000000', 'en')).toBeNull()
+    expect(backlogEquivalent(500, 'us', '76561198000000000', 'en')).toBeNull()
+  })
+})

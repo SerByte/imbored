@@ -68,7 +68,8 @@ describe('ссылка с экрана матча', () => {
 
   test('кнопка берёт адрес и текст из этих строителей, а не из адресной строки', () => {
     const src = code('components/room/MatchShare.tsx')
-    expect(src).toMatch(/matchShareUrl\(window\.location\.origin, roomId\)/)
+    // locale — язык того, кто делится: весть с /en уходит английским адресом
+    expect(src).toMatch(/matchShareUrl\(window\.location\.origin, roomId, locale\)/)
     expect(src).toMatch(/matchShareCopy\(/)
     expect(src).not.toMatch(/location\.href/)
   })
@@ -177,6 +178,7 @@ describe('не участник на сошедшейся комнате — г�
     expect(storeLink({ appid: 620, store: null, storeUrl: null })).toEqual({
       href: 'https://store.steampowered.com/app/620/',
       where: 'Steam',
+      open: 'Открыть в Steam',
     })
   })
 
@@ -184,6 +186,7 @@ describe('не участник на сошедшейся комнате — г�
     expect(storeLink({ appid: -3, store: 'epic', storeUrl: 'https://store.epicgames.com/x' })).toEqual({
       href: 'https://store.epicgames.com/x',
       where: 'Epic Games',
+      open: 'Открыть в Epic Games',
     })
     // магазин без метки — не выдуманное имя, а просто «в магазине»
     expect(storeLink({ appid: -4, store: 'gog', storeUrl: 'https://gog.com/x' })?.where).toBe('магазине')
@@ -194,13 +197,14 @@ describe('не участник на сошедшейся комнате — г�
   })
 
   test('экран берёт ссылку из того же правила и ставит её над абзацем о закрытой комнате', () => {
-    const room = code('app/room/[id]/page.tsx')
+    const room = code('app/[lang]/room/[id]/RoomPage.tsx')
     const start = room.indexOf("state.room.status === 'matched' && state.matchedGame && !state.isMember")
     expect(start).toBeGreaterThan(-1)
     const screen = room.slice(start, room.indexOf('<MatchCeremony', start))
-    expect(screen).toMatch(/const shop = storeLink\(state\.matchedGame\)/)
+    expect(screen).toMatch(/const shop = storeLink\(state\.matchedGame, locale\)/)
+    // по-английски подпись целиком (shop.open), по-русски — прежняя склейка
     expect(screen).toMatch(
-      /<a\s+href=\{shop\.href\}\s+target="_blank"\s+rel="noreferrer"[^>]*>\s*Открыть «\{state\.matchedGame\.name\}» в \{shop\.where\}\s*<\/a>/,
+      /<a\s+href=\{shop\.href\}\s+target="_blank"\s+rel="noreferrer"[^>]*>\s*\{locale === 'en' \? shop\.open : <>Открыть «\{state\.matchedGame\.name\}» в \{shop\.where\}<\/>\}\s*<\/a>/,
     )
     // тихая ссылка под заголовком, а главная кнопка — по-прежнему своя комната
     const h1 = screen.indexOf('</h1>')
@@ -223,7 +227,7 @@ describe('не участник на сошедшейся комнате — г�
    * экрану матча. Экран приглашения открытой комнаты needSteam знал всегда.
    */
   test('свой по ссылке (needSteam) — не «не пускают», а вход через Steam к экрану матча', () => {
-    const room = code('app/room/[id]/page.tsx')
+    const room = code('app/[lang]/room/[id]/RoomPage.tsx')
     const start = room.indexOf("state.room.status === 'matched' && state.matchedGame && !state.isMember")
     const screen = room.slice(start, room.indexOf('<MatchCeremony', start))
     const fork = screen.indexOf('state.needSteam ? (')
@@ -231,15 +235,19 @@ describe('не участник на сошедшейся комнате — г�
     const other = screen.indexOf(') : (', fork)
     expect(other).toBeGreaterThan(fork)
     const steam = screen.slice(fork, other)
-    expect(steam).toContain('href={`/api/auth/steam?join=${roomId}`}')
-    expect(steam).toMatch(/>\s*Войти через Steam\s*</)
+    // Вход — steamLoginFor на языке страницы: на /room/… это прежний
+    // /api/auth/steam?join=КОД, на /en/room/… — с lang=en
+    expect(steam).toContain('href={steamLogin}')
+    expect(steam).toMatch(/>\s*\{signIn\}\s*</)
+    expect(room).toMatch(/const steamLogin = steamLoginFor\(lp\(locale, `\/room\/\$\{roomId\}`\)\)/)
+    expect(room).toMatch(/const signIn = tr\(locale, \{ ru: 'Войти через Steam', en: 'Sign in with Steam' \}\)/)
     expect(steam).not.toMatch(/не пускают|room\/new/)
     // а «не пускают» и своя комната — чужому, в другой ветке
     expect(screen.slice(other)).toMatch(/не пускают[\s\S]*href="\/room\/new"/)
   })
 
   test('запасной экран матча отвечает на «где взять» тем же правилом', () => {
-    expect(code('components/room/CeremonyBoundary.tsx')).toMatch(/const link = storeLink\(game\)/)
+    expect(code('components/room/CeremonyBoundary.tsx')).toMatch(/const link = storeLink\(game, locale\)/)
   })
 })
 
@@ -265,13 +273,13 @@ describe('церемония: куда это встаёт', () => {
     expect(ceremony).toMatch(/<MatchShare[^>]*roomId=\{roomId\}/)
     expect(ceremony).toMatch(/<MatchShare[^>]*forCount=\{forCount\}/)
     expect(ceremony).toMatch(/<MatchShare[^>]*memberCount=\{memberCount\}/)
-    expect(code('app/room/[id]/page.tsx')).toMatch(/<MatchCeremony[^>]*roomId=\{roomId\}/)
+    expect(code('app/[lang]/room/[id]/RoomPage.tsx')).toMatch(/<MatchCeremony[^>]*roomId=\{roomId\}/)
   })
 
   test('новое — в куске церемонии, а не в начальном наборе комнаты', () => {
     // /room/[id] стоит у самого потолка бюджета (bundle-budget.json): MatchShare
     // и MatchOwners импортирует только церемония, которую страница догружает
-    const room = code('app/room/[id]/page.tsx')
+    const room = code('app/[lang]/room/[id]/RoomPage.tsx')
     expect(room).not.toMatch(/MatchShare|MatchOwners|lib\/matchshare/)
   })
 })

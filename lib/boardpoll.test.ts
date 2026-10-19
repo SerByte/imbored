@@ -109,7 +109,7 @@ describe('отпечаток доски', () => {
  */
 describe('повисший запрос доски считается отказом', () => {
   const src = fs
-    .readFileSync(path.join(__dirname, '..', 'app', 'rooms', 'page.tsx'), 'utf8')
+    .readFileSync(path.join(__dirname, '..', 'app', '[lang]', 'rooms', 'page.tsx'), 'utf8')
     // Комментарии гасятся: докблоки цитируют сами правила
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/[^\n]*/g, '$1')

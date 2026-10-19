@@ -134,11 +134,19 @@ describe('подставка держит клавиатуру, пока чан�
     expect(proxy.attrs['aria-label']).toBe('Найти игру')
   })
 
+  // На /en имя подставки — то же, что у значка: «Search games», не «Find a game» (глоссарий)
+  test('на английском подставка называется по-английски', () => {
+    const doc = fakeDocument()
+    vi.stubGlobal('document', doc)
+    const proxy = holdKeyboard('en') as unknown as ReturnType<typeof doc.createElement>
+    expect(proxy.attrs['aria-label']).toBe('Search games')
+  })
+
   test('имя подставки — имя кнопки-значка: одна строка, а не две копии', () => {
     const launcher = code(fs.readFileSync(path.join(ROOT, 'components', 'SearchLauncher.tsx'), 'utf8'))
     expect(launcher.match(/'Найти игру'/g), 'строка имени одна — в константе').toHaveLength(1)
-    expect(launcher).toMatch(/aria-label=\{field \? undefined : NAME\}/)
-    expect(launcher).toMatch(/setAttribute\('aria-label', NAME\)/)
+    expect(launcher).toMatch(/aria-label=\{field \? undefined : NAME\[locale\]\}/)
+    expect(launcher).toMatch(/setAttribute\('aria-label', NAME\[locale\]\)/)
   })
 
   test('фокус ушёл — в поле окна или куда угодно — подставка уходит сама', () => {
@@ -163,7 +171,7 @@ describe('нажатие на «Найти игру»', () => {
   })
 
   test('чанк в пути — подставка встаёт до loadDialog, в самом нажатии', () => {
-    expect(onClick).toMatch(/const proxy = holdKeyboard\(\)\s*loadDialog\(\)\.then\(/)
+    expect(onClick).toMatch(/const proxy = holdKeyboard\(locale\)\s*loadDialog\(\)\.then\(/)
   })
 
   /*
@@ -204,7 +212,7 @@ describe('нажатие на «Найти игру»', () => {
     const miss = onClick.slice(onClick.indexOf('(err: unknown) =>'))
     expect(miss).toMatch(/reportClientError\(\{\s*kind: 'boundary',\s*error: err,\s*island: 'search'/)
     expect(miss).toContain('setMissed(true)')
-    const attempt = onClick.slice(0, onClick.indexOf('const proxy = holdKeyboard()'))
+    const attempt = onClick.slice(0, onClick.indexOf('const proxy = holdKeyboard(locale)'))
     expect(attempt).toContain('setMissed(false)')
   })
 
@@ -233,10 +241,11 @@ describe('нажатие на «Найти игру»', () => {
 
   test('строка отказа — живая область, которая стоит всегда; видна у строки-поля и в подсказке значка', () => {
     expect(launcher).toMatch(
-      /<span role="status" className=\{missed && !field \? 'search-miss' : 'sr-only'\}>\s*\{missed \? MISSED : ''\}\s*<\/span>/,
+      /<span role="status" className=\{missed && !field \? 'search-miss' : 'sr-only'\}>\s*\{missed \? MISSED\[locale\] : ''\}\s*<\/span>/,
     )
-    expect(launcher).toMatch(/\{field && \(missed \? MISSED : 'Найти игру по названию'\)\}/)
-    expect(launcher).toMatch(/title=\{field \? undefined : missed \? MISSED : NAME\}/)
+    expect(launcher).toMatch(/\{field && \(missed \? MISSED\[locale\] : FIELD\[locale\]\)\}/)
+    expect(launcher).toMatch(/const FIELD = \{ ru: 'Найти игру по названию', en: '[^']+' \}/)
+    expect(launcher).toMatch(/title=\{field \? undefined : missed \? MISSED\[locale\] : NAME\[locale\]\}/)
     // текст отказа — одной константой: каждая копия кириллицы — байты каждой страницы
     expect(launcher.match(/'Поиск не загрузился — обнови страницу'/g)).toHaveLength(1)
   })
@@ -259,7 +268,7 @@ describe('нажатие на «Найти игру»', () => {
     expect(rule).toContain('background: var(--bg)')
     expect(rule).toContain('color: var(--danger)')
     // опора строки — ряд значков шапки, а не край экрана за полем px-safe
-    const layout = code(fs.readFileSync(path.join(ROOT, 'app', 'layout.tsx'), 'utf8'))
+    const layout = code(fs.readFileSync(path.join(ROOT, 'app', '[lang]', 'layout.tsx'), 'utf8'))
     const row = layout.slice(0, layout.indexOf('<SearchLauncher />'))
     expect(row.slice(row.lastIndexOf('<div className="'))).toMatch(/^<div className="relative flex /)
   })

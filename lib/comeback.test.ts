@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'vitest'
-import { comebackPatchPairs, comebackSince, patchHasDeadline, wallPatchPairs } from './comeback'
+import {
+  comebackPatchPairs,
+  comebackSince,
+  PATCH_SINCE_LEAD,
+  PATCH_SINCE_LEADS,
+  patchHasDeadline,
+  patchSinceLead,
+  wallPatchPairs,
+} from './comeback'
 import { wallState } from './forgotten'
 import { playtimeHidden } from './playtime'
 import { hiddenLibrary } from './testing/hiddenlibrary'
@@ -122,5 +130,127 @@ describe('patchHasDeadline', () => {
     ]) {
       expect(patchHasDeadline(t), t).toBe(false)
     }
+  })
+})
+
+/*
+ * Английский пересказ (tldr_en) уходит в причину на /en тем же patchSentence,
+ * и срок в нём давит так же. Правила — языка пересказа: locale 'en'.
+ */
+describe('patchHasDeadline: английский пересказ', () => {
+  test('месяц, «until», «ends», «last chance», «hurry», «days left» — срок', () => {
+    for (const t of [
+      'The Halloween season with a new map runs until November 5',
+      'Event ends Nov 5',
+      'Available through May 3',
+      'Rewards until the 3rd of May',
+      'New mode available only until 11/05',
+      'Limited-time event with rewards',
+      'A time-limited mode is back',
+      'Last chance to earn the skin',
+      'Hurry: the event is almost over',
+      'Two weeks left in the season',
+      'A temporary Halloween mode',
+    ]) {
+      expect(patchHasDeadline(t, 'en'), t).toBe(true)
+    }
+  })
+
+  test('«ending soon», «this weekend only», «wraps up», день недели, «the 30th» — тоже срок', () => {
+    for (const t of [
+      'The Halloween event is ending soon: new skins and a boss.',
+      'A free weekend event, this weekend only, with new skins.',
+      'New skins available through Sunday.',
+      'Season 5 wraps up on the 30th with a final boss.',
+      'Players who log in by Friday get a free skin.',
+      'Double XP for three days only.',
+      'Rewards while supplies last.',
+    ]) {
+      expect(patchHasDeadline(t, 'en'), t).toBe(true)
+    }
+  })
+
+  test('числовая дата — только там, где она не дробь: год, диапазон, «through», «on»', () => {
+    for (const t of [
+      'The event runs 10/25–11/05 with new skins.',
+      'Rewards through 11/5.',
+      'The mode returns on 11/5.',
+      'Season ends 11/05/2026.',
+    ]) {
+      expect(patchHasDeadline(t, 'en'), t).toBe(true)
+    }
+  })
+
+  test('версии, «may», «ending», «endless», дроби и обычный пересказ — не срок', () => {
+    for (const t of [
+      'Update 1.5 adds a new biome',
+      'Version 1.10.2: new mode',
+      'You may now trade items with friends',
+      'Added a new ending and two bosses',
+      'Endless mode is here',
+      'Reworked combat, co-op is in',
+      'Space Age is out',
+      'Balance is now 50/50 between factions',
+      // Дроби в балансных патчах — не даты: прежде «1/3» гасило факт целиком
+      'Reduced shotgun damage by 1/3 and added a new map.',
+      'Cooldowns cut from 1/2 to 1/3 of the original.',
+      '3/4 of the perks were replaced with new ones.',
+      // «ends» о баге — не срок: «never ends», «ends up»
+      'Fixed a bug where the round never ends and added a new mode.',
+      'Your squad ends up in a new biome after the prologue.',
+      'Update 1.10 adds a biome',
+    ]) {
+      expect(patchHasDeadline(t, 'en'), t).toBe(false)
+    }
+  })
+})
+
+/*
+ * Русский путь — прежние три правила до буквы. Английские на русском тексте
+ * не безвредны: цифры у языков общие, а латиница в русском пересказе —
+ * обычное дело. Прежде такие пересказы молча теряли факт и в русской
+ * причине, и в русском промпте.
+ */
+describe('patchHasDeadline: русский пересказ не читается английскими правилами', () => {
+  test('дроби и латинские имена в русском пересказе — не срок', () => {
+    for (const t of [
+      'Урон дробовика снижен на 1/3, добавили карту «Завод».',
+      'Переработали прокачку; 3/4 перков заменены новыми.',
+      'Перезарядка теперь 3/4 от прежней, новый босс.',
+      'Добавили режим Until Dawn и новую карту.',
+      'Добавили ивент Last Chance и новые квесты.',
+      'Новый режим March of the Machine и 20 карт.',
+      'Добавлен персонаж June и новая глава.',
+      'Добавили режим Hurry Up и кооператив.',
+      'Режим Temporary Insanity и новая карта.',
+    ]) {
+      expect(patchHasDeadline(t), t).toBe(false)
+      expect(patchHasDeadline(t, 'ru'), t).toBe(false)
+    }
+  })
+
+  test('без locale — русские правила: русский срок узнаётся, английский текст их не задевает', () => {
+    expect(patchHasDeadline('Сезон идёт до 5 ноября')).toBe(true)
+    expect(patchHasDeadline('Event ends Nov 5')).toBe(false)
+    // А английский путь не видит русского срока: кириллица на 'en' не доходит
+    // до проверки вовсе (patchSentence, claudePicks)
+    expect(patchHasDeadline('Сезон идёт до 5 ноября', 'en')).toBe(false)
+  })
+})
+
+/*
+ * Вводная факта — и текст, и метка: shareText вырезает предложение, которое
+ * ей начинается. Английская — неизменный префикс глоссария.
+ */
+describe('patchSinceLead', () => {
+  test('русская по умолчанию — та же строка, что PATCH_SINCE_LEAD', () => {
+    expect(patchSinceLead()).toBe(PATCH_SINCE_LEAD)
+    expect(patchSinceLead('ru')).toBe(PATCH_SINCE_LEAD)
+  })
+
+  test('английская — по глоссарию, без кириллицы', () => {
+    expect(patchSinceLead('en')).toBe('Since you last played, a major update came out')
+    expect(patchSinceLead('en')).not.toMatch(/[А-Яа-яЁё]/)
+    expect(Object.values(PATCH_SINCE_LEADS).sort()).toEqual([PATCH_SINCE_LEAD, patchSinceLead('en')].sort())
   })
 })

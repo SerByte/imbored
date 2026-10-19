@@ -12,8 +12,9 @@ import {
   splitBySource,
   topTags,
 } from './recommend'
-import { SOURCE_BADGE } from './sources'
-import { tagRu } from './tagsru'
+import { tr, type Locale } from './i18n'
+import { sourceBadge } from './sources'
+import { tagLabel } from './tagsru'
 import type { GameArtUrls } from './art'
 import type { Mood } from './types'
 
@@ -80,7 +81,7 @@ export type LandingCard = {
   name: string
   /** Подпись источника продукта: «Пора вернуться», «Открыл и закрыл»… */
   badge: string
-  /** Подписи тегов, уже по-русски (см. demoTags ниже) */
+  /** Подписи тегов, уже на языке страницы (см. demoTags ниже) */
   tags: string[]
   headerImage: string | null
   art: GameArtUrls | null
@@ -123,21 +124,36 @@ function moodOf(key: MoodKey): Mood {
  * которого настоящая выдача не покажет. Сейчас в DEMO_METAS таких тегов нет,
  * но правило одно, и держится оно одной функцией.
  *
- * Сразу русскими подписями (tagRu), и это исключение из правила «переводить
- * на месте вывода»: главная рисует их клиентским компонентом, и перевод там
- * положил бы словарь тегов в бандл самой лёгкой страницы сайта. Здесь теги —
- * уже только подпись: ни с чем их дальше не сравнивают.
+ * Сразу подписями на языке страницы (tagLabel: для ru это tagRu, для en — сам
+ * тег Steam), и это исключение из правила «переводить на месте вывода»:
+ * главная рисует их клиентским компонентом, и перевод там положил бы словарь
+ * тегов в бандл самой лёгкой страницы сайта. Здесь теги — уже только подпись:
+ * ни с чем их дальше не сравнивают.
  */
-function demoTags(appid: number, metaOf: (id: number) => (typeof DEMO_METAS)[number] | undefined): string[] {
-  return topTags(metaOf(appid)).map(tagRu)
+function demoTags(
+  appid: number,
+  metaOf: (id: number) => (typeof DEMO_METAS)[number] | undefined,
+  locale: Locale,
+): string[] {
+  return topTags(metaOf(appid)).map((t) => tagLabel(t, locale))
+}
+
+/** Запасное имя игры без метаданных — глоссарий: «Игра 730» / «Game 730» */
+function gameName(appid: number, locale: Locale): string {
+  return tr(locale, { ru: `Игра ${appid}`, en: `Game ${appid}` })
 }
 
 /**
  * Всё, что показывает главная. Чистая функция от времени — и от него почти не
  * зависит: lastPlayed в демо задан относительными сдвигами, скидок в
  * DEMO_METAS нет, поэтому пятёрки не «дышат» между ревалидациями ISR.
+ *
+ * locale — язык главной: обе главные статические и собираются при сборке,
+ * каждая своим вызовом. Выбор игр от языка не зависит — тот же конвейер на тех
+ * же данных, — меняются только слова: причина первой карточки, подписи тегов
+ * и запасные имена игр.
  */
-export function landingDemo(nowSec: number): LandingDemo {
+export function landingDemo(nowSec: number, locale: Locale = 'ru'): LandingDemo {
   const metas = new Map(DEMO_METAS.map((m) => [m.appid, m]))
   const metaOf = (appid: number) => metas.get(appid)
 
@@ -152,6 +168,7 @@ export function landingDemo(nowSec: number): LandingDemo {
   const minutes = new Map(library.map((g) => [g.appid, g.playtimeForever]))
   const reasonOpts = {
     voice: 'them' as const,
+    locale,
     anchorOf: (appid: number) => {
       const meta = metaOf(appid)
       return meta ? findAnchor(meta) : null
@@ -190,8 +207,10 @@ export function landingDemo(nowSec: number): LandingDemo {
     picks[key] = chosen.map((p, i) => ({
       appid: p.appid,
       name: p.name,
-      badge: SOURCE_BADGE[p.source],
-      tags: demoTags(p.appid, metaOf),
+      // Подпись источника — из lib/sources.ts, на языке главной: та же, что
+      // у полосы героя выдачи («Bought, never opened», «Time to go back»)
+      badge: sourceBadge(p.source, locale),
+      tags: demoTags(p.appid, metaOf, locale),
       headerImage: metaOf(p.appid)?.headerImage ?? null,
       art: metaOf(p.appid)?.art ?? null,
       ...(i === 0 ? { why: p.reason } : {}),
@@ -200,7 +219,7 @@ export function landingDemo(nowSec: number): LandingDemo {
 
   const wall: LandingWallGame[] = library.map((g) => ({
     appid: g.appid,
-    name: metaOf(g.appid)?.name ?? `Игра ${g.appid}`,
+    name: metaOf(g.appid)?.name ?? gameName(g.appid, locale),
     headerImage: metaOf(g.appid)?.headerImage ?? null,
     art: metaOf(g.appid)?.art ?? null,
   }))
@@ -218,7 +237,7 @@ export function landingDemo(nowSec: number): LandingDemo {
   const rows: CompatRow[] = library
     .filter((g) => byOther.has(g.appid))
     .map((g) => ({
-      name: metaOf(g.appid)?.name ?? `Игра ${g.appid}`,
+      name: metaOf(g.appid)?.name ?? gameName(g.appid, locale),
       a: Math.round(g.playtimeForever / 60),
       b: Math.round((byOther.get(g.appid)?.playtimeForever ?? 0) / 60),
     }))

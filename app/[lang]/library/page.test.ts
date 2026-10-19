@@ -1,0 +1,584 @@
+import type { ResolvingMetadata } from 'next'
+import { isValidElement, type ReactElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { BannedShelf } from '@/components/BannedShelf'
+import { Evenings } from '@/components/Evenings'
+import { GameCardBody } from '@/components/GameCard'
+import { LikedShelf } from '@/components/LikedShelf'
+import { NeedSteam } from '@/components/NeedSteam'
+import { SignOut } from '@/components/SignOut'
+import { StatusLine } from '@/components/StatusLine'
+import {
+  issueFeedLink,
+  logFeedback,
+  recordOutcome,
+  saveLibrarySnapshot,
+  saveWishlist,
+  upsertGamesMeta,
+  type Db,
+} from '@/lib/db'
+import { feedTokenHash, newFeedToken } from '@/lib/feedlink'
+import { OTHER_STORE_GAMES } from '@/lib/otherstores'
+import { nowSec } from '@/lib/server'
+import { freshDb, signInAs, STEAMID_OF, type SessionKind } from '@/lib/testing/route'
+import LibraryPage, { generateMetadata } from './page'
+import { WishlistShelf } from './WishlistShelf'
+
+vi.mock('next/headers', () => import('@/lib/testing/headers'))
+
+/**
+ * /library настоящей страницей на базе в памяти: что уходит в разметку и в
+ * пропсы клиентских полок при каждом из трёх происхождений сессии.
+ *
+ * Оценки, скрытое и вечера пишет только сессия, доказавшая владение профилем
+ * (или демо), а сессию по вставленной ссылке выдают на любой публичный
+ * профиль. Прежде такая сессия получала всё это целиком и только без кнопок —
+ * то есть чужой человек со ссылкой видел, что владелец скрыл, что ему
+ * «зашло» и во что он играл после советов.
+ *
+ * Страница не рендерится: полки — клиентские островки с useRouter, им нужен
+ * живой роутер Next. Проверяется дерево, которое страница отдаёт, — ровно то,
+ * что сериализуется в первый HTML и в пропсы островков.
+ */
+
+/** Своё, сыгранное — для мозаики и стены */
+const PLAYED = 1
+/** Своё, ни разу не запускалось — кандидаты полки «Запечатанное» */
+const SEALED = [2, 3]
+/** Скрыто владельцем, хотя лежит в библиотеке: полке забытого его не видать никому */
+const SEALED_BANNED = 4
+/** Не из библиотеки: по ним и видно, утекло ли личное */
+const BANNED = 900
+const LIKED = 901
+const EVENING = 902
+const SKIPPED = 903
+/** Из списка желаемого владельца */
+const WISHED = 904
+
+const NAMES: Record<number, string> = {
+  [PLAYED]: 'Альфа',
+  2: 'Бета',
+  3: 'Гамма',
+  [SEALED_BANNED]: 'Дельта',
+  [BANNED]: 'Скрытая владельцем',
+  [LIKED]: 'Зашедшая владельцу',
+  [EVENING]: 'Вечер владельца',
+  [SKIPPED]: 'Не то для владельца',
+}
+const PRIVATE = [NAMES[BANNED], NAMES[LIKED], NAMES[EVENING], NAMES[SKIPPED]]
+
+let db: Db
+
+beforeEach(async () => {
+  db = await freshDb()
+})
+
+/** Всё, что оставил владелец: бан, «зашло», «не то» и совет, который он запустил */
+async function seed(steamid: string): Promise<void> {
+  const now = nowSec()
+  await upsertGamesMeta(
+    db,
+    Object.entries(NAMES).map(([appid, name]) => ({
+      appid: Number(appid),
+      name,
+      tags: { Puzzle: 100 },
+      genres: [],
+      categories: [2],
+      headerImage: `https://cdn.example/${appid}.jpg`,
+    })),
+    now,
+  )
+  await saveLibrarySnapshot(
+    db,
+    steamid,
+    [PLAYED, ...SEALED, SEALED_BANNED].map((appid) => ({
+      appid,
+      name: NAMES[appid],
+      playtimeForever: appid === PLAYED ? 600 : 0,
+      playtime2Weeks: 0,
+    })),
+    now - 3600,
+  )
+  await logFeedback(db, { steamid, appid: BANNED, action: 'banned' }, now - 300)
+  await logFeedback(db, { steamid, appid: SEALED_BANNED, action: 'banned' }, now - 290)
+  await logFeedback(db, { steamid, appid: LIKED, action: 'liked' }, now - 200)
+  await logFeedback(db, { steamid, appid: SKIPPED, action: 'skipped' }, now - 100)
+  await recordOutcome(db, { steamid, appid: EVENING, source: null, launched: true }, now - 60)
+  // Список желаемого — что человек хочет купить: тоже его личное. Отметки
+  // удаления нет, и строка сессии для записи не нужна (saveWishlist)
+  await saveWishlist(db, { steamid, sid: 'sid-seed' }, [WISHED], now - 30)
+}
+
+async function render(kind: SessionKind): Promise<ReactElement> {
+  const steamid = await signInAs(db, kind)
+  await seed(steamid)
+  return LibraryPage({
+    params: Promise.resolve({}),
+    searchParams: Promise.resolve({}),
+  } as PageProps<'/[lang]/library'>)
+}
+
+/** Все элементы дерева — и в children, и в пропсах вроде corner и meta */
+function elements(root: unknown): ReactElement<Record<string, unknown>>[] {
+  const out: ReactElement<Record<string, unknown>>[] = []
+  const seen = new Set<unknown>()
+  const walk = (n: unknown) => {
+    if (n === null || typeof n !== 'object' || seen.has(n)) return
+    seen.add(n)
+    if (isValidElement<Record<string, unknown>>(n)) {
+      out.push(n)
+      for (const v of Object.values(n.props)) walk(v)
+    } else if (Array.isArray(n)) n.forEach(walk)
+  }
+  walk(root)
+  return out
+}
+
+/** Каждая строка, до которой дотянется сериализация: текст разметки и пропсы островков */
+function strings(root: unknown): string[] {
+  const out: string[] = []
+  const seen = new Set<unknown>()
+  const walk = (n: unknown) => {
+    if (typeof n === 'string') return void out.push(n)
+    if (n === null || typeof n !== 'object' || seen.has(n)) return
+    seen.add(n)
+    if (isValidElement<Record<string, unknown>>(n)) walk(n.props)
+    else Object.values(n).forEach(walk)
+  }
+  walk(root)
+  return out
+}
+
+const propsOf = (tree: ReactElement, type: unknown) =>
+  elements(tree)
+    .filter((e) => e.type === type)
+    .map((e) => e.props)
+
+/** Что стоит на полке «Запечатанное»: у её карточек, и только у них, есть corner */
+const sealedShelf = (tree: ReactElement) =>
+  propsOf(tree, GameCardBody)
+    .filter((p) => p.corner)
+    .map((p) => p.appid)
+
+describe('/library: личное владельца — только тому, кто вправе его писать', () => {
+  test.each<SessionKind>(['openid', 'demo'])('%s — полки, вечера и доля попаданий на месте', async (kind) => {
+    const tree = await render(kind)
+
+    const [banned] = propsOf(tree, BannedShelf)
+    expect((banned.games as Array<{ appid: number }>).map((g) => g.appid)).toEqual([SEALED_BANNED, BANNED])
+    expect(banned.writer).toBe(true)
+
+    const [liked] = propsOf(tree, LikedShelf)
+    expect((liked.games as Array<{ appid: number }>).map((g) => g.appid)).toEqual([LIKED])
+    expect(liked.total).toBe(1)
+
+    const [evenings] = propsOf(tree, Evenings)
+    expect((evenings.items as Array<{ appid: number }>).map((i) => i.appid)).toEqual([EVENING])
+
+    const text = strings(tree).join(' ')
+    expect(text).toContain('Подбор попадает в')
+    expect(text).toContain('«зашло» против')
+    expect(propsOf(tree, NeedSteam).filter((p) => p.why === 'see')).toEqual([])
+  })
+
+  test('вошедший через Steam получает полку желаемого с уже прочитанным списком', async () => {
+    const tree = await render('openid')
+    const shelves = propsOf(tree, WishlistShelf)
+    expect(shelves).toHaveLength(1)
+    expect(shelves[0].steamid).toBe(STEAMID_OF.openid)
+    // sid той самой сессии: по нему поздняя запись списка сверяет, не забыло
+    // ли её «Удалить всё обо мне» (saveWishlist)
+    const sids = await db.execute({ sql: 'SELECT sid FROM sessions WHERE steamid = ?', args: [STEAMID_OF.openid] })
+    expect(sids.rows.map((r) => r.sid)).toEqual([shelves[0].sid])
+    expect((shelves[0].row as { appids: number[] }).appids).toEqual([WISHED])
+    // своё не предлагается купить: полка знает библиотеку
+    expect((shelves[0].owned as ReadonlySet<number>).has(PLAYED)).toBe(true)
+  })
+
+  test('у демо списка желаемого нет — и полки тоже: в Steam за ним не ходим', async () => {
+    expect(propsOf(await render('demo'), WishlistShelf)).toEqual([])
+  })
+
+  test('сессия по ссылке — ни полок, ни вечеров, ни доли; вместо них строка о входе', async () => {
+    const tree = await render('claimed')
+
+    // Полки получают пустое, а не прячут кнопки над полным списком
+    const [banned] = propsOf(tree, BannedShelf)
+    expect(banned.games).toEqual([])
+    const [liked] = propsOf(tree, LikedShelf)
+    expect(liked.games).toEqual([])
+    expect(liked.total).toBe(0)
+    expect(propsOf(tree, Evenings)).toEqual([])
+    // Список желаемого не читается и не показывается: что человек хочет
+    // купить — не дело того, у кого есть ссылка на профиль
+    expect(propsOf(tree, WishlistShelf)).toEqual([])
+
+    const all = strings(tree)
+    for (const name of PRIVATE) {
+      expect(all.filter((s) => s.includes(name)), `«${name}» ушло сессии по ссылке`).toEqual([])
+    }
+    const text = all.join(' ')
+    expect(text).not.toContain('Подбор попадает в')
+    expect(text).not.toContain('Сыграно всерьёз')
+
+    const lines = propsOf(tree, NeedSteam)
+    expect(lines).toEqual([expect.objectContaining({ from: '/library', why: 'see' })])
+    // Строка говорит, чего нет и почему, и ведёт входом обратно сюда
+    const html = renderToStaticMarkup(NeedSteam(lines[0] as Parameters<typeof NeedSteam>[0]))
+    expect(html).toContain('Оценки, скрытые игры и «Твои вечера» видит только вошедший через Steam')
+    expect(html).toMatch(/<a href="\/api\/auth\/steam\?next=%2Flibrary"[^>]*>Войди через Steam<\/a> — и они будут здесь/)
+  })
+
+  /*
+   * Пустая библиотека: у сессии по ссылке строка о входе теперь стоит всегда,
+   * а сетка карточек со своим mb-10 здесь не рисуется. Без отступа у блока
+   * «Steam не отдал ни одной игры» строка ложилась вплотную под кнопку
+   * «Подключить заново».
+   */
+  test('сессия по ссылке, пустая библиотека: блок «Steam не отдал» с отступом, строка о входе под ним', async () => {
+    const steamid = await signInAs(db, 'claimed')
+    await saveLibrarySnapshot(db, steamid, [], nowSec() - 3600)
+    const tree = await LibraryPage({
+      params: Promise.resolve({}),
+      searchParams: Promise.resolve({}),
+    } as PageProps<'/[lang]/library'>)
+
+    const [empty, ...rest] = elements(tree).filter(
+      (e) => e.type === 'section' && strings(e).includes('Steam не отдал ни одной игры'),
+    )
+    expect(rest).toEqual([])
+    expect(empty.props.className).toMatch(/\bmb-\d+\b/)
+    expect(propsOf(tree, NeedSteam)).toEqual([expect.objectContaining({ why: 'see' })])
+  })
+
+  // bannedAppids читается всем — только для отсева, и наружу из него ничего не идёт
+  test.each<SessionKind>(['openid', 'claimed'])('%s: скрытое владельцем не всплывает в «Запечатанном»', async (kind) => {
+    const shelf = sealedShelf(await render(kind))
+    expect(shelf.sort()).toEqual(SEALED)
+    expect(shelf).not.toContain(SEALED_BANNED)
+  })
+})
+
+/**
+ * «Уже прошёл» в «Твоих вечерах» (components/Evenings): решают сервер и его
+ * чтения, островок только рисует. Игра с финалом — кнопка; песочница — нет,
+ * её не «проходят»; уже пройденная (последний бан с причиной 'done', то же
+ * чтение, что полка «Пройдено») — слово вместо кнопки.
+ */
+describe('/library: «Уже прошёл» у вечеров', () => {
+  const RPG = 950
+  const SANDBOX = 951
+  const DONE = 952
+
+  async function evenings() {
+    const steamid = await signInAs(db, 'openid')
+    const now = nowSec()
+    await upsertGamesMeta(
+      db,
+      [
+        { appid: RPG, name: 'С титрами', tags: { RPG: 100, 'Story Rich': 50 }, genres: [], categories: [2] },
+        { appid: SANDBOX, name: 'Без конца', tags: { Sandbox: 100, Survival: 50 }, genres: [], categories: [2] },
+        { appid: DONE, name: 'Пройденная', tags: { Metroidvania: 100 }, genres: [], categories: [2] },
+      ],
+      now,
+    )
+    await saveLibrarySnapshot(
+      db,
+      steamid,
+      [RPG, SANDBOX, DONE].map((appid) => ({ appid, name: `#${appid}`, playtimeForever: 600, playtime2Weeks: 0 })),
+      now - 3600,
+    )
+    for (const appid of [RPG, SANDBOX, DONE]) {
+      await recordOutcome(db, { steamid, appid, source: null, launched: true }, now - 600)
+    }
+    await logFeedback(db, { steamid, appid: DONE, action: 'banned', reason: 'done' }, now - 60)
+    const tree = await LibraryPage({
+      params: Promise.resolve({}),
+      searchParams: Promise.resolve({}),
+    } as PageProps<'/[lang]/library'>)
+    const [props] = propsOf(tree, Evenings)
+    const items = props.items as Array<{ appid: number; finishable: boolean; finished: boolean }>
+    return new Map(items.map((i) => [i.appid, { finishable: i.finishable, finished: i.finished }]))
+  }
+
+  test('кнопка — у игры с финалом; у песочницы нет; пройденная знает, что пройдена', async () => {
+    const got = await evenings()
+    expect(got.get(RPG)).toEqual({ finishable: true, finished: false })
+    expect(got.get(SANDBOX)).toEqual({ finishable: false, finished: false })
+    expect(got.get(DONE)).toEqual({ finishable: true, finished: true })
+  })
+})
+
+/**
+ * План на вечер (lib/eveningplan.ts) закрывается запуском, а «Вернуться к
+ * ней» / «Запустить» в «Твоих вечерах» — запуск сайта, а не клиента Steam.
+ * Игра, которую советовали, запускали и потом поставили на загрузку, бывает
+ * и вечером, и планом; запущенная отсюда, она висела бы на главной «Ставил
+ * на загрузку — ждёт тебя» до конца срока. Какой план жив, решает сервер —
+ * тем же правилом (LIVE_PLAN в lib/db.ts), что живая строка, только читает
+ * все живые планы (livePlanAppids), а не один самый свежий; островок только
+ * пишет запуск по нему.
+ */
+describe('/library: план на вечер у «Твоих вечеров»', () => {
+  /** later — ещё один план, свежее и на игру не с полки: он и встал бы живой строкой */
+  async function plansOf(kind: SessionKind, planned: boolean, later = false) {
+    const steamid = await signInAs(db, kind)
+    await seed(steamid)
+    const plan = (appid: number, at: number) =>
+      logFeedback(db, { steamid, appid, action: 'opened', ctx: { source: 'play', intent: 'install' } }, at)
+    if (planned) await plan(EVENING, nowSec() - 3600)
+    if (later) await plan(PLAYED, nowSec() - 30)
+    const tree = await LibraryPage({
+      params: Promise.resolve({}),
+      searchParams: Promise.resolve({}),
+    } as PageProps<'/[lang]/library'>)
+    return propsOf(tree, Evenings).map((p) => p.plans)
+  }
+
+  test('живой план — его игра едет в «Твои вечера»; без плана — никого', async () => {
+    expect(await plansOf('openid', true)).toEqual([[EVENING]])
+    db = await freshDb()
+    expect(await plansOf('openid', false)).toEqual([[]])
+  })
+
+  /*
+   * Вчера «Сыграю вечером» у игры с полки, сегодня «Поставь на загрузку» у
+   * другой. Полке нужен план своей игры, а не самый свежий: по нему одному
+   * «Вернуться к ней» у старшей ничего не писал, и её план вставал живой
+   * строкой, едва закрывали свежий. Игры не с полки в пропсы не едут — им
+   * там нечего закрывать.
+   */
+  test('план игры с полки едет, даже когда свежее стоит другой', async () => {
+    expect(await plansOf('openid', true, true)).toEqual([[EVENING]])
+    db = await freshDb()
+    expect(await plansOf('openid', false, true)).toEqual([[]])
+  })
+
+  // Демо-библиотека чужая, и «вечером» у неё не наступает; сессии по ссылке
+  // вечеров нет вовсе
+  test('демо — без плана, сессия по ссылке — без полки', async () => {
+    expect(await plansOf('demo', true)).toEqual([[]])
+    db = await freshDb()
+    expect(await plansOf('claimed', true)).toEqual([])
+  })
+})
+
+/**
+ * «Выйти на всех устройствах» гасит и секретную ссылку на RSS-ленту
+ * (revokeAllSessions). Жмут его и просто прибраться в старых устройствах —
+ * и подтверждение обязано сказать про ридер в момент нажатия, а не мелким
+ * шрифтом на /whatsnew. Страница говорит SignOut, есть ли ссылка.
+ */
+describe('/library: выход везде знает про RSS-ссылку', () => {
+  async function signOutProps(kind: SessionKind, withLink: boolean) {
+    const steamid = await signInAs(db, kind)
+    await seed(steamid)
+    if (withLink) {
+      const tokenHash = feedTokenHash(newFeedToken())
+      await issueFeedLink(db, { steamid, sid: 'sid-feed', tokenHash, nowSec: nowSec(), replace: true })
+    }
+    const tree = await LibraryPage({
+      params: Promise.resolve({}),
+      searchParams: Promise.resolve({}),
+    } as PageProps<'/[lang]/library'>)
+    return propsOf(tree, SignOut)
+  }
+
+  test('вошедший через Steam со ссылкой — подтверждение скажет про RSS', async () => {
+    expect(await signOutProps('openid', true)).toEqual([{ verified: true, feedLink: true }])
+  })
+
+  test('без ссылки — обычный вопрос', async () => {
+    expect(await signOutProps('openid', false)).toEqual([{ verified: true, feedLink: false }])
+  })
+
+  // Выхода везде у демо и у сессии по ссылке нет — и ссылку им незачем читать
+  test.each<SessionKind>(['demo', 'claimed'])('%s — без выхода везде ссылка не читается', async (kind) => {
+    expect(await signOutProps(kind, true)).toEqual([{ verified: false, feedLink: false }])
+  })
+})
+
+/**
+ * Английская библиотека (/en/library): страница собирает текст на сервере —
+ * подписи, сводку вечеров, их даты и минуты, — и всё это едет в разметку и в
+ * пропсы островков на языке страницы. Кириллица остаётся только в названиях
+ * игр: их не переводят (docs/i18n.md).
+ */
+describe('/library на /en', () => {
+  const en = () =>
+    LibraryPage({
+      params: Promise.resolve({ lang: 'en' }),
+      searchParams: Promise.resolve({}),
+    } as PageProps<'/[lang]/library'>)
+
+  test('текст и пропсы полок — по-английски, кириллица только в названиях игр', async () => {
+    await seed(await signInAs(db, 'openid'))
+    const tree = await en()
+    const names = new Set(Object.values(NAMES))
+    const all = strings(tree)
+    expect(all.filter((s) => /[а-яё]/i.test(s) && !names.has(s))).toEqual([])
+
+    const text = all.join(' ')
+    expect(text).toContain('How we see your library')
+    expect(text).toContain('Picks land')
+    expect(text).toContain('“Liked it” vs')
+    // Вечера: дата и минуты собраны сервером на языке страницы
+    const [evenings] = propsOf(tree, Evenings)
+    const [item] = evenings.items as Array<{ date: string; played: string }>
+    expect(item.date).toMatch(/^[A-Z][a-z]+ \d{1,2}$/)
+    expect(item.played).toBe('not checked yet')
+    // Полка желаемого берёт язык пропом: getLocale() у неё в тесте не работает
+    expect(propsOf(tree, WishlistShelf)[0].locale).toBe('en')
+  })
+
+  /*
+   * Вечер с игрой другого магазина (пул, appid < 0): /play на /en ведёт в
+   * английский магазин (storeCardView → storeUrlFor), и «Store page» на
+   * полке вечеров обязана вести туда же, а не на русскую страницу из записи
+   * пула. Русская полка — прежний адрес записи.
+   */
+  test('вечер с игрой другого магазина ведёт в магазин на языке страницы', async () => {
+    const FORTNITE = OTHER_STORE_GAMES.find((g) => g.appid === -101)!
+    const steamid = await signInAs(db, 'openid')
+    await seed(steamid)
+    await upsertGamesMeta(db, [FORTNITE], nowSec())
+    await recordOutcome(db, { steamid, appid: FORTNITE.appid, source: null, launched: true }, nowSec() - 30)
+    const storeOf = async (lang?: string) => {
+      const tree = await LibraryPage({
+        params: Promise.resolve(lang ? { lang } : {}),
+        searchParams: Promise.resolve({}),
+      } as PageProps<'/[lang]/library'>)
+      const [evenings] = propsOf(tree, Evenings)
+      const items = evenings.items as Array<{ appid: number; storeUrl: string | null }>
+      return items.find((i) => i.appid === FORTNITE.appid)?.storeUrl
+    }
+    expect(await storeOf('en')).toBe('https://store.epicgames.com/en-US/p/fortnite')
+    expect(await storeOf()).toBe('https://store.epicgames.com/ru/p/fortnite')
+  })
+
+  test('сессия по ссылке: строка о входе ведёт обратно на английскую библиотеку', async () => {
+    await seed(await signInAs(db, 'claimed'))
+    const lines = propsOf(await en(), NeedSteam)
+    expect(lines).toEqual([expect.objectContaining({ from: '/en/library', why: 'see' })])
+    const html = renderToStaticMarkup(NeedSteam(lines[0] as Parameters<typeof NeedSteam>[0]))
+    expect(html).toContain('href="/api/auth/steam?next=%2Flibrary&amp;lang=en"')
+  })
+
+  /**
+   * Своей карточки у /library нет: превью — корневая, а её alt — русская
+   * константа файла. Английская страница переподписывает её своим openGraph
+   * (docs/i18n.md, п. 10), русская своего openGraph не объявляет, как раньше.
+   */
+  test('вкладка и подпись превью — на языке страницы, русская — прежняя', async () => {
+    const rootCard = {
+      url: 'http://localhost/en/opengraph-image?7a1c',
+      width: 1200,
+      height: 630,
+      type: 'image/png',
+      alt: 'imbored — во что поиграть',
+    }
+    const inherited = { images: [rootCard] }
+    const parent = Promise.resolve({ openGraph: inherited }) as unknown as ResolvingMetadata
+    const meta = (lang?: string) =>
+      generateMetadata(
+        {
+          params: Promise.resolve(lang ? { lang } : {}),
+          searchParams: Promise.resolve({}),
+        } as PageProps<'/[lang]/library'>,
+        parent,
+      )
+    const en = await meta('en')
+    expect(en).toMatchObject({
+      title: 'Library',
+      description: "Your whole Steam library on one wall: what's abandoned, what's never been launched and what it all cost.",
+    })
+    expect(en.openGraph).toMatchObject({
+      siteName: 'imbored',
+      locale: 'en_US',
+      url: '/en/library',
+      images: [{ ...rootCard, alt: 'imbored — what to play' }],
+    })
+    expect(JSON.stringify(en)).not.toMatch(/[А-Яа-яЁё]/)
+    expect(await meta()).toEqual({
+      title: 'Библиотека',
+      description: 'Вся твоя Steam-библиотека одной стеной: что заброшено, что ни разу не запускалось и сколько это стоило.',
+    })
+    expect(await meta('ru')).toEqual(await meta())
+  })
+})
+
+/**
+ * Строка поиска (StatusLine) повторяет запрос человека, а запрос — его текст,
+ * не наш. Аудитория по большей части русскоязычная, и русский запрос на
+ * /en/library — частый случай: без пометки английский голос скринридера читал
+ * бы «ведьмак» по буквам, а прогон i18n-audit видел бы кириллицу вне
+ * [lang=ru]. Поэтому на /en русский запрос — своим <span lang="ru">, во всех
+ * трёх ветках строки (нашлось, ничего, нет на этой полке), а фраза — одним
+ * шаблоном. Латинский запрос и русская страница — прежняя строка одним
+ * текстовым узлом.
+ */
+describe('/library: запрос в строке поиска', () => {
+  /** Библиотека не меньше SEARCH_FROM: только над такой стоит поиск */
+  const SHELF: Array<{ appid: number; name: string; minutes: number }> = [
+    { appid: 501, name: 'Ведьмак 3', minutes: 600 },
+    { appid: 502, name: 'Гамма', minutes: 600 },
+    ...Array.from({ length: 10 }, (_, i) => ({ appid: 510 + i, name: `Puzzle ${i + 1}`, minutes: 0 })),
+  ]
+
+  beforeEach(async () => {
+    const steamid = await signInAs(db, 'demo')
+    const now = nowSec()
+    await upsertGamesMeta(
+      db,
+      SHELF.map((g) => ({
+        appid: g.appid,
+        name: g.name,
+        tags: { Puzzle: 100 },
+        genres: [],
+        categories: [2],
+        headerImage: `https://cdn.example/${g.appid}.jpg`,
+      })),
+      now,
+    )
+    await saveLibrarySnapshot(
+      db,
+      steamid,
+      SHELF.map((g) => ({ appid: g.appid, name: g.name, playtimeForever: g.minutes, playtime2Weeks: 0 })),
+      now - 3600,
+    )
+  })
+
+  async function statusOf(q: string, opts: { lang?: string; state?: string } = {}) {
+    const tree = await LibraryPage({
+      params: Promise.resolve(opts.lang ? { lang: opts.lang } : {}),
+      searchParams: Promise.resolve({ q, ...(opts.state ? { state: opts.state } : {}) }),
+    } as PageProps<'/[lang]/library'>)
+    const lines = propsOf(tree, StatusLine)
+    expect(lines).toHaveLength(1)
+    const props = lines[0] as Parameters<typeof StatusLine>[0]
+    return { text: props.text, html: renderToStaticMarkup(StatusLine(props)) }
+  }
+
+  test('на /en русский запрос — своим lang="ru" во всех трёх ветках', async () => {
+    expect((await statusOf('дота', { lang: 'en' })).html).toBe(
+      '<p role="status" class="text-dim text-sm">Nothing found for “<span lang="ru">дота</span>”.</p>',
+    )
+    // «Ведьмак 3» сыгран — на полке нераспакованного его нет, но в библиотеке есть
+    expect((await statusOf('ведьмак', { lang: 'en', state: 'untouched' })).html).toBe(
+      '<p role="status" class="text-dim text-sm">No “<span lang="ru">ведьмак</span>” on this shelf — try the others: the numbers on the filters show where.</p>',
+    )
+    expect((await statusOf('гамма', { lang: 'en' })).html).toBe(
+      '<p role="status" class="sr-only">Found 1 game for “<span lang="ru">гамма</span>”.</p>',
+    )
+  })
+
+  test('латинский запрос на /en и русская страница — прежняя строка одним текстовым узлом', async () => {
+    expect((await statusOf('puzzle', { lang: 'en' })).text).toBe('Found 10 games for “puzzle”.')
+    expect((await statusOf('дота')).text).toBe('Ничего не нашлось по «дота».')
+    expect((await statusOf('ведьмак', { state: 'untouched' })).text).toBe(
+      'На этой полке «ведьмак» нет — поищи на соседних: счётчики на чипсах показывают, где.',
+    )
+    expect((await statusOf('гамма')).text).toBe('По «гамма» нашлась 1 игра.')
+  })
+})

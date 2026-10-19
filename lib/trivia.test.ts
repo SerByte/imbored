@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import { createDb, upsertGameMeta } from './db'
 import {
@@ -7,9 +9,11 @@ import {
   TRIVIA_COUNT,
   type TriviaCatalogGame,
   type TriviaParty,
+  type TriviaQuestion,
 } from './trivia'
 import { tagRu } from './tagsru'
 import { hiddenLibrary } from './testing/hiddenlibrary'
+import { withForeignRuns } from './textlang'
 import type { LibraryGame } from './types'
 
 function game(appid: number, name: string, over: Partial<TriviaCatalogGame> = {}): TriviaCatalogGame {
@@ -92,6 +96,8 @@ describe('buildTrivia', () => {
       const w = CATALOG.find((g) => g.name === winner)!
       const o = CATALOG.find((g) => g.name === other)!
       expect(w.ccu!).toBeGreaterThan(o.ccu!)
+      // по-русски пары — через запятую, как было: разряды там пробелом
+      expect(q.reveal).toMatch(/^.+ — \d[\d\s  ]*, .+ — \d[\d\s  ]*$/)
     }
   })
 
@@ -258,6 +264,66 @@ describe('buildTrivia', () => {
     }
   })
 
+  /*
+   * Тёзки в комнате. Две демо-личности — оба «Демо-игрок» (на /en — оба «Demo
+   * player»), и такие же бывают ники из Steam. «У кого больше часов» и «чей
+   * это топ-3» брали варианты из имён как есть: «Демо-игрок / Демо-игрок» —
+   * вопрос без ответа, а два одинаковых key у кнопок PartyTrivia оставляли в
+   * DOM кнопку прошлого вопроса первой в сетке каждого следующего.
+   */
+  const DEMO = 'Демо-игрок'
+  const twins = (...names: string[]): TriviaParty[] =>
+    names.map((name, i) => ({
+      steamid: `p${i}`,
+      name,
+      library: lib(
+        [1, 'Dota 2', [300, 20, 900][i] ?? 5],
+        [10 + i, `Своя ${i}a`, 50],
+        [20 + i, `Своя ${i}b`, 40],
+        [30 + i, `Своя ${i}c`, 30],
+      ),
+    }))
+  const rounds = (party: TriviaParty[]) =>
+    Array.from({ length: 20 }, (_, round) => buildTrivia({ seed: `r:twin:${round}`, catalog: CATALOG, party })).flat()
+
+  test('тёзки: ни одного вопроса с двумя одинаковыми вариантами, раунд полон', () => {
+    // та же пати с разными именами — вопросы про своих есть, иначе сторож слеп
+    expect(rounds(twins('Аня', 'Боря')).some((q) => q.kind === 'hours' || q.kind === 'toptrio')).toBe(true)
+    for (let round = 0; round < 20; round++) {
+      const qs = buildTrivia({ seed: `r:twin:${round}`, catalog: CATALOG, party: twins(DEMO, DEMO) })
+      // вопросов про своих нет — тёзок не различить, — а раунд добирает каталог
+      expect(qs.filter((q) => q.kind === 'hours' || q.kind === 'toptrio')).toEqual([])
+      expect(qs).toHaveLength(TRIVIA_COUNT)
+      for (const q of qs) {
+        const labels = q.options.map((o) => o.label)
+        expect(new Set(labels).size, `${q.prompt}: ${labels.join(' / ')}`).toBe(labels.length)
+      }
+    }
+  })
+
+  test('тёзки и третий: загадан третий — имя тёзок одним вариантом, загадан тёзка — вопроса нет', () => {
+    const qs = rounds(twins(DEMO, DEMO, 'Аня'))
+    const top = qs.filter((q) => q.kind === 'toptrio')
+    // иначе проверка ниже прошла бы вхолостую
+    expect(top.length).toBeGreaterThan(0)
+    for (const q of top) {
+      expect(q.options.map((o) => o.label).sort(), q.prompt).toEqual([DEMO, 'Аня'].sort())
+      expect(q.options[q.answer].label, q.prompt).toBe('Аня')
+    }
+    for (const q of qs.filter((x) => x.kind === 'hours')) {
+      const labels = q.options.map((o) => o.label)
+      expect(new Set(labels).size, `${q.prompt}: ${labels.join(' / ')}`).toBe(labels.length)
+    }
+  })
+
+  test('PartyTrivia: ключ кнопки — вопрос и место варианта, а не подпись', () => {
+    // Одинаковых вариантов buildTrivia не даёт (тесты выше), но ключ по
+    // подписи ломал сетку молча: React оставлял лишнюю кнопку прошлого вопроса
+    const src = readFileSync('components/room/PartyTrivia.tsx', 'utf8')
+    expect(src).toContain('key={`${q.id}:${i}`}')
+    expect(src).not.toMatch(/key=\{o\.label\}/)
+  })
+
   test('SteamID64 участников в ответ не попадает ни в одном поле', () => {
     // /api/room/[id]/trivia отдаёт вопросы как есть каждому в комнате, а в
     // открытую комнату подсаживаются незнакомые с доски «Пати». id вопроса
@@ -308,5 +374,194 @@ describe('loadTriviaCatalog', () => {
     })
     const [dota] = await loadTriviaCatalog(db, 'seed')
     expect(dota.tags).toEqual(tags)
+  })
+})
+
+/** Кириллица в строке — на английской странице это непереведённый кусок */
+const CYRILLIC = /[А-Яа-яЁё]/
+
+/**
+ * Викторина по-английски. Каталог и пати — латиницей, как придут на /en
+ * (имена — метки ростера, их переводит memberLabel у вызывающего): тогда во
+ * всём, что увидит человек, не должно остаться ни одной русской буквы.
+ */
+describe('buildTrivia по-английски', () => {
+  // Два набора тегов через одну игру: иначе «какого тега нет» не из чего собрать
+  const CATALOG_EN: TriviaCatalogGame[] = Array.from({ length: 24 }, (_, i) =>
+    game(100 + i, `Game ${i}`, {
+      ccu: (i + 1) * 5000,
+      tags: i % 2 ? { Action: 90, 'Co-op': 70, RPG: 50 } : { Strategy: 90, Indie: 70, Puzzle: 50 },
+    }),
+  )
+  const PARTY_EN: TriviaParty[] = [
+    { steamid: 'a', name: 'Anna', library: lib([1, 'Dota 2', 300], [2, 'Portal 2', 10], [3, 'Factorio', 90]) },
+    { steamid: 'b', name: 'Boris', library: lib([1, 'Dota 2', 20], [4, 'Terraria', 200], [5, 'Valheim', 50]) },
+  ]
+  const shown = (q: TriviaQuestion) => [q.prompt, q.reveal ?? '', ...q.options.map((o) => o.label)]
+
+  test('без языка — русский до буквы', () => {
+    const args = { seed: 'r:1:0', catalog: CATALOG, party: PARTY }
+    expect(buildTrivia(args)).toEqual(buildTrivia({ ...args, locale: 'ru' }))
+  })
+
+  test('сид от языка не зависит: те же вопросы, другие слова', () => {
+    const ru = buildTrivia({ seed: 'r:1:0', catalog: CATALOG_EN, party: PARTY_EN })
+    const en = buildTrivia({ seed: 'r:1:0', catalog: CATALOG_EN, party: PARTY_EN, locale: 'en' })
+    expect(en.map((q) => q.id)).toEqual(ru.map((q) => q.id))
+    expect(en.map((q) => q.answer)).toEqual(ru.map((q) => q.answer))
+  })
+
+  test('вопросы каждого вида — английскими фразами', () => {
+    const kinds = new Set<string>()
+    for (let round = 0; round < 10; round++) {
+      for (const q of buildTrivia({ seed: `r:en:${round}`, catalog: CATALOG_EN, party: PARTY_EN, locale: 'en' })) {
+        kinds.add(q.kind)
+        for (const s of shown(q)) expect(s, `${q.kind}: ${s}`).not.toMatch(CYRILLIC)
+        if (q.kind === 'cover') expect(q.prompt).toBe('Which game is this?')
+        if (q.kind === 'ccu') {
+          expect(q.prompt).toBe("Where's the bigger crowd right now?")
+          // онлайн — с английскими разрядами: «Game 3 — 20,000», а пары —
+          // через « · », чтобы запятая между ними не слиплась с разрядами
+          expect(q.reveal).toMatch(/^Game \d+ — \d{1,3}(,\d{3})* · Game \d+ — \d{1,3}(,\d{3})*$/)
+        }
+        if (q.kind === 'nottag') expect(q.prompt).toMatch(/^Which tag doesn't “Game \d+” have\?$/)
+        if (q.kind === 'hours') expect(q.prompt).toBe('Who has more hours in “Dota 2”?')
+        if (q.kind === 'toptrio') expect(q.prompt).toMatch(/^Whose top 3 is this: [^,]+, [^,]+, [^,]+\?$/)
+      }
+    }
+    expect([...kinds].sort()).toEqual(['ccu', 'cover', 'hours', 'nottag', 'toptrio'])
+  })
+
+  /** Пати на двоих с одной общей игрой — латиницей */
+  function duoEn(a: number, b: number): TriviaParty[] {
+    const one = (min: number): LibraryGame[] => [{ appid: 570, name: 'Dota 2', playtimeForever: min, playtime2Weeks: 0 }]
+    return [
+      { steamid: 'd', name: 'Dima', library: one(a) },
+      { steamid: 's', name: 'Sasha', library: one(b) },
+    ]
+  }
+  const hoursEn = (party: TriviaParty[]) =>
+    Array.from({ length: 20 }, (_, round) =>
+      buildTrivia({ seed: `r:h:${round}`, catalog: CATALOG_EN, party, locale: 'en' }).filter((q) => q.kind === 'hours'),
+    ).flat()
+
+  test('hours: разгадка — минутами до десяти часов, дальше — целыми часами с разрядами', () => {
+    const minutes = hoursEn(duoEn(60, 89))
+    expect(minutes.length).toBeGreaterThan(0)
+    for (const q of minutes) expect(q.reveal).toBe('Sasha — 1 h 29 min, Dima — 1 h')
+
+    const ten = hoursEn(duoEn(90, 615))
+    expect(ten.length).toBeGreaterThan(0)
+    for (const q of ten) expect(q.reveal).toBe('Sasha — 10 h, Dima — 1 h 30 min')
+
+    const many = hoursEn(duoEn(40, 2434 * 60))
+    expect(many.length).toBeGreaterThan(0)
+    for (const q of many) expect(q.reveal).toBe('Sasha — 2,434 h, Dima — 40 min')
+  })
+
+  test('nottag: варианты — сами теги Steam, и два ключа с одной подписью — один вариант', () => {
+    const twin: TriviaCatalogGame[] = CATALOG_EN.map((g, i) => ({
+      ...g,
+      tags: (i % 2
+        ? { 'Dystopian ': 90, Action: 70, RPG: 50 }
+        : { Dystopian: 90, Strategy: 70, Indie: 50 }) as Record<string, number>,
+    }))
+    let seen = 0
+    for (let round = 0; round < 20; round++) {
+      for (const q of buildTrivia({ seed: `r:twin:${round}`, catalog: twin, party: [], locale: 'en' })) {
+        if (q.kind !== 'nottag') continue
+        seen++
+        const labels = q.options.map((o) => o.label)
+        expect(new Set(labels).size, labels.join(', ')).toBe(labels.length)
+        // подпись без пробела по краям, как её покажет человек
+        expect(labels.every((l) => l === l.trim()), labels.join('|')).toBe(true)
+        const target = twin.find((g) => q.prompt.includes(`“${g.name}”`))!
+        const own = new Set(Object.keys(target.tags).map((t) => t.trim()))
+        q.options.forEach((o, i) => expect(own.has(o.label), `${q.prompt}: ${o.label}`).toBe(i !== q.answer))
+      }
+    }
+    expect(seen).toBeGreaterThan(0)
+  })
+
+  /*
+   * Русские ники и названия на /en. Аудитория сайта по большей части
+   * русскоязычная: «Вася Пупкин» в ростере и «Смута» в библиотеке на
+   * английской странице — частый случай. Переводить их нельзя (имена
+   * собственные), но и читать английским голосом по буквам — тоже: каждый
+   * такой кусок PartyTrivia помечает lang="ru" (withForeignRuns), а для этого
+   * должна знать его дословно. Варианты она видит сама; вклеенное во фразу
+   * сверх вариантов — название в вопросе, третий владелец в разгадке — едет
+   * в q.runs.
+   */
+  const CATALOG_RU_NAMES = CATALOG_EN.map((g) => ({ ...g, name: `Игра ${g.appid}` }))
+  const PARTY_RU_NAMES: TriviaParty[] = [
+    { steamid: 'a', name: 'Вася Пупкин', library: lib([1, 'Смута', 300], [2, 'Вальхейм', 90], [3, 'Factorio', 50]) },
+    {
+      steamid: 'b',
+      name: 'Leo',
+      library: lib([1, 'Смута', 20], [4, 'Terraria', 200], [5, 'Valheim', 50], [6, 'Portal 2', 10]),
+    },
+    // Третий владелец «Смуты»: в разгадку он попадёт, в варианты — нет
+    { steamid: 'c', name: 'Петя', library: lib([1, 'Смута', 10], [7, 'Dota 2', 30], [8, 'Готика', 20]) },
+  ]
+  /** То, что увидит человек: разметка без честно помеченных кусков не несёт кириллицы */
+  const unmarked = (text: string, runs: string[]) =>
+    renderToStaticMarkup(createElement('p', null, withForeignRuns('en', text, runs))).replace(
+      /<span lang="ru">[^<]*<\/span>/g,
+      '',
+    )
+
+  test('русские ники и названия во фразах на /en — дословно в runs: после пометки кириллицы не остаётся', () => {
+    const kinds = new Set<string>()
+    let thirdOwner = 0
+    for (let round = 0; round < 20; round++) {
+      for (const q of buildTrivia({
+        seed: `r:ru-names:${round}`,
+        catalog: CATALOG_RU_NAMES,
+        party: PARTY_RU_NAMES,
+        locale: 'en',
+      })) {
+        const labels = q.options.map((o) => o.label)
+        // те же куски, что PartyTrivia: варианты и runs вопроса
+        const runs = [...labels, ...(q.runs ?? [])]
+        const verdict = `Nope — ${labels[q.answer]}.${q.reveal ? ` ${q.reveal}` : ''}`
+        for (const text of [q.prompt, q.reveal ?? '', verdict]) {
+          expect(unmarked(text, runs), `${q.kind}: ${text}`).not.toMatch(CYRILLIC)
+        }
+        // без runs вопрос остался бы с русским куском — иначе проверка выше вхолостую
+        if (CYRILLIC.test(unmarked(q.prompt, labels)) || CYRILLIC.test(unmarked(q.reveal ?? '', labels))) {
+          kinds.add(q.kind)
+        }
+        if (q.kind === 'hours' && q.reveal?.includes('Петя') && !labels.includes('Петя')) thirdOwner++
+        // в runs — только то, что во фразах есть, и только русское
+        for (const r of q.runs ?? []) {
+          expect(`${q.prompt} ${q.reveal ?? ''}`, r).toContain(r)
+          expect(r, q.prompt).toMatch(CYRILLIC)
+        }
+      }
+    }
+    expect([...kinds].sort()).toEqual(['hours', 'nottag', 'toptrio'])
+    expect(thirdOwner).toBeGreaterThan(0)
+  })
+
+  test('runs нет на русской странице и у латинских имён — ответ API прежний до байта', () => {
+    for (let round = 0; round < 10; round++) {
+      const ru = buildTrivia({ seed: `r:ru-names:${round}`, catalog: CATALOG_RU_NAMES, party: PARTY_RU_NAMES })
+      expect(ru.length).toBeGreaterThan(0)
+      for (const q of ru) expect(q, q.prompt).not.toHaveProperty('runs')
+      const latin = buildTrivia({ seed: `r:en:${round}`, catalog: CATALOG_EN, party: PARTY_EN, locale: 'en' })
+      for (const q of latin) expect(q, q.prompt).not.toHaveProperty('runs')
+    }
+  })
+
+  test('PartyTrivia метит вопрос, варианты и разбор, а не выводит их голой строкой', () => {
+    const src = readFileSync('components/room/PartyTrivia.tsx', 'utf8')
+    expect(src).toContain('const runs = q ? [...q.options.map((o) => o.label), ...(q.runs ?? [])] : []')
+    expect(src).toContain('{withForeignRuns(locale, q.prompt, runs)}')
+    expect(src).toContain('const said = verdict && withForeignRuns(locale, verdict, runs)')
+    expect(src).toContain('<StatusLine text={said} className="sr-only" />')
+    expect(src).toContain('{langOn(locale, o.label) ? <span lang="ru">{o.label}</span> : o.label}')
+    // голые строки данных в разметке не остаются
+    expect(src).not.toMatch(/\{q\.prompt\}|\{verdict\}|^\s*\{o\.label\}\s*$/m)
   })
 })

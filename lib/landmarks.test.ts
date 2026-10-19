@@ -57,7 +57,14 @@ function navTags(): Array<{ file: string; tag: string }> {
   return out
 }
 
-const nameOf = (tag: string) => tag.match(/aria-label="([^"]+)"/)?.[1] ?? null
+/**
+ * Имя ориентира: строкой — aria-label="…", на языке страницы —
+ * aria-label={tr(locale, { ru: '…', en: '…' })}. Сравнивается русское: пара
+ * переводится вместе, и одно меню на двух ширинах обязано называться
+ * одинаково на обоих языках.
+ */
+const nameOf = (tag: string) =>
+  tag.match(/aria-label="([^"]+)"/)?.[1] ?? tag.match(/aria-label=\{tr\(\w+, \{ ru: '([^']+)', en: '[^']+' \}\)\}/)?.[1] ?? null
 
 describe('навигационные ориентиры', () => {
   const navs = navTags()
@@ -85,11 +92,11 @@ describe('навигационные ориентиры', () => {
       byName.set(name, [...(byName.get(name) ?? []), n.file])
     }
     const repeated = [...byName].filter(([, files]) => files.length > 1)
-    expect(repeated).toEqual([['Разделы', ['app/layout.tsx', 'components/MobileNav.tsx']]])
+    expect(repeated).toEqual([['Разделы', ['app/[lang]/layout.tsx', 'components/MobileNav.tsx']]])
   })
 
   test('два «Раздела» не видны одновременно', () => {
-    const header = navs.find((n) => n.file === 'app/layout.tsx' && nameOf(n.tag) === 'Разделы')
+    const header = navs.find((n) => n.file === 'app/[lang]/layout.tsx' && nameOf(n.tag) === 'Разделы')
     const panel = navs.find((n) => n.file === 'components/MobileNav.tsx')
     expect(header?.tag, 'меню в шапке прячется на телефоне целиком, а не только пункты внутри').toMatch(
       /className="hidden md:flex\b/,
@@ -98,8 +105,8 @@ describe('навигационные ориентиры', () => {
   })
 
   test('кнопка темы — не часть меню разделов', () => {
-    const layout = code(read('app/layout.tsx'))
-    const at = layout.indexOf('<nav aria-label="Разделы"')
+    const layout = code(read('app/[lang]/layout.tsx'))
+    const at = layout.search(/<nav aria-label=(?:"Разделы"|\{tr\(locale, \{ ru: 'Разделы')/)
     expect(at).toBeGreaterThan(-1)
     const body = layout.slice(at, layout.indexOf('</nav>', at))
     expect(body, 'внутри <nav> тема делает из шапки на телефоне «навигацию» из одной кнопки').not.toContain(
@@ -122,7 +129,7 @@ describe('боковые поля под вырез', () => {
 
   /** Без cover вырез и так не заходит на страницу — и правило было бы лишним. */
   test('страница по-прежнему заходит под вырез', () => {
-    expect(read('app/layout.tsx')).toMatch(/viewportFit:\s*'cover'/)
+    expect(read('app/[lang]/layout.tsx')).toMatch(/viewportFit:\s*'cover'/)
   })
 
   /**
@@ -131,12 +138,12 @@ describe('боковые поля под вырез', () => {
    * переходят на px-safe по мере касания.
    */
   const USES: Array<{ file: string; marker: string }> = [
-    { file: 'app/layout.tsx', marker: 'relative mx-auto max-w-6xl px-safe py-4' },
+    { file: 'app/[lang]/layout.tsx', marker: 'relative mx-auto max-w-6xl px-safe py-4' },
     { file: 'components/Footer.tsx', marker: 'mx-auto max-w-6xl px-safe py-6' },
     { file: 'components/StopAsk.tsx', marker: 'flex justify-center px-safe' },
     { file: 'components/WarmStrip.tsx', marker: 'flex justify-center px-safe' },
-    { file: 'app/play/page.tsx', marker: 'max-w-6xl px-safe pb-12 pt-40' },
-    { file: 'app/daily/page.tsx', marker: 'max-w-6xl px-safe pb-16 pt-40' },
+    { file: 'app/[lang]/play/page.tsx', marker: 'max-w-6xl px-safe pb-12 pt-40' },
+    { file: 'app/[lang]/daily/page.tsx', marker: 'max-w-6xl px-safe pb-16 pt-40' },
   ]
 
   test.each(USES)('$file стоит на px-safe', ({ file, marker }) => {
@@ -144,7 +151,7 @@ describe('боковые поля под вырез', () => {
   })
 
   test('на /play и /daily ни один контейнер страницы не остался на px-5', () => {
-    for (const file of ['app/play/page.tsx', 'app/daily/page.tsx']) {
+    for (const file of ['app/[lang]/play/page.tsx', 'app/[lang]/daily/page.tsx']) {
       expect(read(file), `${file}: контейнер max-w-6xl на px-5 уводит текст под вырез`).not.toMatch(
         /max-w-6xl px-5\b/,
       )

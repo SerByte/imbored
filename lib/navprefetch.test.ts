@@ -21,7 +21,7 @@ const ROOT = path.join(__dirname, '..')
 
 /** Файлы, чья разметка стоит на каждой странице сайта. */
 const CHROME = [
-  'app/layout.tsx',
+  'app/[lang]/layout.tsx',
   'components/HeaderNav.tsx',
   'components/MobileNav.tsx',
   'components/Footer.tsx',
@@ -50,11 +50,11 @@ const HIGH_TRAFFIC = ['components/landing/scenes/Repertoire.tsx']
  * префетч ничего не стоит.
  */
 const ISR_PAGES = [
-  'app/game/[appid]/page.tsx',
-  'app/game/[appid]/news/[gid]/page.tsx',
-  'app/game/[appid]/news/page.tsx',
-  'app/games/page.tsx',
-  'app/games/[tag]/page.tsx',
+  'app/[lang]/game/[appid]/page.tsx',
+  'app/[lang]/game/[appid]/news/[gid]/page.tsx',
+  'app/[lang]/game/[appid]/news/page.tsx',
+  'app/[lang]/games/page.tsx',
+  'app/[lang]/games/[tag]/page.tsx',
 ]
 
 /** Код без комментариев: объяснение правки не должно попадать под проверку. */
@@ -65,9 +65,9 @@ function code(src: string): string {
 /** Разделы верхнего уровня, чья страница объявлена force-dynamic. */
 function forceDynamicSections(): string[] {
   const out: string[] = []
-  for (const e of fs.readdirSync(path.join(ROOT, 'app'), { withFileTypes: true })) {
+  for (const e of fs.readdirSync(path.join(ROOT, 'app', '[lang]'), { withFileTypes: true })) {
     if (!e.isDirectory() || e.name.startsWith('(') || e.name.startsWith('[')) continue
-    const page = path.join(ROOT, 'app', e.name, 'page.tsx')
+    const page = path.join(ROOT, 'app', '[lang]', e.name, 'page.tsx')
     if (!fs.existsSync(page)) continue
     if (/export const dynamic = ['"]force-dynamic['"]/.test(code(fs.readFileSync(page, 'utf8')))) {
       out.push(`/${e.name}`)

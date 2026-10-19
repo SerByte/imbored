@@ -98,7 +98,7 @@ describe('размытие подложки', () => {
 describe('стекло шапки видит страницу', () => {
   const ROOT = path.join(__dirname, '..')
   const layout = fs
-    .readFileSync(path.join(ROOT, 'app', 'layout.tsx'), 'utf8')
+    .readFileSync(path.join(ROOT, 'app', '[lang]', 'layout.tsx'), 'utf8')
     .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
 
   test('у <header> нет постоянного имени перехода', () => {

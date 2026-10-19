@@ -11,6 +11,8 @@ import {
 } from './db'
 import { type Discount, discountView, trustedPrice } from './discount'
 import { buildGroupDeck } from './group'
+import type { Locale } from './i18n'
+import { personaLabel, playerFallback } from './playername'
 import { playtimeHidden } from './playtime'
 import { fetchDiscoveryPool, pickQueryTags, rotationSlot } from './pool'
 import { tagStatsFor } from './tagstats'
@@ -167,9 +169,14 @@ function topPlayed(games: LibraryGame[], n: number): LibraryGame[] {
     .slice(0, n)
 }
 
-/** Ник или «Игрок 1234» — одно на страницу сравнения, карточку и хаб */
-export function nameOf(steamid: string, stored: string | null): string {
-  return stored ?? `Игрок ${steamid.slice(-4)}`
+/**
+ * Ник или «Игрок 1234» — одно на страницу сравнения, карточку и хаб.
+ *
+ * locale — язык страницы: на /en демо-ник и запасное имя по-английски
+ * (lib/playername), ник настоящего человека — как записан.
+ */
+export function nameOf(steamid: string, stored: string | null, locale: Locale = 'ru'): string {
+  return personaLabel(steamid, stored, locale) ?? playerFallback(steamid.slice(-4), locale)
 }
 
 /**
@@ -183,10 +190,15 @@ function readOwner(db: Db, steamid: string) {
   return Promise.all([snapshotOnce(db, steamid), personaOnce(db, steamid)])
 }
 
-function inviteHead(steamid: string, games: LibraryGame[], stored: string | null): CompatInviteHead {
+function inviteHead(
+  steamid: string,
+  games: LibraryGame[],
+  stored: string | null,
+  locale: Locale,
+): CompatInviteHead {
   return {
     steamid,
-    name: nameOf(steamid, stored),
+    name: nameOf(steamid, stored, locale),
     gamesCount: games.length,
     totalHours: Math.round(games.reduce((s, g) => s + g.playtimeForever, 0) / 60),
     playtimeHidden: playtimeHidden(games),
@@ -209,8 +221,12 @@ function inviteHead(steamid: string, games: LibraryGame[], stored: string | null
 export async function loadCompatInvite(
   db: Db,
   steamid: string,
-  /** Сколько самых наигранных взять: странице — ленту, карточке — стену */
-  opts: { top?: number } = {},
+  opts: {
+    /** Сколько самых наигранных взять: странице — ленту, карточке — стену */
+    top?: number
+    /** Язык страницы или карточки: от него только имя владельца (nameOf) */
+    locale?: Locale
+  } = {},
 ): Promise<CompatInvite | null> {
   const [snapshot, stored] = await readOwner(db, steamid)
   if (!snapshot) return null
@@ -219,7 +235,7 @@ export async function loadCompatInvite(
   const metas = await getGamesMetaLite(db, top.map((g) => g.appid))
 
   return {
-    ...inviteHead(steamid, snapshot.games, stored),
+    ...inviteHead(steamid, snapshot.games, stored, opts.locale ?? 'ru'),
     topGames: top.map((g) => artRef(g.appid, g.name, metas.get(g.appid))),
   }
 }
@@ -238,16 +254,27 @@ export async function loadCompatInvite(
  * Снапшот и ник у головы и у тела страницы — общие промисы (snapshotOnce) на
  * любом пути: у гостя, у вошедшего, на своей ссылке.
  */
-export async function loadInviteHead(db: Db, steamid: string): Promise<CompatInviteHead | null> {
+export async function loadInviteHead(
+  db: Db,
+  steamid: string,
+  locale: Locale = 'ru',
+): Promise<CompatInviteHead | null> {
   const [snapshot, stored] = await readOwner(db, steamid)
-  return snapshot ? inviteHead(steamid, snapshot.games, stored) : null
+  return snapshot ? inviteHead(steamid, snapshot.games, stored, locale) : null
 }
 
+/**
+ * locale — язык страницы. Снапшоты и ники читаются без него (snapshotOnce и
+ * personaOnce — общая память запроса с generateMetadata), язык решает только
+ * подписи поверх прочитанного: имена (nameOf) и строку «Нет у: …», которая
+ * из этих имён собрана.
+ */
 export async function loadCompat(
   db: Db,
-  args: { other: string; me: string | null; now: number },
+  args: { other: string; me: string | null; now: number; locale?: Locale },
 ): Promise<CompatState> {
   const { other, me, now } = args
+  const locale = args.locale ?? 'ru'
 
   // Своя же ссылка — отвечаем до единого запроса к базе
   if (me && me === other) return { kind: 'self' }
@@ -277,19 +304,24 @@ export async function loadCompat(
     me ? snapshotOnce(db, me) : null,
     me ? personaOnce(db, me) : null,
   ])
-  if (!otherSnap) return { kind: 'noprofile', otherName: otherStored }
+  // Ник без запасного имени, а не nameOf: без ника экран говорит «Этот
+  // игрок», а не «Игрок 1234». Через personaLabel — чтобы демо-ник и тут
+  // был на языке страницы
+  if (!otherSnap) return { kind: 'noprofile', otherName: personaLabel(other, otherStored, locale) }
 
   // Гость и человек без своей библиотеки видят одно и то же — кто зовёт и во
   // что он играет. Снапшот и ник владельца в запросе уже прочитаны
   // (snapshotOnce) — новое чтение здесь одно: обложки ленты
   if (!me || !mySnap) {
-    const invite = await loadCompatInvite(db, other)
-    if (!invite) return { kind: 'noprofile', otherName: otherStored }
+    // Язык — тот же, что у всей страницы: приглашение показывает имя владельца
+    const invite = await loadCompatInvite(db, other, { locale })
+    if (!invite) return { kind: 'noprofile', otherName: personaLabel(other, otherStored, locale) }
     return me ? { kind: 'nolibrary', invite } : { kind: 'noauth', invite }
   }
 
-  const myName = nameOf(me, myStored)
-  const otherName = nameOf(other, otherStored)
+  // Имена идут и в колоду: «Нет у: …» полки «на будущее» собрано из них
+  const myName = nameOf(me, myStored, locale)
+  const otherName = nameOf(other, otherStored, locale)
 
   // Совместимость считается по двум библиотекам — весь каталог для этого не
   // нужен. Статистика тегов и размер пула — тем же кругом, см. выше
@@ -335,6 +367,9 @@ export async function loadCompat(
     metaOf,
     extraPool,
     limit: DECK_SIZE,
+    // Язык подписи закреплённой карты (pinnedReason). Закреплённой у пары нет,
+    // но колода одна на комнату и сравнение, и язык идёт в неё одинаково
+    locale,
   })
 
   /*
@@ -383,8 +418,9 @@ export async function loadCompat(
       ...(регион ? { priceCc: регион } : {}),
       ...(нетВРегионе ? { unsold: true } : {}),
       // Скидка нужна только там, где кому-то придётся покупать: у общей игры
-      // цена в разговоре не участвует, у бесплатной — тем более
-      discount: meta && !c.ownedByAll && !бесплатная ? discountView(meta, now) : null,
+      // цена в разговоре не участвует, у бесплатной — тем более. Срок
+      // распродажи (endsLabel) — на языке страницы: «2 days left» на /en
+      discount: meta && !c.ownedByAll && !бесплатная ? discountView(meta, now, { locale }) : null,
       tags: c.tags,
       ...(c.store ? { store: c.store } : {}),
     }

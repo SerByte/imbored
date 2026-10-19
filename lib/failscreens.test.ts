@@ -30,9 +30,9 @@ const read = (...p: string[]) => fs.readFileSync(path.join(ROOT, ...p), 'utf8')
 
 /** Пары «маршрут API — экран, который показывает его отказы». */
 const PAIRS = [
-  { имя: '/play', api: ['app', 'api', 'recommend', 'route.ts'], page: ['app', 'play', 'page.tsx'] },
-  { имя: '/daily', api: ['app', 'api', 'daily', 'route.ts'], page: ['app', 'daily', 'page.tsx'] },
-  { имя: '/explore', api: ['app', 'api', 'explore', 'route.ts'], page: ['app', 'explore', 'page.tsx'] },
+  { имя: '/play', api: ['app', 'api', 'recommend', 'route.ts'], page: ['app', '[lang]', 'play', 'page.tsx'] },
+  { имя: '/daily', api: ['app', 'api', 'daily', 'route.ts'], page: ['app', '[lang]', 'daily', 'page.tsx'] },
+  { имя: '/explore', api: ['app', 'api', 'explore', 'route.ts'], page: ['app', '[lang]', 'explore', 'page.tsx'] },
 ]
 
 /** Коды, у которых ответ — действие, а не текст на экране отказа. */
@@ -76,7 +76,7 @@ describe('экраны отказа', () => {
    * разборы, и до кнопки они не доходят.
    */
   test('/play: повтор не предлагается там, где он вернёт тот же ответ', () => {
-    const page = read('app', 'play', 'page.tsx')
+    const page = read('app', '[lang]', 'play', 'page.tsx')
     // muted: фильтр «Не предлагать» живёт в куке, и повтор с той же кукой
     // вернёт тот же отказ — снять его можно только на квизе
     for (const code of ['nocandidates', 'nolibrary', 'badmood', 'muted']) {
@@ -97,7 +97,7 @@ describe('экраны отказа', () => {
    * отдельным запросом, а не повтором того же.
    */
   test('/play: отказ выдачи «в духе X» называет X и ведёт к выдаче без неё', () => {
-    const page = read('app', 'play', 'page.tsx')
+    const page = read('app', '[lang]', 'play', 'page.tsx')
     expect(page).toMatch(/reason === 'nocandidates' && askSeed !== null\s*\? seedFail\(failSeed\)/)
     const fn = page.slice(page.indexOf('function seedFail('), page.indexOf('const RECOMMEND_WAIT_MS'))
     expect(fn, 'повтор того же запроса вернёт тот же отказ').not.toMatch(/retry: (?!false)/)
@@ -118,7 +118,7 @@ describe('экраны отказа', () => {
    * отдельным запросом, а не повтором того же.
    */
   test('/play: отказ выдачи по жанру называет жанр и ведёт к выдаче без него', () => {
-    const page = read('app', 'play', 'page.tsx')
+    const page = read('app', '[lang]', 'play', 'page.tsx')
     expect(page).toMatch(/reason === 'nocandidates' && failGenre !== null\s*\? genreFail\(failGenre\)/)
     const fn = page.slice(page.indexOf('function genreFail('), page.indexOf('const RECOMMEND_WAIT_MS'))
     expect(fn, 'повтор того же запроса вернёт тот же отказ').not.toMatch(/retry: (?!false)/)
@@ -131,7 +131,7 @@ describe('экраны отказа', () => {
     expect(page).toContain('...(genreAsk.current ? { genre: genreAsk.current } : {}),')
     expect(page).toMatch(/if \(retrying\) return\s*if \(genreless\) genreAsk\.current = null/)
     const api = read('app', 'api', 'recommend', 'route.ts')
-    expect(api).toContain('const genreTitle = seed === null && genre !== null ? HUB_GENRES[genre].title : null')
+    expect(api).toContain('const genreTitle = seed === null && genre !== null ? hubTitle(genre, locale) : null')
     expect(api).toContain('...(genreTitle ? { genre: { title: genreTitle } } : {}),')
   })
 
@@ -142,7 +142,7 @@ describe('экраны отказа', () => {
    * выдача без затравки, и текст карточки смену настроения не советует.
    */
   test('/play: всё под «Не предлагать» у «в духе X» — выход в выдачу без «похожих»', () => {
-    const page = read('app', 'play', 'page.tsx')
+    const page = read('app', '[lang]', 'play', 'page.tsx')
     expect(page).toMatch(/\{fail\.seedless && askSeed !== null && \(\s*<button\s+onClick=\{\(\) => void retry\(null\)\}/)
     const at = page.indexOf('  muted: {')
     const muted = page.slice(at, page.indexOf('},', at))
@@ -154,7 +154,7 @@ describe('экраны отказа', () => {
   })
 
   test('/explore: повтор не предлагается там, где он вернёт тот же ответ', () => {
-    const page = read('app', 'explore', 'page.tsx')
+    const page = read('app', '[lang]', 'explore', 'page.tsx')
     // у каждого кода, где повтор — тупик, свой разбор, а не FAIL_UNKNOWN
     for (const code of ['nocandidates', 'nolibrary', 'ratelimited']) {
       expect(page, `нет разбора для ${code}`).toContain(`  ${code}: {`)

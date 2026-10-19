@@ -1,39 +1,15 @@
-import { REFUND_NOTE, REFUND_NOTE_NEUTRAL, REFUND_URL } from '@/lib/refund'
-import { Icon } from '@/components/Icon'
+'use client'
+
+import { useLocale } from '@/components/LocaleProvider'
+import { RefundNote as RefundNoteView } from '@/components/RefundNoteView'
 
 /**
- * Страховка покупки одной строкой — под ценой, а не рядом с кнопкой.
- *
- * Строка приглушённая намеренно: это ответ на «а если не зайдёт», который
- * человек задаёт себе сам, а не довод купить. Громче цены она читалась бы как
- * «купи и верни», а за такое Steam перестаёт возвращать деньги.
- *
- * Решение «показывать ли» здесь не принимается — только текст. Его принимает
- * сервер (refundEligible): там известны магазин, цена и дата выхода.
- * Компонент без хуков, поэтому годится и серверной странице игры, и
- * клиентским /play и /daily.
- *
- * tone 'neutral' — для страницы игры: она публичная, совета купить на ней нет.
+ * Строка о возврате для клиентских экранов (/play, /daily) — тонкая обёртка
+ * над components/RefundNoteView: язык — из контекста корневого layout
+ * (useLocale), разметка — та же до байта (lib/pricetag.test.ts). Серверная
+ * страница игры зовёт саму RefundNoteView со своим языком.
  */
-export function RefundNote({
-  tone = 'pick',
-  className = '',
-}: {
-  tone?: 'pick' | 'neutral'
-  className?: string
-}) {
-  return (
-    <p className={`text-xs text-faint leading-relaxed max-w-md ${className}`}>
-      {tone === 'pick' ? REFUND_NOTE : REFUND_NOTE_NEUTRAL}{' '}
-      <a
-        href={REFUND_URL}
-        target="_blank"
-        rel="noreferrer"
-        className="tap inline-flex items-center gap-1 text-dim underline-offset-2 transition-colors hover:text-ink hover:underline"
-      >
-        Правила возврата
-        <Icon name="arrow" size={12} />
-      </a>
-    </p>
-  )
+export function RefundNote(props: { tone?: 'pick' | 'neutral'; className?: string }) {
+  const locale = useLocale()
+  return <RefundNoteView {...props} locale={locale} />
 }
