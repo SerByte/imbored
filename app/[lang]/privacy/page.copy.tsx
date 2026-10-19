@@ -359,14 +359,17 @@ const RU: PolicyCopy = {
           {/* Язык «/» без выбора (homeLocaleFor в lib/homelocale.ts, зовёт
               proxy.ts): x-vercel-ip-country — страну по IP ставит Vercel —
               и Accept-Language читаются в прокси на входе без куки lang и
-              без сессии и никуда не пишутся. Счётчики по адресу из раздела
-              06 этот вход не трогают: на «/» потолка нет */}
+              без сессии и никуда не пишутся. Само решение тоже: куку lang
+              прокси не ставит, и без выбора их читает каждый такой вход
+              (закладка, ссылка извне, запуск с домашнего экрана) — поэтому
+              «при каждом входе», а не «один раз». Счётчики по адресу из
+              раздела 06 этот вход не трогают: на «/» потолка нет */}
           <p>
-            Если язык ещё не выбран, то при входе на главную сайт один раз смотрит на страну,
-            которую хостинг Vercel определяет по IP-адресу, и на язык браузера — только чтобы
-            открыть её по-русски или по-английски. Ни страна, ни язык браузера не сохраняются, и
-            сам IP-адрес для этого мы не храним. Когда язык выбран, главная открывается на нём —
-            по четвёртой cookie.
+            Пока язык не выбран, сайт при каждом входе на главную смотрит на страну, которую
+            хостинг Vercel определяет по IP-адресу, и на язык браузера — только чтобы открыть её
+            по-русски или по-английски. Ни страна, ни язык браузера не сохраняются, и сам
+            IP-адрес для этого мы не храним. Когда язык выбран, главная открывается на нём — по
+            четвёртой cookie.
           </p>
           <p>
             Несколько мелочей сайт помнит прямо в браузере. Например, последнюю подборку —
@@ -711,8 +714,8 @@ const EN: PolicyCopy = {
             one you chose.
           </p>
           <p>
-            If you haven’t chosen a language yet, when you open the home page the site looks once at
-            the country our hosting provider, Vercel, determines from your IP address, and at your
+            Until you choose a language, each time you open the home page the site looks at the
+            country our hosting provider, Vercel, determines from your IP address, and at your
             browser language — only to open the page in Russian or English. Neither the country nor
             the browser language is stored, and we don’t keep your IP address for this. Once you’ve
             chosen a language, the home page opens in it — via the fourth cookie.
