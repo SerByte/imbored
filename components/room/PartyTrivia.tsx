@@ -8,6 +8,7 @@ import { useLocale } from '@/components/LocaleProvider'
 import { StatusLine } from '@/components/StatusLine'
 import { focusAdrift } from '@/lib/focushandoff'
 import { tr, withLang } from '@/lib/i18n'
+import { langOn, withForeignRuns } from '@/lib/textlang'
 import type { TriviaQuestion } from '@/lib/trivia'
 
 const EASE = [0.22, 1, 0.36, 1] as const
@@ -151,6 +152,16 @@ export function PartyTrivia({
               })
         }${q.reveal ? ` ${q.reveal}` : ''}`
       : null
+  /*
+   * Ники и названия игр во фразах — данные: на /en русский кусок — своим
+   * lang="ru" (withForeignRuns), иначе английский голос читает его по буквам.
+   * Варианты — данные целиком, а вклеенное в вопрос и разгадку сверх них
+   * (название в «Who has more hours in “…”?», третий владелец) сервер
+   * перечисляет в q.runs. На русской странице — те же строки, одним
+   * текстовым узлом.
+   */
+  const runs = q ? [...q.options.map((o) => o.label), ...(q.runs ?? [])] : []
+  const said = verdict && withForeignRuns(locale, verdict, runs)
 
   return (
     <div className="relative mt-auto">
@@ -235,7 +246,7 @@ export function PartyTrivia({
               {q && (
                 <>
                   <p ref={headRef} id="trivia-q" tabIndex={-1} className="text-sm font-medium">
-                    {q.prompt}
+                    {withForeignRuns(locale, q.prompt, runs)}
                   </p>
 
                   {q.image && (
@@ -294,7 +305,9 @@ export function PartyTrivia({
                         >
                           {revealed && right && <Icon name="check" size={16} className="shrink-0" />}
                           {missed && <Icon name="close" size={16} className="shrink-0" />}
-                          {o.label}
+                          {/* Ник или название целиком, одним span: кнопка ответа — флекс с
+                              зазором, и кусок посреди подписи стал бы своим элементом */}
+                          {langOn(locale, o.label) ? <span lang="ru">{o.label}</span> : o.label}
                         </button>
                       )
                     })}
@@ -308,12 +321,12 @@ export function PartyTrivia({
                     Сама она sr-only и места в колонке не занимает; глазу разбор
                     показывает ряд ниже.
                   */}
-                  <StatusLine text={verdict} className="sr-only" />
+                  <StatusLine text={said} className="sr-only" />
                   {chosen !== null && (
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       {/* Скринридеру разбор уже сказала строка выше — второй раз не читаем */}
                       <p aria-hidden className="text-xs text-faint">
-                        {verdict}
+                        {said}
                       </p>
                       <button
                         onClick={() => {
