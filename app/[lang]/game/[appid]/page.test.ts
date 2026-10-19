@@ -17,6 +17,7 @@ import { ShownUntil } from '@/components/ShownUntil'
 import { TrailerPreview } from '@/components/TrailerPreview'
 import { PULSE_RESHOW_SEC } from '@/lib/catalogsignals'
 import {
+  getGameMeta,
   replaceGameTags,
   setGameJson,
   setNewsDigest,
@@ -819,6 +820,46 @@ describe('английская карточка', () => {
     expect(items.find((i) => i.gid === '1')?.tldr).toBe('Fixed the netcode.')
     expect(items.find((i) => i.gid === '2')).not.toHaveProperty('tldr')
     for (const i of items) expect(i.title).not.toMatch(CYR)
+  })
+
+  /*
+   * Голова /en с русским именем магазина: title, description, og, twitter,
+   * JSON-LD. У тегов головы своего lang нет, а название — данные (п. 6
+   * docs/i18n.md): страница его не выбрасывает и не подменяет — почему, в
+   * page.tsx у заголовка. Строку, испорченную до правила двух названий
+   * (русское в name, name_ru пуст), лечит первая английская запись — прогрев
+   * или заливка каталога (nameSql в lib/db), — и голова /en после неё
+   * английская целиком; крон карточек с l=russian русское обратно не кладёт.
+   */
+  test('русское имя магазина в name: голова /en с ним, пока английская запись не вернёт своё', async () => {
+    await seedEn()
+    // Так строку оставил крон карточек до правила двух названий
+    await db.execute({
+      sql: "UPDATE games SET name = 'God of War Рагнарёк', name_ru = NULL WHERE appid = ?",
+      args: [APPID],
+    })
+    let meta = await generateMetadata(en())
+    expect(meta.title).toBe('Is God of War Рагнарёк worth playing?')
+
+    // Прогрев или заливка каталога: GetItems по-английски
+    const row = await getGameMeta(db, APPID)
+    await upsertGameMeta(db, { ...row!, name: 'God of War Ragnarök' }, T0 + 10)
+    // Крон карточек (appdetails с l=russian): русское встаёт вторым, а не в name
+    await upsertGameMeta(db, { ...row!, name: 'God of War Рагнарёк' }, T0 + 20, { ruStore: true })
+
+    meta = await generateMetadata(en())
+    expect(meta.title).toBe('Is God of War Ragnarök worth playing?')
+    expect(meta.openGraph?.title).toBe(meta.title)
+    expect(meta.twitter?.title).toBe(meta.title)
+    expect(JSON.stringify(meta)).not.toMatch(CYR)
+    lang.locale = 'en'
+    expect(JSON.stringify(jsonLdOf(flight(await GamePage(en()))))).not.toMatch(CYR)
+    // Русская страница русское название не потеряла: оно второе
+    lang.locale = 'ru'
+    expect(jsonLdOf(flight(await GamePage(params)))[0]).toMatchObject({
+      name: 'God of War Ragnarök',
+      alternateName: 'God of War Рагнарёк',
+    })
   })
 })
 
