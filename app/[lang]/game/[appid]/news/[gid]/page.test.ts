@@ -202,6 +202,51 @@ describe('страница патча на /en', () => {
     expect(textOf(archive[1]?.children)).toBe('All Counter-Strike 2 updates')
   })
 
+  /*
+   * Название игры — данные, и на /en оно бывает русским (games.name у части
+   * верха каталога, nameSql в lib/db). На проде i18n-audit нашёл на
+   * /en/game/292030/news/… три места без пометки: крошку «Ведьмак 3: Дикая
+   * Охота — Обновлённое издание», «More … patches» и «All … updates». Каждое
+   * русское название здесь — внутри lang="ru"; русская страница — без
+   * пометок, как была.
+   */
+  test('русское название игры на /en — только внутри lang="ru": крошка, h1, «More … patches», «All … updates»', async () => {
+    const NAME = 'Ведьмак 3: Дикая Охота'
+    await render()
+    await upsertNewsItems(db, [patch('5123894512300', nowSec() - 3 * 86_400)], nowSec())
+    // Прямо в name: апсерт русское к латинскому увёл бы во второе название
+    await db.execute({ sql: 'UPDATE games SET name = ? WHERE appid = ?', args: [NAME, APPID] })
+    const page = (lang?: string) =>
+      PatchPage({ params: Promise.resolve({ appid: String(APPID), gid: GID, ...(lang ? { lang } : {}) }) })
+    const tree = flightOf(await page('en'), ISLANDS)
+
+    /** Текст страницы без всего, что внутри lang="ru" (и тегов, и островков вроде Link) */
+    const unmarked = (n: unknown): string => {
+      if (typeof n === 'string' || typeof n === 'number') return String(n)
+      if (Array.isArray(n)) return n.map(unmarked).join('')
+      if (n && typeof n === 'object') {
+        const props = (n as { props?: { lang?: unknown; children?: unknown } }).props
+        if (props?.lang === 'ru') return ''
+        return props ? unmarked(props.children) : ''
+      }
+      return ''
+    }
+    // сторож не слепой: название на странице есть, и не раз
+    expect(textOf(tree).split(NAME).length - 1).toBeGreaterThanOrEqual(4)
+    expect(unmarked(tree)).not.toMatch(/[А-Яа-яЁё]/)
+    const crumb = islandsOf(tree, 'Link').find((l) => l.href === `/game/${APPID}`)
+    expect(crumb).toMatchObject({ lang: 'ru', children: NAME })
+    expect(textOf(tree)).toContain(`More ${NAME} patches`)
+    expect(textOf(tree)).toContain(`All ${NAME} updates`)
+
+    // Русская страница — без пометок: ни одного lang="ru", и у крошки нет
+    // пропса lang вовсе — RSC-часть сериализовала бы и undefined (langAttr)
+    const ru = flightOf(await page(), ISLANDS)
+    expect(JSON.stringify(ru)).not.toContain('"lang":"ru"')
+    const ruCrumb = islandsOf(ru, 'Link').find((l) => l.href === `/game/${APPID}`)
+    expect(ruCrumb && 'lang' in ruCrumb).toBe(false)
+  })
+
   test('метаданные: английский заголовок и описание, noindex без английского пересказа', async () => {
     await render()
     const en = { params: Promise.resolve({ appid: String(APPID), gid: GID, lang: 'en' }) }

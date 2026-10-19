@@ -1,6 +1,6 @@
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import { getGamesMetaLite, type StoredNews } from '@/lib/db'
-import { newsDescription, newsPageTitle, newsPath, newsTitleOn } from '@/lib/newspage'
+import { hasEnglishContent, newsDescription, newsPageTitle, newsPath, newsTitleOn } from '@/lib/newspage'
 import { rssFeed } from '@/lib/rss'
 import { htmlLang, lp, LOCALES, toLocale, tr, type Locale } from '@/lib/i18n'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
@@ -54,15 +54,22 @@ async function readFeed(): Promise<{ items: StoredNews[]; names: Map<number, str
 /**
  * Записи ленты на языке канала.
  *
- * Английская лента — только посты с английским пересказом: общая лента —
- * это «коротко о главном», и запись без пересказа на /en была бы заголовком
- * «{Game} update» со ссылкой, а её описанием — русское тело издателя или
- * повтор заголовка. Пересказ английской записи — tldrEn, заголовок —
- * newsTitleOn (titleEn или английский заголовок издателя), адрес — английская
- * страница патча. Русская лента — как была.
+ * Английская лента — только посты, которым есть что сказать по-английски
+ * (hasEnglishContent в lib/newspage): с английским пересказом или с
+ * английским телом издателя. Без того и другого запись на /en была бы
+ * заголовком «{Game} update» со ссылкой, а её описанием — повтор заголовка:
+ * русское тело в английский сниппет не идёт (newsDescription). Описание
+ * записи — tldrEn, иначе начало английского поста; заголовок — newsTitleOn
+ * (titleEn или английский заголовок издателя), адрес — английская страница
+ * патча. Русская лента — как была.
+ *
+ * Стояло «только с пересказом», и на проде, пока английских пересказов не
+ * было, канал /en/whatsnew/feed.xml отдавал ноль записей при тридцати у
+ * русского — а страница по-прежнему звала в него ридеры (alternate). Тело
+ * издателя по-английски — то же содержание, что показывает страница патча.
  */
 function itemsOn(items: StoredNews[], names: Map<number, string>, locale: Locale, base: string) {
-  const own = locale === 'en' ? items.filter((i) => i.tldrEn) : items
+  const own = locale === 'en' ? items.filter(hasEnglishContent) : items
   return own.map((item) => {
     const game = names.get(item.appid)
     const shown = locale === 'en' ? { ...item, tldr: item.tldrEn } : item

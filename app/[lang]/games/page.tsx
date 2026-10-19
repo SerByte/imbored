@@ -270,6 +270,7 @@ function Shelf({ shelf, eager, locale }: { shelf: HubShelf; eager: boolean; loca
               <StaticGameCardBody
                 appid={g.appid}
                 name={g.name}
+                locale={locale}
                 headerImage={g.headerImage}
                 art={g.art}
                 sizes={SHELF_RAIL_SIZES}

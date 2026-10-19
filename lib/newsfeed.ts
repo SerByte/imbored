@@ -25,6 +25,16 @@ export type FeedRankable = { publishedAt: number; rank: number }
 /**
  * Делит ленту на обложку и остаток, сохраняя хронологию в остатке.
  *
+ * prefer — кому обложка достаётся в первую очередь. На /en это посты, которым
+ * есть что сказать по-английски (hasEnglishContent в lib/newspage): обложка —
+ * самое заметное место ленты, и «Team Fortress 2 update · 36 changes · Read
+ * the patch», ведущий на страницу «We don't have these patch notes in
+ * English», — худшее, что туда можно поставить (замер на проде, октябрь
+ * 2026). Среди предпочтённых правило то же — окно и вес, и предпочтённый вне
+ * окна не в счёт; в окне не предпочтён никто — выбор по всей ленте, как без
+ * prefer: обложка есть всегда, пока есть лента. Остаток — вся лента без
+ * обложки, в прежнем порядке.
+ *
  * @param items отсортированные по убыванию даты — так отдают getMajorFeed и getFeedForApps
  * @param windowSec 0 — обложкой становится самый свежий элемент, как в личной ленте
  */
@@ -32,13 +42,24 @@ export function splitFeed<T extends FeedRankable>(
   items: readonly T[],
   nowSec: number,
   windowSec: number = HERO_WINDOW_SEC,
+  prefer?: (item: T) => boolean,
 ): { hero?: T; rest: T[] } {
   if (!items.length) return { rest: [] }
 
-  let heroAt = 0
+  // Кандидаты — номера в ленте, по убыванию даты, как сама лента
+  const all = items.map((_, i) => i)
+  const cut = nowSec - windowSec
+  // Предпочтённые — только из окна: свежесть — условие и для них. Иначе
+  // единственный английский пост двухнедельной давности, всё ещё лежащий в
+  // ленте, стоял бы обложкой поверх свежих, пока не выйдет следующий
+  const preferred = prefer
+    ? all.filter((i) => prefer(items[i]) && (windowSec <= 0 || items[i].publishedAt >= cut))
+    : []
+  const candidates = preferred.length ? preferred : all
+
+  let heroAt = candidates[0]
   if (windowSec > 0) {
-    const cut = nowSec - windowSec
-    for (let i = 1; i < items.length; i++) {
+    for (const i of candidates.slice(1)) {
       if (items[i].publishedAt < cut) continue
       // Первый кандидат мог сам не попасть в окно — тогда его вытесняет любой,
       // кто в окно попал. Дальше сравниваем строго по весу, и равный вес

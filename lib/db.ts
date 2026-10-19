@@ -36,7 +36,7 @@ import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
 import { WISHLIST_KEPT } from './steam'
 import { isMultiplayerCategories, MULTIPLAYER_CATEGORY_SQL } from './steamcats'
 import { LEGACY_PRICE_CC, priceRegion } from './steamregion'
-import { blocksToText, type NewsBlock } from './steamhtml'
+import { blocksToText, decodeEntities, type NewsBlock } from './steamhtml'
 import { readTrailer, type Trailer } from './trailer'
 import type { CandidateSource, GameMeta, GameSemantics, LibraryGame, Mood, RuLang } from './types'
 
@@ -842,6 +842,9 @@ const NEWS_RANK_FIX_KEY = 'news_rank_fixed'
 /** Ключ разовой починки дважды закодированных JSON-колонок games (см. migrateDb). */
 const REPAIR_TAGS_KEY = 'repair_tags_v1'
 
+/** Ключ разовой расшифровки HTML-сущностей в описаниях games (см. migrateDb). */
+const DECODE_DESCRIPTIONS_KEY = 'decode_descriptions_v1'
+
 /** Ключ в catalog_meta: до какой версии схемы доведена база. */
 const SCHEMA_V_KEY = 'schema_v'
 
@@ -1100,6 +1103,8 @@ const ONE_OFF_STEPS = {
   [REPAIR_TAGS_KEY]: 'починка дважды закодированных JSON-колонок: ПЕРЕЗАПИСЬ строк games',
   [NEWS_RANK_FIX_KEY]: 'обнуление веса патчей вне каталога: UPDATE по news_items',
   [REVIEWS_ALL_DUE_KEY]: 'пул без отзывов на всех языках — в голову сверки каталога: UPDATE reviews_at по games',
+  [DECODE_DESCRIPTIONS_KEY]:
+    'расшифровка HTML-сущностей в описаниях: ПЕРЕЗАПИСЬ short_description и short_description_en в games',
 } as const
 
 /**
@@ -1383,6 +1388,40 @@ export async function migrateDb(
   }
 
   /*
+   * Разовая расшифровка HTML-сущностей в описаниях games
+   * (decodeStoredDescriptions): appdetails отдаёт short_description с
+   * «&amp;» и «&quot;», и до storeDescription в lib/catalog они ложились в
+   * базу как есть. Страница выводит описание текстом, и на /en хабы
+   * показывали буквально «find items &amp; build a base» (Muck), «Blade
+   * &amp; Sorcery». Новые записи расшифровывает разбор; этот шаг — то, что
+   * уже лежит.
+   *
+   * Под destructiveMigrationsAllowed — это перезапись исходных данных, как у
+   * починки JSON-колонок выше: превью на продовой базе шаг пропускает и флаг
+   * не пишет. Под флагом: проход по games, а Turso считает прочитанные строки.
+   *
+   * Флаг ставит сам decodeStoredDescriptions — в той же транзакции, что и
+   * строки, а не отдельной записью после. Расшифровка не идемпотентна
+   * («&amp;lt;» — «&lt;», а повтор — «<»), а шаг запускают несколько
+   * процессов разом: хабы пререндерятся с базой, и сборка прода прогоняет
+   * migrateDb в каждом воркере. Флаг, прочитанный выше, у всех пуст; второй
+   * проход, начатый после записи первого, расшифровал бы ещё раз.
+   */
+  if (!flags.has(DECODE_DESCRIPTIONS_KEY) && allowed) {
+    const decoded = await decodeStoredDescriptions(db)
+    if (decoded.length) {
+      console.warn(
+        JSON.stringify({
+          event: 'migrate-repaired',
+          step: 'description-entities',
+          rows: decoded.length,
+          appids: decoded.slice(0, 20),
+        }),
+      )
+    }
+  }
+
+  /*
    * Разовая постановка пула в голову сверки каталога — ради отзывов на всех
    * языках (reviews_all_*): колонки новые, и пусты они у всего пула разом.
    *
@@ -1575,7 +1614,7 @@ export async function pendingMigrations(
   for (const [key, what] of Object.entries(ONE_OFF_STEPS)) {
     if (flags.has(key)) continue
     if (key === OTHER_STORES_SEED_KEY && !opts.seedContent) continue
-    if ((key === REPAIR_TAGS_KEY || key === REVIEWS_ALL_DUE_KEY) && !allowed) continue
+    if ((key === REPAIR_TAGS_KEY || key === REVIEWS_ALL_DUE_KEY || key === DECODE_DESCRIPTIONS_KEY) && !allowed) continue
     pending.push(`${key}: ${what}`)
   }
   return pending
@@ -3437,8 +3476,13 @@ export function keepRussianSql(col: string): string {
  * Различаем по букве (lib/cyrillic): русское к латинскому — латинское
  * остаётся, русское встаёт вторым; латинское к русскому — то же самое, но
  * русское в name было от прежней карточки, и оно уходит во второе. Так
- * строки, испорченные до этой правки, лечатся первой же английской записью —
- * прогревом или заливкой каталога, — без отдельного прохода по Steam.
+ * строки, испорченные до этой правки, лечатся первой же английской записью.
+ * Только ждать её пришлось бы долго: прогрев переписывает игру, лишь когда
+ * она протухла в чьей-то библиотеке, а заливка каталога пишет новые игры. На
+ * проде через неделю после правки русскими так и стояли 80 названий, и
+ * вылечено было одно, — поэтому та же английская запись есть и отдельным
+ * проходом: npm run catalog:repair-names (repairRussianNames в lib/catalog,
+ * отбор — russianNamedGames ниже). Счёт таких строк — в catalog:report.
  *
  * Русское к русскому — обычная замена: у игры нет английского названия
  * вовсе («ЕСТЬ ДВА СТУЛА», «Скуф на рыбалке» — магазин и по-английски зовёт
@@ -3501,6 +3545,39 @@ export function nameRuSql(): string {
 function ruStoreNameRuSql(): string {
   const latinAnswer = `NOT ${cyrillicName('excluded.name')} AND excluded.name IS NOT ('App ' || excluded.appid)`
   return `CASE WHEN ${latinAnswer} THEN NULL ELSE ${nameRuSql()} END`
+}
+
+/**
+ * Игры, у которых в name лежит русское название, а второго, name_ru, нет, —
+ * верх каталога первым.
+ *
+ * Это строки, испорченные до раскладки названий по колонкам (НАЗВАНИЕ выше):
+ * карточка (appdetails, l=russian) клала русское имя магазина поверх
+ * английского, а лечит такую строку только английская запись. Прогрев
+ * доходит до неё, лишь когда игра протухла в чьей-то библиотеке, а заливка
+ * каталога пишет только новые игры, — и на проде к 19.10.2026 так стояли 80
+ * игр из 5921: «Ведьмак 3: Дикая Охота — Обновлённое издание» (28-я по
+ * отзывам), «Одни из нас™: Часть I», «God of War Рагнарёк». На /en они
+ * шли русскими в <title>, og и JSON-LD, где пометить язык нечем, а
+ * английский поиск не находил «witcher 3» и «last of us».
+ *
+ * Сюда же попадают игры, у которых английского названия нет вовсе («ЕСТЬ ДВА
+ * СТУЛА», «Скуф на рыбалке») — это данные, и их отличает только ответ
+ * магазина по-английски (repairRussianNames в lib/catalog). Отрицательные
+ * appid — пул других магазинов, Steam о них не знает.
+ */
+export async function russianNamedGames(db: Db, limit = 10_000): Promise<Array<{ appid: number; name: string }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, name FROM games
+          WHERE ${cyrillicName('name')} AND name_ru IS NULL AND appid > 0
+          ORDER BY COALESCE(reviews_total, 0) DESC, appid
+          LIMIT ?`,
+    args: [limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; name: string }>).map((r) => ({
+    appid: Number(r.appid),
+    name: String(r.name),
+  }))
 }
 
 /** Откуда у записи название — см. upsertGameMeta */
@@ -3811,6 +3888,91 @@ export function parseSemantics(raw: unknown): GameSemantics | undefined {
     basis: s.basis as GameSemantics['basis'],
     ...(played ? { played } : {}),
   }
+}
+
+/**
+ * Описания games с HTML-сущностями — расшифровать на месте.
+ *
+ * Правило — decodeEntities, то же, что у разбора ответов магазина
+ * (storeDescription в lib/catalog): «&amp;» — «&», «&quot;» — кавычка. Пишутся
+ * только две колонки описаний и только у строк, где расшифровка что-то
+ * изменила; updated_at не трогается — по той же причине, что у
+ * setGameDescriptions: это починка записи, а не новое содержание страницы, и
+ * lastmod карты сайта не должен прыгать.
+ *
+ * Отбор — LIKE по «&…;»: и «&», и «;» в шаблоне LIKE — обычные знаки. Под него
+ * попадёт и описание с амперсандом и точкой с запятой без сущности, но такое
+ * decodeEntities оставит как есть, и строки в записи не будет.
+ *
+ * ОДИН РАЗ НА БАЗУ — И ФЛАГ ЗДЕСЬ ЖЕ. Расшифровка не идемпотентна:
+ * «&amp;lt;» после неё — «&lt;», а после второй — «<», то есть второй проход
+ * испортил бы описание, которое первый починил. А проходов бывает несколько
+ * разом: хабы пререндерятся с базой, и сборка прода прогоняет migrateDb в
+ * каждом воркере, а флаг, прочитанный ими на старте, у всех пуст. Поэтому:
+ *
+ * - все записи и флаг decode_descriptions_v1 — одна транзакция (batch 'write'),
+ *   и каждая запись — только пока флага нет. Кто закоммитил первым, тот и
+ *   расшифровал; у остальных записи пусты, а отбор после флага пуст вовсе.
+ *   Сбой посередине не оставляет половины: ни строк, ни флага, и повтор
+ *   начнёт с того же места. Одна транзакция на всё — по размеру: в выгрузке
+ *   прода от 24.09.2026 под отбор попадало 87 строк из 6118;
+ * - каждая колонка пишется своим UPDATE и только при прежнем значении. Между
+ *   чтением и записью колонку мог заполнить кто-то ещё — catalog:descriptions,
+ *   крон, прогрев, — и описание из того же снимка не должно его перетереть.
+ *
+ * Зовётся разово — из migrateDb под флагом. Возвращает appid строк, где
+ * запись правда прошла; dryRun только считает и ничего не пишет.
+ */
+export async function decodeStoredDescriptions(
+  db: Db,
+  opts: { dryRun?: boolean } = {},
+): Promise<number[]> {
+  const notDone = 'NOT EXISTS (SELECT 1 FROM catalog_meta WHERE key = ?)'
+  const res = await db.execute({
+    sql: `SELECT appid, short_description, short_description_en FROM games
+           WHERE ${notDone}
+             AND (short_description LIKE '%&%;%' OR short_description_en LIKE '%&%;%')
+           ORDER BY appid`,
+    args: [DECODE_DESCRIPTIONS_KEY],
+  })
+  const writes: Array<{ appid: number; stmt: InStatement }> = []
+  for (const r of res.rows as unknown as Array<{
+    appid: number
+    short_description: string | null
+    short_description_en: string | null
+  }>) {
+    const appid = Number(r.appid)
+    for (const [col, was] of [
+      ['short_description', r.short_description],
+      ['short_description_en', r.short_description_en],
+    ] as const) {
+      if (was === null) continue
+      const now = decodeEntities(was)
+      if (now === was) continue
+      writes.push({
+        appid,
+        stmt: {
+          sql: `UPDATE games SET ${col} = ? WHERE appid = ? AND ${col} = ? AND ${notDone}`,
+          args: [now, appid, was, DECODE_DESCRIPTIONS_KEY],
+        },
+      })
+    }
+  }
+  const planned = [...new Set(writes.map((w) => w.appid))]
+  if (opts.dryRun) return planned
+
+  const results = await db.batch(
+    [
+      ...writes.map((w) => w.stmt),
+      {
+        sql: `INSERT INTO catalog_meta (key, value) VALUES (?, '1') ON CONFLICT(key) DO NOTHING`,
+        args: [DECODE_DESCRIPTIONS_KEY],
+      },
+    ],
+    'write',
+  )
+  const written = new Set(writes.filter((_, i) => Number(results[i]?.rowsAffected ?? 0) > 0).map((w) => w.appid))
+  return planned.filter((appid) => written.has(appid))
 }
 
 /**

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { DESCRIPTION_MAX } from './clip'
 import {
+  hasEnglishContent,
   indexedNewsPath,
   isNewsGid,
   newsDescription,
@@ -379,5 +380,21 @@ describe('страница патча по-английски', () => {
     expect(patchShareUrl('https://imbored.cc', 730, '5123894512345', 'ru')).toBe(
       'https://imbored.cc/game/730/news/5123894512345?ref=patch',
     )
+  })
+})
+
+describe('hasEnglishContent: есть ли посту что сказать на /en', () => {
+  const ru: NewsBlock[] = [{ kind: 'p', runs: [{ text: 'Починили сеть и баланс оружия.' }] }]
+  const en: NewsBlock[] = [{ kind: 'p', runs: [{ text: 'Fixed the netcode and weapon balance.' }] }]
+
+  test('английский пересказ или английское тело — да', () => {
+    expect(hasEnglishContent({ tldrEn: 'Fixed the netcode.', blocks: ru })).toBe(true)
+    expect(hasEnglishContent({ blocks: en })).toBe(true)
+  })
+
+  test('русское тело без пересказа, пустое тело, пересказ из пробелов — нет', () => {
+    expect(hasEnglishContent({ blocks: ru })).toBe(false)
+    expect(hasEnglishContent({ blocks: [] })).toBe(false)
+    expect(hasEnglishContent({ tldrEn: '   ', blocks: ru })).toBe(false)
   })
 })

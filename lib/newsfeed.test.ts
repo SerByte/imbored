@@ -53,3 +53,38 @@ describe('splitFeed', () => {
     expect(rest).toEqual([])
   })
 })
+
+describe('splitFeed: предпочтение (prefer)', () => {
+  const english = new Set(['английский', 'английский мелкий'])
+  const prefer = (i: { id: string }) => english.has(i.id)
+
+  test('обложка — самый весомый среди предпочтённых, остаток — вся лента без неё', () => {
+    const items = [item('громкий', 1, 900_000), item('английский мелкий', 2, 5_000), item('английский', 3, 300_000)]
+    const { hero, rest } = splitFeed(items, NOW, HERO_WINDOW_SEC, prefer)
+    expect(hero?.id).toBe('английский')
+    expect(rest.map((i) => i.id)).toEqual(['громкий', 'английский мелкий'])
+  })
+
+  test('окно действует и среди предпочтённых', () => {
+    const items = [item('громкий', 1, 900_000), item('английский мелкий', 2, 5_000), item('английский', 20, 300_000)]
+    expect(splitFeed(items, NOW, HERO_WINDOW_SEC, prefer).hero?.id).toBe('английский мелкий')
+  })
+
+  test('предпочтённый вне окна — не обложка: выбор как без prefer', () => {
+    // Единственный английский пост двухнедельной давности ещё в ленте, а в
+    // окне — только русские: обложкой должен встать свежий, а не застрять он
+    const items = [item('громкий', 1, 900_000), item('тихий', 2, 5_000), item('английский', 12, 300_000)]
+    expect(splitFeed(items, NOW, HERO_WINDOW_SEC, prefer).hero?.id).toBe('громкий')
+    expect(splitFeed(items, NOW, HERO_WINDOW_SEC, prefer)).toEqual(splitFeed(items, NOW))
+  })
+
+  test('личная лента (окно 0): самый свежий из предпочтённых', () => {
+    const items = [item('громкий', 0, 900_000), item('английский мелкий', 2, 5_000), item('английский', 3, 300_000)]
+    expect(splitFeed(items, NOW, 0, prefer).hero?.id).toBe('английский мелкий')
+  })
+
+  test('не предпочтён никто — выбор как без prefer', () => {
+    const items = [item('свежий', 0, 5_000), item('громкий', 3, 500_000)]
+    expect(splitFeed(items, NOW, HERO_WINDOW_SEC, () => false)).toEqual(splitFeed(items, NOW))
+  })
+})

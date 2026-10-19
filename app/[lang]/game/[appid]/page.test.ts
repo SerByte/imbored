@@ -1074,7 +1074,7 @@ describe('английская карточка: пульс, цена, архи�
       expect(textOf(similar.children)).toBe(`Similar to “${NAME}”, for your mood`)
       expect(ruSpans(similar.children)).toEqual([NAME])
       // Фраза — одним флекс-элементом рядом со стрелкой: .link-more — inline-flex
-      // с gap, и куски вокруг названия иначе вставали врозь (oneItem в page.tsx)
+      // с gap, и куски вокруг названия иначе вставали врозь (oneItem в lib/textlang)
       for (const link of [archive, similar]) {
         const [phrase, arrow, ...rest] = link.children as Array<{ tag?: string; props?: { lang?: unknown } }>
         expect(rest, 'у ссылки больше двух детей — фраза рассыпалась').toEqual([])
@@ -1095,6 +1095,34 @@ describe('английская карточка: пульс, цена, архи�
       expect(h1Of(page).lang).toBeUndefined()
       expect(ruSpans(page)).toEqual([])
       expect(linkOf(page, `/game/${APPID}/news`).children).toContainEqual(`Все обновления «${NAME}»`)
+    })
+
+    /*
+     * «More from CD PROJEKT RED: ГВИНТ: Ведьмак. Карточная игра» — на проде
+     * i18n-audit нашёл эту ссылку без пометки: h1 помечал название своей
+     * игры, а названия соседей по студии шли голым текстом. Ссылка целиком —
+     * название, и lang стоит на ней самой.
+     */
+    test('«Ещё у студии»: русское название соседа на /en — lang на ссылке; на русской — без него', async () => {
+      await seed()
+      // Прямо в name: апсерт русское к латинскому увёл бы во второе название
+      await db.execute("UPDATE games SET name = 'Портал 2' WHERE appid = 620")
+      const studio = (page: unknown) =>
+        Object.fromEntries(
+          islandsOf(page, 'Link')
+            .filter((l) => l.href === '/game/400' || l.href === '/game/620')
+            .map((l) => [String(l.href), l.lang]),
+        )
+      const ru = flight(await GamePage(params))
+      expect(studio(ru)).toEqual({ '/game/400': undefined, '/game/620': undefined })
+      // и пропса нет вовсе: lang={undefined} RSC-часть сериализует строкой (langAttr)
+      const ruLinks = islandsOf(ru, 'Link').filter((l) => l.href === '/game/400' || l.href === '/game/620')
+      expect(ruLinks.some((l) => 'lang' in l)).toBe(false)
+      lang.locale = 'en'
+      const page = flight(await GamePage(en))
+      expect(textOf(page)).toContain('More from Valve: Portal · Портал 2')
+      // Латинский сосед — без атрибута, как был
+      expect(studio(page)).toEqual({ '/game/400': undefined, '/game/620': 'ru' })
     })
 
     test('латинское название на /en — без атрибута и без лишнего <span>', async () => {
@@ -1121,6 +1149,44 @@ describe('английская карточка: пульс, цена, архи�
     expect(textOf(page)).not.toContain('Ведьмак')
     expect(jsonLdOf(page)[0]).not.toHaveProperty('alternateName')
     expect(jsonLdOf(page)[0]).toMatchObject({ name: 'The Witcher 3: Wild Hunt' })
+  })
+})
+
+/*
+ * Микротрейлер (components/TrailerPreview): название игры — хвостом
+ * доступного имени кнопки и в подписи самого ролика. На проде i18n-audit
+ * нашёл на /en/game/1888930 «span.sr-only: Одни из нас™: Часть I» без пометки
+ * и aria-label «Одни из нас™: Часть I: a few seconds of gameplay, no sound».
+ * Хвост — своим <span lang="ru">; атрибуту lang не поставить, и русское
+ * название из подписи на /en уходит — как у скриншотов ниже. Русская
+ * страница и латинское название — прежняя разметка до байта.
+ */
+describe('трейлер: русское название на /en', () => {
+  const TRAILER = { mp4: 'https://cdn.example/730/t.mp4', poster: 'https://cdn.example/730/p.jpg' }
+
+  function html(locale: Locale, name: string, compact = false): string {
+    lang.locale = locale
+    return renderToStaticMarkup(createElement(TrailerPreview, { trailer: TRAILER, name, compact }))
+  }
+  const ariaOf = (h: string) => h.match(/<video [^>]*aria-label="([^"]*)"/)?.[1]
+
+  test.each([false, true])('на /en: хвост кнопки — <span lang="ru">, подпись ролика — без названия (compact: %s)', (compact) => {
+    const h = html('en', 'Одни из нас™: Часть I', compact)
+    expect(h).toContain('<span class="sr-only">, <span lang="ru">Одни из нас™: Часть I</span></span>')
+    expect(ariaOf(h)).toBe('A few seconds of gameplay, no sound')
+  })
+
+  test('латинское название на /en — прежние хвост и подпись с названием', () => {
+    const h = html('en', 'Counter-Strike 2')
+    expect(h).toContain('<span class="sr-only">, Counter-Strike 2</span>')
+    expect(ariaOf(h)).toBe('Counter-Strike 2: a few seconds of gameplay, no sound')
+  })
+
+  test('русская страница — прежняя разметка, и с русским названием тоже', () => {
+    const h = html('ru', 'Одни из нас™: Часть I')
+    expect(h).toContain('<span class="sr-only">, Одни из нас™: Часть I</span>')
+    expect(h).not.toContain('lang=')
+    expect(ariaOf(h)).toBe('Одни из нас™: Часть I: несколько секунд геймплея без звука')
   })
 })
 

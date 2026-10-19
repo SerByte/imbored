@@ -18,9 +18,10 @@ vi.mock('@/lib/whatsnewcache', async (importOriginal) => {
 
 /**
  * Общая RSS-лента — своя у каждого языка: /whatsnew/feed.xml и
- * /en/whatsnew/feed.xml. Русская — как была. Английская — только посты с
- * английским пересказом: это лента «коротко о главном», и запись без него
- * была бы русским телом или повтором заголовка.
+ * /en/whatsnew/feed.xml. Русская — как была. Английская — только посты,
+ * которым есть что сказать по-английски: с английским пересказом или с
+ * английским телом издателя. Запись без того и другого была бы повтором
+ * заголовка: русское тело в английский сниппет не идёт.
  */
 
 const NOW = 1_760_000_000
@@ -90,6 +91,33 @@ describe('/whatsnew/feed.xml: язык ленты', () => {
     expect(xml).toContain('<description>Grenades no longer pass through walls.</description>')
     // Русский заголовок без перевода — «{Game} update», с датой: заголовки Valve одинаковые
     expect(xml).toMatch(/<title>Counter-Strike 2 update \(Oct \d{1,2}, 2025\) — what changed<\/title>/)
+    expect(xml).not.toMatch(/[А-Яа-яЁё]/)
+  })
+
+  /*
+   * Пост издателя по-английски без английского пересказа — в английской
+   * ленте с началом самого поста. Стояло «только с пересказом», и на проде,
+   * пока пересказов /en не было, канал отдавал ноль записей при тридцати у
+   * русского, а страница звала в него ридеры.
+   */
+  test('английская — и пост с английским телом без пересказа: описание — начало поста', async () => {
+    await upsertGameMeta(db, { appid: 620, name: 'Portal 2', tags: { Puzzle: 100 }, genres: [], categories: [] }, NOW)
+    await upsertNewsItems(
+      db,
+      [
+        {
+          ...patch(620, 3, 'Portal 2 Update Released'),
+          blocks: [{ kind: 'p', runs: [{ text: 'Fixed a crash when loading co-op saves on Linux.' }] }],
+        },
+      ],
+      NOW,
+    )
+    const xml = await feed('en')
+    expect(xml.match(/<item>/g)).toHaveLength(2)
+    expect(xml).toContain('/en/game/620/news/6200</link>')
+    expect(xml).toContain('<description>Fixed a crash when loading co-op saves on Linux.</description>')
+    // Русское тело без пересказа (Dota 2) — по-прежнему не в английской ленте
+    expect(xml).not.toContain('/en/game/570/')
     expect(xml).not.toMatch(/[А-Яа-яЁё]/)
   })
 })

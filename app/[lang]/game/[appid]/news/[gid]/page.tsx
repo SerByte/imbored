@@ -23,7 +23,7 @@ import { patchArchivePath } from '@/lib/patcharchive'
 import { appBaseUrl, getDb } from '@/lib/server'
 import { LOCALES, lp, toLocale, tr } from '@/lib/i18n'
 import { ogSite } from '@/lib/site'
-import { textLangOn } from '@/lib/textlang'
+import { langAttr, oneItem, textLangOn, withForeignRuns } from '@/lib/textlang'
 import { indexedHreflang } from '../alternates'
 import { loadPatch, patchHeading } from './load'
 
@@ -219,7 +219,10 @@ export default async function PatchPage({ params }: Params) {
               без префетча: он на ISR и рендерится по первому заходу */}
           {game && (
             <nav aria-label={tr(locale, { ru: 'Путь к патчу', en: 'Breadcrumb' })} className="flex flex-wrap items-center gap-1.5">
-              <Link href={gameHref} transitionTypes={['nav-back']} className="tap tap-tight link-more">
+              {/* Название — данные: на /en русское — своим lang, как h1
+                  карточки игры (langAttr: на ru пропса нет и в RSC-части);
+                  ссылка целиком — название */}
+              <Link href={gameHref} transitionTypes={['nav-back']} {...langAttr(locale, game.name)} className="tap tap-tight link-more">
                 {game.name}
               </Link>
               <Icon name="arrow" size={14} className="text-faint" />
@@ -240,9 +243,13 @@ export default async function PatchPage({ params }: Params) {
               становится русский. Тело помечает NewsBody сам; пересказ
               «Коротко» наш и на языке страницы — без пометки.
               Название игры в подсчёт не входит: «Обновление Counter-Strike 2»
-              — русский заголовок с именем собственным, а не английский. */}
+              — русский заголовок с именем собственным, а не английский.
+              Зато оно само бывает русским на /en (games.name у части верха
+              каталога): общий «{Game} update» несёт его целиком, и такое
+              название — своим <span lang="ru"> (withForeignRuns), как в
+              ссылках ниже; на ru и у латинского — та же строка. */}
           <h1 lang={textLangOn(locale, heading, game?.name)} className="font-display text-display-md">
-            {heading}
+            {withForeignRuns(locale, heading, [game?.name])}
           </h1>
           <div className="flex flex-wrap items-center gap-3">
             <NewsDate at={item.publishedAt} locale={locale} />
@@ -367,8 +374,10 @@ export default async function PatchPage({ params }: Params) {
         {others.length > 0 && (
           <section>
             <SectionLabel as="h2" className="mb-2">
+              {/* Русское название во фразе на /en — своим <span lang="ru">
+                  (withForeignRuns), как «Все обновления» на карточке игры */}
               {game
-                ? tr(locale, { ru: `Другие патчи ${game.name}`, en: `More ${game.name} patches` })
+                ? withForeignRuns(locale, tr(locale, { ru: `Другие патчи ${game.name}`, en: `More ${game.name} patches` }), [game.name])
                 : tr(locale, { ru: 'Другие патчи', en: 'More patches' })}
             </SectionLabel>
             <ul className="flex flex-col">
@@ -393,7 +402,7 @@ export default async function PatchPage({ params }: Params) {
                 списком — в её архиве обновлений */}
             {game && (
               <Link href={patchArchivePath(item.appid)} prefetch={false} className="tap link-more mt-3">
-                {tr(locale, { ru: `Все обновления «${game.name}»`, en: `All ${game.name} updates` })}
+                {oneItem(withForeignRuns(locale, tr(locale, { ru: `Все обновления «${game.name}»`, en: `All ${game.name} updates` }), [game.name]))}
                 <Icon name="arrow" size={16} />
               </Link>
             )}

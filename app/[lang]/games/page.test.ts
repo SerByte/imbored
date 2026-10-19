@@ -551,4 +551,89 @@ describe('английские хаб и страница жанра', () => {
     const hrefs = islandsOf(page, 'Link').map((l) => String(l.href))
     expect(hrefs.some((h) => h.startsWith('/play?time=short'))).toBe(true)
   })
+
+  /*
+   * Название игры — данные, и на /en оно бывает русским: games.name у части
+   * верха каталога держит русское имя магазина (nameSql в lib/db). На проде
+   * i18n-audit валил /en/games и 17 жанров строками «span.block.truncate:
+   * Assassin's Creed Истоки» — клиентская подпись карточки (GameCardName)
+   * пометку ставила, а серверная капсула нет. Правило одно — langOn: 'ru'
+   * только на /en; русская страница — без атрибута, как была.
+   */
+  describe('русское название на /en — своим lang', () => {
+    /**
+     * Подписи капсул — span.block.truncate с названием — и их lang. hasLang —
+     * есть ли пропс вообще: lang={undefined} RSC-часть страницы сериализует
+     * строкой «"lang":"$undefined"», и русская страница стала бы тяжелее на
+     * каждую капсулу (langAttr в lib/textlang)
+     */
+    function capsuleNames(node: unknown): Array<{ lang: unknown; text: string; hasLang: boolean }> {
+      const out: Array<{ lang: unknown; text: string; hasLang: boolean }> = []
+      const walk = (n: unknown): void => {
+        if (n === null || typeof n !== 'object') return
+        const rec = n as { tag?: string; props?: { className?: unknown; lang?: unknown; children?: unknown } }
+        if (rec.tag === 'span' && String(rec.props?.className ?? '').startsWith('block truncate')) {
+          out.push({ lang: rec.props?.lang, text: textOf(rec.props?.children), hasLang: 'lang' in (rec.props ?? {}) })
+        }
+        Object.values(n).forEach(walk)
+      }
+      walk(node)
+      return out
+    }
+
+    test('капсулы хаба и жанра: «Игра N» на /en — lang="ru", на русской — без атрибута', async () => {
+      // Названия фикстуры — «Игра N»: русские, как «Ведьмак 3…» на проде
+      for (const page of [await GamesHubPage(en({})), await GenrePage(en({ tag: 'open-world' }))]) {
+        const names = capsuleNames(flight(page))
+        expect(names.length).toBeGreaterThan(0)
+        for (const n of names) expect(n, n.text).toEqual({ lang: 'ru', text: expect.stringMatching(/^Игра \d+$/), hasLang: true })
+      }
+      for (const page of [await GamesHubPage({ params: Promise.resolve({ lang: 'ru' }) }), await GenrePage({ params: Promise.resolve({ tag: 'open-world' }) })]) {
+        const names = capsuleNames(flight(page))
+        expect(names.length).toBeGreaterThan(0)
+        // ни атрибута, ни пропса: RSC-часть русской страницы — прежняя до байта
+        for (const n of names) expect(n.hasLang, n.text).toBe(false)
+      }
+    })
+
+    test('латинское название на /en — без атрибута', async () => {
+      await latin()
+      const names = capsuleNames(flight(await GenrePage(en({ tag: 'open-world' }))))
+      expect(names.length).toBeGreaterThan(0)
+      for (const n of names) expect(n.hasLang, n.text).toBe(false)
+    })
+
+    test('«Invite to this game»: русское название в хвосте для скринридера — своим lang', async () => {
+      await upsertGameMeta(
+        db,
+        {
+          appid: 553850,
+          name: 'Глубокая скала',
+          genres: [],
+          categories: [1, 9, 38],
+          tags: { 'Online Co-Op': 1000 },
+          headerImage: 'https://cdn.example/553850/header.jpg',
+          reviewsTotal: 600_000,
+          reviewsPercent: 90,
+          ccu: 50_000,
+        },
+        T0,
+      )
+      await replaceGameTags(db, 553850, storedTagWeights({ 'Online Co-Op': 1000 }))
+      const invite = (page: unknown) => {
+        const [link] = islandsOf(page, 'Link').filter((l) => l.href === '/room/new?game=553850')
+        expect(link).toBeDefined()
+        const [tail] = (link.children as Array<{ tag?: string; props?: { className?: string; children?: unknown } }>).filter(
+          (c) => c?.props?.className === 'sr-only',
+        )
+        return tail
+      }
+      const enTail = invite(flight(await GenrePage(en({ tag: 'coop' }))))
+      expect(textOf(enTail)).toBe(': Глубокая скала')
+      expect(JSON.stringify(enTail)).toContain('"lang":"ru"')
+      // Русская — прежняя: ': ' и название текстом, без <span>
+      const ruTail = invite(flight(await GenrePage({ params: Promise.resolve({ tag: 'coop' }) })))
+      expect(ruTail?.props?.children).toEqual([': ', 'Глубокая скала'])
+    })
+  })
 })

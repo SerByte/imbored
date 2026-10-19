@@ -46,7 +46,7 @@ import { shotUrl } from '@/lib/shots'
 import { storeLink } from '@/lib/storelink'
 import { STORE_LABEL } from '@/lib/stores'
 import { tagLabel } from '@/lib/tagsru'
-import { langOn, textLangOn, withForeignRuns } from '@/lib/textlang'
+import { langAttr, langOn, oneItem, textLangOn, withForeignRuns } from '@/lib/textlang'
 import { heroTitleClass } from '@/lib/titlesize'
 import { SectionLabel } from '@/components/Labels'
 import { TrailerPreview } from '@/components/TrailerPreview'
@@ -318,6 +318,12 @@ function PriceLine({ until, children }: { until: number | null; children: ReactN
  * «исправлений», которые разошлись бы с ней на той же странице. Неразрывный
  * пробел — только у русского «у»: короткий предлог не остаётся в конце строки
  * один, а у «from» такого правила нет.
+ *
+ * Название игры — данные, и на /en оно бывает русским («ГВИНТ: Ведьмак.
+ * Карточная игра» у CD PROJEKT RED): ссылка получает lang тем же правилом,
+ * что h1 (langOn, см. nameLang в GamePage). Ссылка целиком — название, и
+ * атрибут стоит на ней самой, без лишнего <span>; на ru его нет, как не было,
+ * ни в HTML, ни в RSC-части (разворот langAttr).
  */
 function StudioLinks({
   studio,
@@ -339,6 +345,7 @@ function StudioLinks({
             href={`/game/${g.appid}`}
             prefetch={false}
             transitionTypes={['nav-forward']}
+            {...langAttr(locale, g.name)}
             className="tap tap-tight text-ink/80 underline decoration-1 underline-offset-4 decoration-ink/30 transition-colors hover:text-ink hover:decoration-ink"
           >
             {g.name}
@@ -365,21 +372,6 @@ function ReviewsTail({ total, labelled, locale }: { total: number; labelled: boo
       {labelled ? 'из' : 'положительных из'} {n} {reviews}
     </>
   )
-}
-
-/**
- * Фраза ссылки с русским названием на /en — одним флекс-элементом.
- *
- * withForeignRuns режет фразу на куски вокруг <span lang="ru">, а ссылки
- * .link-more — inline-flex с gap: без общей обёртки каждый кусок вставал
- * своим флекс-элементом. На 1280 px — зазоры у кавычек («Similar to “ Одни
- * из нас™… ”, for your mood»), на 360 px — три столбика рядом (замер на next
- * dev, /en/game/2531310 и /en/game/2651280). Тот же приём, что у withNicks
- * (app/[lang]/compat/nick.tsx). Нечего помечать — та же строка без обёртки:
- * русская страница и латинские названия прежние.
- */
-function oneItem(runs: ReactNode): ReactNode {
-  return typeof runs === 'string' ? runs : <span>{runs}</span>
 }
 
 export default async function GamePage({ params }: { params: Promise<{ appid: string; lang?: string }> }) {

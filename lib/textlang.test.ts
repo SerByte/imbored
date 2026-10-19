@@ -7,7 +7,7 @@ import { withNicks } from '../app/[lang]/compat/nick'
 import * as portraitText from '../app/[lang]/portrait/[steamid]/portrait-text'
 import { NewsBody } from '../components/NewsBody'
 import type { NewsBlock } from './steamhtml'
-import { isRussianText, langOn, textLang, textLangOn, withForeignRuns } from './textlang'
+import { isRussianText, langAttr, langOn, oneItem, textLang, textLangOn, withForeignRuns } from './textlang'
 
 describe('isRussianText', () => {
   test('русское описание с латинскими названиями — русское', () => {
@@ -156,6 +156,25 @@ describe('langOn и withForeignRuns', () => {
     expect(langOn('ru', 'Костя')).toBeUndefined()
   })
 
+  /*
+   * Разворот для серверных компонентов: на русской странице и у латиницы —
+   * пустой объект, без ключа lang. lang={undefined} RSC-часть сериализовала
+   * бы строкой «"lang":"$undefined"» у каждой капсулы хаба.
+   */
+  test('langAttr — { lang: "ru" } или пустой объект, без ключа', () => {
+    expect(langAttr('en', 'Ведьмак 3')).toEqual({ lang: 'ru' })
+    for (const [locale, text] of [['en', 'The Witcher 3'], ['ru', 'Ведьмак 3'], ['ru', 'The Witcher 3']] as const) {
+      expect(Object.keys(langAttr(locale, text)), `${locale}: ${text}`).toEqual([])
+    }
+  })
+
+  test('oneItem — куски фразы одной обёрткой без lang; строка — как есть', () => {
+    expect(oneItem('All Portal 2 updates')).toBe('All Portal 2 updates')
+    expect(html(oneItem(withForeignRuns('en', 'All Портал 2 updates', ['Портал 2'])))).toBe(
+      '<p><span>All <span lang="ru">Портал 2</span> updates</span></p>',
+    )
+  })
+
   test('название поровну латиницей и кириллицей — тоже lang="ru"', () => {
     // h1 карточки игры и «Similar to “…”» зовут langOn, «All … updates» — withForeignRuns
     expect(langOn('en', 'God of War Рагнарёк')).toBe('ru')
@@ -257,7 +276,9 @@ const HEADINGS: Array<{ file: string; expr: string; count: number }> = [
   { file: 'components/whatsnew/PatchRow.tsx', expr: 'heading', count: 2 },
   { file: 'components/whatsnew/Cover.tsx', expr: 'item.title', count: 1 },
   { file: 'components/GameNews.tsx', expr: 'heading', count: 2 },
-  { file: 'app/[lang]/game/[appid]/news/[gid]/page.tsx', expr: 'heading', count: 1 },
+  // h1 страницы патча: русское название игры на /en внутри общего «{Game}
+  // update» — своим <span lang="ru">, отсюда withForeignRuns вокруг heading
+  { file: 'app/[lang]/game/[appid]/news/[gid]/page.tsx', expr: 'withForeignRuns(locale, heading, [game?.name])', count: 1 },
   // «Другие патчи» внизу страницы патча
   { file: 'app/[lang]/game/[appid]/news/[gid]/page.tsx', expr: 'title', count: 1 },
   // архив обновлений игры: ссылкой на страницу патча и текстом рядом со ссылкой в Steam

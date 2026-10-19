@@ -1,9 +1,10 @@
 import { parseStoreAssets, type StoreAssets } from './art'
 import { hasCyrillic } from './cyrillic'
-import { getGamesMeta, getStaleAppids, upsertGamesMeta, type Db } from './db'
+import { getGamesMeta, getStaleAppids, russianNamedGames, upsertGamesMeta, type Db } from './db'
 import { logSwallowed } from './errlog'
 import { isEnglishText } from './gamedesc'
 import { pace } from './pace'
+import { decodeEntities } from './steamhtml'
 import { META_CC, priceRegion, regionCurrency } from './steamregion'
 import {
   parseStoreScreenshots,
@@ -13,6 +14,29 @@ import {
   type Trailer,
 } from './trailer'
 import type { GameMeta, RuLang } from './types'
+
+/**
+ * Короткое описание магазина — текстом, а не HTML.
+ *
+ * appdetails отдаёт его с сущностями: «possessed militants &amp; even darker
+ * forces» (DUSK), «&quot;May you find your book in this place.&quot;»
+ * (Library Of Ruina) — замер 19.10.2026, и на l=english, и на l=russian.
+ * Страница выводит описание текстом, и React экранирует его ещё раз: на /en
+ * хабы показывали буквально «Collect resources, find items &amp; build a
+ * base» (Muck), «Blade &amp; Sorcery», «&amp;quot;». Английский слот
+ * наполнялся именно так: крон карточек (appdetails, l=russian) у игры без
+ * перевода получает английский текст магазина, и mergeMeta кладёт его в
+ * пустой слот (englishDescription).
+ *
+ * GetItems в том же замере отдаёт текст уже расшифрованным, но разбирается
+ * тем же правилом: сущность в описании — всегда разметка, а не текст, и
+ * одно правило на все дороги в колонку не даст ей разъехаться снова. Что уже
+ * лежит в базе, расшифровывает разовый шаг миграции (decodeStoredDescriptions
+ * в lib/db).
+ */
+export function storeDescription(raw: string): string {
+  return decodeEntities(raw)
+}
 
 type AppDetailsData = {
   type?: string
@@ -88,7 +112,7 @@ export function parseAppDetails(json: unknown, appid: number, cc: string = META_
     genres: (d.genres ?? []).map((g) => g.description).filter((x): x is string => Boolean(x)),
     categories: (d.categories ?? []).map((c) => c.id).filter((x): x is number => x !== undefined),
   }
-  if (d.short_description) meta.shortDescription = d.short_description
+  if (d.short_description) meta.shortDescription = storeDescription(d.short_description)
   if (d.header_image) meta.headerImage = d.header_image
   const shots = (d.screenshots ?? [])
     .map((s) => s.path_full)
@@ -294,7 +318,7 @@ export function parseStoreItems(json: unknown, tagNames: Map<number, string>): G
       genres: [],
       categories: it.categories?.supported_player_categoryids ?? [],
     }
-    if (it.basic_info?.short_description) meta.shortDescription = it.basic_info.short_description
+    if (it.basic_info?.short_description) meta.shortDescription = storeDescription(it.basic_info.short_description)
     // Издатель и разработчик нужны, чтобы не слепить в одну серию чужие игры
     // с похожим названием: без них «Sniper Elite» и «Sniper Ghost Warrior»
     // выглядят роднёй
@@ -343,6 +367,11 @@ export type StoreMedia = {
  * все буквы, и не немецкий с испанским. Одно правило на запись и на показ:
  * иначе в слот ложилось бы то, что /en потом прячет, а скрипт доливки
  * (backfill-descriptions --lang=en) считал бы такую игру готовой и не чинил.
+ *
+ * Сущностей не трогает: текст сюда приходит уже разобранным (storeDescription
+ * у parseAppDetails, parseStoreItems, parseStoreDescriptions), и вторая
+ * расшифровка сделала бы из «&amp;lt;» магазина «<» в английской колонке при
+ * «&lt;» в русской. Сырой ответ разбирает сам зовущий (parseStoreMedia).
  */
 export function englishDescription(text: string | null | undefined): string | undefined {
   const t = text?.trim()
@@ -374,7 +403,12 @@ export function parseStoreMedia(json: unknown): Map<number, StoreMedia> {
     const media = mediaOf(it)
     // Описание — не в mediaOf: тот же разбор кладёт медиа и в прогрев
     // (parseStoreItems), а там описание и так своё поле меты
-    const en = englishDescription(it.basic_info?.short_description)
+    // Сырой ответ магазина — единственная дорога сюда без разбора, и
+    // расшифровка здесь, а не в englishDescription: остальные зовут его над
+    // уже разобранным описанием, и «&amp;lt;» там стало бы «<», а в соседней
+    // колонке — «&lt;»
+    const raw = it.basic_info?.short_description
+    const en = raw ? englishDescription(storeDescription(raw)) : undefined
     if (en) media.shortDescriptionEn = en
     if (media.screenshots || media.trailer || media.ruLang !== undefined || media.shortDescriptionEn) {
       out.set(appid, media)
@@ -632,7 +666,7 @@ export function parseStoreDescriptions(json: unknown): Map<number, string> {
   for (const it of items) {
     const appid = it.appid ?? it.id
     const text = it.basic_info?.short_description
-    if (appid && typeof text === 'string' && text.trim()) out.set(appid, text)
+    if (appid && typeof text === 'string' && text.trim()) out.set(appid, storeDescription(text))
   }
   return out
 }
@@ -953,4 +987,68 @@ export async function ensureMeta(
     logSwallowed('catalog:ensure-meta', err, { batch: stale.length })
     return false
   }
+}
+
+/** Одна игра прохода repairRussianNames: что лежало в name и что ответил магазин по-английски */
+export type NameRepair = { appid: number; from: string; to: string }
+
+/**
+ * Английское название магазина — играм, у которых в name лежит русское, а
+ * второго названия нет (russianNamedGames в lib/db). Та же английская запись,
+ * что у прогрева (fetchStoreItems → mergeMeta → upsertGamesMeta), только для
+ * этих игр и сразу, без ожидания, пока игра протухнет в чьей-то библиотеке.
+ * Русское название не теряется: апсерт сам уводит его в name_ru (LATIN_OVER_RU
+ * у nameSql в lib/db), и русская страница называет игру как прежде, а «Найти
+ * игру» находит её по обоим.
+ *
+ * Пишутся только игры, у которых английское название правда есть: ответ
+ * магазина по-английски без единой русской буквы. Русский ответ («ЕСТЬ ДВА
+ * СТУЛА», «Скуф на рыбалке» — магазин и по-английски зовёт их так) — данные,
+ * а не порча: такая игра уходит в kept и не трогается. Игры, о которых
+ * GetItems не ответил (visible:false — снята с продажи, чужой регион), — в
+ * missing, тоже без записи.
+ *
+ * Строка переписывается целиком, как у прогрева, и updated_at встаёт свежим:
+ * у страницы сменился заголовок, и lastmod карты сайта говорит правду.
+ * dryRun ходит в магазин и считает, но не пишет.
+ */
+export async function repairRussianNames(
+  db: Db,
+  opts: { fetchFn?: typeof fetch; dryRun?: boolean; limit?: number; nowSec?: number } = {},
+): Promise<{ fixed: NameRepair[]; kept: NameRepair[]; missing: number[] }> {
+  const { fetchFn = fetch, dryRun = false } = opts
+  const rows = await russianNamedGames(db, opts.limit)
+  if (!rows.length) return { fixed: [], kept: [], missing: [] }
+  const appids = rows.map((r) => r.appid)
+  // fetchStoreItems режет на пачки STORE_ITEMS_BATCH и держит темп сам
+  // (callStoreItems → pace), бросает на сбое пачки — проход тогда падает
+  // целиком, ничего не записав: лучше повторить, чем записать половину
+  const fresh = new Map((await fetchStoreItems(appids, { fetchFn })).map((m) => [m.appid, m]))
+  const existing = await getGamesMeta(db, appids)
+
+  const fixed: NameRepair[] = []
+  const kept: NameRepair[] = []
+  const missing: number[] = []
+  const writes: GameMeta[] = []
+  for (const r of rows) {
+    const got = fresh.get(r.appid)
+    if (!got) {
+      missing.push(r.appid)
+      continue
+    }
+    if (hasCyrillic(got.name)) {
+      kept.push({ appid: r.appid, from: r.name, to: got.name })
+      continue
+    }
+    fixed.push({ appid: r.appid, from: r.name, to: got.name })
+    writes.push(mergeMeta(existing.get(r.appid) ?? null, got))
+  }
+
+  if (!dryRun) {
+    const now = opts.nowSec ?? Math.floor(Date.now() / 1000)
+    for (let i = 0; i < writes.length; i += STORE_ITEMS_BATCH) {
+      await upsertGamesMeta(db, writes.slice(i, i + STORE_ITEMS_BATCH), now)
+    }
+  }
+  return { fixed, kept, missing }
 }

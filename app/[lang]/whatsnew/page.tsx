@@ -21,7 +21,7 @@ import { steamLoginFor } from '@/lib/destination'
 import { discountView, trustedPrice } from '@/lib/discount'
 import { lp, pl, toLocale, tr, type Locale } from '@/lib/i18n'
 import { HERO_WINDOW_SEC, splitFeed } from '@/lib/newsfeed'
-import { newsTitleOn } from '@/lib/newspage'
+import { hasEnglishContent, newsTitleOn } from '@/lib/newspage'
 import { currentSession, getDb, isWriter, nowSec } from '@/lib/server'
 import { ownAddress } from '@/lib/site'
 import { countChanges } from '@/lib/steamhtml'
@@ -186,7 +186,16 @@ export default async function WhatsNewPage(props: PageProps<'/[lang]/whatsnew'>)
   // подсунув чужую игру под заголовок про твои.
   const heroSource = items.slice(0, mineCount)
   const topup = items.slice(mineCount)
-  const { hero, rest } = splitFeed(heroSource, now, showPopular ? HERO_WINDOW_SEC : 0)
+  // На /en обложка — в первую очередь пост, которому есть что сказать
+  // по-английски (пересказ или английское тело): иначе на весь экран вставал
+  // патч, чья страница отвечает «We don't have these patch notes in English»
+  // (hasEnglishContent). Таких нет — выбор прежний; русская лента — как была
+  const { hero, rest } = splitFeed(
+    heroSource,
+    now,
+    showPopular ? HERO_WINDOW_SEC : 0,
+    locale === 'en' ? hasEnglishContent : undefined,
+  )
 
   if (!hero) {
     return (

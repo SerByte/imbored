@@ -61,6 +61,21 @@ export const SITEMAP_NEWS_WINDOW_SEC = 90 * 86_400
  */
 export const SITEMAP_NEWS_MAX = 5000
 
+/**
+ * Есть ли посту что сказать на /en своим текстом: английский пересказ
+ * (tldrEn) или английское тело издателя — тем же правилом, каким тело берёт
+ * страница патча (loadPatch: isEnglishText над первыми 600 знаками) и начало
+ * поста — newsDescription. Без того и другого английская страница патча —
+ * общий заголовок «{Game} update» и ссылка на оригинал в Steam (ForeignBody),
+ * а запись RSS — заголовок без содержания.
+ *
+ * Обложка /en/whatsnew предпочитает такие посты (splitFeed с prefer), а
+ * английская RSS-лента берёт только их.
+ */
+export function hasEnglishContent(item: { tldrEn?: string | null; blocks: NewsBlock[] }): boolean {
+  return Boolean(item.tldrEn?.trim()) || isEnglishText(blocksToText(item.blocks, 600))
+}
+
 /** Заголовок патча без названия игры, которое на странице стоит строкой выше */
 export function newsHeading(title: string, gameName: string | null | undefined): string {
   return gameName ? stripGameName(title, gameName) : title.trim()
