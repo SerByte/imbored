@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import type { ResolvingMetadata } from 'next'
 import Link from '@/components/Link'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
@@ -12,8 +14,7 @@ import { flight as flightOf, imageHints, islandsOf, textOf } from '@/lib/testing
 import { freshDb } from '@/lib/testing/route'
 import { loadGenre } from './[tag]/load'
 import GenrePage, { generateMetadata, generateStaticParams } from './[tag]/page'
-import { generateMetadata as generateHubMetadata } from './layout'
-import GamesHubPage from './page'
+import GamesHubPage, { generateMetadata as generateHubMetadata } from './page'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
@@ -386,17 +387,44 @@ describe('английские хаб и страница жанра', () => {
   })
 
   /*
-   * Шаблон корня layout обязан передать дальше: строка без шаблона обрывала
-   * его, и страницы жанров теряли « · imbored» в title (layout.tsx, докблок).
+   * Подпись хаба — у страницы, а не у layout сегмента: метаданные layout
+   * наследовала бы 404 жанра (/games/<нет такого>, dynamicParams = false у
+   * [tag]), и её голова называлась бы хабом (докблок META в page.tsx).
+   * Строка title без своего шаблона — шаблон корня Next ставит к ней сам.
+   * Русская пара — та же, что до перевода: ownAddress('/games', { title,
+   * description }) у страницы.
    */
-  test('хаб: title и description — у layout, на языке страницы, и шаблон корня идёт дальше', async () => {
+  test('хаб: title и description — у страницы, на языке страницы', async () => {
     const root = Promise.resolve({ title: { absolute: 'imbored', template: '%s · imbored' } }) as unknown as ResolvingMetadata
     const enMeta = await generateHubMetadata(en({}), root)
-    expect(enMeta).toMatchObject({ title: { default: 'Games by genre', template: '%s · imbored' } })
-    expect(JSON.stringify(enMeta)).not.toMatch(CYR)
-    expect(await generateHubMetadata({ params: Promise.resolve({ lang: 'ru' }) }, root)).toMatchObject({
-      title: { default: 'Игры по жанрам', template: '%s · imbored' },
+    expect(enMeta).toMatchObject({
+      title: 'Games by genre',
+      description:
+        'Open world, soulslikes, roguelikes, city builders and two dozen more genres — twelve games each where the genre is the main one, with reviews and patch notes.',
+      alternates: { canonical: '/en/games' },
     })
+    // og:url и og:locale — своего языка (ownAddress)
+    expect(enMeta.openGraph).toMatchObject({ url: '/en/games', locale: 'en_US' })
+    expect(JSON.stringify(enMeta)).not.toMatch(CYR)
+    const ruMeta = await generateHubMetadata({ params: Promise.resolve({ lang: 'ru' }) }, root)
+    expect(ruMeta).toMatchObject({
+      title: 'Игры по жанрам',
+      description:
+        'Открытый мир, соулслайки, рогалики, градостроение и ещё два десятка жанров — по двенадцать игр, для которых жанр главный, с отзывами и патчами на русском.',
+      alternates: { canonical: '/games' },
+    })
+    expect(ruMeta.openGraph).toMatchObject({ url: '/games', locale: 'ru_RU' })
+  })
+
+  /*
+   * Метаданные layout сегмента /games достаются и 404 жанра: notFound() у
+   * [tag] рисуется под ним. С подписью хаба в layout голова /games/nope
+   * называлась «Игры по жанрам · imbored» — до перевода там была корневая.
+   */
+  test('у сегмента /games нет layout с метаданными — 404 жанра получает голову корня', () => {
+    const layout = path.join(__dirname, 'layout.tsx')
+    if (!fs.existsSync(layout)) return
+    expect(fs.readFileSync(layout, 'utf8')).not.toMatch(/export\s+(const\s+metadata\b|(async\s+)?function\s+generateMetadata\b|const\s+generateMetadata\b)/)
   })
 
   test('жанр: заголовок жанра первым, строки карточек и описание без кириллицы', async () => {
