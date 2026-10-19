@@ -860,7 +860,7 @@ describe('тексты лендинга по-английски', () => {
    * Список — глаголы, а не места: «Library» или «Your library» не пройдут.
    */
   test('кнопка начинается с глагола в повелительном наклонении', () => {
-    const IMPERATIVES = ['Open', 'Show', 'Find', 'Browse', 'Build', 'Get', 'Create']
+    const IMPERATIVES = ['Open', 'See', 'Find', 'Browse', 'Get', 'Create']
     for (const [p, d] of Object.entries(EN)) {
       expect(IMPERATIVES, `${p}: «${d.action}»`).toContain(d.action.split(' ')[0])
       expect(d.promise.length, `${p}: пустое обещание`).toBeGreaterThan(20)

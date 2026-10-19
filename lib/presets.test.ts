@@ -402,7 +402,7 @@ describe('подписи пресетов по-английски', () => {
   test('вайб-пресеты — по глоссарию, без повторов', () => {
     expect(VIBE_PRESETS.map((p) => presetLabel(p, 'en'))).toEqual([
       'After work, no energy',
-      '30 minutes before bed',
+      '30 min before bed',
       'Friday with friends',
       'Lose the weekend',
       'Quick round',

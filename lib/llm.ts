@@ -5,7 +5,7 @@ import { PATCH_SINCE_LEAD, PATCH_SINCE_LEADS, patchHasDeadline } from './comebac
 import { discountEndsLabel, discountOf, trustedPrice } from './discount'
 import { entryCost, type EntryCost } from './entry'
 import { GENERIC_TAGS } from './hook'
-import { pl, tr, type Locale } from './i18n'
+import { fmtNumber, pl, tr, type Locale } from './i18n'
 import { modelTextFlaw } from './modeltext'
 import type { Lean } from './mood'
 import { playtimeHidden } from './playtime'
@@ -1855,9 +1855,12 @@ function nearSentence(a: OwnAnchor): string {
   return `ближе всего она к «${a.name}», где у тебя ${a.hours} ч`
 }
 
-/** То же по-английски: «h» — сокращение часов из глоссария, как «ч» */
+/**
+ * То же по-английски: «h» — сокращение часов из глоссария, как «ч», а число
+ * — с разрядами, как «2,435 h played» в строке героя над причиной (fmtNumber)
+ */
 function nearSentenceEn(a: OwnAnchor): string {
-  return `it's closest to “${a.name}”, where you've spent ${a.hours} h`
+  return `it's closest to “${a.name}”, where you've spent ${fmtNumber('en', a.hours)} h`
 }
 
 /**
@@ -2067,7 +2070,7 @@ const SOURCE_TEMPLATES_EN: Templates = {
   // Часы — как опыт, а не как вложение, и патч вместо «вернись и проверь» —
   // ровно как в русском шаблоне выше
   comeback: (name, tags, { hours, entry, patch }) => {
-    const known = hours ? `You already have ${hours} h in “${name}”` : `You've already started “${name}”`
+    const known = hours ? `You already have ${fmtNumber('en', hours)} h in “${name}”` : `You've already started “${name}”`
     const recall = entry?.level === 'high' ? RECALL.en : ''
     const fact = patch ? patchSentence(patch, REASON_MAX - known.length - 2 - recall.length, 'en', name) : null
     if (fact) return `${known}. ${fact}${recall}`
@@ -2077,7 +2080,7 @@ const SOURCE_TEMPLATES_EN: Templates = {
   },
   familiar: (name, _tags, { hours }) =>
     hours
-      ? `You already know the controls in “${name}” — you've got ${hours} h in it. Nothing new to learn: just jump in.`
+      ? `You already know the controls in “${name}” — you've got ${fmtNumber('en', hours)} h in it. Nothing new to learn: just jump in.`
       : `You already know the controls in “${name}”. Nothing new to learn: just jump in.`,
   owned: (name, tags, { anchor }) =>
     anchor
@@ -2097,7 +2100,7 @@ const SOURCE_TEMPLATES_EN: Templates = {
 
 /** Якорь демо-игрока по-английски: «they» — без «you», как у русского «у него» */
 function nearSentenceThemEn(a: OwnAnchor): string {
-  return `it's closest to “${a.name}”, where they've spent ${a.hours} h`
+  return `it's closest to “${a.name}”, where they've spent ${fmtNumber('en', a.hours)} h`
 }
 
 /*
@@ -2120,7 +2123,7 @@ const THEM_TEMPLATES_EN: Templates = {
         : `The demo player opened “${name}” and closed it before figuring it out. It deserves another shot.`,
   comeback: (name, tags, { hours, entry }) => {
     const known = hours
-      ? `The demo player already has ${hours} h in “${name}”`
+      ? `The demo player already has ${fmtNumber('en', hours)} h in “${name}”`
       : `The demo player has already started “${name}”`
     const recall = entry?.level === 'high' ? RECALL.en : ''
     return tags
@@ -2129,7 +2132,7 @@ const THEM_TEMPLATES_EN: Templates = {
   },
   familiar: (name, _tags, { hours }) =>
     hours
-      ? `The demo player already knows the controls in “${name}” — they've got ${hours} h in it. Nothing new to learn: they can jump right in.`
+      ? `The demo player already knows the controls in “${name}” — they've got ${fmtNumber('en', hours)} h in it. Nothing new to learn: they can jump right in.`
       : `The demo player already knows the controls in “${name}”. Nothing new to learn: they can jump right in.`,
   owned: (name, tags, { anchor }) =>
     anchor

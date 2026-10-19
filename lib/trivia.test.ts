@@ -93,6 +93,8 @@ describe('buildTrivia', () => {
       const w = CATALOG.find((g) => g.name === winner)!
       const o = CATALOG.find((g) => g.name === other)!
       expect(w.ccu!).toBeGreaterThan(o.ccu!)
+      // по-русски пары — через запятую, как было: разряды там пробелом
+      expect(q.reveal).toMatch(/^.+ — \d[\d\s  ]*, .+ — \d[\d\s  ]*$/)
     }
   })
 
@@ -355,8 +357,9 @@ describe('buildTrivia по-английски', () => {
         if (q.kind === 'cover') expect(q.prompt).toBe('Which game is this?')
         if (q.kind === 'ccu') {
           expect(q.prompt).toBe("Where's the bigger crowd right now?")
-          // онлайн — с английскими разрядами: «Game 3 — 20,000»
-          expect(q.reveal).toMatch(/^Game \d+ — \d{1,3}(,\d{3})*, Game \d+ — \d{1,3}(,\d{3})*$/)
+          // онлайн — с английскими разрядами: «Game 3 — 20,000», а пары —
+          // через « · », чтобы запятая между ними не слиплась с разрядами
+          expect(q.reveal).toMatch(/^Game \d+ — \d{1,3}(,\d{3})* · Game \d+ — \d{1,3}(,\d{3})*$/)
         }
         if (q.kind === 'nottag') expect(q.prompt).toMatch(/^Which tag doesn't “Game \d+” have\?$/)
         if (q.kind === 'hours') expect(q.prompt).toBe('Who has more hours in “Dota 2”?')

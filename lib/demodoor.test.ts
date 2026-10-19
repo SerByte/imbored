@@ -118,7 +118,7 @@ describe('полоса', () => {
     expect(out).toContain(`href="${link.replace(/&/g, '&amp;')}"`)
     expect(out).toMatch(/>Sign in with Steam<\/a>/)
     // вопрос, на который двери отвечают, а не обрубок фразы перед ними
-    expect(out).toContain('<span class="text-dim">Want picks from yours?</span>')
+    expect(out).toContain('<span class="text-dim">Want picks based on yours?</span>')
     expect(out).not.toMatch(/[А-Яа-яЁё]/)
   })
 })

@@ -1,5 +1,6 @@
-import type { Metadata } from 'next'
+import type { Metadata, ResolvingMetadata } from 'next'
 import { toLocale, tr } from '@/lib/i18n'
+import { rootCard } from '@/lib/site'
 
 /**
  * Экран транзитный — создаёт комнату и уводит в неё, — и заголовок ему нужен
@@ -10,9 +11,11 @@ import { toLocale, tr } from '@/lib/i18n'
  * Язык — из params сегмента [lang]; hreflang нет: /room/new закрыта в
  * robots.txt (lib/robots), в выдачу она не идёт.
  */
-export async function generateMetadata({ params }: LayoutProps<'/[lang]/room/new'>): Promise<Metadata> {
-  const locale = toLocale((await params).lang)
+export async function generateMetadata(props: LayoutProps<'/[lang]/room/new'>, parent?: ResolvingMetadata): Promise<Metadata> {
+  const locale = toLocale((await props.params).lang)
   return {
+    // карточка корня на /en — с английской подписью (lib/site)
+    ...(await rootCard(props, parent)),
     title: tr(locale, { ru: 'Новая комната', en: 'New room' }),
     description: tr(locale, {
       ru: 'Создаём комнату для пати и открываем её по ссылке.',

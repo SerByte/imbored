@@ -96,13 +96,41 @@ describe('карта сайта и осечка базы', () => {
     errors.mockRestore()
     expect(got).toContain('/')
     expect(got).toContain('/games')
-    // жанры известны без базы — переживают и сборку без неё, на обоих языках
-    expect(got).toContain('/games/open-world')
-    expect(got).toContain('/en/games/open-world')
-    // подборки — нет: их страницы на такой сборке собраны пустыми и закрыты от индекса
+    // жанры и подборки — нет: их страницы на такой сборке собраны пустыми и
+    // закрыты от индекса (thinList), до первой перегенерации
+    expect(got).not.toContain('/games/open-world')
+    expect(got).not.toContain('/en/games/open-world')
     expect(got).not.toContain('/games/coop')
     expect(got).not.toContain('/en/games/coop')
     expect(got).not.toContain('/game/730')
+  })
+
+  /*
+   * Жанр подобран руками под полную полку, но полка — выборка каталога, и
+   * короче полки хаба страница жанра стоит с noindex (thinList) — как
+   * подборка. В карте — ровно то, что страница пускает в поиск, на обоих
+   * языках сразу.
+   */
+  test('жанр — в карте, только когда его полка полная', async () => {
+    const rogue = async (appid: number) => {
+      await upsertGameMeta(
+        db,
+        { appid, name: `Игра ${appid}`, tags: { Roguelike: 1000 }, genres: [], categories: [], reviewsTotal: 1000 + appid },
+        T0,
+      )
+      await replaceGameTags(db, appid, [{ tag: 'Roguelike', weight: 1000 }])
+    }
+    for (let i = 1; i < HUB_MIN_SHELF; i++) await rogue(2000 + i)
+    let got = await urls()
+    expect(got).not.toContain('/games/roguelike')
+    expect(got).not.toContain('/en/games/roguelike')
+
+    await rogue(2000 + HUB_MIN_SHELF)
+    got = await urls()
+    expect(got.filter((u) => u === '/games/roguelike')).toHaveLength(1)
+    expect(got.filter((u) => u === '/en/games/roguelike')).toHaveLength(1)
+    // одна игра у шутеров (CS2) — полки нет, и в карте их нет
+    expect(got).not.toContain('/games/fps')
   })
 
   /*
@@ -185,6 +213,51 @@ describe('карта сайта и осечка базы', () => {
     expect(entry?.alternates?.languages).toEqual({
       ru: 'http://localhost:3000/game/730/news',
       'x-default': 'http://localhost:3000/game/730/news',
+    })
+
+    // Три английских пересказа — /en-архив сам в поиске: в карте пара, и
+    // hreflang обеих версий ведёт на обе; lastmod — свой у каждого языка
+    for (const [i, gid] of ['1', '2', '3'].entries()) {
+      await setNewsDigestEn(db, 730, gid, { tldrEn: 'In short.' }, T0 + 100 + i)
+    }
+    const both = (await sitemap()).filter((e) => /\/game\/730\/news$/.test(new URL(e.url).pathname))
+    expect(both.map((e) => new URL(e.url).pathname)).toEqual(['/game/730/news', '/en/game/730/news'])
+    for (const e of both) {
+      expect(e.alternates?.languages).toEqual({
+        ru: 'http://localhost:3000/game/730/news',
+        en: 'http://localhost:3000/en/game/730/news',
+        'x-default': 'http://localhost:3000/game/730/news',
+      })
+    }
+    expect(both[0].lastModified).toEqual(new Date((T0 + 60) * 1000))
+    expect(both[1].lastModified).toEqual(new Date((T0 + 102) * 1000))
+  })
+
+  /*
+   * Английские пересказы есть, русских не набралось — /en-архив в карте один,
+   * и x-default ведёт на него: русская версия с noindex — не та, что стоит
+   * показывать по умолчанию.
+   */
+  test('архив только с английскими пересказами — в карте одна /en-версия', async () => {
+    const news = (gid: string): StoredNews => ({
+      appid: 730,
+      gid,
+      title: 'Update',
+      url: '',
+      publishedAt: T0 - 100,
+      kind: 'patch',
+      scale: 'major',
+      blocks: [],
+      bodyHash: `h${gid}`,
+      rank: 9000,
+    })
+    await upsertNewsItems(db, ['1', '2', '3'].map(news), T0)
+    for (const gid of ['1', '2', '3']) await setNewsDigestEn(db, 730, gid, { tldrEn: 'In short.' }, T0)
+    const archive = (await sitemap()).filter((e) => /\/game\/730\/news$/.test(new URL(e.url).pathname))
+    expect(archive.map((e) => new URL(e.url).pathname)).toEqual(['/en/game/730/news'])
+    expect(archive[0].alternates?.languages).toEqual({
+      en: 'http://localhost:3000/en/game/730/news',
+      'x-default': 'http://localhost:3000/en/game/730/news',
     })
   })
 

@@ -68,8 +68,14 @@ export const DESTINATIONS: Readonly<Record<string, Destination>> = {
 /**
  * Те же тексты английского лендинга — тем же satisfies: адрес без текста
  * или текст без адреса не соберутся и здесь. Кнопка так же называет
- * действие: по-английски это повелительное наклонение (Open, Show, Find…),
+ * действие: по-английски это повелительное наклонение (Open, See, Find…),
  * и слова — из глоссария (Find a game, Browse, Get the link, Create a room).
+ *
+ * Кнопка — подпись главной кнопки карточки входа (ConnectCard), и она не
+ * шире русской: замер шрифтом кнопки (Manrope 800, 16 px) — «Показать игру
+ * дня» 146 px, «Show the game of the day» было 198, «See today's game» —
+ * 134; «Собрать портрет» 136, «Build your portrait» было 140, «Get your
+ * portrait» — 129. Остальные и так уже русских.
  */
 const DESTINATIONS_EN = {
   '/library': {
@@ -79,7 +85,7 @@ const DESTINATIONS_EN = {
   },
   '/daily': {
     promise: "The game of the day comes from your own library — connect Steam and it'll show up.",
-    action: 'Show the game of the day',
+    action: "See today's game",
   },
   '/play': {
     promise: "One game for how you feel, from your own library — connect Steam and we'll pick it.",
@@ -91,7 +97,7 @@ const DESTINATIONS_EN = {
   },
   '/portrait': {
     promise: 'Your player portrait is built from your library and your playtime — connect Steam.',
-    action: 'Build your portrait',
+    action: 'Get your portrait',
   },
   '/compat': {
     promise: 'Connect Steam and get a link to compare tastes with anyone.',

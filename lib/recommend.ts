@@ -1450,7 +1450,7 @@ export function moodWordsOf(meta: GameMeta, mood: Mood, locale: Locale = 'ru'): 
     s.session.bucket === mood.time
       ? SESSION_MOOD_WORD[locale][mood.time]
       : mood.time === 'short' && s.session.canStopAnytime
-        ? tr(locale, { ru: 'можно бросить в любой момент', en: 'stop anytime' })
+        ? tr(locale, { ru: 'можно бросить в любой момент', en: 'easy to put down' })
         : null
   if (session) return [...words.slice(0, MOOD_WORDS - 1), session]
   return words.slice(0, MOOD_WORDS)

@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, ResolvingMetadata } from 'next'
 import Link from '@/components/Link'
 import { redirect } from 'next/navigation'
 import { Ambient } from '@/components/Ambient'
@@ -10,6 +10,7 @@ import { bounceTo, steamLoginFor } from '@/lib/destination'
 import { freshness } from '@/lib/freshness'
 import { lp, toLocale, tr } from '@/lib/i18n'
 import { appBaseUrl, currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
+import { rootCard } from '@/lib/site'
 import { Eyebrow } from '@/components/Labels'
 import { Icon } from '@/components/Icon'
 import { withRef } from '@/lib/track'
@@ -17,9 +18,11 @@ import { langOn } from './nick'
 import { COMPAT_SHARE } from './sharecopy'
 
 /** Вкладка и описание — на языке адреса; набор полей прежний: страница личная, её не индексируют */
-export async function generateMetadata(props: PageProps<'/[lang]/compat'>): Promise<Metadata> {
+export async function generateMetadata(props: PageProps<'/[lang]/compat'>, parent?: ResolvingMetadata): Promise<Metadata> {
   const locale = toLocale((await props.params).lang)
   return {
+    // карточка корня на /en — с английской подписью (lib/site)
+    ...(await rootCard(props, parent)),
     title: tr(locale, { ru: 'Совместимость', en: 'Compatibility' }),
     description: tr(locale, {
       ru: 'Процент совпадения игровых вкусов по реальным библиотекам и часам — и во что вам зайти вместе.',

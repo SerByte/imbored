@@ -1,7 +1,7 @@
 import type { MetadataRoute } from 'next'
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import { sitemapGames, sitemapNews, sitemapPatchArchives } from '@/lib/db'
-import { facetPath, HUB_FACETS, HUB_TAGS, hubPath, type HubFacet } from '@/lib/gamehub'
+import { facetPath, HUB_FACETS, HUB_GENRES, HUB_TAGS, hubPath, type HubFacet } from '@/lib/gamehub'
 import { LOCALES, lp, type Locale } from '@/lib/i18n'
 import { newsPath, SITEMAP_NEWS_MAX, SITEMAP_NEWS_WINDOW_SEC } from '@/lib/newspage'
 import { PATCH_ARCHIVE_MIN, patchArchivePath } from '@/lib/patcharchive'
@@ -32,15 +32,12 @@ import { loadGenre, thinList } from './[lang]/games/[tag]/load'
  * Адрес теперь стоит в карте на каждом языке (см. localized ниже), так что
  * игра — это LOCALES.length адресов, и патчи тоже. Потолок игр — то, что
  * остаётся от протокола после патчей, архивов обновлений (их столько же,
- * SITEMAP_NEWS_MAX, и пока на одном языке — см. у выборки ниже) и
+ * SITEMAP_NEWS_MAX, и тоже на каждом языке — см. у выборки ниже) и
  * статических адресов (запас 100 на них с лихвой: жанры и подборки на обоих
  * языках — восемь десятков).
  */
 const PROTOCOL_MAX = 50_000
-const ARCHIVE_LOCALES = 1
-const MAX_GAMES = Math.floor(
-  (PROTOCOL_MAX - SITEMAP_NEWS_MAX * (LOCALES.length + ARCHIVE_LOCALES) - 100) / LOCALES.length,
-)
+const MAX_GAMES = Math.floor((PROTOCOL_MAX - SITEMAP_NEWS_MAX * LOCALES.length * 2 - 100) / LOCALES.length)
 
 /** Сутки: чаще каталог всё равно не меняется, а запрос стоит прочитанных строк. */
 export const revalidate = 86_400
@@ -97,12 +94,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // (см. app/games/page.tsx). Полки меняются медленно — верх по отзывам
     // стоит неделями, — отсюда weekly, а не daily.
     ...localized('/games', { changeFrequency: 'weekly', priority: 0.8 }),
-    // Страницы жанров — адреса известны без базы (HUB_GENRES), поэтому
-    // переживают и сборку без каталога. Ниже хаба: хаб ссылается на них
-    ...HUB_TAGS.flatMap((tag) => {
-      const path = hubPath(tag)
-      return path ? localized(path, { changeFrequency: 'weekly', priority: 0.7 }) : []
-    }),
+    // Страницы жанров — ниже, вместе с подборками: в карте только те, что
+    // страница сама пускает в поиск
     ...localized('/support', { changeFrequency: 'yearly', priority: 0.3 }),
     ...localized('/privacy', { changeFrequency: 'yearly', priority: 0.2 }),
   ]
@@ -171,24 +164,34 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
    * архивы, в которых есть своё — пересказы (PATCH_ARCHIVE_MIN, lib/patcharchive);
    * остальные открыты по ссылке с карточки, но звать туда краулер незачем.
    *
-   * Пока — только русской версией, и hreflang у неё без en. Своё у архива —
-   * пересказы, а sitemapPatchArchives считает русские (tldr); английских
-   * (tldr_en) у архива может не набраться трёх, и тогда /en-двойник стоит с
-   * noindex — в карте он был бы «Submitted URL marked noindex». Тот же довод,
-   * что у патчей выше. Английская версия встанет сюда, когда выборка научится
-   * считать пересказы своего языка (как sitemapNews(…, locale)).
+   * Выборок по одной на язык, как у патчей. Своё у архива — пересказы, а их
+   * у каждого языка свои: /en-архив считает английские (tldr_en, patchOn в
+   * его загрузчике), и если их меньше PATCH_ARCHIVE_MIN, /en-двойник стоит с
+   * noindex — в карте он был бы «Submitted URL marked noindex». Поэтому в
+   * карте архив — на тех языках, где он проходит порог, и hreflang ведёт
+   * только на них. Время изменения — своё у каждого языка.
    */
-  let archives: Awaited<ReturnType<typeof sitemapPatchArchives>> = []
+  const archives = new Map<number, Partial<Record<Locale, number>>>()
   try {
-    archives = await sitemapPatchArchives(await getDb(), PATCH_ARCHIVE_MIN, SITEMAP_NEWS_MAX)
+    const db = await getDb()
+    const rows = await Promise.all(
+      LOCALES.map((locale) => sitemapPatchArchives(db, PATCH_ARCHIVE_MIN, SITEMAP_NEWS_MAX, locale)),
+    )
+    // Порядок — русской выборки (по appid), английские без русского — следом
+    LOCALES.forEach((locale, i) => {
+      for (const a of rows[i]) {
+        const entry = archives.get(a.appid) ?? {}
+        entry[locale] = a.changedAt
+        archives.set(a.appid, entry)
+      }
+    })
   } catch (err) {
     if (process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) throw err
     console.error('sitemap: архивы обновлений недоступны на сборке, отдаём без них —', String(err))
   }
 
   /*
-   * Подборки по факту («с другом», «на 20 минут»…) — не все и не всегда, в
-   * отличие от жанров. Жанры подобраны руками так, чтобы полка была полной, а
+   * Подборки по факту («с другом», «на 20 минут»…) — не все и не всегда:
    * подборка — отбор каталога, и у «на 20 минут» он узкий: только уверенная
    * семантика своей версии, и после выборки ещё уходят матчи. Короче полки
    * хаба страница закрыта от индекса (thinList), и отдай карта её адрес —
@@ -204,21 +207,34 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
    * Одна проверка на оба языка: список игр подборки от языка не зависит
    * (loadGenre — та же выборка и тот же отсев), и тонкой страница бывает на
    * обоих сразу. Поэтому подборка — на каждом языке, как жанр.
+   *
+   * Жанры — тем же правилом. Их подбирали руками под полную полку, но полка
+   * — тоже выборка каталога, и страница жанра короче полки хаба стоит с тем
+   * же noindex (thinList в app/[lang]/games/[tag]): в локальном каталоге так
+   * стояли «Соулслайки» с четырьмя играми и «Уютные» с одной, и карта звала
+   * краулер на обе — и на их /en-двойники. Сборка без базы собирает и
+   * страницы жанров пустыми, то есть закрытыми от индекса, — и в карте их
+   * тогда нет, как подборок, до первой перегенерации.
    */
+  let genres: string[] = []
   let facets: HubFacet[] = []
   try {
-    const pages = await Promise.all(HUB_FACETS.map((f) => loadGenre(f.slug)))
-    facets = HUB_FACETS.filter((_, i) => {
-      const page = pages[i]
-      return page != null && !thinList(page.games)
-    })
+    const listed = (page: Awaited<ReturnType<typeof loadGenre>>) => page != null && !thinList(page.games)
+    const [genrePages, facetPages] = await Promise.all([
+      Promise.all(HUB_TAGS.map((tag) => (hubPath(tag) ? loadGenre(HUB_GENRES[tag].slug) : null))),
+      Promise.all(HUB_FACETS.map((f) => loadGenre(f.slug))),
+    ])
+    genres = HUB_TAGS.filter((_, i) => listed(genrePages[i]))
+    facets = HUB_FACETS.filter((_, i) => listed(facetPages[i]))
   } catch (err) {
     if (process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) throw err
-    console.error('sitemap: подборки недоступны на сборке, отдаём без них —', String(err))
+    console.error('sitemap: жанры и подборки недоступны на сборке, отдаём без них —', String(err))
   }
 
   return [
     ...stat,
+    // Страницы жанров — ниже хаба: хаб ссылается на них
+    ...genres.flatMap((tag) => localized(hubPath(tag)!, { changeFrequency: 'weekly', priority: 0.7 })),
     // Тот же сегмент и тот же ранг, что у жанров, — и так же на каждом языке
     ...facets.flatMap((f) => localized(facetPath(f), { changeFrequency: 'weekly', priority: 0.7 })),
     ...games.flatMap((g) =>
@@ -230,17 +246,21 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ),
     // Между карточкой и патчем: ответ на «обновления X» — один адрес на игру,
     // а не десятки одинаковых заголовков Steam. lastmod — свежий патч или
-    // пересказ (sitemapPatchArchives), а не перезаписанный вес. Только
-    // русская версия — почему, у выборки выше
-    ...archives.map(
-      (a): Entry => ({
-        url: url(patchArchivePath(a.appid)),
-        alternates: languages(patchArchivePath(a.appid), ['ru']),
-        lastModified: new Date(a.changedAt * 1000),
-        changeFrequency: 'weekly',
-        priority: 0.6,
-      }),
-    ),
+    // пересказ своего языка (sitemapPatchArchives), а не перезаписанный вес.
+    // Язык — только тот, где архив проходит порог, — почему, у выборки выше
+    ...[...archives].flatMap(([appid, changedAt]) => {
+      const path = patchArchivePath(appid)
+      const has = LOCALES.filter((locale) => changedAt[locale] !== undefined)
+      return has.map(
+        (locale): Entry => ({
+          url: url(lp(locale, path)),
+          alternates: languages(path, has),
+          lastModified: new Date(changedAt[locale]! * 1000),
+          changeFrequency: 'weekly',
+          priority: 0.6,
+        }),
+      )
+    }),
     // Ниже карточек: патч — повод зайти, а не главное содержание сайта
     ...[...news.values()].flatMap((n) => {
       const path = newsPath(n.appid, n.gid)

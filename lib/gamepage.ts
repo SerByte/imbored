@@ -671,10 +671,15 @@ export function reviewPulse(
     const higher = recent.percent > facts.percent
     const count = reviewsCount(recent.total, locale)
     out.push({
-      label: tr(locale, { ru: `За 30 дней до ${day}`, en: `30 days to ${day}` }),
+      // «through», а не «to»: «30 days to October 8» читается обратным
+      // отсчётом до даты, а здесь — тридцать дней, которые ею кончаются
+      label: tr(locale, { ru: `За 30 дней до ${day}`, en: `30 days through ${day}` }),
       value: tr(locale, {
         ru: `${recent.percent}% положительных из ${count} — ${higher ? 'выше' : 'ниже'}, чем за всё время`,
-        en: `${recent.percent}% positive out of ${count} — ${higher ? 'higher' : 'lower'} than overall`,
+        // Той же фразой, что кольцо прямо над строкой и глоссарий: «N% of M
+        // reviews are positive» (reviewsLine) — одно число двумя оборотами
+        // читалось бы двумя разными мерками
+        en: `${reviewsLine(recent.percent, recent.total, locale)} — ${higher ? 'higher' : 'lower'} than overall`,
       }),
     })
   }

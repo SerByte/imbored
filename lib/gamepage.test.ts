@@ -1721,8 +1721,12 @@ describe('пересказ патча на карточке — на языке 
       title: 'Update 1.5: a new map',
       tldr: 'Adds a new map.',
     })
+    // общий заголовок — с номером версии из заголовка издателя (patchToken)
     const generic = cardNews(ruPost, 'en', 'Counter-Strike 2')
-    expect(generic.title).toBe('Counter-Strike 2 update')
+    expect(generic.title).toBe('Counter-Strike 2 update 1.5')
+    expect(cardNews({ ...ruPost, title: 'Обновление: новая карта' }, 'en', 'Counter-Strike 2').title).toBe(
+      'Counter-Strike 2 update',
+    )
     expect(JSON.stringify(generic)).not.toMatch(CYRILLIC)
     // английский заголовок издателя — как есть
     expect(cardNews(post, 'en', 'Counter-Strike 2').title).toBe('Release Notes for 9/25/2026')
@@ -1754,7 +1758,7 @@ describe('английская карточка: пульс, пара плюсо
       reviewsRuPercent: 96,
     })
     expect(reviewPulse(m, ring, AT + 86_400, 'en')).toEqual([
-      { label: '30 days to October 3', value: '71% positive out of 7,948 reviews — lower than overall' },
+      { label: '30 days through October 3', value: '71% of 7,948 reviews are positive — lower than overall' },
     ])
     expect(reviewPulse({ ...m, reviewsRecentPercent: 95 }, { ...ring, percent: 80 }, AT, 'en')[0].value).toMatch(
       /— higher than overall$/,
@@ -1857,7 +1861,8 @@ describe('английская карточка: пульс, пара плюсо
     )
     const page = await loadGamePage(13, 'en')
     expect(page?.news.map((n) => n.gid)).toEqual(['1'])
-    expect(page?.news[0].title).toBe('Игра 13 update')
+    // «Патч 2.31» — номер версии общий заголовок сохраняет
+    expect(page?.news[0].title).toBe('Игра 13 update 2.31')
     expect(page?.newsMore).toBe(false)
   })
 

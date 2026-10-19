@@ -315,7 +315,7 @@ export const HUB_FACETS: readonly HubFacet[] = [
       title: 'Free games',
       heading: 'Free games on Steam — the best, by reviews',
       label: 'Free',
-      basis: 'ones Steam gives away for free: download and play, no purchase needed.',
+      basis: 'ones that are free on Steam: download and play, no purchase needed.',
     },
   },
   {

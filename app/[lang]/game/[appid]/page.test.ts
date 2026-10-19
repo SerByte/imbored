@@ -899,7 +899,7 @@ describe('английская карточка: пульс, цена, архи�
     expect(text).toContain('Overwhelmingly Positive')
     expect(text).toContain('of 309,180 reviews')
     // 1_760_000_000 — 9 октября 2025 UTC, замер — сутками раньше
-    expect(text).toContain('30 days to October 8:71% positive out of 7,948 reviews — lower than overall')
+    expect(text).toContain('30 days through October 8:71% of 7,948 reviews are positive — lower than overall')
     expect(text).not.toMatch(/16,893|16\s893/)
     expect(text).not.toMatch(CYR)
   })

@@ -77,8 +77,13 @@ export function newsHeading(title: string, gameName: string | null | undefined):
  *      ни одной буквы («1.0.3» языка не имеет);
  *   3. общий «{Game} update» — русского, китайского или немецкого заголовка
  *      на /en нет (docs/i18n.md, п. 9), а пустой строки у ссылки быть не
- *      должно. Без названия игры — просто «Update».
- * Повторный вызов на результате ничего не меняет: каждый вариант английский.
+ *      должно. Без названия игры — просто «Update». Номер версии или сезона
+ *      из заголовка издателя (patchToken) общий заголовок сохраняет:
+ *      «Обновление 7.41d» — «Dota 2 update 7.41d», «Сезон 5» — «Destiny 2
+ *      season 5 update». Без него все патчи игры с русским заголовком
+ *      читались одной строкой — в ленте, в «Других патчах» и в h1.
+ * Повторный вызов на результате ничего не меняет: каждый вариант английский,
+ * а номер в общем заголовке находится в нём же снова.
  */
 export function newsTitleOn(
   item: { title: string; titleEn?: string | null },
@@ -90,7 +95,78 @@ export function newsTitleOn(
   if (translated) return translated
   if (isEnglishText(item.title) || (item.title.trim() && !/\p{L}/u.test(item.title))) return item.title
   const name = gameName?.trim()
-  return name ? `${name} update` : 'Update'
+  const token = patchToken(item.title, name)
+  if (token?.kind === 'season') return name ? `${name} season ${token.value} update` : `Season ${token.value} update`
+  const generic = name ? `${name} update` : 'Update'
+  return token ? `${generic} ${token.value}` : generic
+}
+
+/**
+ * Номер версии: цифры через точку («7.41d», «3.0.436», «0.93L») или с «v» /
+ * «ver» впереди («v0.9.6», «ver1.1.4», «v12»), буква в хвосте — часть номера.
+ * Границы — не буква и не цифра: «2» из «Counter-Strike 2» номером не
+ * считается, а название игры вырезается до поиска (withoutGameName).
+ */
+const VERSION_RE = /(?<![\p{L}\p{N}.])(?:(?:v|ver\.?)\d+(?:\.\d+)*|\d+(?:\.\d+)+)[a-z]?(?![\p{L}\p{N}]|\.\d)/giu
+
+/**
+ * Дата через точки — «12.08.2026», «03.12.25»: день, месяц и год из двух или
+ * четырёх цифр. Это не версия: по-английски «12.08» читается и восьмым
+ * декабря, а дату <title> патча ставит сам (newsPageTitle, коротким месяцем).
+ */
+const DOTTED_DATE_RE = /^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/
+
+function isDottedDate(token: string): boolean {
+  const m = DOTTED_DATE_RE.exec(token)
+  if (!m) return false
+  const [day, month] = [Number(m[1]), Number(m[2])]
+  return day >= 1 && day <= 31 && month >= 1 && month <= 12
+}
+
+/** Сезон: «Сезон 5», «5-й сезон», «начало сезона 12», «Season 5» */
+const SEASON_RE = /(?<![\p{L}\p{N}])(?:(?:сезон[а-яё]{0,2}|season)\s*(\d{1,3})|(\d{1,3})(?:-?[а-яё]{1,2})?\s+сезон[а-яё]{0,2})(?![\p{L}\p{N}])/iu
+
+/**
+ * Что различает патчи игры в заголовке на любом языке — номер версии, иначе
+ * номер сезона; null — ничего такого нет. Для общего «{Game} update»
+ * (newsTitleOn): номер — не перевод, и в английском заголовке он тот же.
+ */
+export function patchToken(
+  title: string,
+  gameName?: string | null,
+): { kind: 'version' | 'season'; value: string } | null {
+  const text = withoutGameName(title, gameName)
+  for (const [version] of text.matchAll(VERSION_RE)) {
+    if (!isDottedDate(version)) return { kind: 'version', value: version }
+  }
+  const season = SEASON_RE.exec(text)
+  const n = season?.[1] ?? season?.[2]
+  return n ? { kind: 'season', value: String(Number(n)) } : null
+}
+
+/**
+ * Заголовок патча на языке страницы без названия игры, которое стоит рядом, —
+ * один для h1, карточки в чате, headline статьи и последней крошки.
+ *
+ * Общий «{Game} update» — ответ newsTitleOn посту без своего английского
+ * заголовка — не режется: название игры в нём и есть весь заголовок, и
+ * newsHeading оставил бы голое «Update» в h1, на карточке, в выдаче и в
+ * крошках. С номером («Dota 2 update 7.41d») режется, как любой заголовок с
+ * названием впереди: «Update 7.41d» — уже не пустое слово. Русский двойник
+ * того же поста, «Обновление Counter-Strike 2», цел по той же причине:
+ * название в конце, и stripGameName его не трогает. Общий заголовок —
+ * ответ newsTitleOn для поста без заголовка, а не своя копия шаблона:
+ * сменится шаблон — сменится и проверка. Русская страница — ровно
+ * newsHeading, как было.
+ */
+export function patchHeading(
+  item: { title: string; titleEn?: string | null },
+  gameName: string | null | undefined,
+  locale: Locale = 'ru',
+): string {
+  const title = newsTitleOn(item, gameName, locale)
+  if (locale === 'en' && title === newsTitleOn({ title: '' }, gameName, locale)) return title
+  return newsHeading(title, gameName)
 }
 
 /**

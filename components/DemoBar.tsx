@@ -63,8 +63,10 @@ export function DemoBar({
       </span>{' '}
       {/* По-английски — вопрос, а не обрубок «For picks from yours —»: двери
           за ним читаются ответами, и «Sign in with Steam» с заглавной не
-          встаёт посреди фразы. Строк на телефоне не больше, чем у русской */}
-      <span className="text-dim">{tr(locale, { ru: 'Подбор по твоей —', en: 'Want picks from yours?' })}</span>{' '}
+          встаёт посреди фразы. «based on», а не «from» (глоссарий): в
+          выдаче бывают и игры магазина, которых у человека нет. Строк на
+          телефоне не больше, чем у русской: две на 360–412 px, как у неё */}
+      <span className="text-dim">{tr(locale, { ru: 'Подбор по твоей —', en: 'Want picks based on yours?' })}</span>{' '}
       {/* Обычная ссылка: вход через Steam — переход на чужой сайт через наш роут */}
       <a
         href={doors.steam}

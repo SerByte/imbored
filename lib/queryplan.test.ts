@@ -230,6 +230,14 @@ const CASES: Case[] = [
     indexes: ['idx_news_feed', 'idx_news_app'],
     sortFree: false,
   },
+  // Те же архивы для /en — английские пересказы остаточным фильтром по тому
+  // же частичному индексу
+  {
+    name: 'английские архивы обновлений для карты сайта',
+    run: async (db) => sitemapPatchArchives(await withPatches(db), 3, 5000, 'en'),
+    indexes: ['idx_news_feed', 'idx_news_app'],
+    sortFree: false,
+  },
   // IndexNow после среза пересказов: то же окно и тот же индекс, что у
   // карты сайта, tldr_at — остаточным фильтром. Сортировка по tldr_at —
   // по окну крупных патчей за девяносто дней, намеренно (см. докблок)

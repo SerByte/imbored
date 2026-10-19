@@ -1,6 +1,7 @@
-import type { Metadata } from 'next'
+import type { Metadata, ResolvingMetadata } from 'next'
 import { MotionLazy } from '@/components/motion/MotionLazy'
 import { toLocale, type Locale } from '@/lib/i18n'
+import { rootCard } from '@/lib/site'
 
 /** Заголовок вкладки и описание — на языке страницы (глоссарий: Полистать — Browse) */
 const COPY = {
@@ -23,8 +24,9 @@ const COPY = {
  * Заголовок — для вкладки, истории и закладки, на языке страницы: язык — из
  * params, сборка знает оба (dynamicParams ниже).
  */
-export async function generateMetadata({ params }: LayoutProps<'/[lang]/explore'>): Promise<Metadata> {
-  return { ...COPY[toLocale((await params).lang)] }
+export async function generateMetadata(props: LayoutProps<'/[lang]/explore'>, parent?: ResolvingMetadata): Promise<Metadata> {
+  // карточка корня на /en — с английской подписью (lib/site)
+  return { ...COPY[toLocale((await props.params).lang)], ...(await rootCard(props, parent)) }
 }
 
 /**
