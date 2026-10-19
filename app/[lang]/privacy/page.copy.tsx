@@ -71,7 +71,7 @@ const RU: PolicyCopy = {
     title: 'Конфиденциальность',
     description: 'Какие данные собирает imbored, где они хранятся и как их удалить.',
   },
-  updated: '18 октября 2026',
+  updated: '19 октября 2026',
   updatedLead: 'Обновлено ',
   eyebrow: 'Конфиденциальность',
   h1: 'Что мы о тебе знаем',
@@ -355,6 +355,18 @@ const RU: PolicyCopy = {
             язык внизу страницы или войти с английской версии, и нужна, чтобы главная открывалась
             на твоём языке. Живёт год. О тебе в ней ничего нет, поэтому выход и «Удалить всё обо
             мне» её не трогают — язык остаётся тем, что ты выбрал.
+          </p>
+          {/* Язык «/» без выбора (homeLocaleFor в lib/homelocale.ts, зовёт
+              proxy.ts): x-vercel-ip-country — страну по IP ставит Vercel —
+              и Accept-Language читаются в прокси на входе без куки lang и
+              без сессии и никуда не пишутся. Счётчики по адресу из раздела
+              06 этот вход не трогают: на «/» потолка нет */}
+          <p>
+            Если язык ещё не выбран, то при входе на главную сайт один раз смотрит на страну,
+            которую хостинг Vercel определяет по IP-адресу, и на язык браузера — только чтобы
+            открыть её по-русски или по-английски. Ни страна, ни язык браузера не сохраняются, и
+            сам IP-адрес для этого мы не храним. Когда язык выбран, главная открывается на нём —
+            по четвёртой cookie.
           </p>
           <p>
             Несколько мелочей сайт помнит прямо в браузере. Например, последнюю подборку —
@@ -697,6 +709,13 @@ const EN: PolicyCopy = {
             home page open in your language. It lives for a year. There’s nothing about you in it,
             so signing out and “Delete everything about me” leave it alone — the language stays the
             one you chose.
+          </p>
+          <p>
+            If you haven’t chosen a language yet, when you open the home page the site looks once at
+            the country our hosting provider, Vercel, determines from your IP address, and at your
+            browser language — only to open the page in Russian or English. Neither the country nor
+            the browser language is stored, and we don’t keep your IP address for this. Once you’ve
+            chosen a language, the home page opens in it — via the fourth cookie.
           </p>
           <p>
             The site remembers a few small things right in your browser. For example, your latest
