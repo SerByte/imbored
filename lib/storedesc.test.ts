@@ -1,5 +1,13 @@
 import { describe, expect, test, vi } from 'vitest'
-import { englishDescription, parseAppDetails, parseStoreItems, storeDescription } from './catalog'
+import {
+  englishDescription,
+  mergeMeta,
+  parseAppDetails,
+  parseStoreDescriptions,
+  parseStoreItems,
+  parseStoreMedia,
+  storeDescription,
+} from './catalog'
 import { createDb, decodeStoredDescriptions, getCatalogMeta, getGameMeta, migrateDb, upsertGameMeta, type Db } from './db'
 import type { GameMeta } from './types'
 
@@ -44,9 +52,34 @@ describe('разбор ответов магазина', () => {
     expect(parseStoreItems(json, new Map())[0]?.shortDescription).toBe('"May you find your book."')
   })
 
-  test('английский слот — расшифрованным, откуда бы описание ни пришло', () => {
-    expect(englishDescription(DUSK_RAW)).toBe(DUSK)
-    expect(englishDescription('Blade &amp; Sorcery is a VR sandbox.')).toBe('Blade & Sorcery is a VR sandbox.')
+  test('английский слот из сырого GetItems — расшифрованным', () => {
+    const json = {
+      response: { store_items: [{ appid: 519860, visible: true, basic_info: { short_description: DUSK_RAW } }] },
+    }
+    expect(parseStoreMedia(json).get(519860)?.shortDescriptionEn).toBe(DUSK)
+  })
+
+  test('расшифровка одна на дорогу: «&amp;lt;» в обоих слотах одинаково', () => {
+    // englishDescription получает уже разобранное описание, и вторая
+    // расшифровка сделала бы английский слот «<3», а русский — «&lt;3»
+    const raw = 'Type &amp;lt;3 to win &amp;amp; more'
+    const once = 'Type &lt;3 to win &amp; more'
+    expect(englishDescription(once)).toBe(once)
+
+    const details = parseAppDetails({ 7: { success: true, data: { type: 'game', name: 'X', short_description: raw } } }, 7)
+    const fromDetails = mergeMeta(null, details!)
+    expect(fromDetails.shortDescription).toBe(once)
+    expect(fromDetails.shortDescriptionEn).toBe(once)
+
+    const items = {
+      response: { store_items: [{ appid: 7, visible: true, name: 'X', basic_info: { short_description: raw } }] },
+    }
+    const fromItems = mergeMeta(null, parseStoreItems(items, new Map())[0]!)
+    expect(fromItems.shortDescription).toBe(once)
+    expect(fromItems.shortDescriptionEn).toBe(once)
+    expect(parseStoreMedia(items).get(7)?.shortDescriptionEn).toBe(once)
+    // доливка описаний (backfill-descriptions --lang=en): разбор, потом отбор
+    expect(englishDescription(parseStoreDescriptions(items).get(7))).toBe(once)
   })
 
   test('обычный текст не меняется: амперсанд без сущности и русские кавычки', () => {
@@ -102,6 +135,61 @@ describe('decodeStoredDescriptions: то, что уже лежит', () => {
     await db.execute({ sql: 'UPDATE games SET short_description = ? WHERE appid = 519860', args: [DUSK_RAW] })
     await migrateDb(db, { VERCEL_ENV: 'production' })
     expect((await getGameMeta(db, 519860))?.shortDescription).toBe(DUSK_RAW)
+  })
+
+  // «&amp;lt;» — расшифровка не идемпотентна: после первой «&lt;», после второй «<»
+  const TWICE_RAW = 'Type &amp;lt;3 to win'
+  const ONCE = 'Type &lt;3 to win'
+
+  test('второй проход после первого ничего не трогает, хоть и прочёл пустой флаг', async () => {
+    // Так стартуют воркеры сборки прода: флаг на старте пуст у всех, а до шага
+    // кто-то доходит, когда первый уже записал
+    const db = await seeded()
+    await upsertGameMeta(db, meta(7, { shortDescription: TWICE_RAW }), NOW)
+    expect(await decodeStoredDescriptions(db)).toEqual([7, 519860, 1256670])
+    expect(await getCatalogMeta(db, 'decode_descriptions_v1')).toBe('1')
+    expect(await decodeStoredDescriptions(db)).toEqual([])
+    expect((await getGameMeta(db, 7))?.shortDescription).toBe(ONCE)
+  })
+
+  test('два прохода разом: расшифровывает один, и только он о записи и сообщает', async () => {
+    const db = await seeded()
+    await upsertGameMeta(db, meta(7, { shortDescription: TWICE_RAW }), NOW)
+    const [a, b] = await Promise.all([decodeStoredDescriptions(db), decodeStoredDescriptions(db)])
+    expect([...a, ...b].sort((x, y) => x - y)).toEqual([7, 519860, 1256670])
+    expect((await getGameMeta(db, 7))?.shortDescription).toBe(ONCE)
+  })
+
+  test('колонку, записанную между чтением и записью, не перетирает', async () => {
+    const db = await seeded()
+    await upsertGameMeta(db, meta(7, { shortDescription: TWICE_RAW }), NOW)
+    const batch = db.batch.bind(db)
+    // Между отбором и записью: английский слот у 7 заполнила доливка, а
+    // русское описание DUSK переписал крон
+    vi.spyOn(db, 'batch').mockImplementationOnce(async (stmts, mode) => {
+      await db.execute("UPDATE games SET short_description_en = 'Filled meanwhile' WHERE appid = 7")
+      await db.execute("UPDATE games SET short_description = 'Свежее описание' WHERE appid = 519860")
+      return batch(stmts, mode)
+    })
+    expect(await decodeStoredDescriptions(db)).toEqual([7, 1256670])
+    expect(await getGameMeta(db, 7)).toMatchObject({ shortDescription: ONCE, shortDescriptionEn: 'Filled meanwhile' })
+    expect((await getGameMeta(db, 519860))?.shortDescription).toBe('Свежее описание')
+  })
+
+  test('сбой посередине не оставляет ни строк, ни флага; повтор расшифровывает один раз', async () => {
+    const db = await seeded()
+    await upsertGameMeta(db, meta(7, { shortDescription: TWICE_RAW }), NOW)
+    // Запись 7 проходит, а следующая строка падает — в той же транзакции
+    await db.execute(`CREATE TRIGGER boom BEFORE UPDATE OF short_description ON games
+                       WHEN NEW.appid = 519860 BEGIN SELECT RAISE(ABORT, 'boom'); END`)
+    await expect(decodeStoredDescriptions(db)).rejects.toThrow(/boom/)
+    expect((await getGameMeta(db, 7))?.shortDescription).toBe(TWICE_RAW)
+    expect(await getCatalogMeta(db, 'decode_descriptions_v1')).toBeNull()
+
+    await db.execute('DROP TRIGGER boom')
+    expect(await decodeStoredDescriptions(db)).toEqual([7, 519860, 1256670])
+    expect((await getGameMeta(db, 7))?.shortDescription).toBe(ONCE)
+    expect((await getGameMeta(db, 519860))?.shortDescription).toBe(DUSK)
   })
 
   test('превью без своей базы не переписывает и флаг не пишет', async () => {

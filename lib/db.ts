@@ -1399,6 +1399,13 @@ export async function migrateDb(
    * Под destructiveMigrationsAllowed — это перезапись исходных данных, как у
    * починки JSON-колонок выше: превью на продовой базе шаг пропускает и флаг
    * не пишет. Под флагом: проход по games, а Turso считает прочитанные строки.
+   *
+   * Флаг ставит сам decodeStoredDescriptions — в той же транзакции, что и
+   * строки, а не отдельной записью после. Расшифровка не идемпотентна
+   * («&amp;lt;» — «&lt;», а повтор — «<»), а шаг запускают несколько
+   * процессов разом: хабы пререндерятся с базой, и сборка прода прогоняет
+   * migrateDb в каждом воркере. Флаг, прочитанный выше, у всех пуст; второй
+   * проход, начатый после записи первого, расшифровал бы ещё раз.
    */
   if (!flags.has(DECODE_DESCRIPTIONS_KEY) && allowed) {
     const decoded = await decodeStoredDescriptions(db)
@@ -1412,10 +1419,6 @@ export async function migrateDb(
         }),
       )
     }
-    await db.execute({
-      sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
-      args: [DECODE_DESCRIPTIONS_KEY, '1'],
-    })
   }
 
   /*
@@ -3901,40 +3904,75 @@ export function parseSemantics(raw: unknown): GameSemantics | undefined {
  * попадёт и описание с амперсандом и точкой с запятой без сущности, но такое
  * decodeEntities оставит как есть, и строки в записи не будет.
  *
- * Зовётся разово — из migrateDb под флагом. Возвращает appid переписанных
- * строк; dryRun только считает.
+ * ОДИН РАЗ НА БАЗУ — И ФЛАГ ЗДЕСЬ ЖЕ. Расшифровка не идемпотентна:
+ * «&amp;lt;» после неё — «&lt;», а после второй — «<», то есть второй проход
+ * испортил бы описание, которое первый починил. А проходов бывает несколько
+ * разом: хабы пререндерятся с базой, и сборка прода прогоняет migrateDb в
+ * каждом воркере, а флаг, прочитанный ими на старте, у всех пуст. Поэтому:
+ *
+ * - все записи и флаг decode_descriptions_v1 — одна транзакция (batch 'write'),
+ *   и каждая запись — только пока флага нет. Кто закоммитил первым, тот и
+ *   расшифровал; у остальных записи пусты, а отбор после флага пуст вовсе.
+ *   Сбой посередине не оставляет половины: ни строк, ни флага, и повтор
+ *   начнёт с того же места. Одна транзакция на всё — по размеру: в выгрузке
+ *   прода от 24.09.2026 под отбор попадало 87 строк из 6118;
+ * - каждая колонка пишется своим UPDATE и только при прежнем значении. Между
+ *   чтением и записью колонку мог заполнить кто-то ещё — catalog:descriptions,
+ *   крон, прогрев, — и описание из того же снимка не должно его перетереть.
+ *
+ * Зовётся разово — из migrateDb под флагом. Возвращает appid строк, где
+ * запись правда прошла; dryRun только считает и ничего не пишет.
  */
 export async function decodeStoredDescriptions(
   db: Db,
   opts: { dryRun?: boolean } = {},
 ): Promise<number[]> {
-  const res = await db.execute(
-    `SELECT appid, short_description, short_description_en FROM games
-      WHERE short_description LIKE '%&%;%' OR short_description_en LIKE '%&%;%'`,
-  )
-  const rows = (
-    res.rows as unknown as Array<{ appid: number; short_description: string | null; short_description_en: string | null }>
-  )
-    .map((r) => {
-      const ru = r.short_description === null ? null : decodeEntities(r.short_description)
-      const en = r.short_description_en === null ? null : decodeEntities(r.short_description_en)
-      return { appid: Number(r.appid), ru, en, changed: ru !== r.short_description || en !== r.short_description_en }
-    })
-    .filter((r) => r.changed)
-
-  if (!opts.dryRun) {
-    const CHUNK = 200
-    for (let i = 0; i < rows.length; i += CHUNK) {
-      await db.batch(
-        rows.slice(i, i + CHUNK).map((r) => ({
-          sql: 'UPDATE games SET short_description = ?, short_description_en = ? WHERE appid = ?',
-          args: [r.ru, r.en, r.appid],
-        })),
-        'write',
-      )
+  const notDone = 'NOT EXISTS (SELECT 1 FROM catalog_meta WHERE key = ?)'
+  const res = await db.execute({
+    sql: `SELECT appid, short_description, short_description_en FROM games
+           WHERE ${notDone}
+             AND (short_description LIKE '%&%;%' OR short_description_en LIKE '%&%;%')
+           ORDER BY appid`,
+    args: [DECODE_DESCRIPTIONS_KEY],
+  })
+  const writes: Array<{ appid: number; stmt: InStatement }> = []
+  for (const r of res.rows as unknown as Array<{
+    appid: number
+    short_description: string | null
+    short_description_en: string | null
+  }>) {
+    const appid = Number(r.appid)
+    for (const [col, was] of [
+      ['short_description', r.short_description],
+      ['short_description_en', r.short_description_en],
+    ] as const) {
+      if (was === null) continue
+      const now = decodeEntities(was)
+      if (now === was) continue
+      writes.push({
+        appid,
+        stmt: {
+          sql: `UPDATE games SET ${col} = ? WHERE appid = ? AND ${col} = ? AND ${notDone}`,
+          args: [now, appid, was, DECODE_DESCRIPTIONS_KEY],
+        },
+      })
     }
   }
-  return rows.map((r) => r.appid)
+  const planned = [...new Set(writes.map((w) => w.appid))]
+  if (opts.dryRun) return planned
+
+  const results = await db.batch(
+    [
+      ...writes.map((w) => w.stmt),
+      {
+        sql: `INSERT INTO catalog_meta (key, value) VALUES (?, '1') ON CONFLICT(key) DO NOTHING`,
+        args: [DECODE_DESCRIPTIONS_KEY],
+      },
+    ],
+    'write',
+  )
+  const written = new Set(writes.filter((_, i) => Number(results[i]?.rowsAffected ?? 0) > 0).map((w) => w.appid))
+  return planned.filter((appid) => written.has(appid))
 }
 
 /**

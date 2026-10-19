@@ -212,13 +212,15 @@ Hogwarts Legacy), и каталог без них развалился бы.
    только **Production**.
 2. **Redeploy** прода: переменная действует с нового деплоя. Лучше вместе со
    следующим плановым мержем — кэш карточек (ISR) сбросится один раз.
-3. Ручные прогоны. Цены в `games` пишут два скрипта — `catalog:promote` и
-   `pages:enrich`, и оба запускаются **без** `.env.turso`: строка в этом файле
-   до них не доедет. Регион им задаётся в той же команде, что и база, на
-   каждый прогон:
+3. Ручные прогоны. Цены в `games` пишут три скрипта — `catalog:promote`,
+   `pages:enrich` и `catalog:repair-names` (английский GetItems приносит и
+   блок покупки, и при регионе цен `us` он ложится ценой), и все три
+   запускаются **без** `.env.turso`: строка в этом файле до них не доедет.
+   Регион им задаётся в той же команде, что и база, на каждый прогон:
 
    ```bash
    STEAM_STORE_CC=ru TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... npm run pages:enrich
+   STEAM_STORE_CC=ru TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... npm run catalog:repair-names
    STEAM_STORE_CC=ru npm run catalog:promote -- --limit=3000   # локально, потом catalog:publish
    ```
 
@@ -226,9 +228,10 @@ Hogwarts Legacy), и каталог без них развалился бы.
    эти скрипты не запускай вовсе, ни во время переоценки, ни после: они
    запишут свежие доллары. Подписаны те будут честно (`us`), так что валюты
    не смешаются, но по отметке `price_at` они перебьют рублёвую цену облака
-   (`pages:enrich` — сразу, `catalog:promote` — через `catalog:publish`), и
-   игра до следующей переоценки покажет «цена неизвестна». В `.env.turso`
-   поставь `STEAM_STORE_CC=ru` тоже — его читают скрипты с
+   (`pages:enrich` и `catalog:repair-names` — сразу, `catalog:promote` —
+   через `catalog:publish`), и игра до следующей переоценки покажет «цена
+   неизвестна». В `.env.turso` поставь `STEAM_STORE_CC=ru` тоже — его читают
+   скрипты с
    `--env-file-if-exists=.env.turso` (`catalog:publish`, `semantics:*`,
    `neighbors:*`, `news:*`). Старые копии скриптов (до колонки `price_cc`)
    после переключения не запускай.
@@ -863,9 +866,14 @@ curl -s https://imbored.cc/game/730 | grep -o '"inLanguage":"ru"'
 GetItems по-английски на двести игр (`repairRussianNames` в `lib/catalog.ts`):
 
 ```bash
-npm run catalog:repair-names -- --dry-run   # что починится; облако — только чтение
-npm run catalog:repair-names                # починить; с TURSO_DATABASE_URL — облако
+TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... npm run catalog:repair-names -- --dry-run   # что починится; облако — только чтение
+TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... npm run catalog:repair-names                # починить облако
 ```
+
+Без `TURSO_DATABASE_URL` скрипт чинит локальный `data/catalog.db`, а
+`.env.turso` он не читает — адрес и токен только в самой команде. Строка
+переписывается целиком, как у прогрева, и с ней — цена: после перехода на
+рубли добавляй `STEAM_STORE_CC=ru` (раздел «Регион цен»).
 
 Игры, которые магазин и по-английски зовёт по-русски («ЕСТЬ ДВА СТУЛА»,
 «Скуф на рыбалке»), скрипт называет отдельно и не трогает — это данные.
@@ -893,15 +901,47 @@ WHERE alive = 1 AND name GLOB '*[а-яА-ЯёЁ]*' ORDER BY reviews_total DESC;
 `&amp;` и `&quot;`, и до правки они ложились в базу как есть — на `/en`
 хабах стояло буквально «find items &amp; build a base». Разбор теперь их
 расшифровывает (`storeDescription` в `lib/catalog.ts`), а то, что уже лежит,
-один раз чинит миграция `decode_descriptions_v1` при первом старте прода
-после деплоя (как `repair_tags_v1`: под `destructiveMigrationsAllowed`, превью
-на продовой базе её пропускает). Пишет две колонки описаний, `updated_at` не
-трогает. Проверка после деплоя — ноль строк:
+один раз чинит миграция `decode_descriptions_v1` (как `repair_tags_v1`: под
+`destructiveMigrationsAllowed`, превью на продовой базе её пропускает). Пишет
+две колонки описаний, `updated_at` не трогает.
+
+Срабатывает она не после деплоя, а уже на **сборке** прода из мержа: хабы
+`/games` пререндерятся с базой, и `next build` прогоняет `migrateDb` в каждом
+воркере (расшифрует один из них — строки и флаг пишутся одной транзакцией);
+без базы на сборке — первым холодным стартом. То есть до промоута и даже если
+деплой потом упадёт. А перезапись необратима: после неё исходный `&amp;` от
+`&` не отличить. Поэтому — **до мержа в `main`**:
+
+```bash
+# сколько строк затронет (только чтение)
+turso db shell imbored "SELECT COUNT(*) FROM games WHERE short_description LIKE '%&%;%' OR short_description_en LIKE '%&%;%'"
+# бэкап таблицы игр
+turso db shell imbored ".dump games" > games-backup.sql
+```
+
+После в логе сборки или в Runtime Logs — строка `"event":"migrate-repaired"`
+с `"step":"description-entities"` и числом строк. Проверка — ноль строк:
 
 ```sql
 SELECT COUNT(*) FROM games
 WHERE short_description LIKE '%&amp;%' OR short_description LIKE '%&quot;%'
    OR short_description_en LIKE '%&amp;%' OR short_description_en LIKE '%&quot;%';
+```
+
+Пара строк в ней — это старый деплой: он работает до промоута и кладёт
+сущности как есть. Английский слот перепишет прогрев — когда игра протухнет
+в чьей-то библиотеке, русский — только крон карточек, через полгода
+(`PAGE_MAX_AGE_SEC`). Флаг ради них **не снимай**: повторный проход
+расшифровал бы ещё раз уже расшифрованное — «&amp;lt;» магазина, ставшее
+«&lt;», превратилось бы в «<». Эти две сущности снимаются и вручную, одним
+проходом — сначала `&quot;`, потом `&amp;` (так «&amp;quot;» станет
+«&quot;», а не кавычкой):
+
+```sql
+UPDATE games SET short_description = REPLACE(REPLACE(short_description, '&quot;', '"'), '&amp;', '&')
+WHERE short_description LIKE '%&amp;%' OR short_description LIKE '%&quot;%';
+UPDATE games SET short_description_en = REPLACE(REPLACE(short_description_en, '&quot;', '"'), '&amp;', '&')
+WHERE short_description_en LIKE '%&amp;%' OR short_description_en LIKE '%&quot;%';
 ```
 
 **Английская версия: свои тексты.** `/en` показывает только английское — нет
@@ -911,10 +951,17 @@ WHERE short_description LIKE '%&amp;%' OR short_description LIKE '%&quot;%'
 одной. Наполнить:
 
 ```bash
-npm run catalog:descriptions -- --lang=en   # английские описания: GetItems, 1,5 с на двести игр, без модели
-npm run news:sync -- --en-backfill          # английские пересказы патчей — модель, доля LLM_EN_BACKFILL_DAILY
-npm run pages:enrich -- --limit=500         # слот en плюсов и минусов (redoEnglish) — модель, та же доля
+TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... npm run catalog:descriptions -- --lang=en   # английские описания: GetItems, 1,5 с на двести игр, без модели
+TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... npm run news:sync -- --en-backfill          # английские пересказы патчей — модель, доля LLM_EN_BACKFILL_DAILY
+TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... npm run pages:enrich -- --limit=500         # слот en плюсов и минусов (redoEnglish) — модель, та же доля
 ```
+
+Адрес и токен — в самой команде: `.env.turso` эти скрипты не читают, а без
+`TURSO_DATABASE_URL` пишут в локальные файлы (`catalog:descriptions` — в
+`data/catalog.db`, два других — в `data/imbored.db`), и Redeploy потом ничего
+не меняет. `pages:enrich` пишет и цены: после перехода на рубли — со
+`STEAM_STORE_CC=ru` (раздел «Регион цен»). Пишущий прогон доводит облако до
+схемы своего кода — запускай из смёрженного `main` («Заливка в облако»).
 
 Первый — дёшев и закрывает описания почти всему пулу; два других платят
 модели, их доля — решение владельца. После ручного прохода — **Redeploy**, как

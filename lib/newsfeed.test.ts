@@ -70,6 +70,14 @@ describe('splitFeed: предпочтение (prefer)', () => {
     expect(splitFeed(items, NOW, HERO_WINDOW_SEC, prefer).hero?.id).toBe('английский мелкий')
   })
 
+  test('предпочтённый вне окна — не обложка: выбор как без prefer', () => {
+    // Единственный английский пост двухнедельной давности ещё в ленте, а в
+    // окне — только русские: обложкой должен встать свежий, а не застрять он
+    const items = [item('громкий', 1, 900_000), item('тихий', 2, 5_000), item('английский', 12, 300_000)]
+    expect(splitFeed(items, NOW, HERO_WINDOW_SEC, prefer).hero?.id).toBe('громкий')
+    expect(splitFeed(items, NOW, HERO_WINDOW_SEC, prefer)).toEqual(splitFeed(items, NOW))
+  })
+
   test('личная лента (окно 0): самый свежий из предпочтённых', () => {
     const items = [item('громкий', 0, 900_000), item('английский мелкий', 2, 5_000), item('английский', 3, 300_000)]
     expect(splitFeed(items, NOW, 0, prefer).hero?.id).toBe('английский мелкий')

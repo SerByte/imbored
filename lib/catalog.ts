@@ -367,11 +367,14 @@ export type StoreMedia = {
  * все буквы, и не немецкий с испанским. Одно правило на запись и на показ:
  * иначе в слот ложилось бы то, что /en потом прячет, а скрипт доливки
  * (backfill-descriptions --lang=en) считал бы такую игру готовой и не чинил.
+ *
+ * Сущностей не трогает: текст сюда приходит уже разобранным (storeDescription
+ * у parseAppDetails, parseStoreItems, parseStoreDescriptions), и вторая
+ * расшифровка сделала бы из «&amp;lt;» магазина «<» в английской колонке при
+ * «&lt;» в русской. Сырой ответ разбирает сам зовущий (parseStoreMedia).
  */
 export function englishDescription(text: string | null | undefined): string | undefined {
-  // Сущности — разметка, а не текст (storeDescription): слот получает их
-  // расшифрованными, откуда бы описание ни пришло
-  const t = text ? storeDescription(text).trim() : undefined
+  const t = text?.trim()
   return t && isEnglishText(t) ? t : undefined
 }
 
@@ -400,7 +403,12 @@ export function parseStoreMedia(json: unknown): Map<number, StoreMedia> {
     const media = mediaOf(it)
     // Описание — не в mediaOf: тот же разбор кладёт медиа и в прогрев
     // (parseStoreItems), а там описание и так своё поле меты
-    const en = englishDescription(it.basic_info?.short_description)
+    // Сырой ответ магазина — единственная дорога сюда без разбора, и
+    // расшифровка здесь, а не в englishDescription: остальные зовут его над
+    // уже разобранным описанием, и «&amp;lt;» там стало бы «<», а в соседней
+    // колонке — «&lt;»
+    const raw = it.basic_info?.short_description
+    const en = raw ? englishDescription(storeDescription(raw)) : undefined
     if (en) media.shortDescriptionEn = en
     if (media.screenshots || media.trailer || media.ruLang !== undefined || media.shortDescriptionEn) {
       out.set(appid, media)
