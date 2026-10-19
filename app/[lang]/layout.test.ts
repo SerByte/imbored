@@ -1,4 +1,7 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
+import { turbopackContentHash } from '@/lib/testing/xxh3'
 
 // next/font/google — функция сборки, вне Next её нет: шрифтам в тесте метадаты нужна только переменная
 vi.mock('next/font/google', () => ({
@@ -27,12 +30,18 @@ describe('корневая карточка превью', () => {
     expect(ru.twitter).not.toHaveProperty('images')
   })
 
-  test('/en — та же карточка корня, но с английским alt', async () => {
+  /*
+   * Адрес — тот, что Next дал бы самому файлу на /en: с хешем его байтов.
+   * Без хвоста после перерисовки карточки мессенджеры сходили бы заново
+   * только за русской — превью они помнят по адресу картинки.
+   */
+  test('/en — та же карточка корня, с тем же хешем, но с английским alt', async () => {
     const { size, contentType } = await import('./opengraph-image')
+    const hash = turbopackContentHash(fs.readFileSync(path.join(__dirname, 'opengraph-image.tsx')))
     const en = await meta('en')
     expect(en.openGraph?.images).toEqual([
       {
-        url: '/en/opengraph-image',
+        url: `/en/opengraph-image?${hash}`,
         width: size.width,
         height: size.height,
         type: contentType,

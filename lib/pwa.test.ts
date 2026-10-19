@@ -3,6 +3,7 @@ import path from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import manifest from '../app/manifest'
 import { GET as manifestEn } from '../app/manifest.en.webmanifest/route'
+import { cardUrl } from './cardhash'
 import { LOCALIZED_SECTIONS, type Locale } from './i18n'
 import { manifestFor, manifestHref } from './manifest'
 import { SITE_DESCRIPTION, SITE_TITLE, siteDescription, siteTitle } from './site'
@@ -183,7 +184,7 @@ describe('корневые метаданные', () => {
     const m = await meta('en')
     expect(m.manifest).toBe('/manifest.en.webmanifest')
     expect(m.openGraph?.images).toEqual([
-      { url: '/en/opengraph-image', width: size.width, height: size.height, type: contentType, alt: siteTitle('en') },
+      { url: cardUrl('/en', 'app/[lang]/opengraph-image.tsx'), width: size.width, height: size.height, type: contentType, alt: siteTitle('en') },
     ])
     // twitter:image Next дозаполняет из openGraph сам — своего тут не нужно
     expect(m.twitter).not.toHaveProperty('images')
