@@ -19,7 +19,7 @@ const RU = 'ru-RU,ru;q=0.9,en;q=0.8'
 const CHROME =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
 
-describe('homeLocaleFor — куда увести первый вход на «/»', () => {
+describe('homeLocaleFor — куда увести вход на «/» без выбора', () => {
   test('гость из СНГ с английским браузером остаётся на русской', () => {
     for (const country of CIS_COUNTRIES) {
       expect(homeLocaleFor({ acceptLanguage: EN, country, userAgent: CHROME }), country).toBe(null)
@@ -235,7 +235,7 @@ describe('язык главной — весь путь: next.config, затем
 })
 
 /**
- * Прокси на «/» — только первый вход: документ, без куки lang и без сессии,
+ * Прокси на «/» — только вход без выбора: документ, без куки lang и без сессии,
  * не запрос роутера и не переход со своей страницы. Остальные просмотры
  * главной — статика с CDN, мимо функции.
  */
@@ -243,7 +243,7 @@ describe('matcher прокси на «/»', () => {
   const match = (headers: Record<string, string>, cookies: Record<string, string> = {}, url = '/') =>
     unstable_doesMiddlewareMatch({ config, url, headers, cookies })
 
-  test('первый вход браузера — будит', () => {
+  test('вход браузера без выбора — будит', () => {
     expect(match(ENTRY)).toBe(true)
     expect(match({ ...ENTRY, 'sec-fetch-site': 'cross-site' })).toBe(true)
     expect(match(ENTRY, {}, '/?next=%2Fplay')).toBe(true)

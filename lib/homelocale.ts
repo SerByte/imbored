@@ -13,7 +13,7 @@
  *      components/landing/ConnectCard). Условия has и missing CDN Vercel
  *      проверяет сам, без функции. Кука lang=ru никуда не уводит: «/» и есть
  *      русская главная.
- *   2. Первый вход без выбора — proxy.ts и homeLocaleFor ниже: краулер
+ *   2. Вход без выбора — proxy.ts и homeLocaleFor ниже: краулер
  *      остаётся, гость из СНГ остаётся, браузер, который ставит русский выше
  *      английского, остаётся, остальных — на /en.
  *
@@ -86,7 +86,7 @@ const CRAWLER =
   /googlebot|google-inspectiontool|bingbot|yandex|duckduckbot|baiduspider|slurp|applebot|petalbot|facebookexternalhit|meta-externalagent|twitterbot|telegrambot|vkshare|discordbot|whatsapp|linkedinbot|slackbot|semrushbot|ahrefsbot|mj12bot|bot|crawl|spider|preview|fetch/i
 
 /**
- * Куда увести первый вход на «/»: 'en' — 307 на /en, null — остаться на
+ * Куда увести вход на «/» без выбора: 'en' — 307 на /en, null — остаться на
  * русской главной. Чистая функция; зовёт её proxy.ts, который стоит на «/»
  * только для такого входа (matcher там же: документ, без куки lang и без
  * сессии, не запрос роутера и не переход со своей страницы).
