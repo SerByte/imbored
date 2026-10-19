@@ -9,6 +9,9 @@
  * Первым шагом пути — русский браузер на «/»: он остаётся на русской
  * главной, а английский с того же адреса уезжает на /en (lib/homelocale.ts).
  *
+ * После русского пути — мусорный адрес и опечатка под разделом: 404 с
+ * noindex в HTML (против прода с SMOKE_BASE_URL — проверка после деплоя).
+ *
  * Следом — английский проход: /en и /en/quiz отвечают 200 с <html lang="en">,
  * английский браузер с «/» уезжает на /en, а /ru/quiz снаружи — постоянный
  * редирект на /quiz (docs/i18n.md, «Адреса»).
@@ -18,7 +21,8 @@
  * роняет. Картинки из CDN Steam могут не грузиться — это не провал.
  *
  * Провал — это: исключение на странице (pageerror), ответ 5xx от нашего
- * сервера, документ не 200, ожидаемый шаг не наступил за отведённое время.
+ * сервера, документ не 200, мусорный адрес не 404 или без noindex, ожидаемый
+ * шаг не наступил за отведённое время.
  *
  * Браузер: в CI — Chrome раннера (channel 'chrome'); локально —
  * SMOKE_CHROME_PATH=/путь/к/chromium. Адрес — SMOKE_BASE_URL, по умолчанию
@@ -110,6 +114,31 @@ async function main(): Promise<void> {
     await step('страница игры открывается', async () => {
       await open(page, game)
       await page.getByRole('heading', { level: 1 }).first().waitFor()
+    })
+
+    /*
+     * Мусорный адрес и опечатка под русским разделом — 404 с noindex.
+     *
+     * Правило afterFiles уводит их в пререндер /_not-found
+     * (garbageRewrites в lib/i18nroutes.ts). Под next start сервер Next
+     * отдаёт его кодом 404, а Vercel — кодом 200, как обычную статическую
+     * страницу: замер прода 19.10.2026 — /games/nonexistent-genre, /quiz/xyz,
+     * /xyz отвечали «200 OK» без единого <meta name="robots">, мягким 404 с
+     * заголовком главной. noindex теперь в метаданных самой 404
+     * (app/global-not-found.tsx) и проверяется здесь на любом сервере; код —
+     * тоже, и против прода (SMOKE_BASE_URL) этот шаг и есть проверка после
+     * деплоя: CI на next start видит 404 всегда.
+     *
+     * fetch, а не браузер: ответ 404 браузер покажет как есть, а смотреть
+     * нужно код и сырой HTML, без скрипта.
+     */
+    await step('мусорный адрес и опечатка под разделом — 404 с noindex', async () => {
+      for (const path of ['/xyz-smoke', '/quiz/xyz', '/games/no-such-genre']) {
+        const res = await fetch(BASE + path, { redirect: 'manual' })
+        const html = await res.text()
+        if (res.status !== 404) problems.push(`${path}: код ${res.status}, а не 404 — мягкий 404`)
+        if (!/<meta name="robots" content="noindex/.test(html)) problems.push(`${path}: нет <meta name="robots" content="noindex…">`)
+      }
     })
 
     /*

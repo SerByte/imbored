@@ -118,6 +118,24 @@ describe('страница без экрана', () => {
 })
 
 /**
+ * noindex у /_not-found — в его собственной голове, а не от Next.
+ *
+ * Свой noindex Next вставляет только при рендере с кодом выше 400 (NonIndex в
+ * next/dist/server/app-render), а Vercel отдаёт пререндер /_not-found, куда
+ * мусор уводит правило afterFiles, как обычную статическую страницу — кодом
+ * 200. Замер на проде 19.10.2026: /games/nonexistent-genre, /quiz/xyz, /xyz,
+ * /.env — «200 OK», X-Matched-Path: /_not-found и ни одного <meta
+ * name="robots">: мягкий 404 с заголовком главной. noindex в метаданных лежит
+ * в самом HTML и работает при любом коде ответа.
+ */
+describe('/_not-found: noindex в своём HTML', () => {
+  test('robots — noindex, follow: полка ведёт на живые карточки', async () => {
+    const { generateMetadata } = await import('@/app/global-not-found')
+    expect((await generateMetadata()).robots).toEqual({ index: false, follow: true })
+  })
+})
+
+/**
  * Карточка превью в голове 404 (docs/i18n.md, п. 10). Голову 404 читают
  * краулеры и превью мессенджеров — сырым HTML, без скрипта.
  */
@@ -139,10 +157,12 @@ describe('карточка превью 404', () => {
     expect(meta.openGraph?.images).toEqual([
       { url: '/ru/opengraph-image', width: size.width, height: size.height, type: contentType, alt },
     ])
-    // Остальная голова — корневая русская, как была: openGraph — корневой и карточка
-    const { openGraph, ...rest } = meta
+    // Остальная голова — корневая русская, как была: openGraph — корневой и
+    // карточка; сверху — только свой noindex (тест ниже)
+    const { openGraph, robots, ...rest } = meta
     const { openGraph: rootOg, ...rootRest } = root
     expect(rest).toEqual(rootRest)
+    expect(robots).toEqual({ index: false, follow: true })
     expect(openGraph).toEqual({ ...rootOg, images: openGraph?.images })
     expect(rootOg).toEqual({ type: 'website', siteName: 'imbored', locale: 'ru_RU' })
     // twitter:image Next достраивает из openGraph сам — своего тут не нужно

@@ -43,8 +43,25 @@ import Template from './[lang]/template'
  * не приходит (его ловит app/[lang]/[...missing] своим языком).
  *
  * Метаданные и viewport — корневые русские: у /_not-found нет сегмента
- * [lang], и generateMetadata корня здесь сам не вызывается. Код 404 и
- * robots noindex Next ставит этому маршруту сам.
+ * [lang], и generateMetadata корня здесь сам не вызывается.
+ *
+ * ROBOTS NOINDEX — СВОЙ, В МЕТАДАННЫХ, А НЕ ОТ NEXT. Стояло «код 404 и
+ * noindex Next ставит этому маршруту сам», и под next start так и есть: сервер
+ * Next отдаёт /_not-found кодом 404. Но Vercel отдаёт этот пререндер как
+ * обычную статическую страницу: замер на проде 19.10.2026 —
+ * /games/nonexistent-genre, /quiz/xyz, /xyz, /wp-login.php, /.env отвечали
+ * «HTTP 200», «Cache-Control: public, max-age=0, must-revalidate»,
+ * X-Matched-Path: /_not-found, и без <meta name="robots">. Свой noindex Next
+ * ставит по коду ответа (NonIndex в app-render: код выше 400), и в
+ * пререндере локальной сборки он есть, а в HTML, который отдаёт прод, — нет.
+ * То есть каждая опечатка под русским разделом и каждый адрес сканера были
+ * индексируемым дублем с заголовком главной — мягкий 404. noindex в
+ * метаданных лежит в самом HTML и действует, каким бы кодом его ни отдали;
+ * под next start рядом с ним стоит и noindex Next — два тега с одним
+ * запретом, поисковик их складывает. Настоящий код 404 на Vercel это не
+ * возвращает — это отдельная правка маршрутизации, её проверяет только деплой
+ * (smoke с SMOKE_BASE_URL, docs/i18n.md, «Адреса»). follow — как у остальных
+ * noindex сайта: полка ведёт на живые карточки.
  *
  * Плюс корневая карточка превью (RU_ROOT_CARD ниже): файловую
  * app/[lang]/opengraph-image.tsx Next ставит только под сегментом [lang], а
@@ -55,7 +72,11 @@ import Template from './[lang]/template'
 export async function generateMetadata(): Promise<Metadata> {
   const root = await rootMetadata({ params: Promise.resolve({ lang: 'ru' }), children: null })
   // openGraph заменяет корневой целиком — тип, имя и язык те же, что у корня
-  return { ...root, openGraph: { ...ogSite('ru'), type: 'website', images: [RU_ROOT_CARD] } }
+  return {
+    ...root,
+    robots: { index: false, follow: true },
+    openGraph: { ...ogSite('ru'), type: 'website', images: [RU_ROOT_CARD] },
+  }
 }
 
 /**
