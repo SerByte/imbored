@@ -874,6 +874,21 @@ WHERE alive = 1 AND name GLOB '*[а-яА-ЯёЁ]*' ORDER BY reviews_total DESC;
 У тех семидесяти игр до правки русским был сам заголовок — проверь на
 `/game/292030`, что «Ведьмак 3: Дикая Охота» на странице осталось.
 
+**Описания с HTML-сущностями.** appdetails отдаёт `short_description` с
+`&amp;` и `&quot;`, и до правки они ложились в базу как есть — на `/en`
+хабах стояло буквально «find items &amp; build a base». Разбор теперь их
+расшифровывает (`storeDescription` в `lib/catalog.ts`), а то, что уже лежит,
+один раз чинит миграция `decode_descriptions_v1` при первом старте прода
+после деплоя (как `repair_tags_v1`: под `destructiveMigrationsAllowed`, превью
+на продовой базе её пропускает). Пишет две колонки описаний, `updated_at` не
+трогает. Проверка после деплоя — ноль строк:
+
+```sql
+SELECT COUNT(*) FROM games
+WHERE short_description LIKE '%&amp;%' OR short_description LIKE '%&quot;%'
+   OR short_description_en LIKE '%&amp;%' OR short_description_en LIKE '%&quot;%';
+```
+
 **Снимок выдачи в фидбеке и отчёт по нему.** К каждой оценке на `/play`
 прикладывается снимок выдачи (`lib/feedbackctx.ts`): где стояла карточка
 (герой, выбранная из «Ещё вариантов», полка покупок), каким движком собрана

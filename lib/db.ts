@@ -36,7 +36,7 @@ import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
 import { WISHLIST_KEPT } from './steam'
 import { isMultiplayerCategories, MULTIPLAYER_CATEGORY_SQL } from './steamcats'
 import { LEGACY_PRICE_CC, priceRegion } from './steamregion'
-import { blocksToText, type NewsBlock } from './steamhtml'
+import { blocksToText, decodeEntities, type NewsBlock } from './steamhtml'
 import { readTrailer, type Trailer } from './trailer'
 import type { CandidateSource, GameMeta, GameSemantics, LibraryGame, Mood, RuLang } from './types'
 
@@ -842,6 +842,9 @@ const NEWS_RANK_FIX_KEY = 'news_rank_fixed'
 /** Ключ разовой починки дважды закодированных JSON-колонок games (см. migrateDb). */
 const REPAIR_TAGS_KEY = 'repair_tags_v1'
 
+/** Ключ разовой расшифровки HTML-сущностей в описаниях games (см. migrateDb). */
+const DECODE_DESCRIPTIONS_KEY = 'decode_descriptions_v1'
+
 /** Ключ в catalog_meta: до какой версии схемы доведена база. */
 const SCHEMA_V_KEY = 'schema_v'
 
@@ -1100,6 +1103,8 @@ const ONE_OFF_STEPS = {
   [REPAIR_TAGS_KEY]: 'починка дважды закодированных JSON-колонок: ПЕРЕЗАПИСЬ строк games',
   [NEWS_RANK_FIX_KEY]: 'обнуление веса патчей вне каталога: UPDATE по news_items',
   [REVIEWS_ALL_DUE_KEY]: 'пул без отзывов на всех языках — в голову сверки каталога: UPDATE reviews_at по games',
+  [DECODE_DESCRIPTIONS_KEY]:
+    'расшифровка HTML-сущностей в описаниях: ПЕРЕЗАПИСЬ short_description и short_description_en в games',
 } as const
 
 /**
@@ -1383,6 +1388,37 @@ export async function migrateDb(
   }
 
   /*
+   * Разовая расшифровка HTML-сущностей в описаниях games
+   * (decodeStoredDescriptions): appdetails отдаёт short_description с
+   * «&amp;» и «&quot;», и до storeDescription в lib/catalog они ложились в
+   * базу как есть. Страница выводит описание текстом, и на /en хабы
+   * показывали буквально «find items &amp; build a base» (Muck), «Blade
+   * &amp; Sorcery». Новые записи расшифровывает разбор; этот шаг — то, что
+   * уже лежит.
+   *
+   * Под destructiveMigrationsAllowed — это перезапись исходных данных, как у
+   * починки JSON-колонок выше: превью на продовой базе шаг пропускает и флаг
+   * не пишет. Под флагом: проход по games, а Turso считает прочитанные строки.
+   */
+  if (!flags.has(DECODE_DESCRIPTIONS_KEY) && allowed) {
+    const decoded = await decodeStoredDescriptions(db)
+    if (decoded.length) {
+      console.warn(
+        JSON.stringify({
+          event: 'migrate-repaired',
+          step: 'description-entities',
+          rows: decoded.length,
+          appids: decoded.slice(0, 20),
+        }),
+      )
+    }
+    await db.execute({
+      sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
+      args: [DECODE_DESCRIPTIONS_KEY, '1'],
+    })
+  }
+
+  /*
    * Разовая постановка пула в голову сверки каталога — ради отзывов на всех
    * языках (reviews_all_*): колонки новые, и пусты они у всего пула разом.
    *
@@ -1575,7 +1611,7 @@ export async function pendingMigrations(
   for (const [key, what] of Object.entries(ONE_OFF_STEPS)) {
     if (flags.has(key)) continue
     if (key === OTHER_STORES_SEED_KEY && !opts.seedContent) continue
-    if ((key === REPAIR_TAGS_KEY || key === REVIEWS_ALL_DUE_KEY) && !allowed) continue
+    if ((key === REPAIR_TAGS_KEY || key === REVIEWS_ALL_DUE_KEY || key === DECODE_DESCRIPTIONS_KEY) && !allowed) continue
     pending.push(`${key}: ${what}`)
   }
   return pending
@@ -3811,6 +3847,56 @@ export function parseSemantics(raw: unknown): GameSemantics | undefined {
     basis: s.basis as GameSemantics['basis'],
     ...(played ? { played } : {}),
   }
+}
+
+/**
+ * Описания games с HTML-сущностями — расшифровать на месте.
+ *
+ * Правило — decodeEntities, то же, что у разбора ответов магазина
+ * (storeDescription в lib/catalog): «&amp;» — «&», «&quot;» — кавычка. Пишутся
+ * только две колонки описаний и только у строк, где расшифровка что-то
+ * изменила; updated_at не трогается — по той же причине, что у
+ * setGameDescriptions: это починка записи, а не новое содержание страницы, и
+ * lastmod карты сайта не должен прыгать.
+ *
+ * Отбор — LIKE по «&…;»: и «&», и «;» в шаблоне LIKE — обычные знаки. Под него
+ * попадёт и описание с амперсандом и точкой с запятой без сущности, но такое
+ * decodeEntities оставит как есть, и строки в записи не будет.
+ *
+ * Зовётся разово — из migrateDb под флагом. Возвращает appid переписанных
+ * строк; dryRun только считает.
+ */
+export async function decodeStoredDescriptions(
+  db: Db,
+  opts: { dryRun?: boolean } = {},
+): Promise<number[]> {
+  const res = await db.execute(
+    `SELECT appid, short_description, short_description_en FROM games
+      WHERE short_description LIKE '%&%;%' OR short_description_en LIKE '%&%;%'`,
+  )
+  const rows = (
+    res.rows as unknown as Array<{ appid: number; short_description: string | null; short_description_en: string | null }>
+  )
+    .map((r) => {
+      const ru = r.short_description === null ? null : decodeEntities(r.short_description)
+      const en = r.short_description_en === null ? null : decodeEntities(r.short_description_en)
+      return { appid: Number(r.appid), ru, en, changed: ru !== r.short_description || en !== r.short_description_en }
+    })
+    .filter((r) => r.changed)
+
+  if (!opts.dryRun) {
+    const CHUNK = 200
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      await db.batch(
+        rows.slice(i, i + CHUNK).map((r) => ({
+          sql: 'UPDATE games SET short_description = ?, short_description_en = ? WHERE appid = ?',
+          args: [r.ru, r.en, r.appid],
+        })),
+        'write',
+      )
+    }
+  }
+  return rows.map((r) => r.appid)
 }
 
 /**

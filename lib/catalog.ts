@@ -4,6 +4,7 @@ import { getGamesMeta, getStaleAppids, upsertGamesMeta, type Db } from './db'
 import { logSwallowed } from './errlog'
 import { isEnglishText } from './gamedesc'
 import { pace } from './pace'
+import { decodeEntities } from './steamhtml'
 import { META_CC, priceRegion, regionCurrency } from './steamregion'
 import {
   parseStoreScreenshots,
@@ -13,6 +14,29 @@ import {
   type Trailer,
 } from './trailer'
 import type { GameMeta, RuLang } from './types'
+
+/**
+ * Короткое описание магазина — текстом, а не HTML.
+ *
+ * appdetails отдаёт его с сущностями: «possessed militants &amp; even darker
+ * forces» (DUSK), «&quot;May you find your book in this place.&quot;»
+ * (Library Of Ruina) — замер 19.10.2026, и на l=english, и на l=russian.
+ * Страница выводит описание текстом, и React экранирует его ещё раз: на /en
+ * хабы показывали буквально «Collect resources, find items &amp; build a
+ * base» (Muck), «Blade &amp; Sorcery», «&amp;quot;». Английский слот
+ * наполнялся именно так: крон карточек (appdetails, l=russian) у игры без
+ * перевода получает английский текст магазина, и mergeMeta кладёт его в
+ * пустой слот (englishDescription).
+ *
+ * GetItems в том же замере отдаёт текст уже расшифрованным, но разбирается
+ * тем же правилом: сущность в описании — всегда разметка, а не текст, и
+ * одно правило на все дороги в колонку не даст ей разъехаться снова. Что уже
+ * лежит в базе, расшифровывает разовый шаг миграции (decodeStoredDescriptions
+ * в lib/db).
+ */
+export function storeDescription(raw: string): string {
+  return decodeEntities(raw)
+}
 
 type AppDetailsData = {
   type?: string
@@ -88,7 +112,7 @@ export function parseAppDetails(json: unknown, appid: number, cc: string = META_
     genres: (d.genres ?? []).map((g) => g.description).filter((x): x is string => Boolean(x)),
     categories: (d.categories ?? []).map((c) => c.id).filter((x): x is number => x !== undefined),
   }
-  if (d.short_description) meta.shortDescription = d.short_description
+  if (d.short_description) meta.shortDescription = storeDescription(d.short_description)
   if (d.header_image) meta.headerImage = d.header_image
   const shots = (d.screenshots ?? [])
     .map((s) => s.path_full)
@@ -294,7 +318,7 @@ export function parseStoreItems(json: unknown, tagNames: Map<number, string>): G
       genres: [],
       categories: it.categories?.supported_player_categoryids ?? [],
     }
-    if (it.basic_info?.short_description) meta.shortDescription = it.basic_info.short_description
+    if (it.basic_info?.short_description) meta.shortDescription = storeDescription(it.basic_info.short_description)
     // Издатель и разработчик нужны, чтобы не слепить в одну серию чужие игры
     // с похожим названием: без них «Sniper Elite» и «Sniper Ghost Warrior»
     // выглядят роднёй
@@ -345,7 +369,9 @@ export type StoreMedia = {
  * (backfill-descriptions --lang=en) считал бы такую игру готовой и не чинил.
  */
 export function englishDescription(text: string | null | undefined): string | undefined {
-  const t = text?.trim()
+  // Сущности — разметка, а не текст (storeDescription): слот получает их
+  // расшифрованными, откуда бы описание ни пришло
+  const t = text ? storeDescription(text).trim() : undefined
   return t && isEnglishText(t) ? t : undefined
 }
 
@@ -632,7 +658,7 @@ export function parseStoreDescriptions(json: unknown): Map<number, string> {
   for (const it of items) {
     const appid = it.appid ?? it.id
     const text = it.basic_info?.short_description
-    if (appid && typeof text === 'string' && text.trim()) out.set(appid, text)
+    if (appid && typeof text === 'string' && text.trim()) out.set(appid, storeDescription(text))
   }
   return out
 }
@@ -954,3 +980,4 @@ export async function ensureMeta(
     return false
   }
 }
+
