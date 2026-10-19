@@ -15,7 +15,7 @@ import { RefCapture } from '@/components/RefCapture'
 import { SearchLauncher } from '@/components/SearchLauncher'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
-import { htmlLang, isLocale, LOCALES, ogLocale, toLocale, tr } from '@/lib/i18n'
+import { htmlLang, isLocale, LOCALES, ogLocale, toLocale, tr, type Locale } from '@/lib/i18n'
 import { appBaseUrl } from '@/lib/server'
 import { siteDescription, siteTitle } from '@/lib/site'
 import { THEME_COLOR } from '@/lib/themecolor'
@@ -115,6 +115,38 @@ export function generateStaticParams(): Array<{ lang: string }> {
   return LOCALES.map((lang) => ({ lang }))
 }
 
+/**
+ * Корневая карточка на /en — та же app/[lang]/opengraph-image.tsx, но с
+ * английской подписью (docs/i18n.md, п. 10).
+ *
+ * alt файловой карточки — константа модуля, и она русская: «imbored — во что
+ * поиграть». Файл встаёт на уровне корня и дальше наследуется, так что на
+ * /en/explore, /en/rooms, /en/room/new, /en/compat и всех ownAddress превью
+ * было подписано по-русски. Свой images этого уровня Next ставит вместо файла
+ * (mergeStaticMetadata), twitter:image дозаполняет из openGraph сам, а
+ * ownAddress переносит в страницу уже английскую. Русская версия images не
+ * объявляет и получает файловую карточку как была.
+ *
+ * 404 под /en этим не закрыта: на not-found Next ставит файлы корня ещё раз,
+ * последним уровнем (errorMetadataItem в resolve-metadata), и images этого
+ * уровня там нет — подписать её может только своя метадата not-found.tsx.
+ *
+ * Размеры и тип — копия size и contentType карточки, а не импорт: модуль
+ * карточки тянет next/og и шрифты в каждый рендер. Что они совпадают —
+ * сторож в layout.test.ts.
+ *
+ * Сам opengraph-image.tsx здесь не правится, даже его комментарий: адрес
+ * файловой карточки несёт хеш содержимого файла (?<contenthash>,
+ * next-metadata-image-loader), и любая правка сменила бы og:image у каждой
+ * русской страницы.
+ */
+const EN_ROOT_CARD = { width: 1200, height: 630, type: 'image/png', alt: siteTitle('en') }
+
+function rootCardOn(locale: Locale) {
+  if (locale !== 'en') return {}
+  return { images: [{ url: `/${locale}/opengraph-image`, ...EN_ROOT_CARD }] }
+}
+
 export async function generateMetadata({ params }: LayoutProps<'/[lang]'>): Promise<Metadata> {
   const locale = toLocale((await params).lang)
   return {
@@ -137,9 +169,10 @@ export async function generateMetadata({ params }: LayoutProps<'/[lang]'>): Prom
      * сервиса, ни языка, ни типа. Telegram и Discord в таком случае показывают
      * голый домен вместо названия продукта.
      *
-     * Картинку сюда НЕ пишем: её даёт app/[lang]/opengraph-image.tsx, а файловая
-     * метадата приоритетнее объекта metadata (см. docs/generate-metadata) — то
-     * есть строка здесь была бы мёртвой и вводила бы в заблуждение при чтении.
+     * Картинку у русской сюда НЕ пишем: её даёт app/[lang]/opengraph-image.tsx
+     * до байта — адрес с хешем, размеры и alt. На /en здесь та же карточка, но
+     * с английской подписью (rootCardOn ниже), — иначе её русский alt
+     * наследовали бы все английские страницы без своей карточки.
      *
      * title/description намеренно не дублируются: Next подставляет в openGraph
      * те же значения, что и в обычные теги, когда они не заданы отдельно, — и
@@ -156,6 +189,7 @@ export async function generateMetadata({ params }: LayoutProps<'/[lang]'>): Prom
       type: 'website',
       siteName: 'imbored',
       locale: ogLocale(locale),
+      ...rootCardOn(locale),
     },
     twitter: {
       card: 'summary_large_image',

@@ -76,22 +76,30 @@ export const STEPS: readonly [StepFor<'time'>, StepFor<'vibe'>, StepFor<'social'
 
 /**
  * Те же шаги по-английски — тот же кортеж той же формы: оси, значения и
- * порядок общие, у языка — только слова. Ударное слово своё: «How much time
- * do you have?» несёт ось в «time» (индекс 2), «What's the vibe?» — в «vibe?»
+ * порядок общие, у языка — только слова. Ударное слово своё: «How much free
+ * time?» несёт ось в «time?» (индекс 3), «What's the vibe?» — в «vibe?»
  * (2), «Solo or with someone?» — в «Solo» (0).
  *
  * Подписи — из глоссария: Unwind / Lock in (как чипсы движка на лендинге),
  * Solo / With friends; «катка» — round, не match.
+ *
+ * Ширина замерена на /en/quiz (360–430 px, Manrope 800): английский не шире
+ * русского. «How much time do you have?» шире «Сколько у тебя времени?»
+ * (530 против 477 px при 40 px) и на 414 и 430 рвался на две строки, где
+ * русский в одну; «How much free time?» — 387 px, в одну строку на всех
+ * пяти ширинах (русский на 360–390 — в две). «A couple of hours» в плитке на
+ * 360–390 вставал в две строки, «Пара часов» — в одну; «A few hours» —
+ * ровно ширина «Пара часов» (119 px при 22 px), в строку везде.
  */
 const STEPS_EN: typeof STEPS = [
   {
     key: 'time',
     axis: 'Time',
-    question: 'How much time do you have?',
-    stress: 2,
+    question: 'How much free time?',
+    stress: 3,
     options: [
       { value: 'short', label: 'Under an hour', hint: 'a quick round, then bed' },
-      { value: 'medium', label: 'A couple of hours', hint: 'a proper session' },
+      { value: 'medium', label: 'A few hours', hint: 'a proper session' },
       { value: 'long', label: 'All evening', hint: 'time to get lost in it' },
     ],
   },

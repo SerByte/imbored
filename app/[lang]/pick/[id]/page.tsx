@@ -26,6 +26,27 @@ export const dynamic = 'force-dynamic'
 
 const loadOnce = cache(loadSharedPick)
 
+/**
+ * Карточка превью на /en — та же opengraph-image.tsx рядом, но с английской
+ * подписью (docs/i18n.md, п. 10). alt файловой карточки — константа модуля,
+ * русская, и на /en og:image:alt был бы «Выбор на вечер — imbored». Свой
+ * images этого уровня Next ставит вместо файла (mergeStaticMetadata), а
+ * twitter:image дозаполняет из openGraph сам. Русская страница images не
+ * объявляет и получает файловую карточку как была: адрес с хешем, размеры и
+ * alt — оттуда. Та же карточка и у игры дня, которой поделились (kind 'daily'):
+ * подпись одна, как у русской.
+ *
+ * Размеры и тип — копия size и contentType карточки, а не импорт: модуль
+ * карточки тянет next/og и шрифты в рендер страницы. Что они совпадают —
+ * сторож в page.test.ts.
+ */
+const EN_CARD = { width: 1200, height: 630, type: 'image/png', alt: "Tonight's pick — imbored" }
+
+function enCard(locale: Locale, url: string) {
+  if (locale !== 'en') return {}
+  return { images: [{ url: lp(locale, `${url}/opengraph-image`), ...EN_CARD }] }
+}
+
 export async function generateMetadata({ params }: { params: Promise<{ id: string; lang?: string }> }): Promise<Metadata> {
   const { id, lang } = await params
   const locale = toLocale(lang)
@@ -54,7 +75,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
     // В переписку — да, в поисковую выдачу — нет: это чья-то ссылка, а не
     // страница сайта. follow — вес ссылке на карточку игры
     robots: { index: false, follow: true },
-    openGraph: { ...ogSite(locale), title, description, type: 'website', url: lp(locale, url) },
+    openGraph: { ...ogSite(locale), title, description, type: 'website', url: lp(locale, url), ...enCard(locale, url) },
     twitter: { card: 'summary_large_image', title, description },
   }
 }

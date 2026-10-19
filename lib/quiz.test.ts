@@ -78,7 +78,7 @@ describe('квиз по-английски', () => {
 
   test('ударное слово — это слово оси: time, vibe, Solo', () => {
     const stressed = EN.map((s) => s.question.split(' ')[s.stress])
-    expect(stressed).toEqual(['time', 'vibe?', 'Solo'])
+    expect(stressed).toEqual(['time?', 'vibe?', 'Solo'])
   })
 
   test('подпись рельса короче вопроса, и кириллицы нет нигде', () => {
@@ -93,7 +93,7 @@ describe('квиз по-английски', () => {
   test('подписи ответов и строка настроения', () => {
     for (const value of ANSWER_VALUES) expect(answerLabel(value, 'en')).toBeTruthy()
     expect(answerLabel('banana', 'en')).toBeNull()
-    expect(moodCaption({ time: 'medium', vibe: 'chill', social: 'solo' }, 'en')).toBe('A couple of hours · Unwind · Solo')
+    expect(moodCaption({ time: 'medium', vibe: 'chill', social: 'solo' }, 'en')).toBe('A few hours · Unwind · Solo')
     expect(moodCaption({ time: 'long', vibe: 'engaged', social: 'friends' }, 'en')).toBe(
       'All evening · Lock in · With friends',
     )

@@ -107,14 +107,16 @@ const FAILS: Record<Locale, Record<string, FailCopy>> = {
     },
     nocandidates: {
       title: 'Nothing to pick from',
-      text: "There's nothing left in your library to pick a game of the day from: maybe everything that fits is under Hidden.",
+      text: "There's nothing left in your library to pick a game of the day from: maybe everything that fits is in Hidden.",
     },
     ratelimited: {
       title: 'Too many tries',
       text: "The game of the day was requested many times in a row, and there's a limit. Check back in a few minutes — or pick a game by mood for now.",
     },
+    // Не калька «под»: по-английски игры прячет фильтр. Заголовок — тот же,
+    // что у этого отказа на /play: одно состояние — одни слова
     muted: {
-      title: "Everything is under “Don't suggest”",
+      title: "All hidden by “Don't suggest”",
       text: "The game of the day comes from what's left after “Don't suggest” — and nothing is. You can change the filter on the mood screen.",
     },
   },
@@ -457,7 +459,7 @@ export default function DailyPage() {
           {/* Кандидатов нет — вернуть игры из бана можно только в библиотеке. */}
           {reason === 'nocandidates' && (
             <Link href="/library" className="tap link-more">
-              {tr(locale, { ru: 'Посмотреть библиотеку', en: 'See your library' })}
+              {tr(locale, { ru: 'Посмотреть библиотеку', en: 'Open your library' })}
               <Icon name="arrow" size={16} />
             </Link>
           )}
@@ -536,7 +538,7 @@ export default function DailyPage() {
             : code === 'muted'
               ? tr(locale, {
                   ru: 'Отложили. Остальное на сегодня — под «Не предлагать»: фильтр меняется на экране настроения.',
-                  en: "Set aside. Everything else today is under “Don't suggest” — change the filter on the mood screen.",
+                  en: "Set aside. Everything else today is hidden by “Don't suggest” — change the filter on the mood screen.",
                 })
               : rerollFailed(locale),
         )
