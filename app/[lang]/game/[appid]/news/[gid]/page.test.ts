@@ -255,7 +255,7 @@ describe('страница патча: hreflang', () => {
     if (told.en) await setNewsDigestEn(db, APPID, GID, { tldrEn: 'Fixed the netcode.' }, now)
   }
 
-  test('пересказ только русский — hreflang только на русскую, и с /en тоже', async () => {
+  test('пересказ только русский — hreflang и x-default только на русскую, и с /en тоже', async () => {
     await seed({ ru: true })
     const ruMeta = await generateMetadata(ru)
     const enMeta = await generateMetadata(en)
@@ -266,9 +266,9 @@ describe('страница патча: hreflang', () => {
     expect(enMeta.alternates).toEqual({ canonical: `/en${PATH}`, languages })
   })
 
-  test('пересказ на обоих — обе версии и x-default на русскую, как было', async () => {
+  test('пересказ на обоих — обе версии и x-default на английскую', async () => {
     await seed({ ru: true, en: true })
-    const languages = { ru: PATH, en: `/en${PATH}`, 'x-default': PATH }
+    const languages = { ru: PATH, en: `/en${PATH}`, 'x-default': `/en${PATH}` }
     const ruMeta = await generateMetadata(ru)
     expect(ruMeta.alternates).toEqual({ canonical: PATH, languages })
     expect((await generateMetadata(en)).alternates).toEqual({ canonical: `/en${PATH}`, languages })

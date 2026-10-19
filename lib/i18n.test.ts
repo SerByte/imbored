@@ -243,21 +243,23 @@ describe('язык в API', () => {
 })
 
 describe('alternates — canonical и hreflang', () => {
-  test('по умолчанию canonical русский', () => {
+  test('по умолчанию canonical русский, x-default — английский', () => {
     expect(alternates('/privacy')).toEqual({
       canonical: '/privacy',
-      languages: { ru: '/privacy', en: '/en/privacy', 'x-default': '/privacy' },
+      languages: { ru: '/privacy', en: '/en/privacy', 'x-default': '/en/privacy' },
     })
+    // порядок ключей — прежний: ru, en, x-default
+    expect(Object.keys(alternates('/privacy').languages)).toEqual(['ru', 'en', 'x-default'])
   })
 
   test('canonical — на языке страницы, языки — те же', () => {
     expect(alternates('/game/730', 'en')).toEqual({
       canonical: '/en/game/730',
-      languages: { ru: '/game/730', en: '/en/game/730', 'x-default': '/game/730' },
+      languages: { ru: '/game/730', en: '/en/game/730', 'x-default': '/en/game/730' },
     })
     expect(alternates('/', 'en')).toEqual({
       canonical: '/en',
-      languages: { ru: '/', en: '/en', 'x-default': '/' },
+      languages: { ru: '/', en: '/en', 'x-default': '/en' },
     })
   })
 })

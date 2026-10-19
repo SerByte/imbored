@@ -312,17 +312,17 @@ describe('архив обновлений: hreflang', () => {
     for (const gid of ['1', '2', '3']) await setNewsDigestEn(db, APPID, gid, { tldrEn: `Summary ${gid}.` }, now)
   }
 
-  test('в поиске только русская — hreflang только на неё, и с /en тоже', async () => {
+  test('в поиске только русская — hreflang и x-default только на неё, и с /en тоже', async () => {
     await seed(three(), ['1', '2', '3'])
     const languages = { ru: PATH, 'x-default': PATH }
     expect((await meta()).alternates).toEqual({ canonical: PATH, languages })
     expect((await meta(undefined, 'en')).alternates).toEqual({ canonical: `/en${PATH}`, languages })
   })
 
-  test('в поиске обе — обе и x-default на русскую, как было', async () => {
+  test('в поиске обе — обе и x-default на английскую', async () => {
     await seed(three(), ['1', '2', '3'])
     await enDigests()
-    const languages = { ru: PATH, en: `/en${PATH}`, 'x-default': PATH }
+    const languages = { ru: PATH, en: `/en${PATH}`, 'x-default': `/en${PATH}` }
     expect((await meta()).alternates).toEqual({ canonical: PATH, languages })
     expect((await meta(undefined, 'en')).alternates).toEqual({ canonical: `/en${PATH}`, languages })
     // порядок ключей — тот же, что у localeAlternates: голова не сдвинулась

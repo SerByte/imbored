@@ -72,8 +72,9 @@ export function ogSite(locale: Locale): { siteName: 'imbored'; locale: 'ru_RU' |
  *
  * path — русский адрес без префикса. canonical — адрес на языке страницы
  * (/en/game/730 у английской), languages — обе версии и x-default на
- * русскую: без них Google считал бы /en/game/730 дублем /game/730 и
- * склеивал бы их, показывая англоязычным русскую.
+ * английскую (почему — у alternates в lib/i18n.ts): без них Google считал бы
+ * /en/game/730 дублем /game/730 и склеивал бы их, показывая англоязычным
+ * русскую.
  */
 export function localeAlternates(locale: Locale, path: string): { canonical: string; languages: Record<string, string> } {
   return alternates(path, locale)

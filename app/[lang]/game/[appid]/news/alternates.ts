@@ -11,9 +11,9 @@ import { alternates, LOCALES, type Locale } from '@/lib/i18n'
  * русской на /en с noindex и спорила с картой сайта, где у того же адреса —
  * только версии из карты (languages в app/sitemap.ts): ссылка на
  * неиндексируемую версию для поиска пустой сигнал. Правило то же, что у
- * карты: x-default — русская, пока она в поиске, без неё — та версия, что
- * есть. Список один на все версии страницы, и на неиндексируемой тоже:
- * связка у всех одна. Ни одной версии в поиске — hreflang нет вовсе.
+ * карты: x-default — английская, пока она в поиске, без неё — русская.
+ * Список один на все версии страницы, и на неиндексируемой тоже: связка у
+ * всех одна. Ни одной версии в поиске — hreflang нет вовсе.
  *
  * Когда в поиске обе версии, ответ — ровно languages из localeAlternates, с
  * тем же порядком ключей: голова такой страницы не меняется ни на байт.
@@ -25,7 +25,7 @@ export function indexedHreflang(path: string, has: readonly Locale[]): { languag
   return {
     languages: {
       ...Object.fromEntries(versions.map((l) => [l, languages[l]])),
-      'x-default': languages[versions.includes('ru') ? 'ru' : versions[0]],
+      'x-default': languages[versions.includes('en') ? 'en' : 'ru'],
     },
   }
 }

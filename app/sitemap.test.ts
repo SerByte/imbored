@@ -48,7 +48,7 @@ describe('карта сайта и осечка базы', () => {
     expect(got).toContain('/game/730')
   })
 
-  test('каждый адрес — на обоих языках, и у каждого — все версии и x-default', async () => {
+  test('каждый адрес — на обоих языках, и у каждого — все версии и x-default на английскую', async () => {
     const entries = await sitemap()
     const paths = entries.map((e) => new URL(e.url).pathname)
     for (const p of ['/', '/quiz', '/games', '/whatsnew', '/privacy', '/support', '/game/730']) {
@@ -68,11 +68,15 @@ describe('карта сайта и осечка базы', () => {
       expect(e.alternates?.languages).toEqual({
         ru: 'http://localhost:3000/game/730',
         en: 'http://localhost:3000/en/game/730',
-        'x-default': 'http://localhost:3000/game/730',
+        'x-default': 'http://localhost:3000/en/game/730',
       })
     }
     const home = entries.find((e) => new URL(e.url).pathname === '/en')
-    expect(home?.alternates?.languages).toMatchObject({ ru: 'http://localhost:3000/', en: 'http://localhost:3000/en' })
+    expect(home?.alternates?.languages).toEqual({
+      ru: 'http://localhost:3000/',
+      en: 'http://localhost:3000/en',
+      'x-default': 'http://localhost:3000/en',
+    })
   })
 
   test('квиз — в карте (он в выдаче), заглушки /daily и /rooms — нет (noindex)', async () => {
@@ -148,7 +152,7 @@ describe('карта сайта и осечка базы', () => {
       expect(e.alternates?.languages).toEqual({
         ru: 'http://localhost:3000/games/roguelike',
         en: 'http://localhost:3000/en/games/roguelike',
-        'x-default': 'http://localhost:3000/games/roguelike',
+        'x-default': 'http://localhost:3000/en/games/roguelike',
       })
     }
     // одна игра у шутеров (CS2) — полки нет: русский адрес есть, английского нет
@@ -203,13 +207,14 @@ describe('карта сайта и осечка базы', () => {
     expect(got).not.toContain('/en/games/short')
 
     // Подборка — как жанр: на обоих языках, и у каждой версии — обе и x-default
+    // на английскую
     const entries = (await sitemap()).filter((e) => /\/games\/coop$/.test(new URL(e.url).pathname))
     expect(entries.map((e) => new URL(e.url).pathname).sort()).toEqual(['/en/games/coop', '/games/coop'])
     for (const e of entries) {
       expect(e.alternates?.languages).toEqual({
         ru: 'http://localhost:3000/games/coop',
         en: 'http://localhost:3000/en/games/coop',
-        'x-default': 'http://localhost:3000/games/coop',
+        'x-default': 'http://localhost:3000/en/games/coop',
       })
     }
   })
@@ -249,7 +254,8 @@ describe('карта сайта и осечка базы', () => {
     })
 
     // Три английских пересказа — /en-архив сам в поиске: в карте пара, и
-    // hreflang обеих версий ведёт на обе; lastmod — свой у каждого языка
+    // hreflang обеих версий ведёт на обе, x-default — на английскую; lastmod
+    // — свой у каждого языка
     for (const [i, gid] of ['1', '2', '3'].entries()) {
       await setNewsDigestEn(db, 730, gid, { tldrEn: 'In short.' }, T0 + 100 + i)
     }
@@ -259,7 +265,7 @@ describe('карта сайта и осечка базы', () => {
       expect(e.alternates?.languages).toEqual({
         ru: 'http://localhost:3000/game/730/news',
         en: 'http://localhost:3000/en/game/730/news',
-        'x-default': 'http://localhost:3000/game/730/news',
+        'x-default': 'http://localhost:3000/en/game/730/news',
       })
     }
     expect(both[0].lastModified).toEqual(new Date((T0 + 60) * 1000))
@@ -348,7 +354,7 @@ describe('карта сайта и языки патчей', () => {
       expect(news.find((n) => n.path === path)?.langs).toEqual({
         ru: 'http://localhost:3000/game/730/news/2',
         en: 'http://localhost:3000/en/game/730/news/2',
-        'x-default': 'http://localhost:3000/game/730/news/2',
+        'x-default': 'http://localhost:3000/en/game/730/news/2',
       })
     }
   })

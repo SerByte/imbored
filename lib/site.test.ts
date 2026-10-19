@@ -76,7 +76,7 @@ describe('ownAddress', () => {
     const en = { params: Promise.resolve({ lang: 'en' }) }
     const meta = await ownAddress('/privacy', { title: 'Privacy' })(en, parent(ROOT_CARD))
     expect(meta.alternates?.canonical).toBe('/en/privacy')
-    expect(meta.alternates?.languages).toEqual({ ru: '/privacy', en: '/en/privacy', 'x-default': '/privacy' })
+    expect(meta.alternates?.languages).toEqual({ ru: '/privacy', en: '/en/privacy', 'x-default': '/en/privacy' })
     expect(meta.openGraph).toMatchObject({ siteName: 'imbored', locale: 'en_US', url: '/en/privacy' })
     const home = await ownAddress('/')(en, parent())
     expect(home.alternates?.canonical).toBe('/en')
@@ -86,7 +86,7 @@ describe('ownAddress', () => {
   test('русская страница — адрес без префикса и те же hreflang', async () => {
     const meta = await ownAddress('/quiz')({ params: Promise.resolve({ lang: 'ru' }) }, parent())
     expect(meta.alternates?.canonical).toBe('/quiz')
-    expect(meta.alternates?.languages).toEqual({ ru: '/quiz', en: '/en/quiz', 'x-default': '/quiz' })
+    expect(meta.alternates?.languages).toEqual({ ru: '/quiz', en: '/en/quiz', 'x-default': '/en/quiz' })
     expect(meta.openGraph).toMatchObject({ locale: 'ru_RU', url: '/quiz' })
   })
 

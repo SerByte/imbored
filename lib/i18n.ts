@@ -227,9 +227,11 @@ export function ogLocale(locale: Locale): 'ru_RU' | 'en_US' {
  * canonical и hreflang страницы: path — русский адрес без префикса.
  *
  * canonical — адрес на языке самой страницы (locale; по умолчанию русский),
- * languages — оба языка и x-default, который смотрит на русский: он адрес
- * без префикса и язык сайта по умолчанию. Для generateMetadata — обёртка
- * localeAlternates в lib/site.ts.
+ * languages — оба языка и x-default, который смотрит на английский: x-default
+ * — версия для языка, которого нет среди версий, а такому гостю вне СНГ
+ * «/» и так показывает английский (homeLocaleFor в lib/homelocale.ts).
+ * Русский остаётся без префикса. Для generateMetadata — обёртка localeAlternates в
+ * lib/site.ts.
  */
 export function alternates(
   path: string,
@@ -237,7 +239,7 @@ export function alternates(
 ): { canonical: string; languages: Record<string, string> } {
   return {
     canonical: lp(locale, path),
-    languages: { ru: path, en: lp('en', path), 'x-default': path },
+    languages: { ru: path, en: lp('en', path), 'x-default': lp('en', path) },
   }
 }
 

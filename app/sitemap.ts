@@ -50,7 +50,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   /*
    * Каждый адрес — на каждом языке, и у каждого — ссылки на все версии и
-   * x-default на русскую (xhtml:link в файле). Без них Google видел бы в
+   * x-default на английскую (xhtml:link в файле). Без них Google видел бы в
    * /en/game/730 дубль /game/730 и выбирал бы один из двух сам, а
    * англоязычному из выдачи показывал бы русскую. Та же пара, что в
    * alternates страниц (localeAlternates в lib/site.ts): path — русский
@@ -60,8 +60,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     languages: {
       ...(has.includes('ru') ? { ru: url(path) } : {}),
       ...(has.includes('en') ? { en: url(lp('en', path)) } : {}),
-      // x-default — русская, пока она в карте; без неё — та версия, что есть
-      'x-default': url(has.includes('ru') ? path : lp(has[0], path)),
+      // x-default — английская, пока она в карте (незнакомому языку «/» и так
+      // показывает английский, lib/homelocale.ts); без неё — русская
+      'x-default': url(has.includes('en') ? lp('en', path) : path),
     },
   })
   const localized = (path: string, rest: Omit<Entry, 'url' | 'alternates'>): Entry[] =>
