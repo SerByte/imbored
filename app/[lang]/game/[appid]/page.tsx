@@ -46,7 +46,7 @@ import { shotUrl } from '@/lib/shots'
 import { storeLink } from '@/lib/storelink'
 import { STORE_LABEL } from '@/lib/stores'
 import { tagLabel } from '@/lib/tagsru'
-import { textLangOn } from '@/lib/textlang'
+import { langOn, textLangOn, withForeignRuns } from '@/lib/textlang'
 import { heroTitleClass } from '@/lib/titlesize'
 import { SectionLabel } from '@/components/Labels'
 import { TrailerPreview } from '@/components/TrailerPreview'
@@ -150,13 +150,17 @@ function enCard(locale: Locale, canonical: string) {
 /**
  * Метаданные 404 под /en/game/<appid> — та же карточка с английским alt.
  *
- * Страница на ISR, и на проде её 404 собирается пререндером: оболочка
- * восстановления после notFound() метаданные заново не считает («The recovery
- * shell only bootstraps the original Flight data», app-render), и голова
- * остаётся от обычного прохода — файловая карточка сегмента плюс то, что
- * вернул generateMetadata. Пустой объект оставлял на /en русский alt файла
- * («Стоит ли играть — imbored»). Русская 404 получает пустой объект, как
- * была, и её голова не меняется. type и siteName — корневого layout: свой
+ * Голов у такой 404 две. В HTML сервера, пустой оболочке __next_error__,
+ * Next собирает голову заново по not-found: layout по пути и файлы корня
+ * последним уровнем (errorMetadataItem в resolve-metadata), generateMetadata
+ * страницы туда не входит, и подпись там корневая (docs/i18n.md, п. 10). А
+ * голову, которую видит браузер, клиент ставит из обычного прохода —
+ * файловая карточка сегмента плюс то, что вернул generateMetadata (замер на
+ * next dev, /en/game/999999999 до и после гидрации). Пустой объект оставлял
+ * в ней на /en русский alt файла («Стоит ли играть — imbored»). Так же
+ * устроены 404 архива и патча (news/page.tsx, news/[gid]/page.tsx). Русская
+ * 404 получает пустой объект, как была, и её голова не меняется. type и
+ * siteName — корневого layout: свой
  * openGraph этого уровня заменяет его целиком; url — свой адрес, как у
  * каждого своего openGraph (lib/social.test.ts).
  */
@@ -435,6 +439,18 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
    * отдельных среза уехали бы двумя копиями.
    */
   const coverArt = trimArt(meta.art)
+  /*
+   * Название — данные, и на /en оно бывает русским: games.name у части верха
+   * каталога держит русское имя магазина, пока его не перепишет английская
+   * запись (nameSql в lib/db; замер на копии базы — God of War Рагнарёк,
+   * Marvel Человек-Паук 2). Переводить его нельзя (docs/i18n.md, п. 6), а
+   * пометить — нужно: английский голос скринридера читал бы кириллицу по
+   * буквам (WCAG 3.1.2). langOn — 'ru' только на /en и только при перевесе
+   * кириллицы: русская страница и латинские названия — без атрибута и без
+   * лишнего <span>, как были.
+   */
+  const nameLang = langOn(locale, meta.name)
+  const nameRun = nameLang ? <span lang={nameLang}>{meta.name}</span> : meta.name
 
   return (
     <div className="flex-1">
@@ -585,7 +601,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 по самому широкому слову: «TROUBLESHOOTER:» в display-lg шире
                 колонки, а рваться посреди слова ему незачем — ступенью ниже
                 оно целое. Пороги и замеры — lib/titlesize */}
-            <h1 className={heroTitleClass(meta.name)}>{meta.name}</h1>
+            <h1 lang={nameLang} className={heroTitleClass(meta.name)}>{meta.name}</h1>
             {/*
               Русское название магазина — вторым рядом, если оно у игры своё.
               Заголовок — английское, как в Steam (nameSql в lib/db), а по
@@ -1026,7 +1042,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             */}
             {data.newsMore && (
               <Link href={patchArchivePath(appid)} prefetch={false} className="tap link-more mt-4">
-                {tr(locale, { ru: `Все обновления «${meta.name}»`, en: `All ${meta.name} updates` })}
+                {withForeignRuns(locale, tr(locale, { ru: `Все обновления «${meta.name}»`, en: `All ${meta.name} updates` }), [meta.name])}
                 <Icon name="arrow" size={16} />
               </Link>
             )}
@@ -1153,7 +1169,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           {data.similar.length > 0 && (
             <Link href={quizHref(null, appid)} className="tap link-more">
               {locale === 'en' ? (
-                <>Similar to “{meta.name}”, for your mood</>
+                <>Similar to “{nameRun}”, for your mood</>
               ) : (
                 <>Похожее на «{meta.name}» — под моё настроение</>
               )}
