@@ -226,6 +226,35 @@ describe('страница патча по-английски', () => {
     expect(newsPageTitle('Counter-Strike 2 Update', 'Counter-Strike 2', AUG3, 'en')).not.toMatch(CYRILLIC)
   })
 
+  /*
+   * Общий «{Game} update» — ответ newsTitleOn посту без английского
+   * заголовка. <title>, og:title и RSS — тем же словом, что h1, карточка и
+   * крошка (patchHeading): не режут его до «Update» и не ставят игру обратно
+   * через двоеточие. С номером он режется, как любой заголовок с названием
+   * впереди, — «Update 7.41d» не пустое слово.
+   */
+  test('общий «{Game} update» — целиком, как в h1, с датой', () => {
+    const generic = newsTitleOn({ title: 'Обновление Counter-Strike 2' }, 'Counter-Strike 2', 'en')
+    expect(generic).toBe('Counter-Strike 2 update')
+    expect(newsPageTitle(generic, 'Counter-Strike 2', AUG3, 'en')).toBe(
+      'Counter-Strike 2 update (Aug 3, 2026) — what changed',
+    )
+    expect(newsPageTitle(generic, 'Counter-Strike 2', undefined, 'en')).toBe('Counter-Strike 2 update — what changed')
+    expect(patchHeading({ title: 'Обновление Counter-Strike 2' }, 'Counter-Strike 2', 'en')).toBe(generic)
+    // без игры — «Update», как было
+    expect(newsPageTitle(newsTitleOn({ title: 'Обновление' }, null, 'en'), null, AUG3, 'en')).toBe(
+      'Update (Aug 3, 2026) — what changed',
+    )
+    // с номером — режется, как раньше
+    const versioned = newsTitleOn({ title: 'Обновление 7.41d' }, 'Dota 2', 'en')
+    expect(versioned).toBe('Dota 2 update 7.41d')
+    expect(newsPageTitle(versioned, 'Dota 2', AUG3, 'en')).toBe('Dota 2: Update 7.41d — what changed')
+    // свой английский заголовок издателя — по общим правилам, хоть и похож
+    expect(newsPageTitle('Counter-Strike 2 Update', 'Counter-Strike 2', AUG3, 'en')).toBe(
+      'Counter-Strike 2: Update (Aug 3, 2026) — what changed',
+    )
+  })
+
   test('без языка — русский заголовок, как был', () => {
     expect(newsPageTitle('Portal 2 - Update', 'Portal 2', AUG3)).toBe(newsPageTitle('Portal 2 - Update', 'Portal 2', AUG3, 'ru'))
     expect(newsPageTitle('Portal 2 - Update', 'Portal 2', AUG3)).toMatch(/— что изменилось$/)
@@ -265,8 +294,9 @@ describe('страница патча по-английски', () => {
     expect(newsDescription({ title: 'Обновление 1.5: новая карта', blocks: [] }, 'Some Game', 'en')).toBe(
       'Some Game: Update 1.5 — what changed.',
     )
+    // общий заголовок без номера — целиком, как в h1: не «Some Game: Update»
     expect(newsDescription({ title: 'Обновление: новая карта', blocks: [] }, 'Some Game', 'en')).toBe(
-      'Some Game: Update — what changed.',
+      'Some Game update — what changed.',
     )
     // по-русски — заголовок издателя, titleEn не читается
     expect(newsDescription({ title: 'Обновление 1.5', titleEn: 'Update 1.5', blocks: [] }, 'Some Game')).toBe(

@@ -89,7 +89,7 @@ describe('/whatsnew/feed.xml: язык ленты', () => {
     expect(xml).toContain('/en/game/730/news/7300</link>')
     expect(xml).toContain('<description>Grenades no longer pass through walls.</description>')
     // Русский заголовок без перевода — «{Game} update», с датой: заголовки Valve одинаковые
-    expect(xml).toMatch(/<title>Counter-Strike 2: Update \(Oct \d{1,2}, 2025\) — what changed<\/title>/)
+    expect(xml).toMatch(/<title>Counter-Strike 2 update \(Oct \d{1,2}, 2025\) — what changed<\/title>/)
     expect(xml).not.toMatch(/[А-Яа-яЁё]/)
   })
 })
