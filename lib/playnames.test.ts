@@ -6,9 +6,11 @@ import { describe, expect, test, vi } from 'vitest'
 import { LocaleProvider } from '../components/LocaleProvider'
 import { OutcomeAsk } from '../components/OutcomeAsk'
 import { SpinWheel } from '../components/SpinWheel'
+import { SteamLaunch } from '../components/SteamLaunch'
 import { StopAsk } from '../components/StopAsk'
-import type { Locale } from './i18n'
+import { tr, type Locale } from './i18n'
 import type { OutcomeAsk as Ask } from './outcome'
+import { withForeignRuns } from './textlang'
 
 /**
  * Названия игр на /play — данные, и на /en русское название обязано стоять
@@ -139,6 +141,48 @@ describe('барабан рулетки (SpinWheel)', () => {
 })
 
 /**
+ * «Just keep playing “X”» на экране выгорания — подпись SteamLaunch с
+ * названием. Кнопка печатает подпись как есть, так что пометка приходит в
+ * самой подписи (ReactNode из withForeignRuns) — в обеих ветках, steam:// и
+ * магазинной под пальцем.
+ */
+describe('подпись SteamLaunch с названием', () => {
+  const launch = (locale: Locale, name: string) =>
+    createElement(SteamLaunch, {
+      appid: 1888930,
+      label: withForeignRuns(
+        locale,
+        tr(locale, { ru: `Просто продолжить «${name}»`, en: `Just keep playing “${name}”` }),
+        [name],
+      ),
+      mobileLabel: withForeignRuns(
+        locale,
+        tr(locale, { ru: `Открыть «${name}» в Steam`, en: `Open “${name}” in Steam` }),
+        [name],
+      ),
+      className: 'btn-ember',
+    })
+
+  test('на /en русское название — lang="ru" в обеих ветках', () => {
+    const html = under('en', launch('en', RU_NAME))
+    expect(html).toContain(`Just keep playing “<span lang="ru">${RU_NAME}</span>”</a>`)
+    expect(html).toContain(`Open “<span lang="ru">${RU_NAME}</span>” in Steam</a>`)
+    expect(unmarked(html)).not.toMatch(CYRILLIC)
+  })
+
+  test('латинское название на /en и русская страница — прежняя разметка, без lang', () => {
+    const en = under('en', launch('en', 'Portal 2'))
+    expect(en).toContain('>Just keep playing “Portal 2”</a>')
+    expect(en).toContain('>Open “Portal 2” in Steam</a>')
+    expect(en).not.toContain('lang=')
+    const ru = under('ru', launch('ru', RU_NAME))
+    expect(ru).toContain(`>Просто продолжить «${RU_NAME}»</a>`)
+    expect(ru).toContain(`>Открыть «${RU_NAME}» в Steam</a>`)
+    expect(ru).not.toContain('lang=')
+  })
+})
+
+/**
  * Герой /play рисуется после ответа /api/recommend, и серверный рендер его
  * не видит — сторож по исходнику, как у пар ru/en в lib/playen.test.ts:
  * причина и кнопки с названием идут через withForeignRuns, а не голым текстом.
@@ -162,5 +206,17 @@ describe('названия в тексте героя /play помечены', (
   test('«Like “X”, but…» и «Similar to “X”» — через withForeignRuns', () => {
     expect(/withForeignRuns\(\s*locale,\s*tr\(locale, \{ ru: `Как «\$\{pick\.name\}», но…`/.test(src)).toBe(true)
     expect(/withForeignRuns\(\s*locale,\s*tr\(locale, \{ ru: `Похожие на «\$\{seed\.name\}»`/.test(src)).toBe(true)
+  })
+
+  test('экран выгорания: «Just keep playing “X”» и «Open “X” in Steam» — через withForeignRuns', () => {
+    expect(/withForeignRuns\(\s*locale,\s*tr\(locale, \{ ru: `Просто продолжить «\$\{cont\.name\}»`/.test(src)).toBe(true)
+    expect(/withForeignRuns\(\s*locale,\s*tr\(locale, \{ ru: `Открыть «\$\{cont\.name\}» в Steam`/.test(src)).toBe(true)
+    // голой строкой в подпись кнопки название больше не идёт
+    expect(/[lL]abel=\{tr\(locale, \{ ru: `[^`]*\$\{cont\.name\}/.test(src)).toBe(false)
+  })
+
+  test('экран отказа «в духе X»: имя затравки в тексте — через withForeignRuns', () => {
+    expect(src.includes('{withForeignRuns(locale, fail.text, [failSeed])}')).toBe(true)
+    expect(/\{fail\.text\}/.test(src)).toBe(false)
   })
 })

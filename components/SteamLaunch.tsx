@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { Icon } from '@/components/Icon'
 import { useLocale } from '@/components/LocaleProvider'
 import { tr } from '@/lib/i18n'
@@ -68,6 +69,10 @@ export type LaunchVia = 'steam' | 'store'
  * умолчанию не позовёшь. undefined — «подпись по умолчанию», null у
  * mobileLabel — «мобильной ветки нет», как и раньше. Названия пунктов
  * клиента Steam — его собственные английские («Library», «Install»).
+ *
+ * Подпись — ReactNode, а не строка: у подписи с названием игры на /en
+ * русское название идёт своим <span lang="ru"> (withForeignRuns), и кнопка
+ * печатает его как есть. Строка остаётся строкой, разметка прежняя.
  */
 export function SteamLaunch({
   appid,
@@ -82,8 +87,8 @@ export function SteamLaunch({
   appid: number
   className?: string
   mode?: 'run' | 'install'
-  label?: string
-  mobileLabel?: string | null
+  label?: ReactNode
+  mobileLabel?: ReactNode
   onClick?: (via: LaunchVia) => void
   onLaunch?: () => void
   /**
