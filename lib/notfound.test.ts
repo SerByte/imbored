@@ -47,7 +47,8 @@ async function view(locale: 'ru' | 'en'): Promise<string> {
 
 describe('мусорный адрес — в /_not-found, который рисует сервер', () => {
   test('правило уводит в /_not-found, а не на страницу с notFound()', () => {
-    expect(garbageRewrites().map((r) => r.destination)).toEqual(['/_not-found'])
+    // Первые два — не 404: «en» в чужом регистре — это /en (garbageRewrites в lib/i18nroutes.ts)
+    expect(garbageRewrites().map((r) => r.destination)).toEqual(['/en', '/en/:path+', '/_not-found'])
   })
 
   /*
