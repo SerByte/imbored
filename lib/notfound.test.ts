@@ -20,10 +20,17 @@ import { garbageRewrites } from './i18nroutes'
 // Полка 404 читает базу через кэш Next; здесь база пуста, и полки нет —
 // как у 404 на молчащей базе (shelf() в app/[lang]/not-found.tsx)
 vi.mock('next/cache', () => ({ unstable_cache: <T>(fn: T) => fn }))
-vi.mock('@/lib/server', () => ({ getDb: async () => ({}) }))
+// appBaseUrl — настоящий: метадата корня (metadataBase) берёт его оттуда же
+vi.mock('@/lib/server', async () => ({ getDb: async () => ({}), appBaseUrl: (await import('@/lib/origin')).appBaseUrl }))
 vi.mock('@/lib/db', () => ({ topCatalogGames: async () => [] }))
 // next/root-params вне сборки бросает при импорте (lib/i18n-server.ts)
 vi.mock('@/lib/i18n-server', () => ({ getLocale: async () => 'ru' }))
+// next/font/google — функция сборки, вне Next её нет; not-found и
+// global-not-found тянут корневой layout, шрифтам нужна только переменная
+vi.mock('next/font/google', () => ({
+  Manrope: () => ({ variable: '--font-manrope' }),
+  JetBrains_Mono: () => ({ variable: '--font-jbmono' }),
+}))
 
 const { NotFoundView } = await import('@/app/[lang]/not-found')
 const { LocaleProvider } = await import('@/components/LocaleProvider')
@@ -105,5 +112,64 @@ describe('страница без экрана', () => {
     const el = (await NotFound()) as ReactElement<{ locale: string }>
     expect(el.type).toBe(NotFoundView)
     expect(el.props.locale).toBe('ru')
+  })
+})
+
+/**
+ * Карточка превью в голове 404 (docs/i18n.md, п. 10). Голову 404 читают
+ * краулеры и превью мессенджеров — сырым HTML, без скрипта.
+ */
+describe('карточка превью 404', () => {
+  /*
+   * У /_not-found нет сегмента [lang], и файловая карточка корня
+   * (app/[lang]/opengraph-image.tsx) сюда не доходит: без своих images
+   * русская 404 вне разделов осталась без og:image и twitter:image вовсе. До
+   * [lang] корневая карточка стояла и на ней. Размеры и тип в
+   * global-not-found — копия, и если карточка сменит формат, тест поймает.
+   */
+  test('/_not-found — корневая карточка русских страниц, с их подписью', async () => {
+    const { generateMetadata } = await import('@/app/global-not-found')
+    const { generateMetadata: rootMetadata } = await import('@/app/[lang]/layout')
+    const { alt, size, contentType } = await import('@/app/[lang]/opengraph-image')
+    const meta = await generateMetadata()
+    const root = await rootMetadata({ params: Promise.resolve({ lang: 'ru' }), children: null } as never)
+    expect(alt).toBe('imbored — во что поиграть')
+    expect(meta.openGraph?.images).toEqual([
+      { url: '/ru/opengraph-image', width: size.width, height: size.height, type: contentType, alt },
+    ])
+    // Остальная голова — корневая русская, как была: openGraph — корневой и карточка
+    const { openGraph, ...rest } = meta
+    const { openGraph: rootOg, ...rootRest } = root
+    expect(rest).toEqual(rootRest)
+    expect(openGraph).toEqual({ ...rootOg, images: openGraph?.images })
+    expect(rootOg).toEqual({ type: 'website', siteName: 'imbored', locale: 'ru_RU' })
+    // twitter:image Next достраивает из openGraph сам — своего тут не нужно
+    expect(meta.twitter).toEqual({ card: 'summary_large_image' })
+  })
+
+  /*
+   * На not-found Next ставит файлы корня ещё раз, последним уровнем, вместе с
+   * метадатой not-found.tsx: без своих images русский alt файла побеждал
+   * английскую карточку layout, и сырой HTML каждой /en/… 404 отдавал
+   * «imbored — во что поиграть» рядом с og:locale en_US.
+   */
+  test('граница not-found на /en — корневой openGraph layout целиком, с английской подписью', async () => {
+    const { generateMetadata } = await import('@/app/[lang]/not-found')
+    const { generateMetadata: rootMetadata } = await import('@/app/[lang]/layout')
+    const { size, contentType } = await import('@/app/[lang]/opengraph-image')
+    const en = await generateMetadata({ params: Promise.resolve({ lang: 'en' }) })
+    const root = await rootMetadata({ params: Promise.resolve({ lang: 'en' }), children: null } as never)
+    // openGraph уровня заменяет накопленный целиком: тип, имя и язык — тоже здесь
+    expect(en).toEqual({ openGraph: root.openGraph })
+    expect(en.openGraph).toMatchObject({ type: 'website', siteName: 'imbored', locale: 'en_US' })
+    expect(en.openGraph?.images).toEqual([
+      { url: '/en/opengraph-image', width: size.width, height: size.height, type: contentType, alt: 'imbored — what to play' },
+    ])
+    expect(JSON.stringify(en)).not.toMatch(CYR)
+  })
+
+  test('граница not-found на русском — своей метадаты нет: работает файл, голова прежняя', async () => {
+    const { generateMetadata } = await import('@/app/[lang]/not-found')
+    expect(await generateMetadata({ params: Promise.resolve({ lang: 'ru' }) })).toEqual({})
   })
 })

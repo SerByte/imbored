@@ -1,16 +1,21 @@
 import type { Metadata, Viewport } from 'next'
+import { ogSite, siteTitle } from '@/lib/site'
 import RootLayout, { generateMetadata as rootMetadata, viewport as rootViewport } from './[lang]/layout'
 import { NotFoundView } from './[lang]/not-found'
 import Template from './[lang]/template'
 
 /**
- * 404 адреса вне всех разделов: /xyz, /wp-login.php, /.env, /xx/quiz.
+ * 404 адреса вне всех разделов (/xyz, /wp-login.php, /.env, /xx/quiz) и
+ * опечатки под русским разделом (/quiz/xyz, /games/<нет такого жанра>,
+ * /game/730/xyz).
  *
  * Сюда такой адрес уводит правило afterFiles из next.config (garbageRewrites
  * в lib/i18nroutes.ts) — в /_not-found, единственный маршрут, чей 404 Next
- * рисует сервером целиком. Он же отвечает за всё, что не нашло маршрута
- * вовсе (/_next, /_vercel без файла), и за dynamicParams = false мимо
- * списка (/games/<нет такого жанра>).
+ * рисует сервером целиком. Опечатка под разделом доходит до него потому, что
+ * beforeFiles переписывают в /ru/… только формы настоящих маршрутов
+ * (SECTION_SHAPES там же), — иначе её ловила бы динамическая
+ * app/[lang]/[...missing] пустой оболочкой. Он же отвечает за всё, что не
+ * нашло маршрута вовсе (/_next, /_vercel без файла).
  *
  * ПОЧЕМУ НЕ СТРАНИЦА С notFound(). Так было: правило уводило мусор в
  * пререндеренную app/[lang]/missing, а она звала notFound(). В этой версии
@@ -33,10 +38,29 @@ import Template from './[lang]/template'
  * Метаданные и viewport — корневые русские: у /_not-found нет сегмента
  * [lang], и generateMetadata корня здесь сам не вызывается. Код 404 и
  * robots noindex Next ставит этому маршруту сам.
+ *
+ * Плюс корневая карточка превью (RU_ROOT_CARD ниже): файловую
+ * app/[lang]/opengraph-image.tsx Next ставит только под сегментом [lang], а
+ * корневой layout на ru images намеренно не объявляет — его карточка и есть
+ * файл. Без этой строки русская 404 была без og:image и twitter:image вовсе,
+ * а до [lang] корневая карточка стояла и на ней.
  */
 export async function generateMetadata(): Promise<Metadata> {
-  return rootMetadata({ params: Promise.resolve({ lang: 'ru' }), children: null })
+  const root = await rootMetadata({ params: Promise.resolve({ lang: 'ru' }), children: null })
+  // openGraph заменяет корневой целиком — тип, имя и язык те же, что у корня
+  return { ...root, openGraph: { ...ogSite('ru'), type: 'website', images: [RU_ROOT_CARD] } }
 }
+
+/**
+ * Та же карточка, что у русских страниц (/ru/opengraph-image), и та же
+ * подпись — alt файла, «imbored — во что поиграть» (docs/i18n.md, п. 10). Без
+ * хеша в адресе: его ставит только файловая метадата, как и у английской
+ * карточки корня. Размеры и тип — копия size и contentType карточки, а не
+ * импорт, по той же причине, что у EN_ROOT_CARD в app/[lang]/layout.tsx:
+ * модуль карточки тянет next/og и шрифты. Совпадение сторожит
+ * lib/notfound.test.ts. twitter:image Next достраивает из openGraph сам.
+ */
+const RU_ROOT_CARD = { url: '/ru/opengraph-image', width: 1200, height: 630, type: 'image/png', alt: siteTitle('ru') }
 
 export const viewport: Viewport = rootViewport
 
