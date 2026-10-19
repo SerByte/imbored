@@ -782,4 +782,16 @@ describe('окно поиска — комбобокс по шаблону ARIA'
     const row = src.slice(src.indexOf('<GameLink'), src.indexOf('</GameLink>'))
     expect(row).toMatch(/\{g\.alias && /)
   })
+
+  /*
+   * На /en русское название — чужой текст: без lang="ru" английский голос
+   * скринридера читает «Ведьмак 3: Дикая Охота» по-английски (WCAG 3.1.2), а
+   * прогон i18n-audit считает его забытым переводом. На русской странице
+   * атрибута нет — русская разметка не меняется.
+   */
+  test('русское название на /en помечено lang="ru"', () => {
+    const row = src.slice(src.indexOf('<GameLink'), src.indexOf('</GameLink>'))
+    const alias = row.slice(row.indexOf('{g.alias && '))
+    expect(alias.slice(0, alias.indexOf('{g.alias}'))).toMatch(/<span lang=\{locale === 'en' \? 'ru' : undefined\}/)
+  })
 })

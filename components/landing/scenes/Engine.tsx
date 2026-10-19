@@ -412,7 +412,7 @@ export function Engine({ demo, locale = 'ru' }: { demo: LandingDemo; locale?: Lo
           <p className="mt-3 max-w-md text-xs leading-relaxed text-faint">
             {tr(locale, {
               ru: 'Своё идёт первым, покупок в пятёрке не больше двух. Третий вопрос — сколько у тебя времени — задаём в самом подборе.',
-              en: 'Your own games come first, and no more than two in the five are purchases. The third question — how much time you have — comes in the pick itself.',
+              en: 'Your own games come first, and no more than two of the five are purchases. The third question — how much time you have — comes in the pick itself.',
             })}
           </p>
         </div>
