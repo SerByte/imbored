@@ -354,6 +354,21 @@ function ReviewsTail({ total, labelled, locale }: { total: number; labelled: boo
   )
 }
 
+/**
+ * Фраза ссылки с русским названием на /en — одним флекс-элементом.
+ *
+ * withForeignRuns режет фразу на куски вокруг <span lang="ru">, а ссылки
+ * .link-more — inline-flex с gap: без общей обёртки каждый кусок вставал
+ * своим флекс-элементом. На 1280 px — зазоры у кавычек («Similar to “ Одни
+ * из нас™… ”, for your mood»), на 360 px — три столбика рядом (замер на next
+ * dev, /en/game/2531310 и /en/game/2651280). Тот же приём, что у withNicks
+ * (app/[lang]/compat/nick.tsx). Нечего помечать — та же строка без обёртки:
+ * русская страница и латинские названия прежние.
+ */
+function oneItem(runs: ReactNode): ReactNode {
+  return typeof runs === 'string' ? runs : <span>{runs}</span>
+}
+
 export default async function GamePage({ params }: { params: Promise<{ appid: string; lang?: string }> }) {
   const { appid: raw, lang } = await params
   // Адреса в разметке — на языке страницы, как её canonical
@@ -448,10 +463,10 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
    * пометить — нужно: английский голос скринридера читал бы кириллицу по
    * буквам (WCAG 3.1.2). langOn — 'ru' только на /en и только при перевесе
    * кириллицы: русская страница и латинские названия — без атрибута и без
-   * лишнего <span>, как были.
+   * лишнего <span>, как были. В h1 — атрибутом, во фразах ссылок ниже — тем
+   * же правилом через withForeignRuns (oneItem).
    */
   const nameLang = langOn(locale, meta.name)
-  const nameRun = nameLang ? <span lang={nameLang}>{meta.name}</span> : meta.name
 
   return (
     <div className="flex-1">
@@ -1043,7 +1058,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             */}
             {data.newsMore && (
               <Link href={patchArchivePath(appid)} prefetch={false} className="tap link-more mt-4">
-                {withForeignRuns(locale, tr(locale, { ru: `Все обновления «${meta.name}»`, en: `All ${meta.name} updates` }), [meta.name])}
+                {oneItem(withForeignRuns(locale, tr(locale, { ru: `Все обновления «${meta.name}»`, en: `All ${meta.name} updates` }), [meta.name]))}
                 <Icon name="arrow" size={16} />
               </Link>
             )}
@@ -1170,7 +1185,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           {data.similar.length > 0 && (
             <Link href={quizHref(null, appid)} className="tap link-more">
               {locale === 'en' ? (
-                <>Similar to “{nameRun}”, for your mood</>
+                oneItem(withForeignRuns(locale, `Similar to “${meta.name}”, for your mood`, [meta.name]))
               ) : (
                 <>Похожее на «{meta.name}» — под моё настроение</>
               )}
