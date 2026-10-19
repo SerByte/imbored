@@ -75,4 +75,17 @@ describe('PlayersNow', () => {
       expect(html).not.toMatch(/[А-Яа-яЁё]/)
     }
   })
+
+  /*
+   * Малое число — ровно то, ради чего строка есть: мёртвый мультиплеер,
+   * «New to you · …» героя /play. «1 were playing» — ошибка согласования;
+   * по-русски «1 играли» согласовывать нечего, и вывод прежний.
+   */
+  test('на /en прошедшее время согласуется с числом: 1 — «was», больше — «were»', () => {
+    expect(text(renderEn(1, NOW - 3 * 86_400))).toBe('1 was playing')
+    expect(text(renderEn(1, undefined))).toBe('1 was playing')
+    expect(text(renderEn(2, NOW - 3 * 86_400))).toBe('2 were playing')
+    expect(text(renderEn(1, NOW - 60))).toBe('1 playing now')
+    expect(text(render(1, NOW - 3 * 86_400))).toBe('1 играли')
+  })
 })

@@ -103,6 +103,14 @@ describe('хаб /games', () => {
     ])
   })
 
+  // Русская полка — подписью тега, как была: заголовок жанра («Игры с
+  // открытым миром») берёт только английская (sentence case вместо тега Steam)
+  test('заголовок русской полки — подпись тега', async () => {
+    const text = textOf(flight(await GamesHubPage()))
+    expect(text).toContain('Открытый мирВесь жанр: Открытый мир')
+    expect(text).not.toContain('Игры с открытым миром')
+  })
+
   test('первые капсулы первой полки грузятся сразу, остальные лениво', async () => {
     const text = JSON.stringify(flight(await GamesHubPage()))
     expect(text.match(/"loading":"eager"/g)).toHaveLength(5)
@@ -359,13 +367,19 @@ describe('английские хаб и страница жанра', () => {
   const en = <T extends object>(p: T) => ({ params: Promise.resolve({ ...p, lang: 'en' }) })
   const latin = () => db.execute({ sql: "UPDATE games SET name = 'Game ' || appid", args: [] })
 
-  test('хаб: подписи по-английски, полка — подпись тега Steam', async () => {
+  /*
+   * Заголовок полки — заголовок страницы жанра (hubTitle), sentence case:
+   * сырой тег Steam «Open World» стоял бы Title Case посреди английской
+   * страницы. Скринридеру «See all» договаривает тот же заголовок.
+   */
+  test('хаб: подписи по-английски, полка — заголовок жанра, а не тег Steam', async () => {
     await latin()
     const page = flight(await GamesHubPage(en({})))
     const text = textOf(page)
-    for (const s of ['Catalog', 'Games by genre', 'Open World', 'See all', 'Find a game for your mood']) {
+    for (const s of ['Catalog', 'Games by genre', 'Open-world games', 'See all: Open-world games', 'Find a game for your mood']) {
       expect(text, s).toContain(s)
     }
+    expect(text).not.toContain('Open World')
     // ряд подборок над полками — подписями своего языка (facetCopy)
     for (const f of HUB_FACETS) expect(text, f.slug).toContain(facetCopy(f, 'en').label)
     expect(text).not.toMatch(CYR)
@@ -402,10 +416,25 @@ describe('английские хаб и страница жанра', () => {
     // те же числа, что у русской плитки: все языки (shownReviews), а не англоязычные «90% of 10K»
     expect(text).toMatch(/91% of 30K/)
     expect(text).not.toMatch(/90% of/)
-    // выход — квиз с жанром; заголовок жанра в кнопке — строчной первой буквой
-    expect(text).toContain('Pick open-world games from your library')
+    // выход — квиз с жанром; заголовок жанра в кнопке — первым и как есть:
+    // hubTitle не понижается (docs/i18n.md), «pick open-world games» его понижал
+    expect(text).toContain('Open-world games — pick from your library')
+    expect(text).not.toMatch(/pick open-world/i)
     expect(text).not.toMatch(CYR)
     expect(JSON.stringify(page)).not.toMatch(CYR)
+  })
+
+  test('жанр: кнопка выхода не понижает заголовок — JRPGs, CRPGs; русская — как была', async () => {
+    for (const [tag, title] of [
+      ['jrpg', 'JRPGs'],
+      ['crpg', 'CRPGs'],
+      ['open-world', 'Open-world games'],
+    ]) {
+      const text = textOf(flight(await GenrePage(en({ tag }))))
+      expect(text, tag).toContain(`${title} — pick from your library`)
+    }
+    const ru = textOf(flight(await GenrePage({ params: Promise.resolve({ tag: 'open-world' }) })))
+    expect(ru).toContain('Подобрать игры с открытым миром из своей библиотеки')
   })
 
   /*

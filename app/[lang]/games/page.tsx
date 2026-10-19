@@ -16,6 +16,7 @@ import {
   HUB_MIN_WEIGHT,
   HUB_TAGS,
   hubPath,
+  hubTitle,
   type HubShelf,
 } from '@/lib/gamehub'
 import { toLocale, tr, type Locale } from '@/lib/i18n'
@@ -196,19 +197,27 @@ export default async function GamesHubPage({ params }: Partial<PageProps<'/[lang
 function Shelf({ shelf, eager, locale }: { shelf: HubShelf; eager: boolean; locale: Locale }) {
   const headingId = `shelf-${shelf.tag.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
   const path = hubPath(shelf.tag)
+  /*
+   * Заголовок полки по-английски — заголовок страницы жанра (hubTitle:
+   * «Open-world games», «Hack-and-slash games»), а не сам тег Steam: тег
+   * пишется Title Case («Open World», «Hack and Slash»), а заголовки
+   * английской версии — sentence case (docs/i18n.md, «Голос»). Подпись тега
+   * остаётся у чипсов и пилюль. Русская полка — как была: подпись тега.
+   */
+  const heading = locale === 'en' ? hubTitle(shelf.tag, locale) : tagLabel(shelf.tag, locale)
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-4">
       {/* У жанра своя страница (/games/<slug>): там он весь, без правила
           «одна игра — одна полка», с отзывами и тем, за что любят */}
       <div className="flex items-baseline justify-between gap-4">
         <h2 id={headingId} className="section-title">
-          {tagLabel(shelf.tag, locale)}
+          {heading}
         </h2>
         {path && (
           <Link href={path} prefetch={false} className="tap link-more shrink-0">
             {tr(locale, { ru: 'Весь жанр', en: 'See all' })}
             <Icon name="arrow" size={16} />
-            <span className="sr-only">: {tagLabel(shelf.tag, locale)}</span>
+            <span className="sr-only">: {heading}</span>
           </Link>
         )}
       </div>

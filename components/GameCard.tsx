@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { GameArtUrls } from '@/lib/art'
 import { GameArt } from './GameArt'
+import { GameCardName } from './GameCardName'
 import { GameMorph } from './Morph'
 
 /**
@@ -72,9 +73,8 @@ export function GameCardBody({
     <>
       {morph ? <GameMorph appid={appid}>{thumbEl}</GameMorph> : thumbEl}
       <span className="mt-3 block px-0.5">
-        <span className="block truncate text-[15px] leading-tight font-extrabold tracking-[-0.01em]">
-          {name}
-        </span>
+        {/* lang русского названия на /en — сам лист, по контексту языка */}
+        <GameCardName>{name}</GameCardName>
         {meta ? (
           <span className="mt-1 flex min-w-0 items-center justify-between gap-2 text-[13px] leading-snug font-semibold text-dim">
             {meta}
