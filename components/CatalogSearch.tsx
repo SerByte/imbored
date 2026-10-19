@@ -11,6 +11,7 @@ import { requestCatalogIndex, useCatalogIndex } from '@/lib/catalogindex'
 import { SEARCH_QUERY_MAX, searchCatalog, searchStatus, stepActive, type SearchHit } from '@/lib/catalogsearch'
 import { tr } from '@/lib/i18n'
 import { backdropOf, holdScroll, makeInert } from '@/lib/pagelock'
+import { langOn } from '@/lib/textlang'
 
 /**
  * Пауза перед тем, как скринридер услышит «Нашлось N игр». Список меняется
@@ -349,9 +350,13 @@ export function CatalogSearch({
                     читает кириллицу по-английски. Алиас — всегда русское
                     название магазина (SearchIndexWire.alt), так что язык
                     известен без подсчёта букв; на русской странице атрибута
-                    нет — она и так русская */}
+                    нет — она и так русская. Само название — тоже данные:
+                    у части игр каталог хранит его только по-русски
+                    («Marvel Человек-Паук 2»), и на /en оно получает lang="ru"
+                    по большинству букв (langOn) — своим узлом только тогда,
+                    русская строка списка прежняя до узла */}
                 <span className="min-w-0 break-words leading-snug">
-                  {g.name}
+                  {langOn(locale, g.name) ? <span lang="ru">{g.name}</span> : g.name}
                   {g.alias && (
                     <span lang={locale === 'en' ? 'ru' : undefined} className="block text-sm font-normal text-dim">
                       {g.alias}
