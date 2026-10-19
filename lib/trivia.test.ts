@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import { createDb, upsertGameMeta } from './db'
 import {
@@ -11,6 +13,7 @@ import {
 } from './trivia'
 import { tagRu } from './tagsru'
 import { hiddenLibrary } from './testing/hiddenlibrary'
+import { withForeignRuns } from './textlang'
 import type { LibraryGame } from './types'
 
 function game(appid: number, name: string, over: Partial<TriviaCatalogGame> = {}): TriviaCatalogGame {
@@ -478,5 +481,87 @@ describe('buildTrivia по-английски', () => {
       }
     }
     expect(seen).toBeGreaterThan(0)
+  })
+
+  /*
+   * Русские ники и названия на /en. Аудитория сайта по большей части
+   * русскоязычная: «Вася Пупкин» в ростере и «Смута» в библиотеке на
+   * английской странице — частый случай. Переводить их нельзя (имена
+   * собственные), но и читать английским голосом по буквам — тоже: каждый
+   * такой кусок PartyTrivia помечает lang="ru" (withForeignRuns), а для этого
+   * должна знать его дословно. Варианты она видит сама; вклеенное во фразу
+   * сверх вариантов — название в вопросе, третий владелец в разгадке — едет
+   * в q.runs.
+   */
+  const CATALOG_RU_NAMES = CATALOG_EN.map((g) => ({ ...g, name: `Игра ${g.appid}` }))
+  const PARTY_RU_NAMES: TriviaParty[] = [
+    { steamid: 'a', name: 'Вася Пупкин', library: lib([1, 'Смута', 300], [2, 'Вальхейм', 90], [3, 'Factorio', 50]) },
+    {
+      steamid: 'b',
+      name: 'Leo',
+      library: lib([1, 'Смута', 20], [4, 'Terraria', 200], [5, 'Valheim', 50], [6, 'Portal 2', 10]),
+    },
+    // Третий владелец «Смуты»: в разгадку он попадёт, в варианты — нет
+    { steamid: 'c', name: 'Петя', library: lib([1, 'Смута', 10], [7, 'Dota 2', 30], [8, 'Готика', 20]) },
+  ]
+  /** То, что увидит человек: разметка без честно помеченных кусков не несёт кириллицы */
+  const unmarked = (text: string, runs: string[]) =>
+    renderToStaticMarkup(createElement('p', null, withForeignRuns('en', text, runs))).replace(
+      /<span lang="ru">[^<]*<\/span>/g,
+      '',
+    )
+
+  test('русские ники и названия во фразах на /en — дословно в runs: после пометки кириллицы не остаётся', () => {
+    const kinds = new Set<string>()
+    let thirdOwner = 0
+    for (let round = 0; round < 20; round++) {
+      for (const q of buildTrivia({
+        seed: `r:ru-names:${round}`,
+        catalog: CATALOG_RU_NAMES,
+        party: PARTY_RU_NAMES,
+        locale: 'en',
+      })) {
+        const labels = q.options.map((o) => o.label)
+        // те же куски, что PartyTrivia: варианты и runs вопроса
+        const runs = [...labels, ...(q.runs ?? [])]
+        const verdict = `Nope — ${labels[q.answer]}.${q.reveal ? ` ${q.reveal}` : ''}`
+        for (const text of [q.prompt, q.reveal ?? '', verdict]) {
+          expect(unmarked(text, runs), `${q.kind}: ${text}`).not.toMatch(CYRILLIC)
+        }
+        // без runs вопрос остался бы с русским куском — иначе проверка выше вхолостую
+        if (CYRILLIC.test(unmarked(q.prompt, labels)) || CYRILLIC.test(unmarked(q.reveal ?? '', labels))) {
+          kinds.add(q.kind)
+        }
+        if (q.kind === 'hours' && q.reveal?.includes('Петя') && !labels.includes('Петя')) thirdOwner++
+        // в runs — только то, что во фразах есть, и только русское
+        for (const r of q.runs ?? []) {
+          expect(`${q.prompt} ${q.reveal ?? ''}`, r).toContain(r)
+          expect(r, q.prompt).toMatch(CYRILLIC)
+        }
+      }
+    }
+    expect([...kinds].sort()).toEqual(['hours', 'nottag', 'toptrio'])
+    expect(thirdOwner).toBeGreaterThan(0)
+  })
+
+  test('runs нет на русской странице и у латинских имён — ответ API прежний до байта', () => {
+    for (let round = 0; round < 10; round++) {
+      const ru = buildTrivia({ seed: `r:ru-names:${round}`, catalog: CATALOG_RU_NAMES, party: PARTY_RU_NAMES })
+      expect(ru.length).toBeGreaterThan(0)
+      for (const q of ru) expect(q, q.prompt).not.toHaveProperty('runs')
+      const latin = buildTrivia({ seed: `r:en:${round}`, catalog: CATALOG_EN, party: PARTY_EN, locale: 'en' })
+      for (const q of latin) expect(q, q.prompt).not.toHaveProperty('runs')
+    }
+  })
+
+  test('PartyTrivia метит вопрос, варианты и разбор, а не выводит их голой строкой', () => {
+    const src = readFileSync('components/room/PartyTrivia.tsx', 'utf8')
+    expect(src).toContain('const runs = q ? [...q.options.map((o) => o.label), ...(q.runs ?? [])] : []')
+    expect(src).toContain('{withForeignRuns(locale, q.prompt, runs)}')
+    expect(src).toContain('const said = verdict && withForeignRuns(locale, verdict, runs)')
+    expect(src).toContain('<StatusLine text={said} className="sr-only" />')
+    expect(src).toContain('{langOn(locale, o.label) ? <span lang="ru">{o.label}</span> : o.label}')
+    // голые строки данных в разметке не остаются
+    expect(src).not.toMatch(/\{q\.prompt\}|\{verdict\}|^\s*\{o\.label\}\s*$/m)
   })
 })

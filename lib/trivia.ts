@@ -4,6 +4,7 @@ import { ALIVE_POOL, parseTagMap, type Db } from './db'
 import { fmtNumber, tr, type Locale } from './i18n'
 import { playedLine } from './outcome'
 import { tagLabel } from './tagsru'
+import { langOn } from './textlang'
 import type { LibraryGame } from './types'
 
 /**
@@ -34,6 +35,15 @@ export type TriviaQuestion = {
   answer: number
   /** подпись после ответа */
   reveal?: string
+  /**
+   * Куски данных в prompt и reveal — названия игр и ники, — которым на /en
+   * нужен свой lang="ru" (withForeignRuns у PartyTrivia). Фраза приходит
+   * готовой, и имён, вклеенных в неё, клиенту иначе не узнать: варианты он
+   * видит, а название в «Who has more hours in “…”?» или третьего владельца
+   * в разгадке — нет. Только русские (langOn) и только когда есть что метить:
+   * на русской странице поля нет, ответ — прежний до байта.
+   */
+  runs?: string[]
 }
 
 export type TriviaCatalogGame = {
@@ -156,6 +166,12 @@ export function buildTrivia(args: {
   const locale = args.locale ?? 'ru'
   const rnd = mulberry32(hashString(seed))
 
+  /** Данные во фразе вопроса — в поле runs, только русские и только на /en (см. TriviaQuestion) */
+  const runsOf = (names: string[]): { runs?: string[] } => {
+    const runs = [...new Set(names.filter((n) => langOn(locale, n) === 'ru'))]
+    return runs.length ? { runs } : {}
+  }
+
   const out: TriviaQuestion[] = []
   const seen = new Set<string>()
   const add = (q: TriviaQuestion | null) => {
@@ -206,6 +222,8 @@ export function buildTrivia(args: {
       // её нет. Выше десяти часов порог 1.3 сам разводит подписи. На языке
       // вопроса: «1 h 29 min», «2,434 h» — сокращения глоссария
       reveal: sorted.map((x) => `${x.name} — ${playedLine(x.min, locale)}`).join(', '),
+      // Владельцев в разгадке бывает больше двух вариантов — все, у кого игра
+      ...runsOf([sorted[0].game, ...sorted.map((x) => x.name)]),
     }
   }
 
@@ -251,6 +269,7 @@ export function buildTrivia(args: {
       }),
       options: s.items,
       answer: s.answer,
+      ...runsOf(chosen.top.map((g) => g.name)),
     }
   }
 
@@ -283,6 +302,7 @@ export function buildTrivia(args: {
       // запятая между парами слипалась с ними («512,345, Counter-Strike 2 —
       // 1,234,567»). У русского разряды — пробелом, разгадка как была
       reveal: `${hi.name} — ${fmtNumber(locale, hi.ccu!)}${tr(locale, { ru: ', ', en: ' · ' })}${lo.name} — ${fmtNumber(locale, lo.ccu!)}`,
+      ...runsOf([hi.name, lo.name]),
     }
   }
 
@@ -362,6 +382,7 @@ export function buildTrivia(args: {
       }),
       options: s.items,
       answer: s.answer,
+      ...runsOf([target.name]),
     }
   }
 
