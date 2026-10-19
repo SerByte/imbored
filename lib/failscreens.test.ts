@@ -107,8 +107,32 @@ describe('экраны отказа', () => {
     expect(page).toContain("setFailSeed(parseSeedRef(d?.seed)?.name ?? null)")
     expect(page).toMatch(/onClick=\{\(\) => void retry\(null\)\}/)
     expect(read('app', 'api', 'recommend', 'route.ts')).toMatch(
-      /error: 'nocandidates', \.\.\.\(seedName \? \{ seed: \{ appid: seed, name: seedName \} \} : \{\}\)/,
+      /error: 'nocandidates',\s*\.\.\.\(seedName \? \{ seed: \{ appid: seed, name: seedName \} \} : \{\}\)/,
     )
+  })
+
+  /*
+   * Жанр со страницы /games: «с друзьями» у визуальных новелл пусто от
+   * самого жанра, а не от банов. Экран называет жанр (название роут кладёт
+   * в тело отказа, только если жанр применился) и ведёт к выдаче без него —
+   * отдельным запросом, а не повтором того же.
+   */
+  test('/play: отказ выдачи по жанру называет жанр и ведёт к выдаче без него', () => {
+    const page = read('app', '[lang]', 'play', 'page.tsx')
+    expect(page).toMatch(/reason === 'nocandidates' && failGenre !== null\s*\? genreFail\(failGenre\)/)
+    const fn = page.slice(page.indexOf('function genreFail('), page.indexOf('const RECOMMEND_WAIT_MS'))
+    expect(fn, 'повтор того же запроса вернёт тот же отказ').not.toMatch(/retry: (?!false)/)
+    expect(fn).toContain('«${title}»')
+    expect(fn).toContain('genreless: true')
+    expect(fn, 'пусто от жанра, а не от банов').not.toMatch(/бан/)
+    expect(page).toContain('setFailGenre(parseGenreRef(d?.genre)?.title ?? null)')
+    expect(page).toMatch(/\{fail\.genreless && \(\s*<button\s+onClick=\{\(\) => void retry\(null, true\)\}/)
+    // жанр снимается насовсем: запрос читает его из ref, а повтор без жанра его гасит
+    expect(page).toContain('...(genreAsk.current ? { genre: genreAsk.current } : {}),')
+    expect(page).toMatch(/if \(retrying\) return\s*if \(genreless\) genreAsk\.current = null/)
+    const api = read('app', 'api', 'recommend', 'route.ts')
+    expect(api).toContain('const genreTitle = seed === null && genre !== null ? hubTitle(genre, locale) : null')
+    expect(api).toContain('...(genreTitle ? { genre: { title: genreTitle } } : {}),')
   })
 
   /*

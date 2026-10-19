@@ -3,12 +3,13 @@ import path from 'node:path'
 import Link from '@/components/Link'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GameArt } from '@/components/GameArt'
+import { LinkPending } from '@/components/LinkPending'
 import { PatchShare } from '@/components/PatchShare'
 import { setNewsDigest, setNewsDigestEn, upsertGameMeta, upsertNewsItems, type Db, type StoredNews } from '@/lib/db'
 import { ldScript, patchArticleLd, patchBreadcrumbLd } from '@/lib/jsonld'
 import { newsHeading } from '@/lib/newspage'
 import { appBaseUrl, nowSec } from '@/lib/server'
-import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
+import { flight as flightOf, imageHints, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
 import { loadPatch, patchHeading } from './load'
 import PatchPage, { generateMetadata, revalidate } from './page'
@@ -47,9 +48,10 @@ const ISLANDS = new Map<unknown, string>([
   [Link, 'Link'],
   [GameArt, 'GameArt'],
   [PatchShare, 'PatchShare'],
+  [LinkPending, 'LinkPending'],
 ])
 
-function patch(gid: string, publishedAt: number): StoredNews {
+function patch(gid: string, publishedAt: number, extra: Partial<StoredNews> = {}): StoredNews {
   return {
     appid: APPID,
     gid,
@@ -61,10 +63,11 @@ function patch(gid: string, publishedAt: number): StoredNews {
     blocks: [{ kind: 'p', runs: [{ text: 'Починили сеть' }] }],
     bodyHash: `h${gid}`,
     rank: 9000,
+    ...extra,
   }
 }
 
-async function render(): Promise<unknown> {
+async function render(extra: Partial<StoredNews> = {}): Promise<unknown> {
   const now = nowSec()
   await upsertGameMeta(
     db,
@@ -79,7 +82,7 @@ async function render(): Promise<unknown> {
     },
     now,
   )
-  await upsertNewsItems(db, [patch(GID, now - 3600)], now)
+  await upsertNewsItems(db, [patch(GID, now - 3600, extra)], now)
   await setNewsDigest(db, APPID, GID, { tldr: 'Починили сеть.', scale: 'major' }, now)
   return flightOf(await PatchPage({ params: Promise.resolve({ appid: String(APPID), gid: GID }) }), ISLANDS)
 }
@@ -89,6 +92,49 @@ describe('страница патча: мост к своей ленте', () =>
     const links = islandsOf(await render(), 'Link').filter((l) => l.href === '/whatsnew')
     expect(links).toHaveLength(1)
     expect(textOf(links[0]?.children)).toBe('Что нового')
+  })
+
+  /*
+   * /whatsnew — force-dynamic (lib/nav, DYNAMIC_SECTIONS), и префетч этой
+   * ссылки будил функцию на каждом просмотре патча, докрученного до низа:
+   * на проде MISS и private, no-store. Нажатие без префетча не выглядит
+   * зависшим — подпись мерцает, пока едет сервер (LinkPending), как у той
+   * же ссылки в шапке.
+   */
+  test('мост не префетчит динамическую ленту, а нажатие видно сразу', async () => {
+    const [link] = islandsOf(await render(), 'Link').filter((l) => l.href === '/whatsnew')
+    expect(link?.prefetch).toBe(false)
+    expect(islandsOf(link?.children, 'LinkPending')).toHaveLength(1)
+  })
+
+  /*
+   * Между игрой и патчем — архив обновлений игры (/game/<appid>/news): путь
+   * над заголовком и разметка крошек (patchBreadcrumbLd) говорят одно.
+   * Без префетча: архив на ISR, и рендерится он по первому заходу.
+   */
+  test('путь над заголовком — игра → «Обновления», архив без префетча', async () => {
+    const links = islandsOf(await render(), 'Link')
+    expect(links).toContainEqual(expect.objectContaining({ href: `/game/${APPID}` }))
+    const archive = links.filter((l) => l.href === `/game/${APPID}/news`)
+    expect(archive.length).toBeGreaterThanOrEqual(1)
+    expect(archive.every((l) => l.prefetch === false)).toBe(true)
+    expect(textOf(archive[0]?.children)).toBe('Обновления')
+  })
+})
+
+/**
+ * Префетч страницы патча не тащит её кадр туда, где стоит ссылка.
+ *
+ * «Читать патч» на обложке /whatsnew префетчит эту страницу, а подсказку
+ * предзагрузки кадра поста из её RSC-части браузер исполнял на самой
+ * ленте: на телефоне 138 КБ вперёд героя обложки — и это при том, что
+ * обложка нарочно не показывает кадр уже md (Cover.tsx).
+ */
+describe('страница патча: префетч', () => {
+  test('кадр поста не уезжает подсказкой предзагрузки', async () => {
+    const page = await render({ imageUrl: 'https://clan.akamai.steamstatic.com/images/1/patch.png' })
+    expect(JSON.stringify(page), 'кадр поста не нарисован — тест ослеп').toContain('patch.png')
+    expect(imageHints(page)).toEqual([])
   })
 
   test('мост не читает сессию: страница остаётся в ISR на сутки', () => {
@@ -142,6 +188,18 @@ describe('страница патча на /en', () => {
     expect(links).toHaveLength(1)
     expect(textOf(links[0]?.children)).toBe("What's new")
     expect(textOf(tree)).toContain("What changed in your games? What's new has the major patches from your library in one feed.")
+    // и на /en без префетча, с мерцанием подписи
+    expect(links[0]?.prefetch).toBe(false)
+    expect(islandsOf(links[0]?.children, 'LinkPending')).toHaveLength(1)
+  })
+
+  test('путь над заголовком — игра → «Updates», и архив внизу — по-английски', async () => {
+    const tree = await renderEn(true)
+    const archive = islandsOf(tree, 'Link').filter((l) => l.href === `/game/${APPID}/news`)
+    expect(archive).toHaveLength(2)
+    expect(archive.every((l) => l.prefetch === false)).toBe(true)
+    expect(textOf(archive[0]?.children)).toBe('Updates')
+    expect(textOf(archive[1]?.children)).toBe('All Counter-Strike 2 updates')
   })
 
   test('метаданные: английский заголовок и описание, noindex без английского пересказа', async () => {
@@ -280,5 +338,59 @@ describe('карточка патча в чате', () => {
     expect(meta.openGraph).toBeDefined()
     expect(meta.openGraph).not.toHaveProperty('images')
     expect(meta.twitter).not.toHaveProperty('images')
+  })
+})
+
+/*
+ * Уже опубликованные «патчи», которые патчами не были: Battlefield 6 «Looking
+ * Ahead To Season 5», Marathon «Дорожная карта обновлений» — h1 «Что
+ * изменилось», бейдж «Крупное» и пересказ «добавлен режим…» о планах, в карте
+ * сайта и с NewsArticle. Прогон по базе прода для них не нужен: страница
+ * сверяет строку с нынешним правилом сама (isStoredPatch в lib/news) и
+ * отдаёт 404, как распродаже, — Google выкинет её при следующем обходе.
+ */
+describe('страница патча: не патч — 404, даже если база думает иначе', () => {
+  async function stored(item: StoredNews, verdict?: 'none') {
+    const now = nowSec()
+    await upsertNewsItems(db, [item], now)
+    const digest = verdict
+      ? { tldr: 'Планы на сезон.', scale: verdict }
+      : { tldr: 'Добавлен режим Rapid Royale.', scale: 'major' as const }
+    await setNewsDigest(db, APPID, item.gid, digest, now)
+  }
+
+  test('строка, записанная старым правилом как патч, по нынешнему — не патч', async () => {
+    await stored({
+      ...patch('703281025618281700', nowSec() - 3600),
+      title: 'Battlefield 6/REDSEC: Looking Ahead To Season 5 And Beyond',
+      blocks: [
+        {
+          kind: 'ul',
+          items: [
+            [{ text: 'Rapid Royale: added as a limited-time mode' }],
+            [{ text: 'Vehicle balance: changed armor values' }],
+            [{ text: 'Fixed spawn camping — currently exploring options' }],
+          ],
+        },
+      ],
+    })
+    // kind в базе — 'patch': так его записал опрос до правки классификатора
+    const row = await db.execute("SELECT kind FROM news_items WHERE gid = '703281025618281700'")
+    expect(row.rows[0]?.kind).toBe('patch')
+    expect(await loadPatch(String(APPID), '703281025618281700')).toBeNull()
+    // правило одно на оба языка: английская страница того же поста — тоже 404
+    expect(await loadPatch(String(APPID), '703281025618281700', 'en')).toBeNull()
+  })
+
+  test('вердикт модели «не патч» — тоже 404', async () => {
+    await stored(patch('519725096071334702', nowSec() - 3600), 'none')
+    expect(await loadPatch(String(APPID), '519725096071334702')).toBeNull()
+    expect(await loadPatch(String(APPID), '519725096071334702', 'en')).toBeNull()
+  })
+
+  test('настоящий патч страницу не теряет', async () => {
+    await stored(patch('42', nowSec() - 3600))
+    expect((await loadPatch(String(APPID), '42'))?.item.gid).toBe('42')
+    expect((await loadPatch(String(APPID), '42', 'en'))?.item.gid).toBe('42')
   })
 })

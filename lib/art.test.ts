@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   ASSET_BASE,
@@ -6,6 +8,7 @@ import {
   buildAssetUrl,
   legacyArtUrl,
   parseStoreAssets,
+  SHELF_RAIL_SIZES,
   trimArt,
 } from './art'
 
@@ -172,5 +175,39 @@ describe('trimArt', () => {
     expect(trimArt({ hero: 'x' })).toBeNull()
     expect(trimArt(null)).toBeNull()
     expect(trimArt(undefined)).toBeNull()
+  })
+})
+
+/**
+ * sizes полки-ряда описывает ту же ширину, что CSS капсулы.
+ *
+ * Разъезд не виден глазом — капсула рисуется так же, — и всплывает только
+ * в байтах: «260px» при капсуле в 200 уводило телефоны с DPR 2 на
+ * header_2x (втрое тяжелее). Поэтому строка выводится прямо из clamp в
+ * globals.css, а оба ряда обязаны брать её, а не своё число.
+ */
+describe('SHELF_RAIL_SIZES', () => {
+  const ROOT = path.join(__dirname, '..')
+  const read = (...p: string[]) => fs.readFileSync(path.join(ROOT, ...p), 'utf8')
+
+  test('та же кривая, что clamp у .shelf-rail > li', () => {
+    const css = read('app', 'globals.css')
+    const block = css.slice(css.indexOf('.shelf-rail > li {'))
+    const m = block.slice(0, block.indexOf('}')).match(/width:\s*clamp\((\d+)px,\s*(\d+)vw,\s*(\d+)px\)/)
+    expect(m, 'ширина капсулы ряда больше не clamp(px, vw, px) — перепиши SHELF_RAIL_SIZES').not.toBeNull()
+    const [min, vw, max] = [Number(m![1]), Number(m![2]), Number(m![3])]
+    // Последняя ширина окна, где vw ещё не дотягивает до края clamp
+    const lo = Math.floor((min * 100) / vw)
+    const hi = Math.floor((max * 100) / vw)
+    expect(SHELF_RAIL_SIZES).toBe(`(max-width: ${lo}px) ${min}px, (max-width: ${hi}px) ${vw}vw, ${max}px`)
+  })
+
+  test('каждый ряд .shelf-rail берёт её, а не своё число', () => {
+    for (const file of [path.join('app', '[lang]', 'games', 'page.tsx'), path.join('components', 'Evenings.tsx')]) {
+      const src = read(file)
+      expect(src, `${file}: ряд .shelf-rail пропал — поправь список`).toContain('shelf-rail')
+      expect(src, `${file}: sizes капсулы ряда — только SHELF_RAIL_SIZES`).toMatch(/sizes=\{SHELF_RAIL_SIZES\}/)
+      expect(src).not.toMatch(/sizes="2\d\dpx"/)
+    }
   })
 })

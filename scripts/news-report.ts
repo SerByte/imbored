@@ -25,6 +25,14 @@ const FEED_LIMIT = 30
 /** Предикат гостевой ленты — дословная копия idx_news_feed (см. lib/db.ts). */
 const FEED = "kind = 'patch' AND scale = 'major' AND rank > 0"
 
+/**
+ * Патч, как его видят списки (getGameNews, getGamePatchHeads): без вердикта
+ * модели «не патч» (scale 'none', NewsVerdict в lib/db). kind у такой строки
+ * остаётся 'patch' — его пишет эвристика, — и голый kind считал бы патчами
+ * посты, которых нет ни на одной поверхности патчей.
+ */
+const PATCH = "kind = 'patch' AND scale IS NOT 'none'"
+
 function openDb() {
   const url = process.env.TURSO_DATABASE_URL
   if (!url) {
@@ -73,15 +81,15 @@ async function main() {
   const a = await one(`SELECT
       COUNT(*) AS rows_all,
       COUNT(DISTINCT appid) AS games_all,
-      SUM(kind = 'patch') AS patch_rows,
-      COUNT(DISTINCT CASE WHEN kind = 'patch' THEN appid END) AS patch_games,
+      SUM(${PATCH}) AS patch_rows,
+      COUNT(DISTINCT CASE WHEN ${PATCH} THEN appid END) AS patch_games,
       SUM(kind = 'patch' AND scale = 'major') AS major_rows,
       COUNT(DISTINCT CASE WHEN kind = 'patch' AND scale = 'major' THEN appid END) AS major_games,
       SUM(${FEED}) AS feed_rows,
       COUNT(DISTINCT CASE WHEN ${FEED} THEN appid END) AS feed_games
     FROM news_items`)
   console.log(`  всего строк:        ${ru(a.rows_all).padStart(9)}   игр: ${ru(a.games_all)}`)
-  console.log(`  kind='patch':       ${ru(a.patch_rows).padStart(9)}   игр: ${ru(a.patch_games)}`)
+  console.log(`  патчи (без «не патч»): ${ru(a.patch_rows).padStart(6)}   игр: ${ru(a.patch_games)}`)
   console.log(`  + scale='major':    ${ru(a.major_rows).padStart(9)}   игр: ${ru(a.major_games)}`)
   console.log(`  + rank>0 (лента):   ${ru(a.feed_rows).padStart(9)}   игр: ${ru(a.feed_games)}`)
   console.log(`\n  → feed_games ≈ 18  — настоящий провал охвата`)
@@ -144,12 +152,38 @@ async function main() {
       SUM(kind='patch' AND scale='hotfix' AND tldr IS NULL)     AS by_heuristic,
       SUM(kind='patch' AND scale='hotfix' AND tldr IS NOT NULL) AS by_claude,
       SUM(kind='patch' AND scale='major'  AND tldr IS NOT NULL) AS major_claude,
-      SUM(kind='patch' AND scale='major'  AND tldr IS NULL)     AS major_pending
+      SUM(kind='patch' AND scale='major'  AND tldr IS NULL)     AS major_pending,
+      SUM(kind='patch' AND scale='none')                        AS not_patch
     FROM news_items`)
   console.log(`  hotfix эвристикой (looksTrivial):  ${ru(d.by_heuristic).padStart(8)}  ← назад пути нет`)
   console.log(`  hotfix моделью:                    ${ru(d.by_claude).padStart(8)}`)
   console.log(`  major подтверждён моделью:         ${ru(d.major_claude).padStart(8)}`)
   console.log(`  major ждёт пересказа:              ${ru(d.major_pending).padStart(8)}`)
+  // вердикт «не патч» (NewsVerdict в lib/db): эвристика сказала «патч»,
+  // модель — «планы, анонс, стрим или чужая игра»
+  console.log(`  «не патч» по мнению модели:        ${ru(d.not_patch).padStart(8)}`)
+
+  // Вердикт «не патч» снимает пост с карточки, ленты, карты сайта и страницы
+  // патча, и опрос его не пересматривает, пока тело то же. Объяснение модели
+  // не хранится (setNewsDigest пишет пустой пересказ), поэтому проверять его
+  // глазами можно только по заголовку — он здесь. Ошибку возвращает модели
+  // npm run news:reclass -- --apply --renone=appid/gid
+  if (n(d.not_patch)) {
+    const none = await rows(
+      `SELECT n.appid, n.gid, substr(n.title, 1, 60) AS title, g.name,
+          date(n.published_at, 'unixepoch') AS d
+        FROM news_items n LEFT JOIN games g ON g.appid = n.appid
+        WHERE n.kind = 'patch' AND n.scale = 'none'
+        ORDER BY n.tldr_at DESC LIMIT 40`,
+    )
+    console.log('\n  «не патч» — свежие вердикты (ключ для --renone, игра, заголовок):')
+    for (const r of none) {
+      console.log(
+        `    ${`${r.appid}/${r.gid}`.padEnd(30)}${String(r.name ?? '—').slice(0, 24).padEnd(26)}` +
+          `${r.d}  ${String(r.title)}`,
+      )
+    }
+  }
 
   // ── E. Форензика rank ──────────────────────────────────────────────────
   head('E. Крупные патчи, выпавшие из ленты по rank = 0')
@@ -282,7 +316,7 @@ async function main() {
   head('H. Что самое свежее на каждом уровне фильтра')
   const h = await one(`SELECT
       (SELECT MAX(published_at) FROM news_items) AS any_news,
-      (SELECT MAX(published_at) FROM news_items WHERE kind='patch') AS patch,
+      (SELECT MAX(published_at) FROM news_items WHERE ${PATCH}) AS patch,
       (SELECT MAX(published_at) FROM news_items WHERE kind='patch' AND scale='major') AS major,
       (SELECT MAX(published_at) FROM news_items WHERE ${FEED}) AS feed,
       (SELECT MAX(updated_at) FROM news_items) AS last_write`)
@@ -317,7 +351,7 @@ async function main() {
   const samples = await rows(
     `SELECT n.title, n.tldr, length(n.tldr) AS len, g.name
        FROM news_items n LEFT JOIN games g ON g.appid = n.appid
-      WHERE n.tldr IS NOT NULL AND n.tldr_at IS NOT NULL
+      WHERE n.tldr IS NOT NULL AND n.tldr_at IS NOT NULL AND n.scale IS NOT 'none'
       ORDER BY n.tldr_at DESC LIMIT 6`,
   )
   for (const r of samples) {
@@ -327,7 +361,7 @@ async function main() {
   const shape = await one(
     `SELECT COUNT(*) AS n, SUM(length(tldr) < 20) AS too_short,
             SUM(tldr LIKE '%…') AS cut, AVG(length(tldr)) AS avg_len
-       FROM news_items WHERE tldr IS NOT NULL`,
+       FROM news_items WHERE tldr IS NOT NULL AND scale IS NOT 'none'`,
   )
   console.log(
     `  всего пересказов: ${ru(shape.n)}   средняя длина: ${Math.round(n(shape.avg_len))}` +

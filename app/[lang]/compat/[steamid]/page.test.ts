@@ -3,6 +3,7 @@ import Link from '@/components/Link'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { Ambient } from '@/components/Ambient'
 import { GameArt } from '@/components/GameArt'
+import { PriceTag } from '@/components/PriceTag'
 import { TilePending } from '@/components/TilePending'
 import { Magnet } from '@/components/Magnet'
 import { SplitHeading } from '@/components/SplitHeading'
@@ -343,6 +344,9 @@ describe('/compat/[steamid] на /en: русский ник помечен lang=
     [CopyCompatLink, 'CopyCompatLink'],
     [TilePending, 'TilePending'],
     [Ambient, 'Ambient'],
+    // ценник полки «на будущее» — клиентский ради языка (useLocale): в кэш
+    // уходят его пропсы, а вызовом вне рендера React хук упал бы
+    [PriceTag, 'PriceTag'],
   ])
   const NICK = 'Костя'
 

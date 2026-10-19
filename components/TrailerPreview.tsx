@@ -13,6 +13,19 @@ import { Icon } from '@/components/Icon'
 type State = 'idle' | 'loading' | 'playing' | 'failed'
 
 /**
+ * Экраны, где постеру хватает кадра 600×338 (smallPoster).
+ *
+ * Порог — тот же, что у слайдера скриншотов (lib/shots, pickShotSize):
+ * маленький кадр, пока бокс × DPR (не больше двух) укладывается в 900
+ * физических пикселей. Бокс на карточке игры — окно минус поля px-5
+ * (40 px), значит при DPR 2 — до 490 px окна: это любой телефон в
+ * портрете. Шире — планшет, телефон боком, десктоп: там остаётся полный
+ * кадр ролика. Медиа-условие, а не srcSet с шириной: по дескрипторам
+ * телефон с DPR 2.6 сам выбрал бы 1920 — ровно то, от чего уходим.
+ */
+export const SMALL_POSTER_MEDIA = '(max-width: 490px)'
+
+/**
  * Микротрейлер Steam прямо на карточке: секунды геймплея без ухода на YouTube
  * и без вкладки магазина.
  *
@@ -45,12 +58,27 @@ export function TrailerPreview({
   trailer,
   name,
   compact = false,
+  smallPoster,
   className = '',
 }: {
   trailer: Trailer
   name: string
   /** Свёрнут в строку-кнопку до нажатия: герой /play, где место под текст */
   compact?: boolean
+  /**
+   * Постер для телефона — кадр 600×338 из скриншотов игры.
+   *
+   * Постер ролика — movie_full, 1920×1080 на 110–453 КБ, а на телефоне бокс
+   * шириной ~370 CSS px. «Ленивость» его не спасала: блок стоит сразу под
+   * героем, в пределах дистанции ленивой загрузки Chrome, и файл качался
+   * со стартом страницы рядом с LCP-картинкой героя (замер на проде:
+   * 426 КБ на /game/1086940, и ещё 453 КБ на /game/1245620). Кадр игры, а
+   * не ролика — честный размен: «В движении» нажимает меньшинство, а
+   * маленький первый скриншот страница всё равно берёт для своего блока
+   * «Скриншоты» (components/GameShots), так что на телефоне он ещё и из
+   * кэша. Без скриншотов — полный кадр, как раньше.
+   */
+  smallPoster?: string
   className?: string
 }) {
   const locale = useLocale()
@@ -102,10 +130,22 @@ export function TrailerPreview({
           {forReader}
         </button>
       )}
+      {/*
+        Рамка плеера — .media-card: тёмная поверхность в обеих темах, как сам
+        ролик. Кнопка на постере — .btn-glass с текстом и подложкой из --ink, и
+        в светлой теме она становилась тёмным пятном на тёмном кадре: замер на
+        проде — 1.34:1 на CS2, 1.70:1 на Cyberpunk 2077, 2.48:1 на Hades. С
+        тёмными токенами подпись светлая, «без звука», спиннер и строка отказа
+        — тоже. Класс на рамке, а не на слое над постером: постера у трейлера
+        бывает и нет, и тогда под кнопкой фон самой рамки — молочный
+        bg-surface дал бы белую подпись на светлом. Фон теперь --bg кино-зоны.
+        Строка компактного вида выше стоит в потоке страницы и держит цвета
+        темы. Сторож — lib/trailer.test.ts.
+      */}
       <div
         ref={boxRef}
         tabIndex={-1}
-        className={`relative aspect-video w-full overflow-hidden rounded-(--radius-panel) border border-edge bg-surface ${
+        className={`media-card relative aspect-video w-full overflow-hidden rounded-(--radius-panel) border border-edge ${
           open ? '' : 'hidden'
         }`}
       >
@@ -132,14 +172,18 @@ export function TrailerPreview({
         {state !== 'playing' && (
           <div className="absolute inset-0">
             {open && trailer.poster && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={trailer.poster}
-                alt=""
-                loading="lazy"
-                decoding="async"
-                className="absolute inset-0 h-full w-full object-cover"
-              />
+              // display: contents — <picture> не создаёт бокса, картинка
+              // ложится на тот же absolute-слой, что и без обёртки
+              <picture className="contents">
+                {smallPoster && <source media={SMALL_POSTER_MEDIA} srcSet={smallPoster} />}
+                <img
+                  src={trailer.poster}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+              </picture>
             )}
             <div className="absolute inset-0 flex items-center justify-center p-4">
               {/*

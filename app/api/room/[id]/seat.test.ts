@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createRoom, getRoom, issueRoomDeck, joinRoom, roomMembers, roomVotes, type Db } from '@/lib/db'
 import { nowSec } from '@/lib/server'
 import { freshDb, params, post, signIn } from '@/lib/testing/route'
@@ -202,9 +202,25 @@ describe('гость по ссылке', () => {
  * Чужая ссылка на профиль жертвы сажала её в любую комнату — хоть в свою
  * собственную, собранную с демо, — и там выедала потолки, общие с настоящей
  * жертвой: сто двадцать голосов в минуту, и в своей пати человек свайпал в 429.
+ *
+ * Часы стоят: окна лимита фиксированные (windowStart в lib/ratelimit), и сто
+ * двадцать один голос подряд на живых часах изредка переваливал через край
+ * минуты — под нагрузкой полного прогона сто двадцать первый попадал в новое
+ * окно и получал 200 вместо 429.
  */
 describe('личные потолки комнаты', () => {
   const OTHER = 'XYZ789'
+  /** Тридцать секунд в минутное окно голосов и пятиминутное лайков: стоящие часы его не покинут */
+  const MID_WINDOW_MS = (Math.floor(1_760_000_000 / 600) * 600 + 330) * 1000
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(MID_WINDOW_MS)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
 
   /** Злоумышленник посадил профиль Алисы по ссылке в свою комнату */
   async function seatedElsewhere(): Promise<void> {

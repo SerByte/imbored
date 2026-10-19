@@ -36,7 +36,7 @@
 
 import { DEFAULT_LOCALE, LOCALES, lp, splitLocale, toLocale, type Locale } from './i18n'
 import { parseLean, parseMood } from './mood'
-import { parseSeedParam, roomPresetByKey, roomSeedOf } from './presets'
+import { parseGenreParam, parseSeedParam, roomPresetByKey, roomSeedOf } from './presets'
 
 /**
  * Места назначения — закрытый список (см. выше). Тексты лендинга к ним — в
@@ -86,6 +86,11 @@ const isDestination = (path: string): path is DestinationPath =>
  * похожими на неё, и после входа выдача обязана быть ими, а не обычной.
  * Разбор — parseSeedParam из того же lib/presets: lib/recommend сюда не
  * тянем, модуль читают лендинг и proxy.ts.
+ *
+ * Жанр (genre) — так же: гость шёл со страницы «Рогалики» за своими
+ * рогаликами, и после входа выдача обязана быть ими. Здесь — только форма
+ * адреса (parseGenreParam): словарь жанров лендингу и proxy.ts не нужен,
+ * незнакомый жанр сервер подбора молча не применит.
  */
 function playQuery(src: URLSearchParams): URLSearchParams {
   const out = new URLSearchParams()
@@ -103,6 +108,8 @@ function playQuery(src: URLSearchParams): URLSearchParams {
   if (lean) out.set('lean', lean)
   const seed = parseSeedParam(src.get('seed'))
   if (seed !== null) out.set('seed', String(seed))
+  const genre = parseGenreParam(src.get('genre'))
+  if (genre) out.set('genre', genre)
   return out
 }
 

@@ -6,6 +6,7 @@ import { getGameMeta, migrateDb, upsertGameMeta } from './db'
 import {
   fetchAppDetails,
   fetchStoreItems,
+  fetchStoreLanguages,
   fetchStoreMedia,
   parseStoreMedia,
   mergeMeta,
@@ -444,6 +445,37 @@ describe('русский язык из GetItems', () => {
     // записать строку: ноль у Balatro тоже знание
     expect(media.get(730)).toEqual({ ruLang: 1 })
     expect(media.get(2379780)).toEqual({ ruLang: 0 })
+  })
+
+  /**
+   * Догон языка кроном карточек (runCardCatchUp в lib/pagejob) — по сотне игр
+   * за звено, и ему нужен ОДИН флаг. С кадрами и трейлерами та же сотня
+   * весила бы втрое больше и шла бы под таймаутом медиа, а писать их догону
+   * не за чем — это работа среза и доливки.
+   */
+  test('fetchStoreLanguages: один флаг языков и ступень на игру; молчание — не ноль', async () => {
+    const requests: Array<Record<string, unknown>> = []
+    const fetchFn = (async (url: string) => {
+      const input = new URL(String(url)).searchParams.get('input_json') ?? '{}'
+      requests.push((JSON.parse(input) as { data_request: Record<string, unknown> }).data_request)
+      return new Response(JSON.stringify(LANGUAGES_RESPONSE), { status: 200 })
+    }) as unknown as typeof fetch
+
+    // 42 в ответе нет: Steam о ней промолчал — «не знаем», в карту не попадает
+    const got = await fetchStoreLanguages([730, 1145360, 1091500, 1172470, 2379780, 42, -5], { fetchFn })
+    expect(requests).toEqual([{ include_supported_languages: true }])
+    expect(got).toEqual(
+      new Map([
+        [730, 1],
+        [1145360, 2],
+        [1091500, 3],
+        [1172470, 3],
+        [2379780, 0],
+      ]),
+    )
+    // отрицательный appid (другой магазин) в Steam не спрашиваем вовсе
+    expect(await fetchStoreLanguages([-5], { fetchFn })).toEqual(new Map())
+    expect(requests).toHaveLength(1)
   })
 })
 

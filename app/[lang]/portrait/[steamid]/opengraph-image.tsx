@@ -1,5 +1,5 @@
-import { ImageResponse } from 'next/og'
 import { OG_BG, OG_INK } from '@/lib/og'
+import { isrImage } from '@/lib/ogresponse'
 import { CardImage, fonts, loadCardData } from './share-card'
 import { isLocale } from '@/lib/i18n'
 
@@ -43,7 +43,7 @@ export default async function Image({ params }: { params: Promise<{ lang: string
   const data = await loadCardData(steamid, lang)
 
   if (!data) {
-    return new ImageResponse(
+    return isrImage(
       (
         <div
           style={{
@@ -65,5 +65,5 @@ export default async function Image({ params }: { params: Promise<{ lang: string
     )
   }
 
-  return new ImageResponse(<CardImage data={data} wide />, { ...size, fonts: await fonts })
+  return isrImage(<CardImage data={data} wide />, { ...size, fonts: await fonts })
 }

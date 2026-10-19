@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
+  archiveBreadcrumbLd,
+  archiveCrumb,
   gameBreadcrumbLd,
   gameJsonLd,
   genreBreadcrumbLd,
@@ -9,6 +11,7 @@ import {
   patchBreadcrumbLd,
   websiteJsonLd,
 } from './jsonld'
+import { newsHeading } from './newspage'
 import { SITE_DESCRIPTION, siteDescription } from './site'
 import { regionCurrency } from './steamregion'
 import { tagRu } from './tagsru'
@@ -51,6 +54,41 @@ describe('gameJsonLd', () => {
     // «нет» — не повод назвать другой язык: остальных мы не храним
     expect(ld({ ruLang: 0 })).not.toHaveProperty('inLanguage')
     expect(ld()).not.toHaveProperty('inLanguage')
+  })
+
+  test('русское название магазина — alternateName, а name остаётся английским', () => {
+    // Карточка показывает его вторым рядом под заголовком — разметка
+    // называет то же самое и по тому же правилу (pageNameRu)
+    const witcher = (nameRu: string | null | undefined) =>
+      gameJsonLd({
+        meta: game({ appid: 292030, name: 'The Witcher 3: Wild Hunt' }),
+        nameRu,
+        baseUrl: BASE,
+        currency: 'USD',
+        now: NOW,
+      })
+    expect(witcher('Ведьмак 3: Дикая Охота')).toMatchObject({
+      name: 'The Witcher 3: Wild Hunt',
+      alternateName: 'Ведьмак 3: Дикая Охота',
+    })
+    expect(witcher(null)).not.toHaveProperty('alternateName')
+    expect(witcher(undefined)).not.toHaveProperty('alternateName')
+    expect(witcher('  ')).not.toHaveProperty('alternateName')
+    // повтор заголовка ничего не называет
+    expect(witcher('The Witcher 3: Wild Hunt')).not.toHaveProperty('alternateName')
+  })
+
+  test('на /en русского второго названия нет: его нет и под заголовком (pageNameRu)', () => {
+    const out = gameJsonLd({
+      meta: game({ appid: 292030, name: 'The Witcher 3: Wild Hunt' }),
+      nameRu: 'Ведьмак 3: Дикая Охота',
+      baseUrl: BASE,
+      locale: 'en',
+      currency: 'USD',
+      now: NOW,
+    })
+    expect(out.name).toBe('The Witcher 3: Wild Hunt')
+    expect(out).not.toHaveProperty('alternateName')
   })
 
   test('минимальная карточка — это VideoGame с адресом страницы', () => {
@@ -439,12 +477,19 @@ describe('страница патча', () => {
     expect(out).not.toHaveProperty('about')
   })
 
-  test('крошки: главная → игра → патч; без игры — два уровня', () => {
+  /*
+   * Было три уровня: главная → игра → патч. Между игрой и патчем встал
+   * архив обновлений игры (/game/<appid>/news) — его страница показывает
+   * этот путь строкой над заголовком, и разметка повторяет ровно её. Без игры
+   * в каталоге архива нет (ему нечего назвать), и крошки остаются двумя.
+   */
+  test('крошки: главная → игра → обновления → патч; без игры — два уровня', () => {
     const withGame = patchBreadcrumbLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE })
-    expect(withGame.itemListElement.map((i) => i.item)).toEqual([
-      'https://imbored.cc/',
-      'https://imbored.cc/game/730',
-      'https://imbored.cc/game/730/news/5123894512345',
+    expect(withGame.itemListElement.map((i) => [i.position, i.name, i.item])).toEqual([
+      [1, 'imbored', 'https://imbored.cc/'],
+      [2, 'Counter-Strike 2', 'https://imbored.cc/game/730'],
+      [3, 'Обновления', 'https://imbored.cc/game/730/news'],
+      [4, newsHeading(item.title, 'Counter-Strike 2'), 'https://imbored.cc/game/730/news/5123894512345'],
     ])
     expect(patchBreadcrumbLd({ item, game: null, baseUrl: BASE }).itemListElement).toHaveLength(2)
   })
@@ -500,7 +545,17 @@ describe('адреса разметки на языке страницы', () =>
     expect(article.inLanguage).toBe('en')
     expect(
       patchBreadcrumbLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE, locale: 'en' }).itemListElement.map((i) => i.item),
-    ).toEqual(['https://imbored.cc/en', 'https://imbored.cc/en/game/730', 'https://imbored.cc/en/game/730/news/5123894512345'])
+    ).toEqual([
+      'https://imbored.cc/en',
+      'https://imbored.cc/en/game/730',
+      'https://imbored.cc/en/game/730/news',
+      'https://imbored.cc/en/game/730/news/5123894512345',
+    ])
+    expect(
+      archiveBreadcrumbLd({ appid: 730, gameName: 'Counter-Strike 2', baseUrl: BASE, locale: 'en' }).itemListElement.map(
+        (i) => i.item,
+      ),
+    ).toEqual(['https://imbored.cc/en', 'https://imbored.cc/en/game/730', 'https://imbored.cc/en/game/730/news'])
   })
 })
 
@@ -651,5 +706,39 @@ describe('тексты разметки на языке страницы', () =>
     expect(JSON.stringify(out)).not.toMatch(CYRILLIC)
     // на русской — ru, как было
     expect(patchArticleLd({ item, game: null, baseUrl: BASE }).inLanguage).toBe('ru')
+  })
+
+  test('крошки патча и архива на /en — «Updates», как в строке над заголовком', () => {
+    const item = {
+      appid: 730,
+      gid: '5123894512345',
+      title: 'Counter-Strike 2: Release Notes for 9/25/2026',
+      url: 'https://store.steampowered.com/news/app/730/view/5123894512345',
+      publishedAt: Date.parse('2026-09-25T18:00:00Z') / 1000,
+    }
+    const patch = patchBreadcrumbLd({ item, game: { name: 'Counter-Strike 2' }, baseUrl: BASE, locale: 'en' })
+    expect(patch.itemListElement.map((i) => i.name).slice(0, 3)).toEqual(['imbored', 'Counter-Strike 2', 'Updates'])
+    const archive = archiveBreadcrumbLd({ appid: 730, gameName: 'Counter-Strike 2', baseUrl: BASE, locale: 'en' })
+    expect(archive.itemListElement.map((i) => [i.position, i.name, i.item])).toEqual([
+      [1, 'imbored', 'https://imbored.cc/en'],
+      [2, 'Counter-Strike 2', 'https://imbored.cc/en/game/730'],
+      [3, 'Updates', 'https://imbored.cc/en/game/730/news'],
+    ])
+    expect(JSON.stringify([patch, archive])).not.toMatch(CYRILLIC)
+    // имя архива — одно на разметку и видимый путь, по-русски — прежняя константа
+    expect(archiveCrumb('en')).toBe('Updates')
+    expect(archiveCrumb()).toBe('Обновления')
+  })
+})
+
+describe('архив обновлений игры', () => {
+  test('крошки: главная → игра → обновления, как в строке над заголовком', () => {
+    const out = archiveBreadcrumbLd({ appid: 730, gameName: 'Counter-Strike 2', baseUrl: BASE })
+    expect(out['@type']).toBe('BreadcrumbList')
+    expect(out.itemListElement.map((i) => [i.position, i.name, i.item])).toEqual([
+      [1, 'imbored', 'https://imbored.cc/'],
+      [2, 'Counter-Strike 2', 'https://imbored.cc/game/730'],
+      [3, 'Обновления', 'https://imbored.cc/game/730/news'],
+    ])
   })
 })

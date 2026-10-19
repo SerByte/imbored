@@ -2,16 +2,30 @@
 
 import { AnimatePresence, m } from 'framer-motion'
 import { MotionLazy } from '@/components/motion/MotionLazy'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { useLocale } from '@/components/LocaleProvider'
 import { Portal } from '@/components/Portal'
 import { tr } from '@/lib/i18n'
-import { stepIndex, swipeStep } from '@/lib/lightbox'
+import { pressSwipes, stepIndex, swipeStep, zoomedIn } from '@/lib/lightbox'
 import { backdropOf, holdScroll, makeInert } from '@/lib/pagelock'
 import { Icon } from '@/components/Icon'
 import { StatusLine } from '@/components/StatusLine'
 
 const EASE = [0.22, 1, 0.36, 1] as const
+
+/*
+ * Увеличена ли страница щипком. Щипок меняет масштаб визуального вьюпорта и
+ * шлёт его resize — подписка на него, а не эффект с состоянием: масштаб
+ * живёт в браузере, компонент его только читает. Без visualViewport масштаба
+ * не знаем — считаем неувеличенным, как и сервер.
+ */
+function subscribeZoom(onChange: () => void) {
+  const viewport = window.visualViewport
+  viewport?.addEventListener('resize', onChange)
+  return () => viewport?.removeEventListener('resize', onChange)
+}
+const readZoom = () => zoomedIn(window.visualViewport?.scale)
+const serverZoom = () => false
 
 /**
  * Полноэкранный просмотр кадра.
@@ -86,6 +100,8 @@ export function Lightbox({
   const pressedHereRef = useRef(false)
   const isOpen = index !== null
   const many = images.length > 1
+  /** Страница увеличена щипком — см. touch-action оверлея ниже. */
+  const zoomed = useSyncExternalStore(subscribeZoom, readZoom, serverZoom)
 
   /*
    * Фокус забираем внутрь и возвращаем обратно.
@@ -175,6 +191,7 @@ export function Lightbox({
           <m.div
             ref={overlayRef}
             className="media-card !bg-transparent fixed inset-0 z-[100] flex items-center justify-center p-5 touch-pinch-zoom select-none"
+            style={zoomed ? { touchAction: 'manipulation' } : undefined}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -184,6 +201,21 @@ export function Lightbox({
               занимает не весь экран, и промах мимо него листать тоже должен.
               touch-pinch-zoom: палец ведёт свайп, а не прокрутку, но щипок
               остаётся — кадр на телефоне рассматривают, увеличивая.
+              Увеличенный кадр палец не листает, а водит по нему: пока
+              страница увеличена, touch-action — manipulation, и браузер
+              двигает вьюпорт, а нажатие свайп не начинает (pressSwipes в
+              lib/lightbox). Иначе после щипка один палец не мог сдвинуть
+              увеличенный угол и вместо этого уводил к следующему кадру —
+              увеличенным оставался тот же угол уже чужого кадра. Листают
+              увеличенный кадр кнопки по бокам и стрелки клавиатуры, а щипок
+              обратно возвращает и свайп.
+              Без увеличения touch-action обязан вернуться к pinch-zoom: с
+              manipulation при масштабе 1 Chrome начинал бы панораму на
+              каждом свайпе и гасил его pointercancel'ом. Браузер читает
+              touch-action в начале касания, так что переключение после
+              щипка успевает к следующему жесту. Касание по фону и при
+              увеличении закрывает окно — страница остаётся увеличенной, как
+              после любого закрытия: сбросить масштаб надёжно нечем.
               select-none: протяжка мышью выделяла кадр, и следующая протяжка
               тащила уже выделение — dragstart, pointercancel, кадр стоит
               (замерено на втором свайпе подряд).
@@ -194,7 +226,12 @@ export function Lightbox({
             onPointerDown={(e) => {
               swipedRef.current = false
               pressedHereRef.current = true
-              pressRef.current = many ? { x: e.clientX, y: e.clientY, id: e.pointerId } : null
+              // Масштаб — в момент нажатия, а не из zoomed: resize вьюпорта
+              // может прийти позже, чем палец ляжет снова
+              pressRef.current =
+                many && pressSwipes(e.pointerType, window.visualViewport?.scale)
+                  ? { x: e.clientX, y: e.clientY, id: e.pointerId }
+                  : null
             }}
             onPointerUp={(e) => {
               const press = pressRef.current

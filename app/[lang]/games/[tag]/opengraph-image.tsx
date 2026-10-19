@@ -1,25 +1,30 @@
-import { ImageResponse } from 'next/og'
 import { ogFonts, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { PosterWall, postersOf, WallShade, WALL_POSTERS } from '@/lib/ogcard'
+import { isrImage } from '@/lib/ogresponse'
 import { CANVAS_WIDE, WALL_WIDE } from '@/lib/ogwall'
 import { loadGenre } from './load'
 import { isLocale, pl, tr } from '@/lib/i18n'
 
 /**
- * Подпись картинки — русская, как была: Next читает alt константой модуля, а
- * не на запрос. generateImageMetadata перенёс бы картинку на адрес
+ * Подпись картинки — русская: Next читает alt константой модуля, а не на
+ * запрос. generateImageMetadata перенёс бы картинку на адрес
  * …/opengraph-image/<id>, и у русской страницы сменился бы сам og:image.
  * Английскую подпись на /en ставит страница своим openGraph.images с этой же
  * карточкой (EN_CARD в page.tsx; почему так можно — у карточки игры,
  * app/[lang]/game/[appid]).
+ *
+ * Одна на сегмент — и для жанра, и для подборки (/games/coop…): «Жанр» у
+ * карточки «Кооперативных игр» говорил бы скринридеру неправду.
  */
-export const alt = 'Жанр — imbored'
+export const alt = 'Подборка игр — imbored'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
 /**
  * Карточка жанра для чатов и выдачи: стена постеров его верхних игр — тот же
- * жест, что у портрета и сравнения (lib/ogcard), — и название жанра.
+ * жест, что у портрета и сравнения (lib/ogcard), — и название жанра. У
+ * подборки (HUB_FACETS: «с другом», «бесплатные»…) — то же самое с её
+ * заголовком: «во что поиграть с другом» пересылают чаще любого жанра.
  *
  * Сутки кэша, как у страницы: список меняется не чаще. Пустой
  * generateStaticParams регистрирует сегмент — без него revalidate не значит
@@ -44,7 +49,8 @@ export default async function Image({ params }: { params: Promise<{ lang: string
   const { lang, tag } = await params
   // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
   if (!isLocale(lang)) return new Response('Not found', { status: 404 })
-  // Дальше lang — язык страницы жанра: заголовок (hubTitle) и подписи на нём
+  // Дальше lang — язык страницы: заголовок (hubTitle жанра или facetCopy
+  // подборки) и подписи на нём
   const locale = lang
   // null — незнакомый адрес: карточка без стены, с общим заголовком
   const genre = await loadGenre(tag, locale)
@@ -54,7 +60,7 @@ export default async function Image({ params }: { params: Promise<{ lang: string
   const n = games.length
   const gamesWord = pl(locale, n, { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] })
 
-  return new ImageResponse(
+  return isrImage(
     (
       <div
         style={{
@@ -80,27 +86,47 @@ export default async function Image({ params }: { params: Promise<{ lang: string
             flexDirection: 'column',
           }}
         >
+          {/* Подборка (/games/coop…) — не жанр: и шапка, и подпись говорят,
+              по чему отобрано, а не «жанр главный» */}
           <div style={{ fontSize: 20, letterSpacing: 6, color: OG_EMBER, marginBottom: 18 }}>
-            {tr(locale, { ru: 'IMBORED.CC · ИГРЫ ПО ЖАНРАМ', en: 'IMBORED.CC · GAMES BY GENRE' })}
+            {genre?.kind === 'facet'
+              ? tr(locale, { ru: 'IMBORED.CC · ПОДБОРКИ', en: 'IMBORED.CC · COLLECTIONS' })
+              : tr(locale, { ru: 'IMBORED.CC · ИГРЫ ПО ЖАНРАМ', en: 'IMBORED.CC · GAMES BY GENRE' })}
           </div>
           {/* Запас снизу — под хвосты кириллицы (см. карточку портрета) */}
           <div style={{ fontSize: 76, lineHeight: 1.12, marginBottom: 22 }}>
             {genre ? genre.title : tr(locale, { ru: 'Игры по жанрам', en: 'Games by genre' })}
           </div>
-          {/* Порядок — по числу отзывов, как на странице, а не по их доле:
-              «ranked by reviews» читалось бы рейтингом. «this» — жанр из
-              заголовка над строкой. Не шире русской (замер Manrope 800,
-              26 px: 693 против 751 px у «40 игр…»), в строку на 1072 px */}
+          {/* Пустой список — сборка без базы или подборка, которой ещё нечем
+              ответить («на 20 минут» ждёт уверенной семантики). Подборке —
+              своя строка: «Тридцать жанров» под «Играми на 20 минут» звали бы
+              её жанром и обещали бы то, чего на странице нет.
+
+              По-английски порядок — по числу отзывов, как на странице, а не
+              по их доле: «ranked by reviews» читалось бы рейтингом. «this» —
+              жанр из заголовка над строкой. Не шире русской (замер Manrope
+              800, 26 px: 693 против 751 px у «40 игр…»), в строку на 1072 px;
+              строки подборки короче жанровой на обоих языках */}
           <div style={{ fontSize: 26, color: OG_DIM }}>
-            {n > 0
-              ? tr(locale, {
-                  ru: `${n} ${gamesWord}, для которых жанр главный, — по отзывам игроков`,
-                  en: `${n} ${gamesWord} where this is a main tag, most-reviewed first`,
-                })
-              : tr(locale, {
-                  ru: 'Тридцать жанров — по отзывам игроков Steam',
-                  en: 'Thirty genres, most-reviewed games first',
-                })}
+            {genre?.kind === 'facet'
+              ? n > 0
+                ? tr(locale, {
+                    ru: `${n} ${gamesWord} — по отзывам игроков Steam`,
+                    en: `${n} ${gamesWord}, most-reviewed on Steam first`,
+                  })
+                : tr(locale, {
+                    ru: 'Подборка собирается — по отзывам игроков Steam',
+                    en: 'Collection in the works, based on Steam player reviews',
+                  })
+              : n > 0
+                ? tr(locale, {
+                    ru: `${n} ${gamesWord}, для которых жанр главный, — по отзывам игроков`,
+                    en: `${n} ${gamesWord} where this is a main tag, most-reviewed first`,
+                  })
+                : tr(locale, {
+                    ru: 'Тридцать жанров — по отзывам игроков Steam',
+                    en: 'Thirty genres, most-reviewed games first',
+                  })}
           </div>
         </div>
       </div>

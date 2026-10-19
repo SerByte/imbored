@@ -72,6 +72,37 @@ export function parseSeedRef(x: unknown): SeedRef | null {
 }
 
 /**
+ * Жанр со страницы /games — эхо genre из /api/recommend: название для подписи
+ * и были ли в пятёрке свои. Словаря жанров на /play нет (он стоит у потолка
+ * бюджета первой загрузки), поэтому название приходит с сервера.
+ */
+export type GenreRef = { title: string; own: boolean }
+
+/** Эхо жанра или null — выдача без жанра, в том числе при любом мусоре */
+export function parseGenreRef(x: unknown): GenreRef | null {
+  if (!x || typeof x !== 'object') return null
+  const g = x as Record<string, unknown>
+  return typeof g.title === 'string' && g.title ? { title: g.title, own: g.own === true } : null
+}
+
+/**
+ * Подпись выдачи по жанру — одной строкой. «Только», а не «из твоей
+ * библиотеки»: до двух мест пятёрки и при своих отдаются магазину
+ * (MAX_NEW_PICKS), и подпись над магазинным героем врала бы. Своих в
+ * пятёрке нет — так и сказано: иначе человек со страницы «Рогалики» решил бы,
+ * что рогалики в его библиотеке — вот эти.
+ *
+ * «Своих не нашлось», а не «в библиотеке таких нет»: own: false приходит и
+ * тогда, когда свои рогалики есть, но все под баном, на паузе «Не сейчас» или
+ * не годятся «с друзьями» (filterActual), — и «таких нет» человеку с тремя
+ * рогаликами на полке было бы неправдой.
+ */
+export function genreLine(g: GenreRef): string {
+  const what = g.title.charAt(0).toLowerCase() + g.title.slice(1)
+  return g.own ? `Только ${what}` : `Только ${what}: своих таких не нашлось — эти из магазина`
+}
+
+/**
  * Выдача целиком: то, что пришло, плюс то, о чём спрашивали.
  *
  * scope — из запроса, а не из эха сервера: при фокусе «нераспакованное» сервер
@@ -91,6 +122,12 @@ export type Deal = {
    * и подпись обязаны говорить, подо что собрана выдача. null — обычная.
    */
   seed: SeedRef | null
+  /**
+   * Жанр со страницы /games, под который собрана выдача, — из эха, как и
+   * seed: подпись обязана говорить, подо что собрана выдача на экране. null —
+   * без жанра, в том числе у записи на устройстве до этого поля.
+   */
+  genre: GenreRef | null
   /**
    * Подталкивание, под которое собрана выдача (lib/nudge.ts), — из эха, как и
    * lean: нажатым чипс под героем показывается по ответу, а не по нажатию.
@@ -131,6 +168,7 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     engine?: unknown
     lean?: unknown
     seed?: unknown
+    genre?: unknown
     nudge?: unknown
     continue?: unknown
     nowSec?: unknown
@@ -147,6 +185,7 @@ export function dealFrom(body: unknown, scope: Scope): Deal | null {
     lean: parseLean(d.lean),
     scope,
     seed: parseSeedRef(d.seed),
+    genre: parseGenreRef(d.genre),
     nudge: parseNudge(d.nudge),
     nowSec: typeof d.nowSec === 'number' && Number.isFinite(d.nowSec) ? d.nowSec : 0,
     viewer: typeof d.viewer === 'string' && d.viewer ? d.viewer : null,

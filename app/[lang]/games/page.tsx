@@ -5,9 +5,13 @@ import { Icon } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'
 import { SearchLauncher } from '@/components/SearchLauncher'
 import { StaticGameCardBody } from '@/components/StaticGameCard'
+import { SHELF_RAIL_SIZES } from '@/lib/art'
 import { topGamesByTags } from '@/lib/db'
 import {
   assembleHub,
+  facetCopy,
+  facetPath,
+  HUB_FACETS,
   HUB_FETCH,
   HUB_MIN_WEIGHT,
   HUB_TAGS,
@@ -99,6 +103,28 @@ export default async function GamesHubPage({ params }: Partial<PageProps<'/[lang
               когда поиск открыли (components/SearchLauncher) */}
           <SearchLauncher variant="field" />
         </header>
+
+        {/*
+          Подборки по факту — над полками, а не тридцать первой полкой:
+          «во что поиграть с другом» и «бесплатные» ищут чаще любого жанра, и
+          ответ на них — своя страница (/games/<slug>, lib/gamehub HUB_FACETS),
+          а не ряд капсул, который ещё надо долистать. Ссылки без префетча,
+          как у «Весь жанр»: страницы на ISR и холодную будить незачем.
+        */}
+        <nav aria-labelledby="hub-facets" className="flex flex-col gap-3">
+          <h2 id="hub-facets" className="section-title">
+            {tr(locale, { ru: 'Подборки', en: 'Collections' })}
+          </h2>
+          <ul className="flex flex-wrap gap-2">
+            {HUB_FACETS.map((f) => (
+              <li key={f.slug}>
+                <Link href={facetPath(f)} prefetch={false} className="pill">
+                  {facetCopy(f, locale).label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
 
         {shelves.length > 0 ? (
           <div className="flex flex-col gap-10">
@@ -195,13 +221,21 @@ function Shelf({ shelf, eager, locale }: { shelf: HubShelf; eager: boolean; loca
                 рендерятся функцией и читают базу — прокрутка хаба будила бы
                 её на каждую капсулу, по которой никто не пойдёт. */}
             <GameLink appid={g.appid} className="game-card block">
+              {/* sizes — ширина капсулы из .shelf-rail > li по всем
+                  экранам, а не одно «260px»: на телефоне капсула 200 px, и
+                  при DPR 2 «260» уводило браузер на header_2x — 67–187 КБ
+                  вместо 25–53 КБ за ту же картинку (lib/art, SHELF_RAIL_SIZES).
+                  Высокий приоритет — только первой капсуле первой полки:
+                  она LCP хаба на телефоне, а в очереди стояла Low рядом с
+                  четырьмя соседями */}
               <StaticGameCardBody
                 appid={g.appid}
                 name={g.name}
                 headerImage={g.headerImage}
                 art={g.art}
-                sizes="260px"
+                sizes={SHELF_RAIL_SIZES}
                 eager={eager && i < 5}
+                fetchPriority={eager && i === 0 ? 'high' : undefined}
               />
             </GameLink>
           </li>

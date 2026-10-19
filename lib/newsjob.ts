@@ -21,11 +21,12 @@ import {
   getUnsummarized,
   getUnsummarizedEn,
   pruneNewsForApp,
+  resetFlawedDigests,
   setNewsDigest,
   setNewsDigestEn,
   upsertNewsItems,
   type Db,
-  type NewsScale,
+  type NewsVerdict,
   type PollOutcome,
   type PollStatus,
   type PollTarget,
@@ -91,7 +92,8 @@ export type DigestOutcome = {
   tldr?: string
   tldrEn?: string | null
   titleEn?: string | null
-  scale: NewsScale
+  /** Вердикт модели: масштаб или 'none' — «не патч» (NewsVerdict в lib/db) */
+  scale: NewsVerdict
 }
 
 export type DigestFn = (args: DigestArgs) => Promise<DigestOutcome | null>
@@ -118,8 +120,15 @@ export type SliceResult = {
   digested: number
   /**
    * Игры, у которых опрос поменял ленту патчей карточки: роут сбрасывает их
-   * адреса в ISR (lib/gamecache). Лента без единого патча сюда не попадает —
-   * карточка показывает только патчи (getGameNews).
+   * адреса в ISR (lib/gamecache) — карточку и архив обновлений игры. Лента
+   * без единого патча сюда не попадает — карточка показывает только патчи
+   * (getGameNews).
+   *
+   * Переопрос, переписавший «патч» в новость после правки классификатора,
+   * карточку не меняет и сброса не требует: карточка сама сверяет каждую
+   * строку с нынешним правилом (isStoredPatch в lib/gamepage), то есть
+   * перестала показывать её с первой перегенерации на новом коде. Архив
+   * обновлений сверяет так же (app/game/[appid]/news/load.ts).
    */
   cards: number[]
   hasMore: boolean
@@ -411,9 +420,12 @@ export async function runNewsSlice(
 export type DigestResult = {
   digested: number
   /**
-   * Игры, патчам которых срез дописал пересказ: он стоит на карточке строкой
-   * под заголовком и делает заголовок ссылкой (indexedNewsPath) — роут
-   * сбрасывает их адреса в ISR (lib/gamecache).
+   * Игры, патчам которых срез дописал пересказ или снял битый
+   * (resetFlawedDigests): он стоит на карточке строкой под заголовком и делает
+   * заголовок ссылкой (indexedNewsPath) — роут сбрасывает их адреса в ISR
+   * (lib/gamecache): карточку и архив обновлений. Вердикт «не патч» (scale
+   * 'none') — тоже сюда: строка уходит с карточки и из архива, а карточка
+   * живёт неделю.
    */
   cards: number[]
   hasMore: boolean
@@ -485,18 +497,36 @@ export async function runDigestSlice(
   const digest = opts.digestFn ?? defaultDigest
   const log = opts.onProgress ?? (() => {})
 
+  /*
+   * Битые пересказы, записанные до проверки текста модели, — вон из базы и
+   * обратно в очередь (resetFlawedDigests, раз на базу). До проверки ключа:
+   * мусор снимается со страниц и без модели, а пересказ заново дождётся её.
+   * Сбой уборки пересказ не останавливает — она повторится следующим звеном.
+   */
+  const cards = new Set<number>()
+  try {
+    const swept = await resetFlawedDigests(db)
+    if (swept?.length) log(`  битых пересказов снято: игр ${swept.length}`)
+    for (const appid of swept ?? []) cards.add(appid)
+  } catch (e) {
+    logSwallowed('newsjob:tldr-sweep', e)
+  }
+
   // Нет ключа — не ходим в очередь вовсе. Иначе каждая запись впустую тратит
   // попытку, и после трёх прогонов сотни патчей НАВСЕГДА выпадают из очереди
   // пересказа: причина-то временная (ключ забыли положить), а отметка вечная.
   // Попытка должна засчитываться за отказ модели, а не за её отсутствие.
   if (!opts.digestFn && !llmAvailable()) {
-    return { digested: 0, cards: [], hasMore: false, stopped: 'unavailable' }
+    return { digested: 0, cards: [...cards], hasMore: false, stopped: 'unavailable' }
   }
 
   const pending = opts.englishOnly ? [] : await getUnsummarized(db, limit)
   if (!pending.length) {
-    if (opts.english === false) return { digested: 0, cards: [], hasMore: false, stopped: 'done' }
-    return runEnglishBackfill(db, { deadlineAt: opts.deadlineAt, now, limit, digest, log })
+    // Карточки, с которых уборка выше сняла битые пересказы, едут в сброс и
+    // тогда, когда звено целиком уходит догону
+    const swept: DigestResult = { digested: 0, cards: [...cards], hasMore: false, stopped: 'done' }
+    if (opts.english === false) return swept
+    return mergeDigest(swept, await runEnglishBackfill(db, { deadlineAt: opts.deadlineAt, now, limit, digest, log }))
   }
 
   const metas = await getGamesMeta(
@@ -505,7 +535,6 @@ export async function runDigestSlice(
   )
 
   let digested = 0
-  const cards = new Set<number>()
   let stopped: DigestResult['stopped'] = 'done'
   /*
    * Ответила ли модель хоть раз без английского ключа вовсе — прежним
@@ -552,22 +581,28 @@ export async function runDigestSlice(
       throw e
     }
     // Ответ без русского — отказ записи, как и null: так решает договор (спам
-    // и битый русский — null), а пересказ без tldr сломал бы очередь
-    const tldr = res?.tldr
+    // и битый русский — null), а пересказ без tldr сломал бы очередь. Кроме
+    // вердикта 'none' («не патч»): его пересказ пустой по договору
+    // (validateDigest), и это ответ, а не отказ — setNewsDigest пишет его
+    // пустой строкой и снимает английский слот, а запись уходит из очереди.
+    // В сброс карточки — и он: строка уходит с карточки и из архива
+    const none = res?.scale === 'none'
+    const tldr = none ? '' : res?.tldr
+    const answered = !!res && (none || !!tldr)
     await setNewsDigest(
       db,
       item.appid,
       item.gid,
-      res && tldr
+      res && answered
         ? {
-            tldr,
+            tldr: tldr ?? '',
             scale: res.scale,
             ...(res.tldrEn !== undefined ? { tldrEn: res.tldrEn, titleEn: res.titleEn ?? null } : {}),
           }
         : null,
       now,
     )
-    if (res && tldr) {
+    if (res && answered) {
       digested++
       cards.add(item.appid)
       if (res.tldrEn === undefined) legacyModel = true

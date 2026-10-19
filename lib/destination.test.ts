@@ -381,6 +381,22 @@ describe('ответы квиза переживают вход', () => {
     }
   })
 
+  // «Подобрать рогалики из своей библиотеки» со страницы жанра: гость
+  // проходит квиз, /play разворачивает его на вход — и после входа выдача
+  // обязана быть рогаликами. Мусор (не адрес страницы) отбрасывается здесь
+  test('жанр переживает вход, мусор в нём — нет', () => {
+    const genred = playHref({ time: 'short', vibe: 'chill', social: 'solo' }, { lean: 'fresh', genre: 'roguelike' })
+    expect(genred).toBe('/play?time=short&vibe=chill&social=solo&lean=fresh&genre=roguelike')
+    expect(destinationUrl(genred)).toBe(genred)
+    const next = query(bounceTo('/play', query(genred))).get('next')
+    expect(loginTarget(new URLSearchParams(loginCarry(new URLSearchParams({ next: next ?? '' }))))).toBe(genred)
+    expect(loginTarget(query(steamLoginFor(genred)))).toBe(genred)
+    expect(destinationUrl('/play?genre=point-and-click')).toBe('/play?genre=point-and-click')
+    for (const junk of ['Roguelike', 'point & click', '-x', 'a--b', '', 'x'.repeat(41), '//evil.example']) {
+      expect(destinationUrl(`/play?genre=${encodeURIComponent(junk)}`), junk).toBe('/play')
+    }
+  })
+
   test('/play без строки запроса — как раньше', () => {
     expect(bounceTo('/play', new URLSearchParams())).toBe('/?next=%2Fplay')
     expect(bounceTo('/play', null)).toBe('/?next=%2Fplay')
@@ -414,6 +430,7 @@ describe('квиз гостя: сразу на лендинг, и лендинг
       playHref(MOOD),
       playHref({ time: 'short', vibe: 'engaged', social: 'friends' }, { lean: 'fresh' }),
       playHref(MOOD, { seed: 1145360 }),
+      playHref(MOOD, { genre: 'roguelike' }),
       playHref(MOOD, { roulette: true }),
       playHref(MOOD, { focus: 'untouched' }),
       ...VIBE_PRESETS.map((p) => presetHref(p)),

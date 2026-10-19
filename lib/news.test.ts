@@ -1,5 +1,14 @@
 import { describe, expect, test } from 'vitest'
-import { bodyHash, detectLang, fetchGameNews, isPatchNote, looksTrivial, newsText, parseNewsRss } from './news'
+import {
+  bodyHash,
+  detectLang,
+  fetchGameNews,
+  isPatchNote,
+  isStoredPatch,
+  looksTrivial,
+  newsText,
+  parseNewsRss,
+} from './news'
 import { parseSteamHtml } from './steamhtml'
 
 /**
@@ -221,6 +230,158 @@ describe('isPatchNote', () => {
     const changes = '• Исправлен вылет на старте\n• Добавлен новый режим\n• Улучшена стабильность'
     expect(isPatchNote('Заметки разработчиков', changes)).toBe(true)
     expect(isPatchNote('Заметки разработчиков', 'Мы рады сообщить о планах на год.')).toBe(false)
+  })
+})
+
+/*
+ * Заголовки ниже — живые, из ленты прода (выгрузка news_items от 24.09.2026 и
+ * страницы, найденные аудитом); тела — их сокращённые пересказы того же вида.
+ * Все эти посты классификатор считал патчами, а пересказ на «Что изменилось»
+ * писал «добавлен режим…» о том, чего в игре ещё нет.
+ */
+describe('isPatchNote: то, что ещё не вышло, — не патч', () => {
+  /** Список с глаголами изменений: у превью и дорожных карт он такой же, как у патча */
+  const PLANNED = [
+    '• Rapid Royale: added as a limited-time mode with a smaller ring',
+    '• Vehicle balance: changed armor values for light tanks',
+    '• Fixed spawn camping on Blackwell Fields — currently exploring options',
+  ].join('\n')
+
+  test('«Looking Ahead», дорожная карта и превью проигрывают даже списку правок', () => {
+    // −4, а не −2: слово обновления (+2) плюс список правок (+2) — это ровно
+    // счёт патча, и превью с таким телом иначе проходило бы порог
+    for (const t of [
+      'Battlefield 6/REDSEC: Looking Ahead To Season 5 And Beyond',
+      'Marathon: дорожная карта обновлений на 2026 год',
+      'New Year, New Tabletop Simulator — 2.0 Overhaul Roadmap',
+      'Phasmophobia Quality of Life Update Preview',
+      'SCUM | July Update Preview: New Tutorial, Master Hunter Quests & Mutant Animals',
+      '1.27 preview',
+      'Upcoming Anniversary Update: Lost & Found',
+      '5 years of Black Mesa: Blue Shift & Upcoming Update!',
+      'На следующей неделе выйдет летнее обновление 2026 года',
+      'Завершение ПТЕ v.1 и превью патча',
+    ]) {
+      expect(isPatchNote(t, PLANNED), t).toBe(false)
+    }
+  })
+
+  test('анонс патча с версией: без списка правок — новость, с полным списком — патч', () => {
+    // «Update 1.1 coming soon!» — слово обновления и версия (+4) против −4.
+    // Решает тело: «скоро, следите за новостями» — новость, а патчноут,
+    // опубликованный за день до выхода, — патч, и «выйдет/добавят» вместо
+    // «добавлено» в его пересказе держит модель (lib/llm, claudeNewsDigest)
+    expect(isPatchNote('Update 1.1 coming soon!', 'Stay tuned — more details next week.')).toBe(false)
+    expect(isPatchNote('Update 1.1 coming soon!', PLANNED)).toBe(true)
+  })
+
+  test('анонс стрима — не патч, даже с номером обновления в заголовке', () => {
+    // «REDstreams» — одно слово: границы words() не дают найти «stream»
+    // внутри него, поэтому стрим ловится вместе с приставкой
+    const stream = 'Присоединяйтесь к REDstreams в четверг в 18:00 МСК: покажем, что ждёт вас в обновлении 2.2.'
+    expect(isPatchNote('REDstreams —  Обновление 2.2', stream)).toBe(false)
+    expect(isPatchNote("Civ Streams: Civ VII's Test of Time Update", stream)).toBe(false)
+    // а «Stream Deck» в патчноуте — это функция, а не трансляция
+    expect(isPatchNote('Update 1.2: Stream Deck support', '')).toBe(true)
+  })
+
+  test('вышедший патч рядом с планами остаётся патчем', () => {
+    // посты «вот что вошло, а вот что дальше» — это и есть патч: слабые
+    // слова про будущее стоят −2, и список правок их перевешивает
+    const shipped = [
+      '• Добавлены летние предметы кастомизации ресторана',
+      '• Исправлен вылет при загрузке сохранения',
+      '• Улучшена производительность кухни',
+    ].join('\n')
+    expect(
+      isPatchNote('Летний патч и обновление о разработке: что выходит сейчас и что дальше 🍃🔥', shipped),
+    ).toBe(true)
+    expect(isPatchNote('Патч #14: Новый PvE-контент и планы на будущее!', shipped)).toBe(true)
+    // «Upcoming Event» — про ивент, а не про то, что патч ещё не вышел
+    expect(isPatchNote('Backend Update, UI Rework, Upcoming Event', shipped)).toBe(true)
+    // явный патчноут с версией перевешивает и «preview», и дорожную карту —
+    // версия в скобках тоже версия
+    expect(isPatchNote('Christmas Update & Optimization Preview | Patch Notes - v1.4.9', '')).toBe(true)
+    expect(isPatchNote('Roadmap & Major Update (1.1.5.7)', shipped)).toBe(true)
+  })
+})
+
+describe('isPatchNote: «Update» в значении «новости о…»', () => {
+  test('сводки сообщества, разработчиков и античита — не патчи', () => {
+    // слово «Update» здесь — «рассказ о делах», и плюс за слово обновления
+    // такой заголовок не получает; тело решает само
+    const report = [
+      'We’ve taken action against players who were found to be sharing their accounts.',
+      'As a result, we have handed 258 Predator players 60-day suspensions.',
+    ].join('\n')
+    for (const t of [
+      'An Update from the Anti Cheat Team - 10/08/2026',
+      'Apex Legends: Anti-Cheat Update - 09/10/2026',
+      'Controller Anti-Cheat Enforcement & Ban Wave Update — 09/02/2026',
+      'Community Update - July 2026',
+      'Battlefield 6 - Community Update - Top Gun Incoming',
+      'Developer Update #8',
+      'Diablo IV Developer Update - Season 14 | June, 2026',
+      'An Update on the Roadmap',
+      'Update about servers.',
+    ]) {
+      expect(isPatchNote(t, report), t).toBe(false)
+    }
+  })
+
+  test('настоящий патч внутри сводки по-прежнему узнаётся', () => {
+    const changes = [
+      '• Fixed a crash when joining a cross-play lobby',
+      '• Added cross-play invites to the friends list',
+      '• Improved loading times on Steam Deck',
+    ].join('\n')
+    // «Hotfix» стоит своим словом — нейтрализуется только «Community Update»
+    expect(isPatchNote('Community Update #34 - Connecting With Cross-Play & Hotfix #32', changes)).toBe(
+      true,
+    )
+    // античит сам по себе не штраф: вышедшие правки со списком — патч
+    expect(isPatchNote('Anti-Cheat Improvements: Phase One - Out Now', changes)).toBe(true)
+  })
+})
+
+describe('isPatchNote: бета и тестовый сервер — не игра у всех', () => {
+  test('анонс открытой беты и уголок разработчиков — не патчи', () => {
+    const beta =
+      'The public beta for our next major update is now available. To opt in, open Properties → Betas. ' +
+      'We are still not sure if we should release this, so please share your feedback.'
+    expect(isPatchNote('Hearts of Iron IV: Dev Corner & Open Beta: Energy #2', beta)).toBe(false)
+    expect(isPatchNote('HOI IV - Open Beta Summer Edition™', beta)).toBe(false)
+    expect(isPatchNote('Black Mesa: Beta Test For Major Update!', beta)).toBe(false)
+    expect(isPatchNote('Обновление #70: V. 1.066.0 открытое бета-тестирование', beta)).toBe(false)
+    expect(isPatchNote('Уголок разработчиков HOI IV | Война в третьем измерении — ВДВ в HOI', beta)).toBe(
+      false,
+    )
+  })
+
+  test('игра в бете и явный патчноут беты остаются патчами', () => {
+    // голое «beta/бета» не штраф: «бета-версия» — это стадия самой игры, и
+    // её патчи — патчи. Пересказ беты помечает модель (lib/llm, «В бете:»)
+    expect(isPatchNote('Обновление 0.4 для бета-версии', '')).toBe(true)
+    expect(isPatchNote('Beta Patch Notes - v0.110.0', '')).toBe(true)
+  })
+})
+
+describe('isStoredPatch: сохранённая запись по нынешнему правилу', () => {
+  const blocks = (lines: string[]) => [{ kind: 'ul' as const, items: lines.map((text) => [{ text }]) }]
+  const changes = blocks(['Исправлен вылет при загрузке', 'Добавлен режим', 'Улучшена стабильность'])
+
+  test('патч, записанный старым правилом, проверяется заново', () => {
+    // строка лежит в базе с kind='patch' с прошлого опроса — новое правило
+    // её не пускает, и ждать переопроса страница не обязана
+    expect(
+      isStoredPatch({ kind: 'patch', title: 'Battlefield 6/REDSEC: Looking Ahead To Season 5', blocks: changes }),
+    ).toBe(false)
+    expect(isStoredPatch({ kind: 'patch', title: 'Патч 2.31', blocks: changes })).toBe(true)
+  })
+
+  test('новость не становится патчем на чтении', () => {
+    // обратного пути здесь нет: вид поста меняет только опрос
+    expect(isStoredPatch({ kind: 'news', title: 'Патч 2.31', blocks: changes })).toBe(false)
   })
 })
 

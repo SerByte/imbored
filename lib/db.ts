@@ -14,10 +14,11 @@ import {
   type SkipReason,
 } from './feedbackkinds'
 import { isDeadReason } from './liveness'
+import { modelTextFlaw } from './modeltext'
 import { parseMood } from './mood'
 import { NEIGHBORS_K, type Neighbor } from './neighbors'
 import { OTHER_STORE_GAMES } from './otherstores'
-import { minutesHidden, playtimeHidden } from './playtime'
+import { HIDDEN_PLAYTIME_MIN_GAMES, minutesHidden, playtimeHidden } from './playtime'
 import { PLAN_INTENTS_SQL, PLAN_TTL_SEC, type EveningPlan, type PlanIntent } from './eveningplan'
 import {
   OUTCOME_LATE_ASK_SEC,
@@ -29,7 +30,7 @@ import {
   eveningFrom,
   type Evening,
 } from './outcome'
-import { SEMANTICS_V } from './semantics'
+import { SEMANTICS_MIN_CONFIDENCE, SEMANTICS_V } from './semantics'
 import { SHARED_PICK_TTL_SEC, type PickKind } from './sharedpick'
 import { SESSION_TOUCH_AFTER_SEC, SESSION_TTL_SEC } from './sessions'
 import { WISHLIST_KEPT } from './steam'
@@ -478,9 +479,9 @@ const alivePool = (p: '' | 'g.') =>
  * {appid}» из /api/prepare их нет).
  *
  * Одна строка на весь проект. Ею построены частичные индексы каталога ниже
- * (idx_games_pool, idx_games_ccu, idx_games_reviews_at, idx_games_developer),
- * а SQLite берёт частичный индекс, только если WHERE запроса повторяет его
- * предикат почти дословно. Копий было девять — в lib/db, lib/pool, lib/trivia
+ * (idx_games_pool, idx_games_ccu, idx_games_reviews_at, idx_games_developer,
+ * idx_games_ru_unknown), а SQLite берёт частичный индекс, только если WHERE
+ * запроса повторяет его предикат почти дословно. Копий было девять — в lib/db, lib/pool, lib/trivia
  * и скриптах, — и отъезд любой из них не ломал ни одного ответа, а молча
  * превращал запрос в полный скан games. Планы сторожит lib/queryplan.test.ts, копии —
  * lib/noscan.test.ts.
@@ -492,6 +493,21 @@ export const ALIVE_POOL = alivePool('')
 
 /** То же под алиасом g. — для JOIN и подзапросов, где голая колонка двусмысленна */
 export const ALIVE_POOL_G = alivePool('g.')
+
+/**
+ * Разгромленная игра, которую курация сняла с подбора (judgeLiveness, причина
+ * 'panned').
+ *
+ * Вторая ветка очереди пульса (reviewPulseQueue). Вердикт «большинство
+ * отзывов отрицательные» на карточке молчит, когда месяц похвал говорит
+ * обратное (deadVerdict в lib/gamepage), — но месяц этот кто-то должен
+ * измерить, а пул (ALIVE_POOL) мёртвых не содержит по построению. Строкой,
+ * а не копией в запросе, по той же причине, что ALIVE_POOL: ею построен
+ * частичный idx_games_panned, и SQLite берёт его только при дословном
+ * повторе. Вытесненных сиквелом не отсекаем: их карточка — своя страница со
+ * своим вердиктом (см. «мёртвая» в app/game/[appid]/page.tsx).
+ */
+const PANNED_DEAD = `alive = 0 AND dead_reason = 'panned'`
 
 /**
  * До какого момента витрина верит скидке — discountOf (lib/discount) в SQL:
@@ -599,6 +615,19 @@ CREATE INDEX IF NOT EXISTS idx_games_ccu ON games (ccu DESC)
 -- двухсот прочитанных, а не всего пула.
 CREATE INDEX IF NOT EXISTS idx_games_reviews_at ON games (reviews_at, reviews_total DESC)
   WHERE ${ALIVE_POOL};
+
+-- Разгромленные, снятые с подбора (PANNED_DEAD), по числу отзывов — вторая
+-- ветка очереди пульса (reviewPulseQueue). Их полсотни на весь каталог, и
+-- без индекса ради них каждое звено крона карточек читало бы всю games.
+-- Здесь, а не в SCHEMA: dead_reason у старых баз приезжает ALTER'ом.
+CREATE INDEX IF NOT EXISTS idx_games_panned ON games (reviews_total DESC)
+  WHERE ${PANNED_DEAD};
+-- Догон русского языка кроном карточек (gamesMissingRuLang): живые игры, о
+-- языке которых Steam ещё не спрашивали, верх каталога первым. В индексе
+-- только они, и он тает по мере догона: пачка стоит своих строк, а когда
+-- догонять нечего — ни одной, а не прохода по пулу на каждом звене крона.
+CREATE INDEX IF NOT EXISTS idx_games_ru_unknown ON games (reviews_total DESC)
+  WHERE ${ALIVE_POOL} AND ru_lang IS NULL;
 
 -- «Ещё у этой студии» на карточке игры (gamesByDeveloper): игры одного
 -- разработчика по отзывам, второй ключ — appid, он же rowid, которым индекс
@@ -816,8 +845,18 @@ const REPAIR_TAGS_KEY = 'repair_tags_v1'
 /** Ключ в catalog_meta: до какой версии схемы доведена база. */
 const SCHEMA_V_KEY = 'schema_v'
 
+/**
+ * Ключ в catalog_meta: какие колонки из ADDED_COLUMNS в базе уже точно есть —
+ * «таблица.колонка» через запятую. Страховка версии от двух веток с одним
+ * номером, см. schemaUpgradeNeeded.
+ */
+const SCHEMA_COLS_KEY = 'schema_cols'
+
 /** Ключ разового досева кураторского пула других магазинов (см. migrateDb). */
 const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
+
+/** Ключ разовой постановки пула в голову сверки ради отзывов на всех языках (см. migrateDb). */
+const REVIEWS_ALL_DUE_KEY = 'reviews_all_due_v1'
 
 /**
  * Версия схемы: набор колонок из ADDED_COLUMNS плюс форма таблиц, которые
@@ -836,10 +875,16 @@ const OTHER_STORES_SEED_KEY = 'other_stores_seeded_v1'
  * :memory: версии нет, и миграция там идёт целиком. Об этом напомнит сторож
  * «новая колонка без новой версии схемы» в lib/db.test.ts.
  *
+ * Колонки страхует ещё и отметка их состава (SCHEMA_COLS_KEY): две ветки,
+ * поднявшие версию до одного и того же числа, git сливает молча, и без неё
+ * вторая на проде прочла бы «уже доведено». Разбор — у schemaUpgradeNeeded.
+ * Шаг под upgrade, который не колонка (CHECK у feedback), отметка не видит —
+ * для него версия по-прежнему единственный сигнал.
+ *
  * Новым таблицам и индексам версия не нужна: блоки CREATE … IF NOT EXISTS
  * выполняются на каждом старте, по одному обращению на блок.
  */
-export const CURRENT_SCHEMA_V = 10
+export const CURRENT_SCHEMA_V = 13
 
 /**
  * Колонки, добавленные после первых версий схемы.
@@ -933,8 +978,41 @@ export const ADDED_COLUMNS = [
   // промоут и доливка медиа, прогрев его не просит (lib/catalog). Пустое не
   // затирает известное — COALESCE в апсерте и в setGamesMedia
   ['games', 'ru_lang INTEGER'],
+  // Русское название магазина, когда оно у игры своё: «Ведьмак 3: Дикая
+  // Охота» при «The Witcher 3: Wild Hunt» в name. Приносит его обогащение
+  // карточки (appdetails с l=russian), раскладывает апсерт (nameSql и
+  // nameRuSql), ищет по нему «Найти игру». NULL — второго названия нет или
+  // карточку ещё не обогащали
+  ['games', 'name_ru TEXT'],
+  // Отзывы, которые видят люди: все языки, сводка магазина (GetItems
+  // summary_filtered) и её оценка словами — EUserReviewScore 1…9. Пишет крон
+  // сигналов каталога (lib/catalogsignals) тем же запросом, что англоязычные
+  // reviews_total и reviews_percent, а читает одно правило показа —
+  // shownReviews в lib/gametraits: кольцо /game, плитки хабов и /play. Те
+  // остаются шкалой порогов и порядка пула. NULL — ещё не сверяли
+  ['games', 'reviews_all_total INTEGER'],
+  ['games', 'reviews_all_percent INTEGER'],
+  ['games', 'reviews_all_score INTEGER'],
+  // Отзывы на русском — та же сводка магазина в русском контексте: вторым
+  // GetItems на пачку сверки. NULL — не сверяли или на русском их нет
+  ['games', 'reviews_ru_total INTEGER'],
+  ['games', 'reviews_ru_percent INTEGER'],
+  // Пульс: отзывы за 30 дней до reviews_recent_at, все языки (appreviews
+  // filter=recent) — доля положительных рядом с кольцом /game. Своя отметка:
+  // замер по игре, а не пачкой, и ходит своей очередью (reviewPulseQueue).
+  // Тройка — то, что ПОКАЗАНО (подпись «за 30 дней до <дата>» несёт её
+  // дату), и переписывается только заметным сдвигом (updateReviewPulse)
+  ['games', 'reviews_recent_total INTEGER'],
+  ['games', 'reviews_recent_percent INTEGER'],
+  ['games', 'reviews_recent_at INTEGER'],
+  // Когда пульс спрашивали в последний раз — очередь и «Steam промолчал». Не
+  // reviews_recent_at: та — дата показанного замера, и двигать её каждой
+  // недельной проверкой значило бы переписывать строку под кольцом, а с ней
+  // и карточку в ISR, каждую неделю. По ней же заливка каталога бережёт
+  // облачный reviews_30d (ПО_ОТМЕТКЕ в scripts/publishsql)
+  ['games', 'reviews_recent_checked_at INTEGER'],
   /*
-   * Английская версия сайта (docs/i18n.md) — v10. Всё, что хранится по
+   * Английская версия сайта (docs/i18n.md) — v13. Всё, что хранится по
    * языку, получает английский слот рядом с русским, а не вместо него:
    * русские колонки и их правила остаются как были.
    */
@@ -967,6 +1045,44 @@ export const ADDED_COLUMNS = [
   ['shared_picks', "lang TEXT NOT NULL DEFAULT 'ru'"],
 ] as const
 
+/** «таблица.колонка» каждой из ADDED_COLUMNS — тем же видом, что у presentAddedColumns */
+const ADDED_COLUMN_NAMES: readonly string[] = ADDED_COLUMNS.map(
+  ([table, col]) => `${table}.${col.split(' ')[0]}`,
+)
+
+/** Отметка состава колонок из флагов миграций; нет её — пустое множество */
+function knownAddedColumns(flags: Map<string, string>): Set<string> {
+  return new Set((flags.get(SCHEMA_COLS_KEY) ?? '').split(',').filter(Boolean))
+}
+
+/**
+ * Доводить ли схему: записанная версия ниже CURRENT_SCHEMA_V — или в
+ * отметке состава нет хоть одной колонки этой сборки.
+ *
+ * ЗАЧЕМ ВТОРОЕ УСЛОВИЕ. Версия — голое число, общее для всех веток. Так и
+ * вышло в восьмом круге: fix/w8-search (name_ru) и fix/w8-prices-reviews
+ * (reviews_all_*, reviews_ru_*, reviews_recent_*) подняли 9 → 10 каждая со
+ * своими колонками, и git сливает одинаковые строки «= 10» без конфликта.
+ * Уедь они на прод разными деплоями — первый запишет 10, второй прочтёт «уже
+ * доведено», и его ALTER не выполнятся никогда: апсерт каталога, прогрев и
+ * индекс поиска падали бы на «no such column». Порядок мержей и деплоев
+ * ветка не выбирает, поэтому решать по одному числу нельзя.
+ *
+ * Отметка перечисляет сами колонки, и сборка с колонкой вне её доводит схему
+ * при любой версии. Пишется она там же, где версия, — последней и только
+ * когда всё прошло (конец migrateDb), — и объединением с прежней: сборка без
+ * чужой колонки (откат, параллельная ветка) отметку не сужает, а версию по
+ * той же причине не опускает. Отметки нет у баз, доведённых до неё: такая
+ * база один раз пройдёт ALTER-цикл — одно чтение pragma_table_info и ALTER
+ * только для действительно недостающих — и получит её.
+ */
+function schemaUpgradeNeeded(flags: Map<string, string>): boolean {
+  // «не меньше», а не «меньше»: мусор вместо числа тоже означает «доводить»
+  if (!(Number(flags.get(SCHEMA_V_KEY) ?? 0) >= CURRENT_SCHEMA_V)) return true
+  const known = knownAddedColumns(flags)
+  return ADDED_COLUMN_NAMES.some((name) => !known.has(name))
+}
+
 /**
  * Разовые шаги migrateDb под своим флагом в catalog_meta — и что каждый из
  * них делает с базой, словами для pendingMigrations.
@@ -983,6 +1099,7 @@ const ONE_OFF_STEPS = {
   [PAGE_TRIES_BACKFILL_KEY]: 'пометка карточек без данных (page_tries): UPDATE по всей games',
   [REPAIR_TAGS_KEY]: 'починка дважды закодированных JSON-колонок: ПЕРЕЗАПИСЬ строк games',
   [NEWS_RANK_FIX_KEY]: 'обнуление веса патчей вне каталога: UPDATE по news_items',
+  [REVIEWS_ALL_DUE_KEY]: 'пул без отзывов на всех языках — в голову сверки каталога: UPDATE reviews_at по games',
 } as const
 
 /**
@@ -992,7 +1109,7 @@ const ONE_OFF_STEPS = {
  * на каждом старте ради ответа, который почти всегда «уже сделано».
  */
 async function readMigrationFlags(db: Db): Promise<Map<string, string>> {
-  const keys = [SCHEMA_V_KEY, ...Object.keys(ONE_OFF_STEPS)]
+  const keys = [SCHEMA_V_KEY, SCHEMA_COLS_KEY, ...Object.keys(ONE_OFF_STEPS)]
   const res = await db.execute({
     sql: `SELECT key, value FROM catalog_meta WHERE key IN (${placeholders(keys.length)})`,
     args: keys,
@@ -1141,8 +1258,8 @@ export async function migrateDb(
   await db.executeMultiple(SCHEMA_NEWS)
 
   const flags = await readMigrationFlags(db)
-  // «не меньше», а не «меньше»: мусор вместо числа тоже означает «доводить»
-  const upgrade = !(Number(flags.get(SCHEMA_V_KEY) ?? 0) >= CURRENT_SCHEMA_V)
+  // по версии и по отметке состава колонок — почему по двум, см. schemaUpgradeNeeded
+  const upgrade = schemaUpgradeNeeded(flags)
   const allowed = destructiveMigrationsAllowed(env)
 
   // Пересборка feedback — сразу за ALTER-циклом (ей нужен полный набор
@@ -1265,6 +1382,45 @@ export async function migrateDb(
     })
   }
 
+  /*
+   * Разовая постановка пула в голову сверки каталога — ради отзывов на всех
+   * языках (reviews_all_*): колонки новые, и пусты они у всего пула разом.
+   *
+   * Без неё колонки заполнялись бы неделю: сверка берёт игру, только когда её
+   * reviews_at старше SIGNALS_MAX_AGE_SEC, а крон держал его свежим у всего
+   * пула. Неделю плитки хабов и /play молчали бы об отзывах, а у карточек без
+   * сводки (reviews_summary_json — её нет у 278 из тысячи) пропало бы кольцо
+   * целиком: англоязычные колонки, которые оно брало раньше, людям больше не
+   * показываются (reviewFacts в lib/gamepage). Сверка проходит пул меньше чем
+   * за сутки, если поставить его в голову очереди.
+   *
+   * Отметка 1, а не NULL. Очередь читает её так же: NULL идут первыми, сразу
+   * за ними — единицы, и обе давно просрочены. А заливка каталога различает:
+   * reviews_total и reviews_percent едут из локального снимка, только если он
+   * не старше облачного замера по reviews_at (ПО_ОТМЕТКЕ в scripts/publishsql),
+   * и при NULL catalog:publish в эти сутки откатил бы сверенные кроном числа к
+   * посевным. Единица — «сверено, давно»: замер был, и локальный безотметочный
+   * снимок его не перетрёт. Ни разу не сверенных (NULL) не трогаем — они и так
+   * первые.
+   *
+   * Под destructiveMigrationsAllowed, хотя данных шаг не стирает, — ради
+   * флага. Превью на продовой базе выставило бы его, а пул в голове очереди
+   * разобрал бы крон прода, ещё не знающий новых колонок: отметки снова
+   * свежие, колонки пустые, а шаг больше не повторится. Флаг ставит тот, кто
+   * колонки и заполнит, — первый старт прода после мержа.
+   *
+   * Под флагом по той же причине, что и бэкфиллы выше: проход по games, а
+   * Turso считает прочитанные строки.
+   */
+  if (!flags.has(REVIEWS_ALL_DUE_KEY) && allowed) {
+    await db.execute(`UPDATE games SET reviews_at = 1
+      WHERE ${ALIVE_POOL} AND reviews_all_total IS NULL AND reviews_at IS NOT NULL`)
+    await db.execute({
+      sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
+      args: [REVIEWS_ALL_DUE_KEY, '1'],
+    })
+  }
+
   // Разовая починка веса у уже записанных патчей. До неё вес считался по числу
   // отзывов для любой опрошенной игры, и в общую ленту налезли Half-Life 2:
   // Deathmatch с Condition Zero — те самые, что каталог метит alive = 0.
@@ -1286,9 +1442,17 @@ export async function migrateDb(
     if (rebuilt && allowed) {
       // Последней: версия пишется, только когда всё выше прошло. Оборвись
       // миграция на полпути — следующий старт повторит её целиком.
+      //
+      // С ней, тем же запросом, — отметка состава колонок. Обе не ниже
+      // прежних: прежние могла записать сборка с колонкой, которой здесь нет,
+      // и ни опустить версию, ни потерять ту колонку из отметки нельзя
+      // (schemaUpgradeNeeded)
+      const stored = Number(flags.get(SCHEMA_V_KEY))
+      const version = Math.max(Number.isFinite(stored) ? stored : 0, CURRENT_SCHEMA_V)
+      const cols = [...new Set([...knownAddedColumns(flags), ...ADDED_COLUMN_NAMES])].sort()
       await db.execute({
-        sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?)',
-        args: [SCHEMA_V_KEY, String(CURRENT_SCHEMA_V)],
+        sql: 'INSERT OR REPLACE INTO catalog_meta (key, value) VALUES (?, ?), (?, ?)',
+        args: [SCHEMA_V_KEY, String(version), SCHEMA_COLS_KEY, cols.join(',')],
       })
     } else if (rebuilt) {
       // Превью на продовой базе, и пересобирать нечего, — версию всё равно
@@ -1335,15 +1499,17 @@ export async function migrateDb(
  * смотрят предпросмотр.
  *
  * Условия шагов те же, что в migrateDb: досев пула — только с seedContent,
- * починка JSON-колонок, пересборка feedback и отметка версии — только там,
- * где destructiveMigrationsAllowed. Что migrateDb на этой базе пропустит,
- * того и здесь нет; сторожит это тест «после migrateDb ждать нечего».
+ * починка JSON-колонок, постановка пула в голову сверки, пересборка feedback
+ * и отметка версии — только там, где destructiveMigrationsAllowed. Что
+ * migrateDb на этой базе пропустит, того и здесь нет; сторожит это тест
+ * «после migrateDb ждать нечего».
  *
  * Только чтение: sqlite_master, колонки (pragma_table_info) и флаги в
- * catalog_meta. Не видно двух вещей, которых не видит и сама migrateDb:
- * индекса со сменённым определением под прежним именем (ПРАВИЛО ДЛЯ
- * ИНДЕКСОВ у SCHEMA_CATALOG) и колонки, добавленной без подъёма версии
- * (сторож «новая колонка без новой версии схемы» в lib/db.test.ts).
+ * catalog_meta. Не видно того, чего не видит и сама migrateDb: индекса со
+ * сменённым определением под прежним именем (ПРАВИЛО ДЛЯ ИНДЕКСОВ у
+ * SCHEMA_CATALOG). Колонку, добавленную без подъёма версии, видно по отметке
+ * состава (schemaUpgradeNeeded) — если базу уже доводила сборка, которая её
+ * пишет.
  */
 export async function pendingMigrations(
   db: Db,
@@ -1377,9 +1543,9 @@ export async function pendingMigrations(
     ? await readMigrationFlags(db)
     : new Map<string, string>()
 
-  // То же сравнение, что в migrateDb: мусор вместо числа тоже значит «доводить»
+  // То же условие, что в migrateDb: по версии и по отметке состава колонок
   const v = flags.get(SCHEMA_V_KEY)
-  if (!(Number(v ?? 0) >= CURRENT_SCHEMA_V)) {
+  if (schemaUpgradeNeeded(flags)) {
     const have = await presentAddedColumns(db)
     if (!have) {
       pending.push('ALTER TABLE: все колонки из ADDED_COLUMNS, которых нет (состав не узнать)')
@@ -1397,14 +1563,19 @@ export async function pendingMigrations(
       pending.push('пересборка feedback под новый CHECK: DROP и RENAME таблицы')
     }
     if (allowed) {
-      pending.push(`версия схемы: ${v == null ? 'не записана' : `v${v}`} → v${CURRENT_SCHEMA_V}`)
+      pending.push(
+        Number(v ?? 0) >= CURRENT_SCHEMA_V
+          ? // версию записала сборка без колонок этой — см. schemaUpgradeNeeded
+            `отметка колонок схемы: v${v} записана без колонок этой сборки`
+          : `версия схемы: ${v == null ? 'не записана' : `v${v}`} → v${CURRENT_SCHEMA_V}`,
+      )
     }
   }
 
   for (const [key, what] of Object.entries(ONE_OFF_STEPS)) {
     if (flags.has(key)) continue
     if (key === OTHER_STORES_SEED_KEY && !opts.seedContent) continue
-    if (key === REPAIR_TAGS_KEY && !allowed) continue
+    if ((key === REPAIR_TAGS_KEY || key === REVIEWS_ALL_DUE_KEY) && !allowed) continue
     pending.push(`${key}: ${what}`)
   }
   return pending
@@ -2906,6 +3077,50 @@ export async function snapshotOwns(db: Db, steamid: string, appid: number): Prom
 }
 
 /**
+ * Какие из этих игр есть в последнем снапшоте — и сколько в каждой наиграно.
+ *
+ * Для «Похожее уже есть у тебя» на странице игры (/api/session/owns, near):
+ * дюжина соседей против библиотеки за один заход. Как и у snapshotOwns,
+ * отвечает база, а не JS: блоб библиотеки на сотни килобайт в функцию не
+ * едет, обратно — строки одних совпавших игр.
+ *
+ * Значение — минуты по снимку; null — время скрыто настройками Steam
+ * (playtimeHidden в lib/playtime: от HIDDEN_PLAYTIME_MIN_GAMES игр и ни
+ * одной минуты). Признак — по всей библиотеке, а не по совпавшим, поэтому
+ * счёт игр и максимум минут идут оконными функциями того же прохода по
+ * json_each: второй разбор блоба ради одного бита стоил бы столько же,
+ * сколько первый. Без этого «не запускал» стояло бы у игры, где у человека
+ * пятьсот часов, — та же неправда, от которой lib/playtime и заведён.
+ *
+ * Снапшота нет — пустая карта: «есть ли похожая» тогда просто не о чем
+ * сказать, как и у snapshotOwns с его null.
+ */
+export async function snapshotOwnsMany(
+  db: Db,
+  steamid: string,
+  appids: readonly number[],
+): Promise<Map<number, number | null>> {
+  if (!appids.length) return new Map()
+  const res = await db.execute({
+    sql: `SELECT appid, minutes, total, top FROM (
+            SELECT json_extract(j.value, '$.appid') AS appid,
+                   COALESCE(json_extract(j.value, '$.playtimeForever'), 0) AS minutes,
+                   COUNT(*) OVER () AS total,
+                   MAX(COALESCE(json_extract(j.value, '$.playtimeForever'), 0)) OVER () AS top
+            FROM (SELECT games_json FROM library_snapshots WHERE steamid = ?
+                  ORDER BY taken_at DESC, id DESC LIMIT 1) s,
+                 json_each(s.games_json) j
+          ) WHERE appid IN (SELECT value FROM json_each(?))`,
+    args: [steamid, JSON.stringify(appids)],
+  })
+  const rows = res.rows as unknown as Array<{ appid: number; minutes: number; total: number; top: number }>
+  // Все строки несут одни и те же total и top — признак берётся с первой
+  const hidden =
+    rows.length > 0 && Number(rows[0].total) >= HIDDEN_PLAYTIME_MIN_GAMES && !Number(rows[0].top)
+  return new Map(rows.map((r) => [Number(r.appid), hidden ? null : Math.max(0, Number(r.minutes) || 0)]))
+}
+
+/**
  * Отметка библиотеки на начало года.
  *
  * takenAt отдаём наружу не для порядка: отметка ставится при первом за год
@@ -3202,6 +3417,102 @@ export function keepRussianSql(col: string): string {
   )
 }
 
+/*
+ * НАЗВАНИЕ: два у одной игры, и у каждого своя колонка.
+ *
+ * name — английское название магазина: его приносят прогрев, посев и
+ * заливка (GetItems по-английски, STORE_LANGUAGE в lib/catalog), и на нём
+ * стоят эвристики junk.ts и editions.ts. name_ru — русское, если оно у игры
+ * своё: его приносит обогащение карточки (appdetails с l=russian, lib/pagejob).
+ *
+ * Писатели при этом шлют одно поле, name, — то, что сказал их источник, — и
+ * прежде правило было «последний победил»: карточка клала «Ведьмак 3: Дикая
+ * Охота» поверх «The Witcher 3: Wild Hunt», прогрев через две недели —
+ * обратно, и так по кругу. На проде к октябрю 2026 русским стояло ~70
+ * названий верха каталога, и «Найти игру» не находила «witcher 3», «hogwarts
+ * legacy», «ghost of tsushima» — индекс знал только то, что лежало в name.
+ *
+ * Теперь их раскладывает апсерт, и по тому же доводу, что у описаний: SQL
+ * помнит у всех писателей, а слияние в JS — только у тех, кто его зовёт.
+ * Различаем по букве (lib/cyrillic): русское к латинскому — латинское
+ * остаётся, русское встаёт вторым; латинское к русскому — то же самое, но
+ * русское в name было от прежней карточки, и оно уходит во второе. Так
+ * строки, испорченные до этой правки, лечатся первой же английской записью —
+ * прогревом или заливкой каталога, — без отдельного прохода по Steam.
+ *
+ * Русское к русскому — обычная замена: у игры нет английского названия
+ * вовсе («ЕСТЬ ДВА СТУЛА», «Скуф на рыбалке» — магазин и по-английски зовёт
+ * их так), и это переименование. Заглушка «App N» (ensureMeta,
+ * parseAppDetails) — не название: русское её заменяет, а не встаёт вторым.
+ *
+ * Плата — редкий случай, который отсюда не отличить: игру с латинским
+ * названием магазин переименовал в русское. Название тогда останется
+ * прежним, а новое встанет вторым — найти её можно по обоим.
+ *
+ * В SET выражения видят строку ДО обновления, поэтому оба правила решают по
+ * прежнему games.name, сколько бы колонок ни писалось рядом.
+ *
+ * Латинское к латинскому второе название не трогает: от прогрева и заливки
+ * оно значит «английское», а не «русского нет». Снять его может только
+ * писатель, спрашивавший магазин по-русски, — ruStoreNameRuSql ниже.
+ */
+const cyrillicName = (col: string) => `COALESCE(${col}, '') GLOB ${CYRILLIC_GLOB}`
+
+/** Русское пришло к настоящему латинскому названию (не заглушке «App N») */
+const RU_OVER_LATIN =
+  `${cyrillicName('excluded.name')} AND NOT ${cyrillicName('games.name')}` +
+  ` AND games.name IS NOT ('App ' || games.appid)`
+
+/** Латинское пришло к русскому — русское в name от прежней карточки */
+const LATIN_OVER_RU = `${cyrillicName('games.name')} AND NOT ${cyrillicName('excluded.name')}`
+
+/** games.name: английское название не заменяется русским (см. НАЗВАНИЕ выше) */
+export function nameSql(): string {
+  return `CASE WHEN ${RU_OVER_LATIN} THEN games.name ELSE excluded.name END`
+}
+
+/**
+ * games.name_ru: русское название, вытесненное из name или не пущенное туда;
+ * иначе прежнее. Писатель самой колонки не шлёт — она выводится из name.
+ */
+export function nameRuSql(): string {
+  return (
+    `CASE WHEN ${RU_OVER_LATIN} THEN excluded.name` +
+    ` WHEN ${LATIN_OVER_RU} THEN games.name ELSE games.name_ru END`
+  )
+}
+
+/**
+ * games.name_ru у писателя, который спрашивал магазин ПО-РУССКИ, — у крона
+ * карточек (appdetails с l=russian, lib/pagejob). Остальные приносят
+ * английское название, и латинское от них о русском не говорит ничего —
+ * отсюда «иначе прежнее» в nameRuSql. А у этого латинское значит ровно
+ * «русского названия у игры в Steam нет»: локализованное он получил бы
+ * вместо него.
+ *
+ * Без этого правила снять второе название не мог никто. Steam убрал игре
+ * русское — карточка приносит английское, латинское к латинскому, и
+ * прежнее name_ru оставалось навсегда: «Найти игру» находила игру по
+ * названию, которого у неё больше нет, и показывала его вторым рядом.
+ *
+ * Заглушка «App N» (parseAppDetails, когда имени в ответе нет) — не ответ
+ * про название, и второе она не снимает. Русское — по общим правилам.
+ */
+function ruStoreNameRuSql(): string {
+  const latinAnswer = `NOT ${cyrillicName('excluded.name')} AND excluded.name IS NOT ('App ' || excluded.appid)`
+  return `CASE WHEN ${latinAnswer} THEN NULL ELSE ${nameRuSql()} END`
+}
+
+/** Откуда у записи название — см. upsertGameMeta */
+export type GameNameSource = {
+  /**
+   * meta.name — ответ магазина на l=russian (крон карточек): латинское тогда
+   * снимает второе название (ruStoreNameRuSql). Другим писателям не ставить:
+   * их латинское — просто английское, и русского оно не отменяет.
+   */
+  ruStore?: boolean
+}
+
 /**
  * Замер с отметкой времени (цена — price_at, онлайн — ccu_at): едет, только
  * если он не старше того, что уже лежит. Без отметки считается самым старым.
@@ -3213,7 +3524,12 @@ export function newerMeasureSql(col: string, stamp: string): string {
   return `CASE WHEN COALESCE(excluded.${stamp}, 0) >= COALESCE(games.${stamp}, 0) THEN excluded.${col} ELSE games.${col} END`
 }
 
-function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflict = 'update') {
+function gameMetaStatement(
+  meta: GameMeta,
+  nowSec: number,
+  onConflict: OnConflict = 'update',
+  source: GameNameSource = {},
+) {
   return {
     sql:
       onConflict === 'keep'
@@ -3221,7 +3537,10 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
           ON CONFLICT(appid) DO NOTHING`
         : `${GAME_INSERT}
           ON CONFLICT(appid) DO UPDATE SET
-            name = excluded.name,
+            -- английское и русское название — по своим колонкам, см. nameSql;
+            -- снять русское может только ответ на l=russian (ruStoreNameRuSql)
+            name = ${nameSql()},
+            name_ru = ${source.ruStore ? ruStoreNameRuSql() : nameRuSql()},
             tags_json = excluded.tags_json,
             -- скриншоты, жанры и русское описание берегутся от пустого и от
             -- английского — см. keepFilledSql и keepRussianSql выше
@@ -3315,8 +3634,13 @@ function gameMetaStatement(meta: GameMeta, nowSec: number, onConflict: OnConflic
   }
 }
 
-export async function upsertGameMeta(db: Db, meta: GameMeta, nowSec: number): Promise<void> {
-  await db.execute(gameMetaStatement(meta, nowSec))
+export async function upsertGameMeta(
+  db: Db,
+  meta: GameMeta,
+  nowSec: number,
+  source: GameNameSource = {},
+): Promise<void> {
+  await db.execute(gameMetaStatement(meta, nowSec, 'update', source))
 }
 
 /**
@@ -3612,7 +3936,18 @@ export type GameRow = {
   dead_reason?: string | null
   /** Колонка из ALTER-цикла, как price_cc: у строки старше неё поля нет */
   ru_lang?: number | null
-  /** Английское описание — колонка из ALTER-цикла v10, как ru_lang */
+  /** Отзывы для людей — все языки (shownReviews); колонки из ALTER-цикла */
+  reviews_all_total?: number | null
+  reviews_all_percent?: number | null
+  /** В узкой выборке колонки нет: словами оценку пишет только кольцо /game */
+  reviews_all_score?: number | null
+  /** Отзывы на русском и пульс за 30 дней — только /game, в узкой выборке их нет */
+  reviews_ru_total?: number | null
+  reviews_ru_percent?: number | null
+  reviews_recent_total?: number | null
+  reviews_recent_percent?: number | null
+  reviews_recent_at?: number | null
+  /** Английское описание — колонка из ALTER-цикла v13, как ru_lang */
   short_description_en?: string | null
   /**
    * game_semantics.json через SEMANTICS_JOIN. Есть только у выборок пачкой;
@@ -3693,6 +4028,27 @@ export function rowToMeta(row: GameRow, cc: string = priceRegion()): GameMeta {
   if (row.reviews_percent !== null && row.reviews_percent !== undefined) {
     meta.reviewsPercent = row.reviews_percent
   }
+  // Отзывы для людей, на русском и пульс — только парой «сколько и какая
+  // доля»: половина пары — не факт, а повод показать «0% из 1 200»
+  const pair = (total: number | null | undefined, percent: number | null | undefined) =>
+    typeof total === 'number' && typeof percent === 'number' ? { total, percent } : null
+  const all = pair(row.reviews_all_total, row.reviews_all_percent)
+  if (all) {
+    meta.reviewsAllTotal = all.total
+    meta.reviewsAllPercent = all.percent
+    if (typeof row.reviews_all_score === 'number') meta.reviewsAllScore = row.reviews_all_score
+  }
+  const ru = pair(row.reviews_ru_total, row.reviews_ru_percent)
+  if (ru) {
+    meta.reviewsRuTotal = ru.total
+    meta.reviewsRuPercent = ru.percent
+  }
+  const recent = pair(row.reviews_recent_total, row.reviews_recent_percent)
+  if (recent && typeof row.reviews_recent_at === 'number') {
+    meta.reviewsRecentTotal = recent.total
+    meta.reviewsRecentPercent = recent.percent
+    meta.reviewsRecentAt = row.reviews_recent_at
+  }
   // Эти три колонки пишутся в upsertGameMeta и до сих пор молча терялись при
   // чтении: в GameRow их не было, в маппинге тоже. Из-за этого подпись вида
   // «Valve · 2013» была невозможна, хотя данные лежали в базе.
@@ -3747,7 +4103,8 @@ export async function getGameMeta(db: Db, appid: number): Promise<GameMeta | nul
  *
  * Семантика игры (длина сессии на карточке) приезжает тем же чтением —
  * SEMANTICS_JOIN по первичному ключу, одна строка game_semantics, а не
- * второй поход в базу на каждый рендер.
+ * второй поход в базу на каждый рендер. Русское название (name_ru) — тоже:
+ * SELECT * его и так везёт, а GameMeta его не носит (см. GamePageRow).
  */
 export async function getGamePageRow(db: Db, appid: number): Promise<GamePageRow | null> {
   const res = await db.execute({
@@ -3758,7 +4115,19 @@ export async function getGamePageRow(db: Db, appid: number): Promise<GamePageRow
   return row ? pageRowOf(row) : null
 }
 
-export type GamePageRow = { meta: GameMeta; reviewsSummary: unknown; prosCons: unknown }
+export type GamePageRow = {
+  meta: GameMeta
+  reviewsSummary: unknown
+  prosCons: unknown
+  /**
+   * Русское название магазина, когда оно у игры своё (games.name_ru, см.
+   * nameSql); null — его нет. Не поле GameMeta: мету пишут все писатели
+   * каталога, а name_ru выводит апсерт, и лишнее поле в записи только
+   * обещало бы, что его можно прислать. Читает его карточка — вторым рядом
+   * под английским заголовком и alternateName в разметке.
+   */
+  nameRu: string | null
+}
 
 function pageRowOf(row: GameRow & Record<string, unknown>): GamePageRow {
   const разобрать = (v: unknown): unknown => {
@@ -3773,6 +4142,7 @@ function pageRowOf(row: GameRow & Record<string, unknown>): GamePageRow {
     meta: rowToMeta(row),
     reviewsSummary: разобрать(row.reviews_summary_json),
     prosCons: разобрать(row.pros_cons_json),
+    nameRu: typeof row.name_ru === 'string' && row.name_ru ? row.name_ru : null,
   }
 }
 
@@ -4082,6 +4452,10 @@ const GAME_LITE_COLS = [
   // ru_lang — одно число, а нужен он именно здесь: полка покупок и герой /play
   // читают мету этой выборкой (подбор, пул открытий)
   'ru_lang',
+  // «92% из 48 тыс.» на плитках хабов и /play — та же пара, что кольцо /game
+  // (shownReviews), а не англоязычная шкала порогов. Оценка словами, русские
+  // и пульс плиткам не нужны — их читает только карточка, строкой целиком
+  'reviews_all_total', 'reviews_all_percent',
   // «О чём игра» у новой для человека игры на /en (aboutLine в lib/cards) —
   // та же выборка, что и русское описание рядом
   'short_description_en',
@@ -4213,10 +4587,10 @@ export async function setGamesMedia(
  * же, как описание без русского перевода у catalog:descriptions: трейлер у
  * игры может появиться позже, а лишний вопрос стоит одного места в пачке.
  *
- * Язык — тем же запросом GetItems (STORE_MEDIA_DATA_REQUEST в lib/catalog), и
- * без него в выборке крон карточек довёз бы русский до уже обогащённых игр
- * только через полгода (PAGE_MAX_AGE_SEC): у них page_at стоит, и в очередь
- * они не вернутся. Языки нужны прежде всего им — это верх каталога.
+ * Язык — тем же запросом GetItems (STORE_MEDIA_DATA_REQUEST в lib/catalog):
+ * раз доливка всё равно спрашивает, пусть заодно и язык. Уже обогащённым
+ * играм его довозит и крон — своей выборкой gamesMissingRuLang ниже, без
+ * трейлеров и кадров (почему не этой — там же).
  */
 export async function gamesMissingMedia(db: Db, limit: number): Promise<number[]> {
   const res = await db.execute({
@@ -4230,6 +4604,135 @@ export async function gamesMissingMedia(db: Db, limit: number): Promise<number[]
     args: [limit],
   })
   return res.rows.map((r) => Number(r.appid))
+}
+
+/**
+ * Живые игры, о русском языке которых Steam ещё не спрашивали (ru_lang NULL),
+ * — для догона кроном карточек (runCardCatchUp в lib/pagejob). Верх каталога
+ * первым: его страницы видят чаще всего, и именно у него язык не появлялся
+ * сам — крон возвращается к обогащённой карточке раз в полгода.
+ *
+ * Не gamesMissingMedia: та берёт и игры без трейлера, а у верха каталога
+ * таких хватает, и в Steam трейлер у них не появится — пачка в двести
+ * забивалась бы ими на каждом звене, до языка очередь не доходила бы. Здесь
+ * условие одно, и игра уходит из выборки с первым же ответом Steam, ноль
+ * («русского нет») тоже ответ.
+ *
+ * В выборке остаётся только игра, о языках которой Steam промолчал (снята с
+ * витрины, пустой список языков): NULL у неё так и стоит. Такие копятся в
+ * голове очереди — ответившие из неё уходят, а промолчавшие верх каталога
+ * остаются, — и без skip пачка спрашивала бы их на каждом звене, а наберись
+ * их сотня — только их, и до остальных очередь не дошла бы никогда. Поэтому
+ * догон передаёт тех, о ком Steam промолчал за последнюю неделю
+ * (CATCHUP_RU_SILENT_KEY в lib/pagejob), и пачка берёт следующих. Список
+ * одним параметром, как APPIDS_IN выше.
+ *
+ * Частичный индекс idx_games_ru_unknown: читается пачка и пропущенные, а
+ * когда догонять нечего — одни пропущенные, единицы. План сторожит
+ * lib/queryplan.test.ts.
+ */
+export async function gamesMissingRuLang(
+  db: Db,
+  limit: number,
+  skip: readonly number[] = [],
+): Promise<number[]> {
+  const res = await db.execute({
+    sql: `SELECT appid FROM games
+          WHERE ${ALIVE_POOL} AND ru_lang IS NULL AND appid > 0
+            AND appid NOT IN (SELECT value FROM json_each(?))
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [JSON.stringify(skip), limit],
+  })
+  return res.rows.map((r) => Number(r.appid))
+}
+
+/**
+ * Обогащённые живые игры, чьей карточке не хватает «Наиграли»
+ * (GameSemantics.played), а отзывы ради неё ещё не разбирались, — для догона
+ * кроном карточек (runCardCatchUp в lib/pagejob). Верх каталога первым; теги
+ * — для deriveSemantics, чтобы не читать строку второй раз.
+ *
+ * Ждут догона три вида записей — те же, что в очереди reviewDueSql у
+ * scripts/semanticsbuild, кроме ветки версии:
+ *   • записи нет вовсе;
+ *   • запись по одним тегам, а за отзывами не ходили (reviews_at NULL);
+ *   • запись по отзывам, разобранным до `since`, — без played: since —
+ *     PLAYED_SINCE из lib/semantics, с него разбор и считает хваливших.
+ * Первые две — не редкость, а верх каталога: так стоят карточки, которые
+ * крон обогатил до того, как в него вошла семантика (с 14 августа по 23
+ * сентября 2026), если по ним не прошёл semantics:build, — без записи или с
+ * приором без отметки. Туда же — карточка, чей поход за отзывами срез не
+ * довёл (отказ сети: приор пишется без reviews_at). Срез к обогащённой вернётся
+ * только через полгода (PAGE_MAX_AGE_SEC), и без этих двух веток «Наиграли»
+ * не доехала бы до самых посещаемых страниц раньше февраля — а DEPLOY.md
+ * обещает её кроном, без ручного шага.
+ *
+ * Для каждой игры выборка разовая: после похода reviews_at стоит позже
+ * отсечки (upsertSemantics с reviewsAt, затем markReviewsParsed) — и тогда,
+ * когда хваливших с названным временем меньше MIN_PLAYED_REVIEWS, и при
+ * пустом ответе. Тонкая игра — запись по тегам С reviews_at: Steam ответил,
+ * а отзывов не хватило сдвинуть оси, — сюда не берётся: played пишется
+ * только вместе с такими отзывами, и перезапрос дал бы тот же ответ. Запись
+ * по тегам без reviews_at — не тонкая, а неспрошенная, и её берём.
+ *
+ * Только обогащённые (page_at): необогащённую ведёт сам срез, с тем же
+ * походом за отзывами, — догон повторял бы его работу на хвосте каталога.
+ * Ветки версии (s.v < SEMANTICS_V) нет: смена формата делает ждущим весь
+ * каталог разом, и перечитать его — дело semantics:build --with-reviews, а
+ * не пяти игр за звено.
+ *
+ * Цена. Отсутствие записи индексом по game_semantics не найти, поэтому
+ * внешний цикл — пул по idx_games_pool, уже в порядке отзывов, и семантика
+ * по ключу к каждой игре. Пока ждущие есть, чтение обрывает LIMIT на пятой
+ * найденной, а ждущие — верх каталога, то есть начало прохода. Когда их нет,
+ * это весь пул: шесть тысяч строк games и столько же game_semantics. Поэтому
+ * пустой ответ догон запоминает и сутки сюда не ходит
+ * (CATCHUP_PLAYED_IDLE_KEY в lib/pagejob). План сторожит lib/queryplan.test.ts.
+ *
+ * hasRecord — была ли запись до догона: приор по тегам, легший туда, где её
+ * не было, меняет отпечаток карточки (cardRowPrint) так же, как запись по
+ * отзывам, и страница идёт в сброс.
+ */
+export async function gamesMissingPlayed(
+  db: Db,
+  since: number,
+  limit: number,
+): Promise<Array<{ appid: number; tags: Record<string, number>; hasRecord: boolean }>> {
+  const res = await db.execute({
+    sql: `SELECT g.appid, g.tags_json, s.appid IS NOT NULL AS has_record FROM games g
+          ${SEMANTICS_JOIN}
+          WHERE ${ALIVE_POOL_G} AND g.appid > 0 AND g.page_at IS NOT NULL
+            AND (s.appid IS NULL OR s.reviews_at IS NULL
+                 OR (s.basis = 'tags+reviews' AND s.reviews_at < ?
+                     AND json_extract(s.json, '$.played') IS NULL))
+          ORDER BY g.reviews_total DESC, g.appid
+          LIMIT ?`,
+    args: [since, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; tags_json: unknown; has_record: unknown }>).map((r) => ({
+    appid: Number(r.appid),
+    tags: parseTagMap(r.tags_json),
+    hasRecord: Number(r.has_record) === 1,
+  }))
+}
+
+/**
+ * Отметка «отзывы разобраны в at» — и тогда, когда запись семантики не легла.
+ *
+ * Так бывает у догона «Наиграли»: запись по отзывам вернулась в очередь, а
+ * Steam в этот раз отдал меньше отзывов, чем нужно сдвинуть оси, — или пустой
+ * ответ. Приор по тегам upsertSemantics поверх неё не пишет, и правильно, но
+ * вместе с записью не двигалась бы и reviews_at: игра стояла бы в голове
+ * очереди каждый запуск. reviews_at и значит «когда отзывы последний раз
+ * разбирались» (схема game_semantics), а не «из каких отзывов запись».
+ * Назад отметка не едет.
+ */
+export async function markReviewsParsed(db: Db, appid: number, at: number): Promise<void> {
+  await db.execute({
+    sql: 'UPDATE game_semantics SET reviews_at = ? WHERE appid = ? AND (reviews_at IS NULL OR reviews_at < ?)',
+    args: [at, appid, at],
+  })
 }
 
 /** Строка для upsertSemantics */
@@ -4661,7 +5164,8 @@ export async function claimPageEnrichBatch(
  * Патчноут — именно kind = 'patch', то есть ровно то, что карточка рисует
  * (getGameNews). news_items хранит и распродажи, ивенты, анонсы (kind =
  * 'news'), и без фильтра каждая «Weekend Deal» двигала lastmod карточки, на
- * которой её нет, — тот же шум, от которого правило выше и защищает. Цена
+ * которой её нет, — тот же шум, от которого правило выше и защищает. По той
+ * же причине и без вердикта модели «не патч» (scale = 'none', NewsVerdict). Цена
  * фильтра: kind в idx_news_app не входит, но MAX по индексу (appid,
  * published_at DESC) SQLite обрывает на первой подходящей строке (проверено
  * по байткоду: Goto после AggStep), то есть читает посты от свежего до
@@ -4684,7 +5188,8 @@ export async function sitemapGames(
                    g.updated_at,
                    COALESCE(g.page_at, 0),
                    COALESCE((SELECT MAX(n.published_at) FROM news_items n
-                             WHERE n.appid = g.appid AND n.kind = 'patch'), 0)
+                             WHERE n.appid = g.appid AND n.kind = 'patch'
+                               AND n.scale IS NOT 'none'), 0)
                  ) AS updated_at
           FROM games g
           -- живая игра с алиасом таблицы: подзапрос по news_items требует
@@ -4748,22 +5253,27 @@ export async function topCatalogGames(db: Db, limit: number): Promise<SimilarGam
  * Читает частичный idx_games_pool по порядку и обрывается на LIMIT — весь
  * живой каталог, раз в сутки (ISR маршрута). Сторож плана —
  * lib/queryplan.test.ts.
+ *
+ * nameRu — русское название магазина, когда оно у игры своё (name_ru, см.
+ * nameSql): по нему «ведьмак 3» находит «The Witcher 3: Wild Hunt». Нет —
+ * поля нет вовсе, а не null: таких строк — почти все шесть тысяч.
  */
 export async function searchIndexGames(
   db: Db,
   limit: number,
-): Promise<Array<{ appid: number; name: string }>> {
+): Promise<Array<{ appid: number; name: string; nameRu?: string }>> {
   const res = await db.execute({
-    sql: `SELECT appid, name FROM games
+    sql: `SELECT appid, name, name_ru FROM games
           WHERE ${ALIVE_POOL} AND appid > 0
           ORDER BY reviews_total DESC
           LIMIT ?`,
     args: [limit],
   })
-  return (res.rows as unknown as Array<{ appid: number; name: string }>).map((r) => ({
-    appid: Number(r.appid),
-    name: String(r.name),
-  }))
+  return (res.rows as unknown as Array<{ appid: number; name: string; name_ru: string | null }>).map((r) => {
+    const row: { appid: number; name: string; nameRu?: string } = { appid: Number(r.appid), name: String(r.name) }
+    if (r.name_ru) row.nameRu = String(r.name_ru)
+    return row
+  })
 }
 
 /**
@@ -4828,6 +5338,75 @@ export async function topGamesByTags(
 }
 
 /**
+ * Отбор подборки хаба (HUB_FACETS в lib/gamehub) — условие на строку каталога.
+ *
+ *   • categories — есть хоть одна из категорий Steam (кооператив, общий экран);
+ *   • free — Steam отдаёт игру бесплатно (is_free);
+ *   • session — один заход короче belowMinutes по уверенной семантике: та же
+ *     уверенность (SEMANTICS_MIN_CONFIDENCE), с которой карточка игры вообще
+ *     называет длину сессии (sessionTrait в lib/gametraits). По одним тегам
+ *     «короткая» — приор жанра, а подборка утверждает это о каждой игре. И
+ *     только своей версии формата (SEMANTICS_V): чужую parseSemantics
+ *     читает как «семантики нет», и такая строка заняла бы место в LIMIT,
+ *     а карточка потом не назвала бы её сессию вовсе.
+ */
+export type FacetQuery =
+  | { kind: 'categories'; ids: readonly number[] }
+  | { kind: 'free' }
+  | { kind: 'session'; belowMinutes: number }
+
+/**
+ * Игры подборки — верх живого каталога по числу отзывов, у которых условие
+ * выполнено. Форма та же, что у полки хаба (SimilarGame): страница подборки
+ * дочитывает отзывы и «за что любят» так же, как страница жанра.
+ *
+ * Идёт по idx_games_pool (reviews_total DESC) по порядку и останавливается
+ * на limit-й подходящей: условие — подзапрос на строку (категории — json_each
+ * её же categories_json, семантика — поиск по ключу game_semantics), поэтому
+ * ни сортировки, ни прохода по таблице мимо индекса. Чем реже факт, тем
+ * дальше уходит проход: общий экран — у одной игры из десяти, а уверенная
+ * короткая сессия, пока отзывы разобраны у немногих, может не набрать limit и
+ * за весь пул — тогда это пул целиком (тысячи строк, как у topGamesByTags).
+ * Поэтому зовёт только страница на ISR с суточным revalidate. Сторож плана —
+ * lib/queryplan.test.ts.
+ *
+ * Список категорий — параметром, а не текстом запроса: числа приходят из
+ * lib/gamehub, но SQL от этого не должен зависеть.
+ */
+export async function topGamesByFacet(db: Db, q: FacetQuery, limit: number): Promise<SimilarGame[]> {
+  const cond =
+    q.kind === 'categories'
+      ? {
+          sql: 'EXISTS (SELECT 1 FROM json_each(games.categories_json) WHERE value IN (SELECT value FROM json_each(?)))',
+          args: [JSON.stringify(q.ids)],
+        }
+      : q.kind === 'free'
+        ? { sql: 'is_free = 1', args: [] }
+        : {
+            sql: `EXISTS (SELECT 1 FROM game_semantics AS s WHERE s.appid = games.appid
+                    AND s.v = ?
+                    AND json_extract(s.json, '$.confidence') >= ?
+                    AND json_extract(s.json, '$.session.minutes') < ?)`,
+            args: [SEMANTICS_V, SEMANTICS_MIN_CONFIDENCE, q.belowMinutes],
+          }
+  const res = await db.execute({
+    sql: `SELECT appid, name, header_image, art_json FROM games
+          WHERE ${ALIVE_POOL} AND appid > 0 AND ${cond.sql}
+          ORDER BY reviews_total DESC
+          LIMIT ?`,
+    args: [...cond.args, limit],
+  })
+  return (
+    res.rows as unknown as Array<{ appid: number; name: string; header_image: string | null; art_json: string | null }>
+  ).map((r) => ({
+    appid: Number(r.appid),
+    name: r.name,
+    headerImage: r.header_image ?? null,
+    art: r.art_json ? (JSON.parse(r.art_json) as GameArtUrls) : null,
+  }))
+}
+
+/**
  * «За что любят» пачкой — для страницы жанра: по сорок игр разом, а не
  * getGamePageRow на каждую.
  *
@@ -4835,6 +5414,10 @@ export async function topGamesByTags(
  * не у вызывающего: эвристика ('reviews', 'thin') бывает на английском и с
  * бранью из отзывов, и страница игры её не показывает никогда (lib/gamepage).
  * Новому потребителю обойти это правило нечем — строк с ней он не получит.
+ *
+ * И без битых пунктов (modelTextFlaw) — по той же причине, что shownProsCons
+ * у карточки: обломки JSON и «геймплей механика» лежат в базе с тех пор, как
+ * фильтра после модели не было, а пересборка дойдёт до них через полгода.
  */
 export async function getLovedFor(
   db: Db,
@@ -4859,7 +5442,9 @@ export async function getLovedFor(
       continue
     }
     if (!Array.isArray(pros)) continue
-    const clean = pros.filter((p): p is string => typeof p === 'string' && p.trim() !== '').map((p) => p.trim())
+    const clean = pros
+      .filter((p): p is string => typeof p === 'string' && p.trim() !== '' && !modelTextFlaw(p))
+      .map((p) => p.trim())
     if (clean.length) out.set(Number(r.appid), clean)
   }
   return out
@@ -4881,7 +5466,7 @@ export async function gameDescriptions(
   limit: number,
   locale: Locale = 'ru',
 ): Promise<Array<{ appid: number; description: string | null }>> {
-  // Колонка — по языку доливки: английская живёт отдельно (ADDED_COLUMNS v10)
+  // Колонка — по языку доливки: английская живёт отдельно (ADDED_COLUMNS v13)
   const col = locale === 'en' ? 'short_description_en' : 'short_description'
   const res = await db.execute({
     sql: `SELECT appid, ${col} AS description FROM games
@@ -5370,6 +5955,13 @@ const PRICE_CC = `COALESCE(price_cc, '${LEGACY_PRICE_CC}')`
  * человека её не переснимет, — без сверки однажды пойманный visible:false
  * остался бы на игре каталога навсегда. Заходам людей флаг не нужен: им
  * хватает срока.
+ *
+ * deadDeals — своя цена, которую витрина прячет (DEAD_DEAL), тоже протухшая
+ * при любом возрасте. Тоже нужно только сверке, и довод тот же: погасшую
+ * распродажу trustedPrice не показывает вовсе, а переснимают цену только
+ * заходы людей, которые до игры доходят не всегда, — на проде так неделями
+ * стояли без цены Hades, ICARUS и Among Us. Заходам людей флаг опять не
+ * нужен: замер старше их срока протух и так.
  */
 export async function stalePriceAppids(
   db: Db,
@@ -5378,23 +5970,44 @@ export async function stalePriceAppids(
   nowSec: number,
   limit = 200,
   cc: string = priceRegion(),
-  opts: { hidden?: boolean } = {},
+  opts: { hidden?: boolean; deadDeals?: boolean } = {},
 ): Promise<number[]> {
   const positive = appids.filter((id) => id > 0)
   if (!positive.length) return []
   const hidden = opts.hidden ? ' OR store_hidden = 1' : ''
+  const dead = opts.deadDeals ? ` OR ${DEAD_DEAL}` : ''
   const res = await db.execute({
     // Сначала те, у кого цены своего региона не было никогда, потом самые
     // давние: бюджет одного вызова конечен, а пустая цена заметнее устаревшей
     sql: `SELECT appid FROM games
           WHERE ${APPIDS_IN}
-            AND (price_at IS NULL OR price_at < ? OR ${PRICE_CC} <> ?${hidden})
+            AND (price_at IS NULL OR price_at < ? OR ${PRICE_CC} <> ?${hidden}${dead})
           ORDER BY (price_at IS NOT NULL AND ${PRICE_CC} = ?), price_at
           LIMIT ?`,
-    args: [JSON.stringify(positive), nowSec - maxAgeSec, cc, cc, limit],
+    args: [
+      JSON.stringify(positive),
+      nowSec - maxAgeSec,
+      cc,
+      ...(opts.deadDeals ? [nowSec] : []),
+      cc,
+      limit,
+    ],
   })
   return (res.rows as unknown as Array<{ appid: number }>).map((r) => r.appid)
 }
+
+/**
+ * Цена есть, а показать её нельзя — trustedPrice (lib/discount) в SQL, с одним
+ * параметром «сейчас». Скидка заявлена, но discountOf ей не верит: пары «было
+ * — стало» нет, «было» не выше «стало» или срок доверия (DEAL_UNTIL) прошёл.
+ * COALESCE — для строки со скидкой без отметки замера и без срока: ей не
+ * верят тем более.
+ *
+ * Регион здесь не проверяется: цена чужого региона и так протухшая в
+ * stalePriceAppids (PRICE_CC <> ?), а своя — ровно то, что прячет витрина.
+ */
+const DEAD_DEAL = `(discount_percent > 0 AND price_final IS NOT NULL
+  AND (price_initial IS NULL OR price_initial <= price_final OR COALESCE(${DEAL_UNTIL}, 0) <= ?))`
 
 /**
  * Лежащая цена переживает котировку без блока покупки, только если она своего
@@ -5569,12 +6182,25 @@ export async function catalogSignalsQueue(db: Db, limit: number): Promise<Signal
  * тем, про кого Steam промолчал (снята с продажи, нет отзывов на языке):
  * иначе они вечно стояли бы в голове очереди и съедали бы каждую пачку.
  * Значения отзывов пишутся только тем, у кого они приехали.
+ *
+ * Отзывы для людей (все языки и русские) пишутся отдельным UPDATE со своим
+ * условием — только когда показанное число сдвинулось заметно, см.
+ * SHOWN_DRIFT. Англоязычные пороги — каждую сверку, как прежде.
  */
 export async function updateCatalogSignals(
   db: Db,
   signals: {
     checked: readonly number[]
-    reviews: ReadonlyMap<number, { total: number; percent: number } | null>
+    reviews: ReadonlyMap<
+      number,
+      | {
+          total: number
+          percent: number
+          all?: { total: number; percent: number; score: number | null }
+          ru?: { total: number; percent: number }
+        }
+      | null
+    >
     ccu: ReadonlyArray<{ appid: number; ccu: number }>
   },
   nowSec: number,
@@ -5589,12 +6215,200 @@ export async function updateCatalogSignals(
           }
         : { sql: 'UPDATE games SET reviews_at = ? WHERE appid = ?', args: [nowSec, appid] }
     }),
+    ...signals.checked.flatMap((appid) => {
+      const r = signals.reviews.get(appid)
+      const out: Array<{ sql: string; args: Array<number | null> }> = []
+      if (r?.all) {
+        const { total, percent, score } = r.all
+        out.push({
+          sql: `UPDATE games SET reviews_all_total = ?, reviews_all_percent = ?, reviews_all_score = ?
+                WHERE appid = ? AND (${shownMoved('reviews_all_total', 'reviews_all_percent')}
+                  OR reviews_all_score IS NOT ?)`,
+          args: [total, percent, score, appid, percent, total, score],
+        })
+      }
+      if (r?.ru) {
+        out.push({
+          sql: `UPDATE games SET reviews_ru_total = ?, reviews_ru_percent = ?
+                WHERE appid = ? AND ${shownMoved('reviews_ru_total', 'reviews_ru_percent')}`,
+          args: [r.ru.total, r.ru.percent, appid, r.ru.percent, r.ru.total],
+        })
+      }
+      return out
+    }),
     ...signals.ccu.map(({ appid, ccu }) => ({
       sql: 'UPDATE games SET ccu = ?, ccu_at = ? WHERE appid = ?',
       args: [ccu, nowSec, appid],
     })),
   ]
   if (stmts.length) await db.batch(stmts, 'write')
+}
+
+/**
+ * Показанное людям число отзывов переписывается, только когда сдвинулось на
+ * 1/SHOWN_DRIFT (2%) или поменялась доля.
+ *
+ * Это про ISR. Карточка игры живёт неделю и пишется заново, только если её
+ * вывод разошёлся с прошлым (lib/gamecache), а кольцо печатает число отзывов
+ * до единицы. Сверка идёт раз в неделю, и у игры, которая прибавляет хоть
+ * десяток отзывов, каждая перегенерация была бы новой страницей — запись ISR
+ * на каждую зашедшую карточку каждую неделю, при выбранном бюджете. С порогом
+ * Hades (309 тысяч, +1–2 тысячи в неделю) переписывается раз в несколько
+ * недель, а число на странице отстаёт не больше чем на 2%: решению «стоит ли
+ * играть» эти два процента ничего не меняют. Доля — сразу при любом сдвиге:
+ * «97%» вместо «98%» — уже другой факт.
+ */
+const SHOWN_DRIFT = 50
+
+/**
+ * Условие перезаписи пары «сколько — какая доля» (SHOWN_DRIFT): NULL — ещё не
+ * писали. Параметры по порядку: новая доля, новое число.
+ */
+function shownMoved(totalCol: string, percentCol: string): string {
+  return `(${totalCol} IS NULL OR ${percentCol} IS NOT ?
+    OR ABS(${totalCol} - ?) * ${SHOWN_DRIFT} >= ${totalCol})`
+}
+
+/**
+ * Голова очереди пульса отзывов (refreshReviewPulse в lib/catalogsignals):
+ * из верхних `top` игр пула по отзывам и верхних `panned` разгромленных,
+ * снятых с подбора (PANNED_DEAD), — те, чей пульс не спрашивали или
+ * спрашивали раньше `before`; сперва ни разу не спрошенные, потом самые
+ * давние, а среди равных — у кого больше отзывов.
+ *
+ * Только верх, и это про цену. Пульс — запрос на игру в store.steampowered.com
+ * через тот же пейсер, что у крона карточек (1.7 с на шаг), и каждый его шаг
+ * — полкарточки, не обогащённой в этом звене. Пульсу же есть что сказать
+ * только у игры с полусотней отзывов в месяц (PULSE_MIN_RECENT), а это и есть
+ * верх каталога — и его карточки читают чаще всего.
+ *
+ * Разгромленные — исключение из «только пул», и не ради строки под кольцом.
+ * Вердикт «большинство отзывов отрицательные» молчит, когда за месяц игру
+ * хвалят (deadVerdict в lib/gamepage): починенной игре суждение за всё время
+ * врёт так же, как «почти не осталось людей» игре с вернувшимся онлайном. Но
+ * молчать ему не по чему, пока месяц никто не мерил, а пул по построению
+ * мёртвых не содержит. Их полсотни на каталог — к четырём сотням верха это
+ * восьмая часть.
+ *
+ * Отметка — reviews_recent_checked_at, а не reviews_recent_at: та — дата
+ * показанного замера, и переписывается она не каждой проверкой (см.
+ * updateReviewPulse).
+ *
+ * Обе ветки читаются своими частичными индексами по порядку (idx_games_pool и
+ * idx_games_panned), а сортировка по отметке — только их `top + panned` строк.
+ */
+export async function reviewPulseQueue(
+  db: Db,
+  opts: { top: number; panned: number; before: number; limit: number },
+): Promise<number[]> {
+  const res = await db.execute({
+    sql: `SELECT appid FROM (
+            SELECT * FROM (
+              SELECT appid, reviews_total, reviews_recent_checked_at AS checked FROM games
+              WHERE ${ALIVE_POOL} AND appid > 0
+              ORDER BY reviews_total DESC
+              LIMIT ?
+            )
+            UNION ALL
+            SELECT * FROM (
+              SELECT appid, reviews_total, reviews_recent_checked_at AS checked FROM games
+              WHERE ${PANNED_DEAD} AND appid > 0
+              ORDER BY reviews_total DESC
+              LIMIT ?
+            )
+          )
+          WHERE checked IS NULL OR checked < ?
+          ORDER BY checked, reviews_total DESC
+          LIMIT ?`,
+    args: [opts.top, opts.panned, opts.before, opts.limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number }>).map((r) => Number(r.appid))
+}
+
+/**
+ * Показанный пульс переписывается, только когда новый замер говорит заметно
+ * другое, — и это снова про ISR, как SHOWN_DRIFT.
+ *
+ * Строка под кольцом — «за 30 дней до 3 октября: 71% положительных из 7 948
+ * отзывов», и с каждым замером в ней меняется что-нибудь: дата — всегда, счёт
+ * — почти всегда, доля — через раз. Переписывай её каждой недельной
+ * проверкой — и каждая зашедшая карточка верха пула, самые читаемые карточки
+ * сайта, была бы записью ISR в неделю при выбранном бюджете (lib/gamecache).
+ * А правды бы не прибавилось: подпись несёт дату, и прежний замер верен ровно
+ * так же, как новый, — он просто про месяц на неделю раньше.
+ *
+ * Поэтому переписывается новость, а не дата:
+ *   • доля сдвинулась на PULSE_SHARE_DRIFT пункта — при полусотне отзывов
+ *     (PULSE_MIN_RECENT) один отзыв и есть два пункта, меньшее — шум;
+ *   • счёт сдвинулся больше чем на 1/PULSE_COUNT_DRIFT (20%) — «из 8 тысяч»
+ *     против «из 10 тысяч» уже другой масштаб, а «7 948» против «8 102» нет;
+ *   • показанный замер старше reshowBefore — тогда любой новый: иначе месяц
+ *     игры, где ничего не случилось, однажды состарился бы за срок показа
+ *     (PULSE_SHOW_MAX_AGE_SEC в lib/gamepage), и строка пропала бы как раз у
+ *     неё.
+ * Ноль отзывов против любого числа — сдвиг на всё число, его ловит второе
+ * правило.
+ *
+ * Порогов показа (PULSE_MIN_RECENT, PULSE_MIN_GAP) здесь нет намеренно.
+ * «Переписать при пересечении» дёргало бы страницу каждую неделю у игры,
+ * чьи отзывы колеблются у самой границы, — ровно то, от чего правило
+ * заведено. Без него показанная доля отстаёт от новой меньше чем на
+ * PULSE_SHARE_DRIFT, и строка появляется или гаснет на пункт позже границы,
+ * которая и сама выбрана на глаз.
+ *
+ * Параметры условия по порядку: reshowBefore, новое число, новая доля.
+ */
+const PULSE_SHARE_DRIFT = 2
+const PULSE_COUNT_DRIFT = 5
+const PULSE_MOVED = `(reviews_recent_at IS NULL OR reviews_recent_total IS NULL
+    OR reviews_recent_at < ?
+    OR ABS(reviews_recent_total - ?) * ${PULSE_COUNT_DRIFT} > reviews_recent_total
+    OR ABS(reviews_recent_percent - ?) >= ${PULSE_SHARE_DRIFT})`
+
+/**
+ * Записывает пульс отзывов узкими UPDATE — по той же причине, что сверка
+ * каталога: upsertGameMeta двигал бы updated_at.
+ *
+ * Проверка и показ пишутся раздельно. Каждым ответом Steam —
+ * reviews_recent_checked_at (по ней идёт очередь) и reviews_30d: то же число
+ * за месяц, им судит живость совместной игры без замера онлайна
+ * (judgeLiveness), и до пульса его освежал только ручной промоут. Тройка же,
+ * которую печатает строка под кольцом /game, — только по PULSE_MOVED.
+ *
+ * pulse undefined — Steam ответил, но не про игру: ставится одна отметка
+ * проверки, иначе игра стояла бы в голове очереди вечно. Показанный замер
+ * остаётся со своей датой и гаснет на странице сам, по сроку показа: подпись
+ * датой не даёт ему выдать себя за свежий, а одна осечка Steam не стоит
+ * карточке записи ISR. Ноль отзывов за месяц — ответ: число пишется, доли у
+ * него нет.
+ */
+export async function updateReviewPulse(
+  db: Db,
+  rows: ReadonlyArray<{ appid: number; pulse: { total: number; positive: number } | undefined }>,
+  nowSec: number,
+  opts: { reshowBefore: number },
+): Promise<void> {
+  if (!rows.length) return
+  await db.batch(
+    rows.flatMap(({ appid, pulse }) => {
+      if (!pulse) {
+        return [{ sql: 'UPDATE games SET reviews_recent_checked_at = ? WHERE appid = ?', args: [nowSec, appid] }]
+      }
+      const percent = pulse.total > 0 ? Math.round((pulse.positive / pulse.total) * 100) : null
+      return [
+        {
+          sql: 'UPDATE games SET reviews_30d = ?, reviews_recent_checked_at = ? WHERE appid = ?',
+          args: [pulse.total, nowSec, appid],
+        },
+        {
+          sql: `UPDATE games SET reviews_recent_total = ?, reviews_recent_percent = ?, reviews_recent_at = ?
+                WHERE appid = ? AND ${PULSE_MOVED}`,
+          args: [pulse.total, percent, nowSec, appid, opts.reshowBefore, pulse.total, percent],
+        },
+      ]
+    }),
+    'write',
+  )
 }
 
 /* ---------- фидбек ---------- */
@@ -7194,6 +8008,28 @@ export async function sweepStale(db: Db, nowSec: number): Promise<SweepReport> {
 export type NewsKind = 'patch' | 'news'
 export type NewsScale = 'major' | 'hotfix'
 
+/**
+ * Ответ модели пересказа: масштаб патча или 'none' — «это не патч» (дорожная
+ * карта, превью, анонс стрима, бета-анонс, пост про другую игру; см.
+ * claudeNewsDigest в lib/llm).
+ *
+ * 'none' живёт в колонке scale, но в NewsScale его нет намеренно: дальше
+ * rowToNews такая строка не уходит патчем вовсе — её kind читается как
+ * 'news', а scale как null. Ни бейджу, ни ленте, ни странице патча третье
+ * значение масштаба знать незачем.
+ *
+ * Почему scale, а не kind: kind переписывает каждый опрос (upsertNewsItems,
+ * kind = excluded.kind), и эвристика вернула бы «патч» на следующие же
+ * сутки — с прежним пересказом, раз тело то же. scale и пересказ при том же
+ * теле опрос не трогает; новое тело — новый пост, и модель решает заново.
+ *
+ * Обратная сторона той же стойкости: ошибочный 'none' сам не уходит. Список
+ * таких постов — в npm run news:report (раздел D) и в плане news:reclass, а
+ * вернуть вердикт модели — news:reclass -- --apply --renone
+ * (scripts/newsreclass.ts).
+ */
+export type NewsVerdict = NewsScale | 'none'
+
 export type StoredNews = {
   appid: number
   gid: string
@@ -7263,7 +8099,7 @@ type NewsRow = {
   image_url: string | null
   rank: number
   tldr: string | null
-  /** Колонки ALTER-цикла v10: у строки, прочитанной до него, их нет вовсе */
+  /** Колонки ALTER-цикла v13: у строки, прочитанной до него, их нет вовсе */
   tldr_en?: string | null
   title_en?: string | null
 }
@@ -7282,7 +8118,10 @@ function rowToNews(r: NewsRow): StoredNews {
     title: r.title,
     url: r.url,
     publishedAt: r.published_at,
-    kind: r.kind === 'patch' ? 'patch' : 'news',
+    // Вердикт модели «не патч» (NewsVerdict) — это новость, что бы ни сказала
+    // эвристика: списки отсекают его в SQL, а здесь — всё, что читает строку
+    // по ключу (getNewsPage → 404 страницы патча, как у распродажи)
+    kind: r.kind === 'patch' && r.scale !== 'none' ? 'patch' : 'news',
     scale: r.scale === 'major' || r.scale === 'hotfix' ? r.scale : null,
     blocks,
     bodyHash: r.body_hash,
@@ -7461,12 +8300,19 @@ export async function getNewsBlocks(
   }
 }
 
-/** Страница игры: тут показываем и мелкие патчи тоже */
+/**
+ * Страница игры: тут показываем и мелкие патчи тоже.
+ *
+ * scale IS NOT 'none' — без вердикта модели «не патч» (NewsVerdict). Не в
+ * памяти, а в запросе: строка, отсечённая после LIMIT, съедала бы место
+ * настоящего патча. IS NOT, а не <>: scale бывает NULL, и <> молча выкинул
+ * бы патч, которому масштаб ещё не назначен.
+ */
 export async function getGameNews(db: Db, appid: number, limit = 8): Promise<StoredNews[]> {
   if (appid <= 0) return []
   const res = await db.execute({
     sql: `SELECT ${NEWS_COLS} FROM news_items
-          WHERE appid = ? AND kind = 'patch'
+          WHERE appid = ? AND kind = 'patch' AND scale IS NOT 'none'
           ORDER BY published_at DESC LIMIT ?`,
     args: [appid, limit],
   })
@@ -7549,13 +8395,14 @@ export type NewsHead = {
  *
  * Не getGameNews: та везёт blocks_json каждой строки, а здесь нужны только
  * заголовок и дата. Идёт по idx_news_app (appid, published_at DESC), порядок
- * приходит из индекса.
+ * приходит из индекса. Вердикт модели «не патч» отсекается тем же условием,
+ * что у getGameNews: ссылка на него вела бы на 404.
  */
 export async function getGamePatchHeads(db: Db, appid: number, limit = 8): Promise<NewsHead[]> {
   if (appid <= 0) return []
   const res = await db.execute({
     sql: `SELECT gid, title, published_at, scale, title_en FROM news_items
-          WHERE appid = ? AND kind = 'patch'
+          WHERE appid = ? AND kind = 'patch' AND scale IS NOT 'none'
           ORDER BY published_at DESC LIMIT ?`,
     args: [appid, limit],
   })
@@ -7573,6 +8420,68 @@ export async function getGamePatchHeads(db: Db, appid: number, limit = 8): Promi
     publishedAt: Number(r.published_at),
     scale: r.scale === 'major' || r.scale === 'hotfix' ? r.scale : null,
     ...(r.title_en ? { titleEn: r.title_en } : {}),
+  }))
+}
+
+/**
+ * Архивы обновлений игр для карты сайта: игры с не меньше чем minTold
+ * пересказанными крупными патчами у игры каталога.
+ *
+ * Предикат повторяет idx_news_feed дословно (крупные патчи игр каталога), как
+ * у sitemapNews, — по нему и идёт проход, только без окна по дате: архив
+ * держит всё, что не срезала ретенция (NEWS_KEEP в lib/newsjob, тридцать
+ * постов на игру). Группировка по игре сортирует эти строки — сотни игр по
+ * десятку патчей раз в сутки на ISR карты сайта, а не таблицу.
+ *
+ * Плюс перед f.appid в GROUP BY и ORDER BY — не опечатка, а запрет брать
+ * порядок из индекса. Без него SQLite, экономя сортировку, шёл по
+ * idx_news_app (appid, …) целиком — то есть читал ВСЕ посты всех игр, с
+ * распродажами и анонсами, ради порядка по appid (план проверен на базе).
+ * Унарный плюс выключает этот столбец для индекса, и проход идёт по
+ * частичному idx_news_feed — только по крупным патчам игр каталога. Сторож
+ * плана — lib/queryplan.test.ts.
+ *
+ * Подмножество того, что архив сам пускает в индекс (archiveIndexable в
+ * lib/patcharchive считает и пересказанные хотфиксы): в карту — только
+ * наверняка индексируемое. «Патч» здесь — записанный kind, как у sitemapNews
+ * и sitemapGames: тел карта сайта не читает, и сверить строку с нынешним
+ * правилом классификатора, как сам архив (isStoredPatch в lib/news), не
+ * может. Дорожная карта, записанная патчем старым правилом, считается здесь
+ * до переопроса игры — худшее, что выйдет, это архив в карте с noindex на
+ * самой странице, а не строка неправды. Вердикт модели «не патч» (scale
+ * 'none') отсекает уже scale = 'major'.
+ *
+ * changed_at — когда список последний раз менялся по существу: самый свежий
+ * патч игры любого масштаба (хотфикс в архиве — тоже строка; поиск по
+ * idx_news_app до первого патча, как у sitemapGames, и без вердикта «не
+ * патч» тем же условием) или последний пересказ. Не updated_at каждой
+ * строки: ради него пришлось бы дочитывать все патчи игры, а не
+ * останавливаться на первом, а сверх этих двух он поймал бы только правку
+ * одного заголовка у старого поста — правка тела и так сбрасывает пересказ,
+ * и новый сдвинет tldr_at.
+ */
+export async function sitemapPatchArchives(
+  db: Db,
+  minTold: number,
+  limit: number,
+): Promise<Array<{ appid: number; changedAt: number }>> {
+  const res = await db.execute({
+    sql: `SELECT f.appid AS appid,
+                 MAX(MAX(f.tldr_at), COALESCE((SELECT MAX(n.published_at) FROM news_items AS n
+                                               WHERE n.appid = f.appid AND n.kind = 'patch'
+                                                 AND n.scale IS NOT 'none'), 0)) AS changed_at
+          FROM news_items AS f
+          WHERE f.kind = 'patch' AND f.scale = 'major' AND f.rank > 0
+            AND f.tldr IS NOT NULL
+          GROUP BY +f.appid
+          HAVING COUNT(*) >= ?
+          ORDER BY +f.appid
+          LIMIT ?`,
+    args: [minTold, limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; changed_at: number }>).map((r) => ({
+    appid: Number(r.appid),
+    changedAt: Number(r.changed_at),
   }))
 }
 
@@ -8015,7 +8924,8 @@ export async function getUnsummarizedEn(db: Db, limit = 12): Promise<StoredNews[
  */
 export type NewsDigestWrite = {
   tldr: string
-  scale: NewsScale
+  /** Вердикт модели: масштаб патча или 'none' — «не патч» (см. setNewsDigest) */
+  scale: NewsVerdict
   tldrEn?: string | null
   titleEn?: string | null
 }
@@ -8024,6 +8934,24 @@ export type NewsDigestWrite = {
  * tldr = null засчитывает попытку, но не выжигает запись: три неудачи подряд
  * (нет ключа, отказ модели, битый JSON) — и запись выпадает из очереди.
  * Английский слот — см. NewsDigestWrite; одним UPDATE с русским.
+ *
+ * Вердикт 'none' («не патч», NewsVerdict) пишется с пустым пересказом, что бы
+ * модель ни написала в tldr. Пустая строка, а не NULL: NULL вернул бы запись
+ * в очередь (getUnsummarized), и за тот же вердикт платили бы трижды. А
+ * пустая, а не текст модели: пересказ поста, который не патч, не должен
+ * всплыть строкой патча ни через один запрос, где фильтр scale забудут, —
+ * idx_news_app_major, newsIndexable и описание страницы считают его
+ * отсутствующим. Цена — объяснение модели не сохраняется, и вердикт
+ * проверяют глазами по заголовку (news-report, раздел D).
+ *
+ * Английский слот у вердикта 'none' — по тому же доводу: не текст модели, а
+ * пустота. Он снимается целиком (tldr_en, tldr_en_at, title_en — NULL), что
+ * бы ни пришло в tldrEn: от прежнего пересказа (resetFlawedDigests снимает
+ * только русский) он остался бы английской строкой патча у поста, который не
+ * патч, — idx_news_en_major, sitemapNews и freshlyDigestedPatches на /en. NULL,
+ * а не пустая строка: в очередь догона (getUnsummarizedEn) запись и так не
+ * вернётся — её tldr пустой, а «IS NOT NULL» английских запросов NULL не
+ * пропустит. Попытка английского при этом не засчитывается: переводить нечего.
  */
 export async function setNewsDigest(
   db: Db,
@@ -8033,9 +8961,11 @@ export async function setNewsDigest(
   nowSec: number,
 ): Promise<void> {
   if (digest) {
-    const en = digest.tldrEn === undefined ? null : digest.tldrEn?.trim() || ''
-    const enSet =
-      en === null
+    const none = digest.scale === 'none'
+    const en = none || digest.tldrEn === undefined ? null : digest.tldrEn?.trim() || ''
+    const enSet = none
+      ? ', tldr_en = NULL, tldr_en_at = NULL, title_en = NULL'
+      : en === null
         ? ''
         : en
           ? ', tldr_en = ?, tldr_en_at = ?, title_en = ?, tldr_en_tries = tldr_en_tries + 1'
@@ -8044,7 +8974,7 @@ export async function setNewsDigest(
     await db.execute({
       sql: `UPDATE news_items SET tldr = ?, scale = ?, tldr_at = ?, tldr_tries = tldr_tries + 1${enSet}
             WHERE appid = ? AND gid = ?`,
-      args: [digest.tldr, digest.scale, nowSec, ...enArgs, appid, gid],
+      args: [none ? '' : digest.tldr, digest.scale, nowSec, ...enArgs, appid, gid],
     })
     return
   }
@@ -8080,6 +9010,80 @@ export async function setNewsDigestEn(
     sql: 'UPDATE news_items SET tldr_en_tries = tldr_en_tries + 1 WHERE appid = ? AND gid = ?',
     args: [appid, gid],
   })
+}
+
+/** Флаг в catalog_meta: уборка resetFlawedDigests уже прошла по этой базе */
+export const TLDR_FLAW_SWEEP_KEY = 'tldr_flaw_sweep_v1'
+
+/** Строк news_items на одно чтение уборки */
+const TLDR_SWEEP_PAGE = 500
+
+/**
+ * Разовая уборка пересказов, записанных до проверки текста модели.
+ *
+ * validateDigest бракует «видеосettings» и «комбатe» только у новых ответов.
+ * Уже лежащие пересказы сами не уходили никогда: попытки (tldr_tries)
+ * сбрасывает лишь новое тело патча (upsertNewsItems), а тело старого патча не
+ * меняется. На выгрузке прода таких 15 из 2 381 — «Ваmai», «механикой
+ * риposte», «Табletop Simulator», — и стояли они на странице патча, в «Что
+ * нового» на карточке, в RSS, в og-картинке и в причинах на /play.
+ *
+ * Сброс, а не скрытие при чтении: страница патча без пересказа — noindex, а
+ * карта сайта (sitemapNews) и IndexNow берут только патчи с tldr. Спрячь его
+ * лишь на странице — и в карте сайта остались бы адреса, которые сами просят
+ * их не индексировать. С tldr = NULL строка уходит отовсюду разом и встаёт в
+ * очередь getUnsummarized заново, с tldr_tries от нуля: лучше пересказ
+ * следующим звеном, чем мусор сейчас, а полтора десятка вызовов суточный
+ * бюджет модели (lib/llmcap) не заметит.
+ *
+ * Масштаб: 'hotfix' здесь мог поставить только сам пересказ (у патча, которому
+ * hotfix сказала эвристика, пересказа не бывает — см. getUnsummarized), а с
+ * ним строка в очередь не вернулась бы никогда. Он сбрасывается в NULL, и
+ * масштаб решит новый пересказ. 'major' остаётся: общая лента (getMajorFeed)
+ * берёт патчи по нему без пересказа, и снимать его значило бы выбросить
+ * крупный патч из ленты до следующего звена.
+ *
+ * Не в migrateDb, хотя флаг тот же по смыслу: проверка — код (modelTextFlaw),
+ * а не SQL, и это постраничное чтение всех пересказов. На холодном старте его
+ * ждал бы первый запрос посетителя, а превью на продовой базе стирало бы
+ * пересказы прода. Зовёт крон пересказов (runDigestSlice), который тут же их
+ * и перепишет. Оборвётся на полпути — флаг не записан, следующий прогон
+ * повторит с начала: уже сброшенное второй раз не найдётся.
+ *
+ * Возвращает игры, у которых пересказ снят: их карточки роут сбрасывает в ISR
+ * (строка под патчем на карточке живёт неделю). null — уборка уже была.
+ */
+export async function resetFlawedDigests(db: Db): Promise<number[] | null> {
+  if (await getCatalogMeta(db, TLDR_FLAW_SWEEP_KEY)) return null
+  const appids = new Set<number>()
+  let after = 0
+  for (;;) {
+    const res = await db.execute({
+      sql: `SELECT rowid AS rid, appid, gid, tldr FROM news_items
+            WHERE rowid > ? AND tldr IS NOT NULL ORDER BY rowid LIMIT ?`,
+      args: [after, TLDR_SWEEP_PAGE],
+    })
+    const rows = res.rows as unknown as Array<{ rid: number; appid: number; gid: string; tldr: string }>
+    const flawed = rows.filter((r) => modelTextFlaw(String(r.tldr)))
+    if (flawed.length) {
+      await db.batch(
+        flawed.map((r) => ({
+          // tldr = ? — строку, которую успели переписать между чтением и
+          // записью (новое тело патча, свежий пересказ), не трогаем
+          sql: `UPDATE news_items SET tldr = NULL, tldr_at = NULL, tldr_tries = 0,
+                  scale = CASE WHEN scale = 'hotfix' THEN NULL ELSE scale END
+                WHERE appid = ? AND gid = ? AND tldr = ?`,
+          args: [r.appid, r.gid, r.tldr],
+        })),
+        'write',
+      )
+      for (const r of flawed) appids.add(Number(r.appid))
+    }
+    if (rows.length < TLDR_SWEEP_PAGE) break
+    after = Number(rows[rows.length - 1].rid)
+  }
+  await setCatalogMeta(db, TLDR_FLAW_SWEEP_KEY, '1')
+  return [...appids]
 }
 
 /** Ретенция на игру. Держим больше, чем берём из фида, иначе вечный цикл

@@ -34,7 +34,7 @@ const warmup = () =>
     progress: { remaining: 312, total: 1204, library: { games: 1204, untouched: 87, wall: [] } },
     message: 'Looking through your library…',
     caption: 'Short · Chill · Solo',
-    chosen: { appid: 620, name: 'Portal 2' },
+    chosen: { appid: 620, name: 'Portal 2', poster: 'https://cdn.example/620/library_600x900.jpg' },
   })
 
 describe('островки /play на /en', () => {

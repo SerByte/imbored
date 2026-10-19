@@ -4,7 +4,7 @@ import { GameArt } from '@/components/GameArt'
 import { createSharedPick, replaceGameTags, upsertGameMeta, type Db } from '@/lib/db'
 import { quizHref, roomSeedHref } from '@/lib/presets'
 import { nowSec } from '@/lib/server'
-import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
+import { classOfTag, flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
 import { pickCopy, quoted, type PickKind } from '@/lib/sharedpick'
 import type { GameMeta } from '@/lib/types'
@@ -232,7 +232,7 @@ describe('/en/pick: причина — только на своём языке',
     expect(meta.alternates?.canonical).toBe('/en/pick/hjkmnpqrstuv')
   })
 
-  test('английский выбор на /en — цитата в “…”, описание из неё', async () => {
+  test('английский выбор на /en — цитата в “…”, описание — она же в кавычках', async () => {
     const reason = '“Hades” fits a short evening: one run takes about 30 minutes.'
     await shareIn('jkmnpqrstuvw', game(31, { name: 'Hades' }), 'en', reason, 'daily')
     const text = textOf(flightOf(await PickPage(en('jkmnpqrstuvw')), ISLANDS))
@@ -240,7 +240,8 @@ describe('/en/pick: причина — только на своём языке',
     expect(text).toContain(quoted(reason, 'en'))
     const meta = await generateMetadata(en('jkmnpqrstuvw'))
     expect(meta.title).toBe('“Hades” — my game of the day')
-    expect(meta.description).toBe(reason)
+    // Описание — та же цитата, что на странице: в “…”, как у русской в «…»
+    expect(meta.description).toBe(quoted(reason, 'en'))
   })
 
   /*
@@ -268,5 +269,51 @@ describe('/en/pick: причина — только на своём языке',
     expect(text).not.toContain('Because it fits tonight')
     const meta = await generateMetadata(params)
     expect(meta.description).toBe(pickCopy(null).description)
+  })
+})
+
+/** Класс h1 раскрытой страницы — заголовок героя один */
+function h1ClassOf(page: unknown): string {
+  const cls = classOfTag(page, 'h1')
+  expect(cls, 'h1 на странице не найден — сторож ослеп').toBeDefined()
+  return cls!
+}
+
+/**
+ * Тот же h1 с тем же кеглем, что у героя карточки игры, — и та же беда с
+ * длинным названием: стена из восьми строк вместо причины и кнопок. Правило
+ * одно на оба героя — lib/titlesize.
+ */
+describe('кегль названия в герое', () => {
+  test('обычное имя — кегль героя, длинное — титул экрана', async () => {
+    let params = await share('hjkmnpqrstuv', game(30, { name: 'Hades' }))
+    expect(h1ClassOf(flightOf(await PickPage(params), ISLANDS))).toMatch(/\btext-display-lg\b/)
+
+    params = await share(
+      'jkmnpqrstuvw',
+      game(31, { name: 'YEAH! YOU WANT "THOSE GAMES," RIGHT? SO HERE YOU GO! NOW, LET\'S SEE YOU CLEAR THEM!' }),
+    )
+    const cls = h1ClassOf(flightOf(await PickPage(params), ISLANDS))
+    expect(cls).toMatch(/\btext-display-md\b/)
+    expect(cls).toContain('[overflow-wrap:anywhere]')
+  })
+})
+
+/**
+ * Герой выбора на телефоне — постер игры, а не обрывок полосы.
+ *
+ * Стоячий бокс героя вписывал library_hero (3.1:1) по высоте и показывал
+ * 19% её ширины вдвое крупнее себя: на проде у Ravenswatch друг по ссылке
+ * видел фиолетово-золотое пятно. Как GameArt раскладывает постер и героя —
+ * lib/heroportrait.test.ts; здесь — что /pick об этом просит.
+ */
+describe('герой /pick на портретном экране', () => {
+  test('просит у GameArt вертикальный постер', async () => {
+    const params = await share('aaaaaaaaaaaa', game(1145360, {}))
+    const arts = islandsOf(flightOf(await PickPage(params), ISLANDS), 'GameArt')
+    const hero = arts.filter((a) => a.variant === 'hero')
+    expect(hero).toHaveLength(1)
+    expect(hero[0]?.portrait).toBe(true)
+    expect(hero[0]?.fetchPriority).toBe('high')
   })
 })

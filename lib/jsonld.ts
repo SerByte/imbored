@@ -2,6 +2,7 @@ import { discountOf, trustedPrice } from './discount'
 import { descriptionFor } from './gamedesc'
 import { DEFAULT_LOCALE, htmlLang, lp, tr, type Locale } from './i18n'
 import { newsHeading, newsPath, newsTitleOn } from './newspage'
+import { patchArchivePath } from './patcharchive'
 import { OG_SITE, siteDescription } from './site'
 import { STORE_LABEL } from './stores'
 import { tagLabel } from './tagsru'
@@ -46,6 +47,8 @@ export type GameLd = {
   '@context': 'https://schema.org'
   '@type': 'VideoGame'
   name: string
+  /** русское название магазина — то же, что вторым рядом под заголовком; только на русской странице */
+  alternateName?: string
   url: string
   gamePlatform: 'PC'
   description?: string
@@ -108,6 +111,12 @@ function ldDescription(meta: GameMeta, locale: Locale): string | undefined {
 
 export type GameLdInput = {
   meta: GameMeta
+  /**
+   * Русское название магазина (GamePageData.nameRu). Страница рисует его
+   * вторым рядом под заголовком, разметка называет alternateName — и только
+   * тогда, когда оно на странице есть (pageNameRu).
+   */
+  nameRu?: string | null
   /** абсолютный адрес сайта — schema.org требует полных ссылок */
   baseUrl: string
   /** язык страницы: адреса в разметке — на нём (по умолчанию ru) */
@@ -134,8 +143,31 @@ const PLAY_MODES: Array<[number[], string]> = [
   [[9, 38], 'CoOp'],
 ]
 
+/**
+ * Второе название, которое карточка показывает под заголовком, — или null.
+ *
+ * Одно правило на страницу и разметку: alternateName без строки на странице
+ * — ровно та разметка, что говорит больше видимого. Совпадающее с name не
+ * показываем — повтор заголовка ничего не называет.
+ *
+ * На /en — null: русское название нужно русской выдаче («Ведьмак 3: Дикая
+ * Охота» ищут по-русски), а английской странице это строка кириллицы под
+ * английским заголовком, которой её читатель не ищет (docs/i18n.md: русского
+ * на /en нет). Без языка — русская страница, как было.
+ */
+export function pageNameRu(
+  meta: Pick<GameMeta, 'name'>,
+  nameRu: string | null | undefined,
+  locale: Locale = DEFAULT_LOCALE,
+): string | null {
+  if (locale === 'en') return null
+  const alt = nameRu?.trim()
+  return alt && alt !== meta.name ? alt : null
+}
+
 export function gameJsonLd({
   meta,
+  nameRu,
   baseUrl,
   locale = DEFAULT_LOCALE,
   currency,
@@ -149,6 +181,17 @@ export function gameJsonLd({
     // Каталог — только PC-игры: и Steam, и кураторский пул других магазинов.
     gamePlatform: 'PC',
   }
+  /*
+   * Русское название — вторым именем, а не вместо: название карточки —
+   * английское, как в магазине (STORE_LANGUAGE в lib/catalog), а русское
+   * у ~70 игр верха каталога («Ведьмак 3: Дикая Охота», «Призрак Цусимы»)
+   * — то, как их ищут в русской выдаче. До правила двух названий (nameSql в
+   * lib/db) крон карточек клал его прямо в name, и <title> с H1 этих страниц
+   * были русскими; теперь они английские, а русское остаётся на странице
+   * вторым рядом — и здесь. На /en его нет ни там, ни здесь (pageNameRu).
+   */
+  const alt = pageNameRu(meta, nameRu, locale)
+  if (alt) ld.alternateName = alt
 
   const description = ldDescription(meta, locale)
   if (description) ld.description = description
@@ -491,8 +534,10 @@ export function patchArticleLd({
 }
 
 /**
- * Крошки патча: главная → игра → патч — ровно та ссылка назад, что стоит над
- * заголовком. Игры нет в каталоге — нет и ссылки на неё: два уровня.
+ * Крошки патча: главная → игра → обновления → патч — ровно тот путь, что
+ * стоит над заголовком. «Обновления» — архив обновлений игры
+ * (/game/<appid>/news, lib/patcharchive): патч — одна его строка. Игры нет в
+ * каталоге — нет ни её карточки, ни архива: два уровня.
  */
 export function patchBreadcrumbLd({
   item,
@@ -507,13 +552,61 @@ export function patchBreadcrumbLd({
 }): BreadcrumbLd {
   const steps = [
     { name: 'imbored', item: at(baseUrl, locale, '/') },
-    ...(game ? [{ name: game.name, item: at(baseUrl, locale, `/game/${item.appid}`) }] : []),
+    ...(game
+      ? [
+          { name: game.name, item: at(baseUrl, locale, `/game/${item.appid}`) },
+          { name: archiveCrumb(locale), item: at(baseUrl, locale, patchArchivePath(item.appid)) },
+        ]
+      : []),
     { name: newsHeading(newsTitleOn(item, game?.name, locale), game?.name), item: at(baseUrl, locale, newsPath(item.appid, item.gid)) },
   ]
   return {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: steps.map((step, i) => ({ '@type': 'ListItem' as const, position: i + 1, ...step })),
+  }
+}
+
+/**
+ * Имя архива в крошках по-русски — тот же текст, что в видимом пути над
+ * заголовком. Русская константа остаётся ради старых вызывающих; на языке
+ * страницы — archiveCrumb.
+ */
+export const ARCHIVE_CRUMB = 'Обновления'
+
+/**
+ * Имя архива в крошках на языке страницы: «Обновления» / «Updates». Видимый
+ * путь над заголовком архива и патча берёт его отсюда же — разметка не
+ * говорит больше страницы.
+ */
+export function archiveCrumb(locale: Locale = DEFAULT_LOCALE): string {
+  return tr(locale, { ru: ARCHIVE_CRUMB, en: 'Updates' })
+}
+
+/**
+ * Крошки архива обновлений игры: главная → игра → обновления — путь, который
+ * архив показывает строкой над заголовком. Адреса и имя архива — на языке
+ * страницы, как её canonical.
+ */
+export function archiveBreadcrumbLd({
+  appid,
+  gameName,
+  baseUrl,
+  locale = DEFAULT_LOCALE,
+}: {
+  appid: number
+  gameName: string
+  baseUrl: string
+  locale?: Locale
+}): BreadcrumbLd {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { name: 'imbored', item: at(baseUrl, locale, '/') },
+      { name: gameName, item: at(baseUrl, locale, `/game/${appid}`) },
+      { name: archiveCrumb(locale), item: at(baseUrl, locale, patchArchivePath(appid)) },
+    ].map((step, i) => ({ '@type': 'ListItem' as const, position: i + 1, ...step })),
   }
 }
 

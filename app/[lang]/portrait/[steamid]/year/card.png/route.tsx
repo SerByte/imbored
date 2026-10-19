@@ -1,4 +1,4 @@
-import { ImageResponse } from 'next/og'
+import { isrImage } from '@/lib/ogresponse'
 import { YearCardImage, fonts, loadYearCardData } from '../share-card'
 import { isLocale } from '@/lib/i18n'
 
@@ -26,7 +26,7 @@ export async function GET(
   const data = await loadYearCardData(steamid, lang)
   if (!data) return new Response('Not found', { status: 404 })
 
-  return new ImageResponse(<YearCardImage data={data} wide={false} />, {
+  return isrImage(<YearCardImage data={data} wide={false} />, {
     ...SIZE,
     fonts: await fonts,
   })

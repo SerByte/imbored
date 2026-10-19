@@ -5273,9 +5273,37 @@ img[data-art-fade][data-loaded] {
   animation: page-in var(--dur-fast) var(--ease-out);
 }
 
+/*
+ * ГЛАВНАЯ ВХОДИТ БЕЗ ПРОЗРАЧНОСТИ — только сдвигом.
+ *
+ * Знак «Одна игра. И почему именно она.» — LCP главной, и он приходит в
+ * статическом HTML. Но первый кадр рисовал его с opacity: 0 (начало
+ * page-in), а Chrome засчитывает текст в LCP только тогда, когда ГЛАВНЫЙ
+ * ПОТОК рисует его видимым: проявление ведёт композитор, и запись LCP ждала
+ * следующей перерисовки — то есть гидрации. Замер на проде, телефон:
+ * FCP 1.8–1.95 с, LCP 2.5–2.8 с; без прозрачности LCP совпал с FCP. Тот же
+ * довод — у SplitHeading (components/SplitHeading.tsx).
+ *
+ * Только главной: остальным страницам проявление при переходе оставлено,
+ * а без :has() (старый браузер) главная просто проявляется, как раньше.
+ * Под «уменьшить движение» выключено вместе с базовым правилом — блок ниже.
+ */
+@keyframes page-in-move {
+  from {
+    transform: translateY(4px);
+  }
+  to {
+    transform: none;
+  }
+}
+.anim-page-in:has(.hero) {
+  animation-name: page-in-move;
+}
+
 /* Под самим правилом, а не в общем списке выше: там оно ему проигрывало. */
 @media (prefers-reduced-motion: reduce) {
-  .anim-page-in {
+  .anim-page-in,
+  .anim-page-in:has(.hero) {
     animation: none;
   }
 }

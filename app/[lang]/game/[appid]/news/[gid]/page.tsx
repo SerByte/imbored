@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { GameArt } from '@/components/GameArt'
 import { Icon } from '@/components/Icon'
 import { Eyebrow, SectionLabel } from '@/components/Labels'
+import { LinkPending } from '@/components/LinkPending'
 import { ForeignBody, NewsBody } from '@/components/NewsBody'
 import { NewsDate, ScaleBadge } from '@/components/NewsMeta'
 import { PatchShare } from '@/components/PatchShare'
@@ -16,7 +17,9 @@ import {
   newsPath,
   newsTitleOn,
 } from '@/lib/newspage'
-import { patchArticleLd, patchBreadcrumbLd, ldScript } from '@/lib/jsonld'
+import { archiveCrumb, patchArticleLd, patchBreadcrumbLd, ldScript } from '@/lib/jsonld'
+import { navPrefetch } from '@/lib/nav'
+import { patchArchivePath } from '@/lib/patcharchive'
 import { appBaseUrl, getDb } from '@/lib/server'
 import { lp, toLocale, tr } from '@/lib/i18n'
 import { localeAlternates, ogSite } from '@/lib/site'
@@ -180,12 +183,27 @@ export default async function PatchPage({ params }: Params) {
       <article className="relative mx-auto flex w-full max-w-3xl flex-col gap-8 px-safe pt-28 pb-16">
         <header className="flex flex-col gap-4 anim-rise">
           {/* Игры в каталоге может не быть (пост пришёл по чьей-то
-              библиотеке) — тогда и её карточки нет, и ссылаться некуда */}
+              библиотеке) — тогда нет ни её карточки, ни архива, и ссылаться
+              некуда. Путь — тот же, что в разметке крошек (patchBreadcrumbLd):
+              игра → её архив обновлений → этот патч. Был одной ссылкой
+              «← игра»; архив (/game/<appid>/news) встал между ними, и
+              подняться к остальным патчам теперь можно одним шагом. Архив —
+              без префетча: он на ISR и рендерится по первому заходу */}
           {game && (
-            <Link href={gameHref} transitionTypes={['nav-back']} className="tap tap-tight link-more self-start">
-              <Icon name="back" size={16} />
-              {game.name}
-            </Link>
+            <nav aria-label={tr(locale, { ru: 'Путь к патчу', en: 'Path to this patch' })} className="flex flex-wrap items-center gap-1.5">
+              <Link href={gameHref} transitionTypes={['nav-back']} className="tap tap-tight link-more">
+                {game.name}
+              </Link>
+              <Icon name="arrow" size={14} className="text-faint" />
+              <Link
+                href={patchArchivePath(item.appid)}
+                transitionTypes={['nav-back']}
+                prefetch={false}
+                className="tap tap-tight link-more"
+              >
+                {archiveCrumb(locale)}
+              </Link>
+            </nav>
           )}
           <Eyebrow as="p">{tr(locale, { ru: 'Что изменилось', en: 'What changed' })}</Eyebrow>
           {/* Заголовок и тело — текст издателя, обычно английский, а
@@ -220,16 +238,28 @@ export default async function PatchPage({ params }: Params) {
         <section className="flex flex-col gap-4">
           <SectionLabel as="h2">{tr(locale, { ru: 'Патч целиком', en: 'Full patch notes' })}</SectionLabel>
           {item.imageUrl && (
-            // Кадр поста из RSS Steam, как в ленте (PatchRow, Cover). Не
-            // next/image по той же причине, что в NewsBody: пришлось бы
-            // открывать remotePatterns на весь CDN
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={item.imageUrl}
-              alt=""
-              decoding="async"
-              className="w-full rounded-[var(--radius-card)] border border-edge object-cover"
-            />
+            /*
+              Кадр поста из RSS Steam, как в ленте (PatchRow, Cover). Не
+              next/image по той же причине, что в NewsBody: пришлось бы
+              открывать remotePatterns на весь CDN.
+
+              В <picture> — чтобы префетч страницы не тащил кадр туда, где
+              стоит ссылка. Серверный <img> без lazy Flight превращает в
+              подсказку предзагрузки, а страницу патча префетчит «Читать
+              патч» на обложке /whatsnew: на телефоне кадр 138 КБ качался
+              вперёд героя ленты, рядом с которым его не показывают вовсе
+              (подробно — у StaticGameCardBody). lazy здесь не годится: под
+              коротким «Коротко» кадр бывает над сгибом, и его ждали бы до
+              раскладки. Сторож — imageHints в page.test.ts.
+            */
+            <picture className="contents">
+              <img
+                src={item.imageUrl}
+                alt=""
+                decoding="async"
+                className="w-full rounded-[var(--radius-card)] border border-edge object-cover"
+              />
+            </picture>
           )}
           {item.blocks.length > 0 ? (
             <NewsBody blocks={item.blocks} locale={locale} />
@@ -283,14 +313,22 @@ export default async function PatchPage({ params }: Params) {
           Английская фраза — своя целиком, а не перевод кусков вокруг ссылки:
           в ней ссылка — подлежащее («What's new has…»), в русской — заголовок
           перед тире.
+
+          Без префетча: /whatsnew собирается на каждый запрос (lib/nav,
+          DYNAMIC_SECTIONS), и префетч будил функцию на каждом просмотре
+          патча, докрученного до низа, — MISS и private, no-store на проде,
+          а пришедших из поиска и по ссылкам на ~530 патчей много больше,
+          чем нажавших. Паузу перехода закрывает мерцание подписи
+          (LinkPending) — как у той же ссылки в шапке.
         */}
         <p className="text-sm leading-relaxed text-dim">
           {tr(locale, { ru: 'А что изменилось в твоих играх?', en: 'What changed in your games?' })}{' '}
           <Link
             href="/whatsnew"
+            prefetch={navPrefetch('/whatsnew')}
             className="tap tap-tight font-semibold text-ink underline decoration-1 underline-offset-4 transition-opacity hover:opacity-70"
           >
-            {tr(locale, { ru: 'Что нового', en: "What's new" })}
+            <LinkPending>{tr(locale, { ru: 'Что нового', en: "What's new" })}</LinkPending>
           </Link>{' '}
           {tr(locale, {
             ru: '— крупные патчи твоей библиотеки одной лентой.',
@@ -323,6 +361,14 @@ export default async function PatchPage({ params }: Params) {
                 )
               })}
             </ul>
+            {/* Шесть соседних — перелинковка, а все хранящиеся патчи игры
+                списком — в её архиве обновлений */}
+            {game && (
+              <Link href={patchArchivePath(item.appid)} prefetch={false} className="tap link-more mt-3">
+                {tr(locale, { ru: `Все обновления «${game.name}»`, en: `All ${game.name} updates` })}
+                <Icon name="arrow" size={16} />
+              </Link>
+            )}
           </section>
         )}
       </article>

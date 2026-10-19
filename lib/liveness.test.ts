@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { filterPlayable, judgeLiveness, playMode } from './liveness'
+import { filterPlayable, judgeLiveness, playContextOf, playMode } from './liveness'
 import type { GameMeta } from './types'
 
 /**
@@ -22,7 +22,7 @@ describe('playMode', () => {
     expect(playMode(CS_SOURCE.categories)).toBe('online')
   })
 
-  test('кооп — друзей приводишь своих, толпа не нужна', () => {
+  test('кооп без одиночного режима — отдельный режим, не сетевая игра', () => {
     expect(playMode([1, 9, 38])).toBe('coop')
   })
 
@@ -84,7 +84,7 @@ describe('judgeLiveness: контекст соло или компания', () 
     expect(verdict.reason).toBe('solo-only')
   })
 
-  test('кооп не гейтится онлайном вовсе — друзей приводишь своих', () => {
+  test('кооп не гейтится онлайном нигде, кроме alone, — друзей приводишь своих', () => {
     // The Jackbox Party Pack 4: режимы 1,49,37,9,39, онлайн 15 человек на
     // весь мир. Это диванная игра: садишься с друзьями в одной комнате,
     // телефоны вместо джойстиков. Мировой онлайн к ней отношения не имеет
@@ -111,6 +111,66 @@ describe('judgeLiveness: контекст соло или компания', () 
   })
 })
 
+/*
+ * «Один — только я и игра» на /play. Режимы и онлайн сняты из каталога
+ * продакшна: Never Split the Party выпала гостю, ответившему «Один», героем
+ * вечера — «0 играли», а это кооп и PvP на четверых без одиночного режима.
+ * Правило коопа «друзей приводишь своих» к человеку, который сам сказал, что
+ * друзей сегодня нет, не относится: такому коопу напарник нужен из
+ * матчмейкинга, и судить его надо по толпе, как сетевую игру.
+ */
+const NEVER_SPLIT = { categories: [1, 49, 36, 9, 38, 27], ccu: 6 }
+const DOTA2 = { categories: [1, 9], ccu: 896_573 }
+const HELLDIVERS2 = { categories: [1, 9, 38], ccu: 96_996 }
+
+describe('judgeLiveness: «один прямо сейчас» (alone)', () => {
+  test('кооп без одиночного режима и без толпы — не для того, кто играет один', () => {
+    const verdict = judgeLiveness(NEVER_SPLIT, 'alone')
+    expect(verdict.alive).toBe(false)
+    expect(verdict.reason).toBe('dead-multiplayer')
+    // онлайн неизвестен — тот же запасной сигнал по отзывам, что у сетевой игры
+    expect(judgeLiveness({ categories: [1, 9, 38], reviews30d: 0, reviewsTotal: 4000 }, 'alone').alive).toBe(
+      false,
+    )
+  })
+
+  test('живой кооп с матчмейкингом проходит: напарника найдёт толпа', () => {
+    // Dota 2 у Steam — [1, 9], то есть «кооп»; выкинуть её из одиночной
+    // выдачи значило бы потерять «Продолжить «Dota 2»» у того, кто в неё играет
+    expect(judgeLiveness(DOTA2, 'alone').alive).toBe(true)
+    expect(judgeLiveness(HELLDIVERS2, 'alone').alive).toBe(true)
+    expect(judgeLiveness({ categories: [1, 9, 38], ccu: 5000 }, 'alone').alive).toBe(true)
+  })
+
+  test('игра с одиночным режимом не гейтится и здесь', () => {
+    expect(judgeLiveness(DEEP_ROCK, 'alone').alive).toBe(true)
+    expect(judgeLiveness({ ...DEEP_ROCK, ccu: 0 }, 'alone').alive).toBe(true)
+    expect(judgeLiveness(CONDITION_ZERO, 'alone').alive).toBe(true)
+  })
+
+  test('сигнала нет — живая, как и в остальных контекстах', () => {
+    // падение Steam не должно опустошать выдачу
+    expect(judgeLiveness({ categories: [1, 9, 38] }, 'alone').alive).toBe(true)
+  })
+
+  test('контекст выдачи: «Один» — alone, «С друзьями» — party, колода без настроения — мягкий solo', () => {
+    expect(playContextOf({ social: 'solo' })).toBe('alone')
+    expect(playContextOf({ social: 'friends' })).toBe('party')
+    // «Полистать» — находки на потом, а не «во что сесть сейчас»
+    expect(playContextOf({ social: 'solo' }, true)).toBe('solo')
+    expect(playContextOf({ social: 'friends' }, true)).toBe('party')
+  })
+
+  test('мягкий solo курации и party комнаты этим правилом не задеты', () => {
+    // promote-catalog пишет games.alive вердиктом по умолчанию: строже он —
+    // и Jackbox-подобный диванный кооп пропал бы из колод пати вместе с ним
+    expect(judgeLiveness(NEVER_SPLIT).alive).toBe(true)
+    expect(judgeLiveness(NEVER_SPLIT, 'solo').alive).toBe(true)
+    expect(judgeLiveness(NEVER_SPLIT, 'party').alive).toBe(true)
+    expect(judgeLiveness({ categories: [1, 49, 37, 9, 39], ccu: 15 }, 'party').alive).toBe(true)
+  })
+})
+
 describe('filterPlayable', () => {
   function meta(appid: number, over: Partial<GameMeta>): GameMeta {
     return { appid, name: `Игра ${appid}`, tags: {}, genres: [], categories: [], ...over }
@@ -132,6 +192,18 @@ describe('filterPlayable', () => {
   test('в компании отсекает и то, во что вместе не сесть', () => {
     const kept = filterPlayable(candidates, metaOf, 'party')
     expect(kept.map((c) => c.appid)).toEqual([730])
+  })
+
+  test('один прямо сейчас — отсекает и кооп, где напарника не найти', () => {
+    const withCoop = new Map(metas)
+    withCoop.set(711810, meta(711810, NEVER_SPLIT))
+    withCoop.set(570, meta(570, DOTA2))
+    const coop = [{ appid: 711810 }, { appid: 570 }, { appid: 80 }]
+    expect(filterPlayable(coop, (id) => withCoop.get(id), 'alone').map((c) => c.appid)).toEqual([570, 80])
+    // мягкий solo — прежний: кооп не гейтится
+    expect(filterPlayable(coop, (id) => withCoop.get(id), 'solo').map((c) => c.appid)).toEqual([
+      711810, 570, 80,
+    ])
   })
 
   test('если живого не осталось — возвращает всё как было', () => {

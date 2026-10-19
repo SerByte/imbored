@@ -6,6 +6,9 @@ import { getDb } from '@/lib/server'
 /**
  * Индекс «Найти игру»: номер и название каждой игры с карточкой — для поиска
  * по каталогу прямо в браузере (lib/catalogsearch, components/CatalogSearch).
+ * Название — английское, как в магазине, и у сотни игр второе, русское, если
+ * Steam дал его игре сам: «ведьмак 3» находит «The Witcher 3: Wild Hunt»
+ * (games.name_ru, nameSql в lib/db; SearchIndexWire.alt).
  *
  * Статический, с перегенерацией раз в сутки, как RSS ленты
  * (app/whatsnew/feed.xml): GET-ручки по умолчанию не кэшируются вовсе (docs:
@@ -20,7 +23,8 @@ import { getDb } from '@/lib/server'
  * только тот, кто открыл поиск: страница его не грузит (lib/catalogindex).
  * Названия — почти весь вес (47 КБ br из 66), номера — остальное; колонки
  * вместо пар сэкономили 7 КБ gzip (lib/catalogsearch, SearchIndexWire). На
- * локальной базе в тысячу игр — 14 КБ gzip.
+ * локальной базе в тысячу игр — 14 КБ gzip. Вторые названия — ~37 байт gzip
+ * на каждое: на сотню — ~4 КБ (замер — у SearchIndexWire).
  *
  * ЗАПИСЬ ISR. ~172 КБ — около двадцати двух блоков по 8 КБ, и пишутся они,
  * только когда вывод разошёлся с прошлым (lib/gamecache — лимит Hobby
@@ -41,7 +45,7 @@ export const revalidate = 86_400
  * отказом, а не пустым каталогом (readSearchIndex → null): «Каталог не
  * загрузился» с кнопкой повтора, а не «Ничего не нашлось» на «Dota 2».
  */
-async function readIndex(): Promise<Array<{ appid: number; name: string }>> {
+async function readIndex(): Promise<Awaited<ReturnType<typeof searchIndexGames>>> {
   try {
     return await searchIndexGames(await getDb(), SEARCH_INDEX_MAX)
   } catch (err) {

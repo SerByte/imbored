@@ -14,6 +14,7 @@ import {
   bannedAppids,
   bannedAppidsOf,
   castRoomVote,
+  catalogSignalsQueue,
   claimNewsPollBatch,
   countIngest,
   countNewsPollDue,
@@ -35,11 +36,13 @@ import {
   getMajorFeedHead,
   getRssFeedForApps,
   getUnsummarized,
+  getUnsummarizedEn,
   latestMajorPatchSince,
   PATCH_SINCE_MAX,
   pruneNewsForApp,
   releaseLease,
   repairGameJson,
+  resetFlawedDigests,
   liftRoomKick,
   raiseRoomSeat,
   removeRoomMember,
@@ -48,7 +51,10 @@ import {
   setGameDescriptions,
   setGamesMedia,
   setNewsDigest,
+  setNewsDigestEn,
   sitemapNews,
+  sitemapPatchArchives,
+  TLDR_FLAW_SWEEP_KEY,
   freshlyDigestedPatches,
   STEAM_LEASE,
   upsertNewsItems,
@@ -124,6 +130,7 @@ import {
   updateGamePrices,
   topCatalogGames,
   searchIndexGames,
+  topGamesByFacet,
   topGamesByTags,
   upsertGameMeta,
   upsertGamesMeta,
@@ -293,9 +300,12 @@ describe('db', () => {
     test('запись без трейлера — прогрев, appdetails — привезённый не стирает', async () => {
       const db = await freshDb()
       await upsertGameMeta(db, { ...META, trailer: TRAILER }, NOW)
-      await upsertGameMeta(db, { ...META, name: 'Portal 2 (новое имя)' }, NOW + 1)
+      // Имя здесь — свидетель того, что остальная строка обновилась. Латиницей:
+      // русское к латинскому апсерт кладёт вторым названием (см. «два
+      // названия игры»), и name остался бы прежним по другой причине
+      await upsertGameMeta(db, { ...META, name: 'Portal 2 (renamed)' }, NOW + 1)
       const after = await getGameMeta(db, 620)
-      expect(after?.name).toBe('Portal 2 (новое имя)')
+      expect(after?.name).toBe('Portal 2 (renamed)')
       expect(after?.trailer).toEqual(TRAILER)
     })
 
@@ -386,9 +396,10 @@ describe('db', () => {
     test('запись без языка — прогрев, appdetails без звёздочки — известный не стирает', async () => {
       const db = await freshDb()
       await upsertGameMeta(db, { ...META, ruLang: 3 }, NOW)
-      await upsertGameMeta(db, { ...META, name: 'Portal 2 (новое имя)' }, NOW + 1)
+      // Имя латиницей — по той же причине, что у трейлера выше
+      await upsertGameMeta(db, { ...META, name: 'Portal 2 (renamed)' }, NOW + 1)
       const after = await getGameMeta(db, 620)
-      expect(after?.name).toBe('Portal 2 (новое имя)')
+      expect(after?.name).toBe('Portal 2 (renamed)')
       expect(after?.ruLang).toBe(3)
       // а свежий ответ Steam побеждает, ноль в том числе
       await upsertGameMeta(db, { ...META, ruLang: 0 }, NOW + 2)
@@ -558,6 +569,123 @@ describe('db', () => {
     await upsertGameMeta(db, { ...META, appid: 621, shortDescription: 'Old English' }, NOW)
     await upsertGameMeta(db, { ...META, appid: 621, shortDescription: 'New English' }, NOW + 10)
     expect((await getGameMeta(db, 621))?.shortDescription).toBe('New English')
+  })
+
+  /*
+   * Названий у игры два: английское из магазина (name — его пишут прогрев,
+   * посев и заливка: GetItems по-английски) и русское (name_ru — его
+   * приносит обогащение карточки: appdetails с l=russian). Прежде русское
+   * ложилось в name поверх английского, и «witcher 3» в «Найти игру»
+   * отвечал «Ничего не нашлось» на «Ведьмак 3: Дикая Охота» — одну из
+   * тридцати самых популярных игр каталога, а с ней ещё шесть десятков.
+   */
+  describe('два названия игры', () => {
+    const WITCHER = { ...META, appid: 292030, name: 'The Witcher 3: Wild Hunt' }
+    const RU = 'Ведьмак 3: Дикая Охота'
+    const namesOf = async (db: Db, appid: number) => {
+      const r = await db.execute({ sql: 'SELECT name, name_ru FROM games WHERE appid = ?', args: [appid] })
+      return { ...(r.rows[0] as unknown as { name: string; name_ru: string | null }) }
+    }
+
+    test('русское из appdetails не затирает английское, а ложится вторым названием', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, WITCHER, NOW)
+      await upsertGameMeta(db, { ...WITCHER, name: RU }, NOW + 10)
+      expect(await namesOf(db, 292030)).toEqual({ name: WITCHER.name, name_ru: RU })
+      expect((await getGameMeta(db, 292030))?.name).toBe(WITCHER.name)
+
+      // Прогрев через две недели — английское английским, русское остаётся
+      await upsertGameMeta(db, WITCHER, NOW + 20)
+      expect(await namesOf(db, 292030)).toEqual({ name: WITCHER.name, name_ru: RU })
+    })
+
+    test('строка, где русское уже затёрло английское, лечится первой английской записью', async () => {
+      // Так выглядит прод до этой правки: в name — русское от карточки
+      const db = await freshDb()
+      await upsertGameMeta(db, WITCHER, NOW)
+      await db.execute({ sql: 'UPDATE games SET name = ? WHERE appid = ?', args: [RU, 292030] })
+
+      await upsertGameMeta(db, WITCHER, NOW + 10)
+      expect(await namesOf(db, 292030)).toEqual({ name: WITCHER.name, name_ru: RU })
+    })
+
+    test('русское название магазина — само название, а не второе', async () => {
+      const db = await freshDb()
+      // Английского у игры нет вовсе: магазин и по-английски зовёт её по-русски
+      await upsertGameMeta(db, { ...META, appid: 873190, name: 'ЕСТЬ ДВА СТУЛА' }, NOW)
+      await upsertGameMeta(db, { ...META, appid: 873190, name: 'ЕСТЬ ДВА СТУЛА' }, NOW + 10)
+      expect(await namesOf(db, 873190)).toEqual({ name: 'ЕСТЬ ДВА СТУЛА', name_ru: null })
+      // Переименовали в магазине — русское русским едет
+      await upsertGameMeta(db, { ...META, appid: 873190, name: 'ЕСТЬ ДВА СТУЛА: Опять' }, NOW + 20)
+      expect(await namesOf(db, 873190)).toEqual({ name: 'ЕСТЬ ДВА СТУЛА: Опять', name_ru: null })
+
+      // Заглушка «App N» — не название: русское её заменяет, а не встаёт вторым
+      await upsertGameMeta(db, { ...META, appid: 42, name: 'App 42' }, NOW)
+      await upsertGameMeta(db, { ...META, appid: 42, name: RU }, NOW + 10)
+      expect(await namesOf(db, 42)).toEqual({ name: RU, name_ru: null })
+    })
+
+    /*
+     * Снять второе название может только ответ магазина на l=russian (крон
+     * карточек): латинское от него значит «русского у игры в Steam больше
+     * нет». Латинское от прогрева — просто английское, и прежде, кроме него,
+     * писателей не было: устаревшее русское жило в индексе поиска навсегда.
+     */
+    test('ответ на l=russian без русского снимает второе название, прогрев — нет', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, WITCHER, NOW)
+      await upsertGameMeta(db, { ...WITCHER, name: RU }, NOW + 10)
+
+      await upsertGameMeta(db, WITCHER, NOW + 20)
+      expect(await namesOf(db, 292030)).toEqual({ name: WITCHER.name, name_ru: RU })
+
+      await upsertGameMeta(db, WITCHER, NOW + 30, { ruStore: true })
+      expect(await namesOf(db, 292030)).toEqual({ name: WITCHER.name, name_ru: null })
+    })
+
+    test('ответ на l=russian с русским раскладывает его как обычно', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, WITCHER, NOW)
+      await upsertGameMeta(db, { ...WITCHER, name: RU }, NOW + 10, { ruStore: true })
+      expect(await namesOf(db, 292030)).toEqual({ name: WITCHER.name, name_ru: RU })
+
+      // Русское у игры без английского — по-прежнему само название
+      await upsertGameMeta(db, { ...META, appid: 873190, name: 'ЕСТЬ ДВА СТУЛА' }, NOW, { ruStore: true })
+      expect(await namesOf(db, 873190)).toEqual({ name: 'ЕСТЬ ДВА СТУЛА', name_ru: null })
+    })
+
+    test('строка до правки: русское в name уходит не вторым, а вовсе, если магазин его не знает', async () => {
+      // Прод до правки: в name — русское от прежней карточки. Теперь магазин
+      // на l=russian отвечает английским — русского у игры больше нет
+      const db = await freshDb()
+      await upsertGameMeta(db, WITCHER, NOW)
+      await db.execute({ sql: 'UPDATE games SET name = ? WHERE appid = ?', args: [RU, 292030] })
+
+      await upsertGameMeta(db, WITCHER, NOW + 10, { ruStore: true })
+      expect(await namesOf(db, 292030)).toEqual({ name: WITCHER.name, name_ru: null })
+    })
+
+    test('заглушка «App N» в ответе на l=russian второе название не снимает', async () => {
+      // parseAppDetails ставит её, когда имени в ответе нет: это не «русского нет»
+      const db = await freshDb()
+      await upsertGameMeta(db, WITCHER, NOW)
+      await upsertGameMeta(db, { ...WITCHER, name: RU }, NOW + 10)
+      await upsertGameMeta(db, { ...WITCHER, name: 'App 292030' }, NOW + 20, { ruStore: true })
+      expect((await namesOf(db, 292030)).name_ru).toBe(RU)
+    })
+
+    test('индекс поиска везёт оба названия', async () => {
+      const db = await freshDb()
+      await upsertGameMeta(db, { ...WITCHER, reviewsTotal: 900 }, NOW)
+      await upsertGameMeta(db, { ...WITCHER, name: RU, reviewsTotal: 900 }, NOW + 10)
+      await upsertGameMeta(db, { ...META, reviewsTotal: 100 }, NOW)
+      await db.execute('UPDATE games SET alive = 1, tag_count = 3, superseded_by = NULL')
+
+      expect(await searchIndexGames(db, 10)).toEqual([
+        { appid: 292030, name: WITCHER.name, nameRu: RU },
+        { appid: 620, name: 'Portal 2' },
+      ])
+    })
   })
 
   test('цена и скидка переживают роундтрип — их и теряли в этом месте', async () => {
@@ -1155,6 +1283,21 @@ describe('db', () => {
     const loved = await getLovedFor(db, [620, 621, 622, 623, 999])
     expect([...loved.entries()]).toEqual([[620, ['Сюжет', 'Юмор']]])
     expect(await getLovedFor(db, [])).toEqual(new Map())
+  })
+
+  // Плитка хаба — та же витрина, что карточка игры: битое, лежащее в базе с
+  // до-фильтровых времён, не показывается и здесь (см. shownProsCons в lib/gamepage)
+  test('«за что любят» пачкой — без битых пунктов', async () => {
+    const db = await freshDb()
+    for (const appid of [620, 621]) await upsertGameMeta(db, { ...META, appid }, NOW)
+    await setGameJson(db, 620, 'pros_cons_json', {
+      pros: ["Сложность хорошо подобрана, справедливо'],", 'Глубокая геймплей механика', 'Атмосфера'],
+      cons: [],
+      source: 'claude',
+    })
+    await setGameJson(db, 621, 'pros_cons_json', { pros: ['Отличный модификация Quake'], cons: [], source: 'claude' })
+    const loved = await getLovedFor(db, [620, 621])
+    expect([...loved.entries()]).toEqual([[620, ['Атмосфера']]])
   })
 
   test('портрет кэшируется в users и читается', async () => {
@@ -2327,6 +2470,34 @@ describe('getNewsBlocks', () => {
   })
 })
 
+/*
+ * Уборка битых пересказов читает таблицу страницами по rowid: пересказов на
+ * проде тысячи. Битое — на краях страниц: первая строка, последняя и первая
+ * по обе стороны границы, одинокая на последней странице. Ровно там и
+ * ошибается курсор.
+ */
+describe('resetFlawedDigests', () => {
+  test('битое на любой странице снимается, честное остаётся, повтора нет', async () => {
+    const db = await freshDb()
+    const gids = Array.from({ length: 1001 }, (_, i) => String(i))
+    await upsertNewsItems(db, gids.map((gid) => newsItem({ gid })), NOW)
+    const junk = ['0', '499', '500', '1000']
+    for (const gid of gids) {
+      const tldr = junk.includes(gid) ? 'Новые видеосettings и правки' : 'Починили дым'
+      await setNewsDigest(db, 730, gid, { tldr, scale: 'major' }, NOW)
+    }
+
+    expect(await resetFlawedDigests(db)).toEqual([730])
+    const cleared = await db.execute(
+      'SELECT gid FROM news_items WHERE tldr IS NULL ORDER BY CAST(gid AS INTEGER)',
+    )
+    expect(cleared.rows.map((r) => r.gid)).toEqual(junk)
+    expect(await getCatalogMeta(db, TLDR_FLAW_SWEEP_KEY)).toBe('1')
+    // флаг стоит — второй раз таблицу не читаем вовсе
+    expect(await resetFlawedDigests(db)).toBeNull()
+  })
+})
+
 describe('страница патча', () => {
   async function liveGame(db: Db, appid: number, alive = 1) {
     await upsertGameMeta(db, { ...META, appid, name: `Игра ${appid}` }, NOW)
@@ -2397,6 +2568,63 @@ describe('страница патча', () => {
       { gid: 'a', title: 'Старый', publishedAt: NOW - 300, scale: 'major' },
     ])
     expect(await getGamePatchHeads(db, 730, 1)).toHaveLength(1)
+  })
+
+  /*
+   * Архив обновлений игры попадает в карту сайта, только когда в нём есть
+   * что искать: не меньше трёх пересказанных крупных патчей у игры каталога —
+   * подмножество того, что страница сама пускает в индекс (lib/patcharchive).
+   */
+  test('архивы для карты сайта: от трёх пересказанных крупных патчей у игры каталога', async () => {
+    const db = await freshDb()
+    const DAY = 86_400
+    const items = [
+      // 730: три пересказанных крупных — в карте
+      ...['1', '2', '3'].map((gid, i) => newsItem({ gid, publishedAt: NOW - (i + 1) * DAY, bodyHash: `h${gid}` })),
+      // 570: два пересказанных и один без пересказа — не в карте
+      ...['4', '5', '6'].map((gid) => newsItem({ appid: 570, gid, bodyHash: `h${gid}` })),
+      // 440: три пересказанных, но игра не в каталоге (rank 0) — не в карте
+      ...['7', '8', '9'].map((gid) => newsItem({ appid: 440, gid, rank: 0, bodyHash: `h${gid}` })),
+    ]
+    await upsertNewsItems(db, items, NOW)
+    for (const it of items) {
+      if (it.gid === '6') continue
+      await setNewsDigest(db, it.appid, it.gid, { tldr: 'коротко', scale: 'major' }, NOW)
+    }
+    expect((await sitemapPatchArchives(db, 3, 100)).map((a) => a.appid)).toEqual([730])
+    expect((await sitemapPatchArchives(db, 2, 100)).map((a) => a.appid)).toEqual([570, 730])
+  })
+
+  /*
+   * lastmod архива — когда список последний раз менялся: новый патч (любой,
+   * хотфикс тоже — он стоит в архиве строкой) или пересказ. НЕ updated_at:
+   * его двигает и одна перезапись веса после сверки отзывов (F79 аудита), а
+   * архив вес не показывает.
+   */
+  test('lastmod архива — свежий патч или пересказ, а не перезаписанный вес', async () => {
+    const db = await freshDb()
+    const DAY = 86_400
+    const major = ['1', '2', '3'].map((gid, i) =>
+      newsItem({ gid, publishedAt: NOW - (10 + i) * DAY, bodyHash: `h${gid}` }),
+    )
+    await upsertNewsItems(db, major, NOW - 9 * DAY)
+    for (const it of major) await setNewsDigest(db, 730, it.gid, { tldr: 'коротко', scale: 'major' }, NOW - 9 * DAY)
+    const lastmod = async () => (await sitemapPatchArchives(db, 3, 10))[0]?.changedAt
+    expect(await lastmod()).toBe(NOW - 9 * DAY)
+
+    // неделю спустя сдвинулись отзывы — строки переписаны ради rank
+    await upsertNewsItems(db, major.map((it) => ({ ...it, rank: 9000 })), NOW - 2 * DAY)
+    expect(await lastmod()).toBe(NOW - 9 * DAY)
+
+    // пост посвежее модель назвала «не патч» (scale 'none', дорожная карта) —
+    // в архиве его нет, и список от него не поменялся
+    await upsertNewsItems(db, [newsItem({ gid: 'rm', publishedAt: NOW - 3 * DAY, bodyHash: 'hrm' })], NOW - 3 * DAY)
+    await setNewsDigest(db, 730, 'rm', { tldr: 'Планы на сезон.', scale: 'none' }, NOW - 3 * DAY)
+    expect(await lastmod()).toBe(NOW - 9 * DAY)
+
+    // вышел хотфикс без пересказа — в архиве новая строка
+    await upsertNewsItems(db, [newsItem({ gid: 'hf', publishedAt: NOW - DAY, scale: 'hotfix', bodyHash: 'hhf' })], NOW)
+    expect(await lastmod()).toBe(NOW - DAY)
   })
 
   test('карта сайта: крупные, с пересказом, у игр каталога и не старше окна', async () => {
@@ -3443,6 +3671,106 @@ describe('очередь пересказа: экономия на мелочи'
   })
 })
 
+/*
+ * Модель пересказа отвечает scale 'none', когда пост не про вышедшее в игре:
+ * дорожная карта, превью, анонс стрима, бета-анонс, пост про сиквел на
+ * странице первой части (lib/llm, claudeNewsDigest). Классификатор такое
+ * пропускает, если заголовок молчит, — Battlefield 6 «Community Update — Top
+ * Gun Incoming» со списком будущих правок.
+ */
+describe('вердикт модели «не патч» (scale = none)', () => {
+  async function rejected(db: Db) {
+    await upsertNewsItems(db, [newsItem({ scale: null })], NOW)
+    const verdict = { tldr: 'Планы на сезон 5: Rapid Royale и баланс техники.', scale: 'none' as const }
+    await setNewsDigest(db, 730, '1', verdict, NOW + 10)
+  }
+
+  test('пропадает отовсюду, где показывают патчи, и из очереди пересказа', async () => {
+    const db = await freshDb()
+    await rejected(db)
+    expect(await getGameNews(db, 730)).toEqual([])
+    expect(await getGamePatchHeads(db, 730)).toEqual([])
+    expect(await getMajorFeed(db)).toEqual([])
+    expect(await sitemapNews(db, NOW - 86_400, 10)).toEqual([])
+    expect(await freshlyDigestedPatches(db, NOW - 86_400, 0, 10)).toEqual([])
+    expect(await latestMajorPatchSince(db, [[730, NOW - 100]])).toEqual(new Map())
+    // второй раз за тот же вердикт не платим
+    expect(await getUnsummarized(db)).toEqual([])
+  })
+
+  test('по ключу читается как новость, и текст модели не хранится', async () => {
+    // getNewsPage читает строку по ключу, мимо фильтров списков: её вид
+    // решает rowToNews, и для страницы патча это 404, как у распродажи.
+    // Пересказ вердикта не публикуется нигде — пустая строка, а не текст,
+    // чтобы забытый где-то фильтр не вывел «Планы на сезон» строкой патча
+    const db = await freshDb()
+    await rejected(db)
+    const page = await getNewsPage(db, 730, '1')
+    expect(page?.item).toMatchObject({ kind: 'news', scale: null })
+    expect(page?.item.tldr).toBeUndefined()
+  })
+
+  test('переопрос с тем же телом вердикт не отменяет', async () => {
+    // Ловушка, ради которой вердикт живёт в scale, а не в kind: kind опрос
+    // переписывает каждый раз (эвристика снова скажет «патч»), а scale и
+    // пересказ держатся, пока тело то же (upsertNewsItems)
+    const db = await freshDb()
+    await rejected(db)
+    await upsertNewsItems(db, [newsItem({ scale: 'major', rank: 9000 })], NOW + 86_400)
+    expect(await getGameNews(db, 730)).toEqual([])
+    expect(await getUnsummarized(db)).toEqual([])
+  })
+
+  test('переписанное тело — новый пост: снова патч и снова к модели', async () => {
+    // дорожную карту издатель мог дописать до патчноута — решать заново
+    const db = await freshDb()
+    await rejected(db)
+    await upsertNewsItems(db, [newsItem({ bodyHash: 'h2' })], NOW + 86_400)
+    expect((await getGameNews(db, 730)).map((n) => n.gid)).toEqual(['1'])
+    expect((await getUnsummarized(db)).map((n) => n.gid)).toEqual(['1'])
+  })
+
+  test('английский слот вердикт не держит: ни строкой патча на /en, ни в догоне', async () => {
+    // Английский от прежнего пересказа (уборка битых снимает только русский)
+    // остался бы английской строкой патча у поста, который не патч. Вердикт
+    // снимает и его, что бы модель ни написала в tldrEn, и в догон запись не
+    // встаёт: её русский пересказ пустой
+    const db = await freshDb()
+    await upsertNewsItems(db, [newsItem({ scale: null, title: 'Дорожная карта' })], NOW)
+    await setNewsDigest(
+      db,
+      730,
+      '1',
+      { tldr: 'Добавлен режим.', scale: 'major', tldrEn: 'Added a mode.', titleEn: 'Roadmap' },
+      NOW,
+    )
+    await db.execute("UPDATE news_items SET tldr = NULL, tldr_at = NULL, tldr_tries = 0 WHERE gid = '1'")
+    await setNewsDigest(
+      db,
+      730,
+      '1',
+      { tldr: 'Планы на сезон 5.', scale: 'none', tldrEn: 'Season 5 plans.', titleEn: 'Roadmap' },
+      NOW + 10,
+    )
+
+    const page = await getNewsPage(db, 730, '1')
+    expect(page?.item).toMatchObject({ kind: 'news', scale: null })
+    expect(page?.item.tldrEn).toBeUndefined()
+    expect(page?.item.titleEn).toBeUndefined()
+    expect(await getUnsummarizedEn(db)).toEqual([])
+    expect(await sitemapNews(db, NOW - 86_400, 10, 'en')).toEqual([])
+    expect(await freshlyDigestedPatches(db, NOW - 86_400, 0, 10, 'en')).toEqual([])
+    expect(await latestMajorPatchSince(db, [[730, NOW - 100]], 'en')).toEqual(new Map())
+    // попытка английского не засчитана: переводить было нечего
+    const row = (await db.execute("SELECT tldr, tldr_en, tldr_en_tries FROM news_items WHERE gid = '1'")).rows[0]
+    expect({ tldr: row?.tldr, tldrEn: row?.tldr_en, tries: Number(row?.tldr_en_tries) }).toEqual({
+      tldr: '',
+      tldrEn: null,
+      tries: 1,
+    })
+  })
+})
+
 describe('лента не даёт одной игре себя захватить', () => {
   test('в общей ленте не больше одного патча на игру', async () => {
     // Valve выкатывает движковый апдейт разом во всю линейку, Warhammer
@@ -3618,6 +3946,66 @@ describe('кандидаты полок хаба', () => {
     } as unknown as typeof db
     expect(await topGamesByTags(spy, [], { minWeight: 500, perTag: 12 })).toEqual([])
     expect(calls).toBe(0)
+  })
+})
+
+/*
+ * Подборки хаба (HUB_FACETS в lib/gamehub): верх живого пула по отзывам, у
+ * которого выполнен факт — категория Steam, бесплатность или уверенная
+ * короткая сессия.
+ */
+describe('подборки хаба: отбор в базе', () => {
+  async function put(db: Db, appid: number, reviews: number, over: Partial<GameMeta> = {}, alive = 1) {
+    await upsertGameMeta(db, { ...META, appid, name: `Игра ${appid}`, reviewsTotal: reviews, ...over }, NOW)
+    await db.execute({
+      sql: 'UPDATE games SET alive = ?, tag_count = 3, superseded_by = NULL WHERE appid = ?',
+      args: [alive, appid],
+    })
+  }
+  const ids = (rows: Array<{ appid: number }>) => rows.map((r) => r.appid)
+
+  test('категории — любая из названных, по отзывам; мёртвые и чужой магазин мимо', async () => {
+    const db = await freshDb()
+    await put(db, 1, 900, { categories: [2, 38] })
+    await put(db, 2, 5000, { categories: [1, 9] })
+    await put(db, 3, 9000, { categories: [2, 1] }) // без кооператива
+    await put(db, 4, 7000, { categories: [9] }, 0) // мёртвая
+    await put(db, -5, 8000, { categories: [9] }) // чужой магазин
+    expect(ids(await topGamesByFacet(db, { kind: 'categories', ids: [9, 38] }, 10))).toEqual([2, 1])
+    expect(ids(await topGamesByFacet(db, { kind: 'categories', ids: [9, 38] }, 1))).toEqual([2])
+  })
+
+  test('бесплатные — по флагу Steam', async () => {
+    const db = await freshDb()
+    await put(db, 1, 900, { isFree: true })
+    await put(db, 2, 5000, { isFree: false })
+    expect(ids(await topGamesByFacet(db, { kind: 'free' }, 10))).toEqual([1])
+  })
+
+  /*
+   * Семантика — только своей версии формата и уверенная: parseSemantics
+   * читает чужую версию как «семантики нет», и такая строка заняла бы место
+   * в LIMIT, а карточка игры потом не назвала бы ей сессию вовсе.
+   */
+  test('короткая сессия — только уверенная и своей версии формата', async () => {
+    const db = await freshDb()
+    const sem = (minutes: number, confidence = 0.7): GameSemantics => ({
+      ...deriveSemantics({ Puzzle: 100 }, null),
+      session: { bucket: minutes < 30 ? 'short' : 'medium', minutes, canStopAnytime: false },
+      confidence,
+      n: 60,
+      basis: 'tags+reviews',
+    })
+    for (const [appid, reviews] of [[1, 900], [2, 5000], [3, 7000], [4, 8000]]) await put(db, appid, reviews)
+    await upsertSemantics(db, [
+      { appid: 1, semantics: sem(20), computedAt: NOW },
+      { appid: 2, semantics: sem(90), computedAt: NOW }, // заход длинный
+      { appid: 3, semantics: sem(15, 0.3), computedAt: NOW }, // неуверенно
+      { appid: 4, semantics: sem(10), computedAt: NOW },
+    ])
+    // запись старого формата: те же поля, другая версия
+    await db.execute({ sql: 'UPDATE game_semantics SET v = v - 1 WHERE appid = 4' })
+    expect(ids(await topGamesByFacet(db, { kind: 'session', belowMinutes: 30 }, 10))).toEqual([1])
   })
 })
 
@@ -4663,14 +5051,266 @@ describe('версия схемы', () => {
     expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
   })
 
+  /**
+   * Прод в первый холодный старт со вторым названием игры: версия 9, строки
+   * games живут, колонки нет. Без неё апсерт каталога падал бы на SET
+   * name_ru, а индекс поиска — на SELECT.
+   */
+  test('прод на v9 получает name_ru, и каталог пишется и читается как был', async () => {
+    const db = await freshDb()
+    await upsertGameMeta(db, { ...META, appid: 292030, name: 'The Witcher 3: Wild Hunt' }, NOW)
+    await db.execute('ALTER TABLE games DROP COLUMN name_ru')
+    await db.execute("UPDATE catalog_meta SET value = '9' WHERE key = 'schema_v'")
+    await migrateDb(db)
+
+    expect((await columnsOf(db)).has('games.name_ru')).toBe(true)
+    await upsertGameMeta(db, { ...META, appid: 292030, name: 'Ведьмак 3: Дикая Охота' }, NOW + 10)
+    expect(await searchIndexGames(db, 10)).toEqual([
+      { appid: 292030, name: 'The Witcher 3: Wild Hunt', nameRu: 'Ведьмак 3: Дикая Охота' },
+    ])
+    expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V))
+  })
+
+  /*
+   * Английская версия сайта (docs/i18n.md) — v13, поверх цикла 3: тот уехал на
+   * прод с версией 12 и отметкой состава своих колонок, а номер 10, который
+   * английская ветка занимала до слияния, там уже прочитан как «доведено».
+   * Поэтому её колонки и индексы — отдельным шагом, и сторожатся оба пути:
+   * свежая база получает всё сразу, прод на v12 — ровно английские ALTER и
+   * индексы, без единого падающего запроса и без потери живых строк.
+   */
+  describe('английские слоты v13', () => {
+    const EN_COLUMNS = [
+      'games.short_description_en',
+      'news_items.tldr_en',
+      'news_items.tldr_en_at',
+      'news_items.tldr_en_tries',
+      'news_items.title_en',
+      'news_items.blocks_en_json',
+      'shared_picks.lang',
+    ]
+    // порядок — как в SCHEMA_CATALOG: в нём предпросмотр их и называет
+    const EN_INDEXES = ['idx_news_en_digest', 'idx_news_en_major', 'idx_games_page_en']
+    const columnName = ([table, col]: readonly [string, string]) => `${table}.${col.split(' ')[0]}`
+
+    async function indexesOf(db: Db): Promise<Set<string>> {
+      const res = await db.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
+      return new Set(res.rows.map((r) => String(r.name)))
+    }
+
+    /**
+     * Прод после цикла 3: версия 12, отметка состава — его колонки без
+     * английских, английских колонок и индексов нет, строки живут.
+     */
+    async function prodV12(): Promise<Db> {
+      const db = await freshDb()
+      await upsertGameMeta(db, { ...META, appid: 292030, name: 'The Witcher 3: Wild Hunt' }, NOW)
+      await upsertNewsItems(db, [newsItem()], NOW)
+      await setNewsDigest(db, 730, '1', { tldr: 'Починили вылет.', scale: 'major' }, NOW)
+      await createSharedPick(
+        db,
+        { id: 'abcdefghjkmn', createdBy: 'a', appid: 620, source: 'owned', kind: 'play', reason: 'Потому что' },
+        NOW,
+      )
+      await db.executeMultiple(`
+        DROP INDEX idx_news_en_digest;
+        DROP INDEX idx_news_en_major;
+        DROP INDEX idx_games_page_en;
+        ALTER TABLE games DROP COLUMN short_description_en;
+        ALTER TABLE news_items DROP COLUMN tldr_en;
+        ALTER TABLE news_items DROP COLUMN tldr_en_at;
+        ALTER TABLE news_items DROP COLUMN tldr_en_tries;
+        ALTER TABLE news_items DROP COLUMN title_en;
+        ALTER TABLE news_items DROP COLUMN blocks_en_json;
+        ALTER TABLE shared_picks DROP COLUMN lang;`)
+      await setCatalogMeta(db, 'schema_v', '12')
+      await setCatalogMeta(
+        db,
+        'schema_cols',
+        ADDED_COLUMNS.map(columnName)
+          .filter((name) => !EN_COLUMNS.includes(name))
+          .sort()
+          .join(','),
+      )
+      return db
+    }
+
+    test('английских колонок в списке ровно семь, и все они — в ADDED_COLUMNS', () => {
+      // Сторож самого теста: колонку добавили, а сюда не вписали — путь с v12
+      // её бы не проверил
+      expect(ADDED_COLUMNS.map(columnName).filter((name) => EN_COLUMNS.includes(name)).sort()).toEqual(
+        [...EN_COLUMNS].sort(),
+      )
+    })
+
+    test('свежая база получает английские колонки, индексы и версию 13 сразу', async () => {
+      const db = createClient({ url: ':memory:' })
+      await migrateDb(db)
+
+      const cols = await columnsOf(db)
+      for (const name of EN_COLUMNS) expect(cols.has(name), name).toBe(true)
+      const idx = await indexesOf(db)
+      for (const name of EN_INDEXES) expect(idx.has(name), name).toBe(true)
+      expect(await getCatalogMeta(db, 'schema_v')).toBe('13')
+      const marker = String(await getCatalogMeta(db, 'schema_cols')).split(',')
+      for (const name of EN_COLUMNS) expect(marker, name).toContain(name)
+      expect(await pendingMigrations(db, {})).toEqual([])
+    })
+
+    test('предпросмотр прода на v12 называет ровно английский шаг', async () => {
+      const db = await prodV12()
+      expect(await pendingMigrations(db, {})).toEqual([
+        ...EN_INDEXES.map((name) => `новый индекс: ${name}`),
+        ...ADDED_COLUMNS.map(columnName)
+          .filter((name) => EN_COLUMNS.includes(name))
+          .map((name) => `новая колонка: ${name}`),
+        'версия схемы: v12 → v13',
+      ])
+    })
+
+    test('прод на v12 получает ровно английские ALTER и индексы, живые строки читаются как были', async () => {
+      const db = await prodV12()
+      const { spy, calls } = recording(db)
+      await migrateDb(spy)
+
+      // ни одного заведомо падающего ALTER и ни одной колонки цикла 3 заново
+      const alters = calls.filter(isAlter)
+      expect(alters.filter((c) => c.failed)).toEqual([])
+      expect(alters.map((c) => c.sql)).toEqual(
+        ADDED_COLUMNS.filter((c) => EN_COLUMNS.includes(columnName(c))).map(
+          ([table, col]) => `ALTER TABLE ${table} ADD COLUMN ${col}`,
+        ),
+      )
+      const cols = await columnsOf(db)
+      for (const name of EN_COLUMNS) expect(cols.has(name), name).toBe(true)
+      const idx = await indexesOf(db)
+      for (const name of EN_INDEXES) expect(idx.has(name), name).toBe(true)
+      // версия и отметка — до 13 и со всеми колонками обеих веток
+      expect(await getCatalogMeta(db, 'schema_v')).toBe('13')
+      const marker = String(await getCatalogMeta(db, 'schema_cols')).split(',')
+      for (const name of ADDED_COLUMNS.map(columnName)) expect(marker, name).toContain(name)
+      expect(await pendingMigrations(db, {})).toEqual([])
+
+      // Живые строки: пересказ на месте и встаёт в английский догон, выбор,
+      // которым поделились до английской версии, — русский
+      expect((await getGameNews(db, 730))[0]).toMatchObject({ tldr: 'Починили вылет.' })
+      expect((await getGameNews(db, 730))[0]).not.toHaveProperty('tldrEn')
+      expect((await getUnsummarizedEn(db)).map((n) => n.gid)).toEqual(['1'])
+      expect((await getSharedPick(db, 'abcdefghjkmn', 0))?.lang).toBe('ru')
+      // и пишутся по-английски: апсерт каталога и английский пересказ
+      await upsertGameMeta(db, { ...META, appid: 292030, shortDescriptionEn: 'Open-world RPG.' }, NOW + 10)
+      expect((await getGameMeta(db, 292030))?.shortDescriptionEn).toBe('Open-world RPG.')
+      await setNewsDigestEn(db, 730, '1', { tldrEn: 'Fixed a crash.' }, NOW + 10)
+      expect((await getGameNews(db, 730))[0]).toMatchObject({ tldr: 'Починили вылет.', tldrEn: 'Fixed a crash.' })
+
+      // и второй старт уже ничего не доводит
+      const again = recording(db)
+      await migrateDb(again.spy)
+      expect(again.calls.map((c) => c.kind)).toEqual(['multiple', 'multiple', 'execute', 'multiple'])
+    })
+
+    test('прод на v12 под превью колонки получает, а версию и отметку не пишет', async () => {
+      // Версию и отметку ставит только прод после мержа — см. migrateDb
+      const db = await prodV12()
+      await migrateDb(db, { VERCEL_ENV: 'preview' })
+
+      const cols = await columnsOf(db)
+      for (const name of EN_COLUMNS) expect(cols.has(name), name).toBe(true)
+      expect(await getCatalogMeta(db, 'schema_v')).toBe('12')
+      expect(String(await getCatalogMeta(db, 'schema_cols')).split(',')).not.toContain('news_items.tldr_en')
+    })
+  })
+
+  /*
+   * Две ветки подняли версию до одного числа, каждая со своими колонками
+   * (восьмой круг: name_ru здесь, reviews_* в fix/w8-prices-reviews), и git
+   * слил одинаковые строки молча. Первая уехала на прод отдельным деплоем и
+   * записала эту версию — вторая по одной версии решила бы, что всё доведено,
+   * и её ALTER не выполнились бы никогда. Решает отметка состава колонок.
+   */
+  describe('та же версия от другой сборки', () => {
+    const SIBLING = 'games.reviews_all_total'
+
+    /** Прод после деплоя соседней ветки: версия та же, колонки name_ru нет */
+    async function siblingDb(marker: string | null): Promise<Db> {
+      const db = await freshDb()
+      await upsertGameMeta(db, { ...META, appid: 292030, name: 'The Witcher 3: Wild Hunt' }, NOW)
+      await db.execute('ALTER TABLE games DROP COLUMN name_ru')
+      await setCatalogMeta(db, 'schema_v', String(CURRENT_SCHEMA_V))
+      if (marker == null) await db.execute("DELETE FROM catalog_meta WHERE key = 'schema_cols'")
+      else await setCatalogMeta(db, 'schema_cols', marker)
+      return db
+    }
+
+    test('сборка без отметки записала ту же версию — name_ru всё равно доезжает', async () => {
+      const db = await siblingDb(null)
+      const { spy, calls } = recording(db)
+      await migrateDb(spy)
+
+      // ровно одна недостающая, а не перебор всех: состав узнаётся одним чтением
+      expect(calls.filter(isAlter).map((c) => c.sql)).toEqual(['ALTER TABLE games ADD COLUMN name_ru TEXT'])
+      await upsertGameMeta(db, { ...META, appid: 292030, name: 'Ведьмак 3: Дикая Охота' }, NOW + 10)
+      expect(await searchIndexGames(db, 10)).toEqual([
+        { appid: 292030, name: 'The Witcher 3: Wild Hunt', nameRu: 'Ведьмак 3: Дикая Охота' },
+      ])
+      expect(String(await getCatalogMeta(db, 'schema_cols')).split(',')).toContain('games.name_ru')
+      // и второй старт уже ничего не доводит
+      const again = recording(db)
+      await migrateDb(again.spy)
+      expect(again.calls.map((c) => c.kind)).toEqual(['multiple', 'multiple', 'execute', 'multiple'])
+    })
+
+    test('отметка соседа без name_ru: колонка доезжает, его колонка из отметки не пропадает', async () => {
+      const db = await siblingDb(SIBLING)
+      await migrateDb(db)
+
+      expect((await columnsOf(db)).has('games.name_ru')).toBe(true)
+      const marker = String(await getCatalogMeta(db, 'schema_cols')).split(',')
+      expect(marker).toContain('games.name_ru')
+      // Сузь её эта сборка — сосед на следующем деплое перепроверял бы схему
+      // зря, а сборка после него не узнала бы, что колонку уже добавляли
+      expect(marker).toContain(SIBLING)
+    })
+
+    test('версию выше своей сборка не опускает', async () => {
+      // Прод уже на следующей версии (откат деплоя или ветка с номером выше),
+      // а колонки этой сборки в отметке нет: доводит её, а версию оставляет
+      const db = await siblingDb(SIBLING)
+      await setCatalogMeta(db, 'schema_v', String(CURRENT_SCHEMA_V + 1))
+      await migrateDb(db)
+
+      expect((await columnsOf(db)).has('games.name_ru')).toBe(true)
+      expect(await getCatalogMeta(db, 'schema_v')).toBe(String(CURRENT_SCHEMA_V + 1))
+    })
+
+    test('превью на такой базе колонку добавляет, а отметку не пишет', async () => {
+      // Отметку, как и версию, ставит только прод после мержа — см. migrateDb
+      const db = await siblingDb(SIBLING)
+      await migrateDb(db, { VERCEL_ENV: 'preview' })
+
+      expect((await columnsOf(db)).has('games.name_ru')).toBe(true)
+      expect(await getCatalogMeta(db, 'schema_cols')).toBe(SIBLING)
+    })
+
+    test('предпросмотр говорит, что доведёт, хотя версия та же', async () => {
+      const db = await siblingDb(SIBLING)
+      expect(await pendingMigrations(db, {})).toEqual([
+        'новая колонка: games.name_ru',
+        `отметка колонок схемы: v${CURRENT_SCHEMA_V} записана без колонок этой сборки`,
+      ])
+      await migrateDb(db, {})
+      expect(await pendingMigrations(db, {})).toEqual([])
+    })
+  })
+
   test('новая колонка без новой версии схемы не проскочит', () => {
     // На живой базе версия уже записана, и колонка, добавленная без подъёма
     // CURRENT_SCHEMA_V, туда не доедет никогда, а все остальные тесты гоняют
     // свежую :memory:, где версии нет. Поменял ADDED_COLUMNS — подними
     // CURRENT_SCHEMA_V и перепиши здесь обе цифры.
     expect({ version: CURRENT_SCHEMA_V, columns: ADDED_COLUMNS.length }).toEqual({
-      version: 10,
-      columns: 47,
+      version: 13,
+      columns: 57,
     })
   })
 })
@@ -4828,6 +5468,47 @@ describe('превью и продовая база', () => {
     }
     expect(await getCatalogMeta(db, 'repair_tags_v1')).toBe('1')
     expect(await repairGameJson(db, { dryRun: true })).toEqual([])
+  })
+
+  /*
+   * Отзывы на всех языках — новые колонки, пустые у всего пула разом, а
+   * сверка каталога берёт игру только по просроченному reviews_at. Без
+   * разового шага плитки хабов неделю молчали бы об отзывах, а у карточек без
+   * сводки пропало бы кольцо: англоязычные колонки людям больше не показываются.
+   */
+  test('пул без отзывов на всех языках встаёт в голову сверки — раз и только на проде', async () => {
+    const db = await freshDb()
+    for (const appid of [1, 2, 3, 4]) await upsertGameMeta(db, { ...META, appid }, NOW)
+    await db.execute({ sql: 'UPDATE games SET reviews_at = ?', args: [NOW] })
+    // 2 уже сверена с новыми колонками, 3 снята с подбора, у 4 сверки не было вовсе
+    await db.execute('UPDATE games SET reviews_all_total = 500, reviews_all_percent = 90 WHERE appid = 2')
+    await db.execute('UPDATE games SET alive = 0 WHERE appid = 3')
+    await db.execute('UPDATE games SET reviews_at = NULL WHERE appid = 4')
+    await db.execute("DELETE FROM catalog_meta WHERE key = 'reviews_all_due_v1'")
+    const stamps = async () =>
+      (await db.execute('SELECT appid, reviews_at FROM games ORDER BY appid')).rows.map((r) => [
+        Number(r.appid),
+        r.reviews_at === null ? null : Number(r.reviews_at),
+      ])
+
+    // Превью на продовой базе флаг не ставит: пул в голове очереди разобрал бы
+    // крон прода, который новых колонок ещё не пишет, — и шаг не повторился бы
+    await migrateDb(db, PREVIEW)
+    expect(await stamps()).toEqual([[1, NOW], [2, NOW], [3, NOW], [4, null]])
+    expect(await getCatalogMeta(db, 'reviews_all_due_v1')).toBeNull()
+
+    // Первый старт прода после мержа. Отметка 1, а не NULL: сверено, давно, —
+    // и безотметочный снимок заливки каталога облачные числа не перетрёт
+    await migrateDb(db, { VERCEL_ENV: 'production' })
+    expect(await stamps()).toEqual([[1, 1], [2, NOW], [3, NOW], [4, null]])
+    expect(await getCatalogMeta(db, 'reviews_all_due_v1')).toBe('1')
+    // в очереди сверки — сразу за ни разу не сверенными
+    expect((await catalogSignalsQueue(db, 10)).map((r) => r.appid)).toEqual([4, 1, 2])
+
+    // Флаг стоит — следующий старт проход по games не повторяет
+    await db.execute({ sql: 'UPDATE games SET reviews_at = ? WHERE appid = 1', args: [NOW] })
+    await migrateDb(db, { VERCEL_ENV: 'production' })
+    expect((await stamps())[0]).toEqual([1, NOW])
   })
 
   test('превью со своей базой мигрирует целиком', async () => {
@@ -4999,11 +5680,14 @@ describe('предпросмотр миграции', () => {
     // окажется в catalog_meta, а в предпросмотре его не будет
     const db = createClient({ url: ':memory:' })
     await migrateDb(db, {}, { seedContent: true })
-    const keys = (await db.execute("SELECT key FROM catalog_meta WHERE key != 'schema_v'")).rows.map(
+    // Версия и отметка состава колонок — не разовые шаги: их предпросмотр
+    // называет своими строками («версия схемы», «отметка колонок схемы»)
+    const SCHEMA_KEYS = "('schema_v', 'schema_cols')"
+    const keys = (await db.execute(`SELECT key FROM catalog_meta WHERE key NOT IN ${SCHEMA_KEYS}`)).rows.map(
       (r) => String(r.key),
     )
     expect(keys.length).toBeGreaterThan(0)
-    await db.execute("DELETE FROM catalog_meta WHERE key != 'schema_v'")
+    await db.execute(`DELETE FROM catalog_meta WHERE key NOT IN ${SCHEMA_KEYS}`)
     const pending = await pendingMigrations(db, {}, { seedContent: true })
     for (const key of keys) {
       expect(pending.some((p) => p.startsWith(`${key}: `)), key).toBe(true)
@@ -5993,7 +6677,7 @@ describe('выбор, которым поделились (/pick/<id>)', () => {
       kind: 'play',
       reason: 'Вечер на головоломки.',
       createdAt: NOW,
-      // язык ссылки — поле SharedPick с v10; без него при записи — русский
+      // язык ссылки — поле SharedPick с v13; без него при записи — русский
       lang: 'ru',
     })
     expect(await getSharedPick(db, 'abcdefghjkmn', NOW + 1)).toBeNull()

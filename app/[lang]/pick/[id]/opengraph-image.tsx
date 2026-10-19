@@ -1,7 +1,7 @@
-import { ImageResponse } from 'next/og'
 import { clip } from '@/lib/clip'
 import { ogFonts, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { ArtBackdrop, ogArt } from '@/lib/ogcard'
+import { isrImage } from '@/lib/ogresponse'
 import { CANVAS_WIDE } from '@/lib/ogwall'
 import { pickCopy, quoted } from '@/lib/sharedpick'
 import { loadSharedPick, reasonOn } from './load'
@@ -46,7 +46,7 @@ export default async function Image({ params }: { params: Promise<{ lang: string
   const copy = pickCopy(got ? { name: got.meta.name, reason: reason ?? '', kind: got.pick.kind } : null, lang)
   const art = got ? await ogArt(got.meta) : null
 
-  return new ImageResponse(
+  return isrImage(
     (
       <div
         style={{

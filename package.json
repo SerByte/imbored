@@ -23,6 +23,7 @@
     "catalog:repair-tags": "tsx scripts/repair-tags.ts",
     "news:report": "tsx --env-file-if-exists=.env.turso scripts/news-report.ts",
     "news:spread": "tsx --env-file-if-exists=.env.turso scripts/spread-news-poll.ts",
+    "news:reclass": "tsx --env-file-if-exists=.env.turso scripts/news-reclass.ts",
     "news:sync": "tsx scripts/sync-news.ts",
     "pages:enrich": "tsx scripts/enrich-pages.ts",
     "reviews:fixtures": "tsx scripts/review-fixtures.ts",

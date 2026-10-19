@@ -6,6 +6,7 @@ import {
   getMajorFeed,
   getUnsummarized,
   getUnsummarizedEn,
+  setNewsDigest,
   upsertGameMeta,
   type Db,
 } from './db'
@@ -44,7 +45,7 @@ const feedOf =
   async (appid: number): Promise<RawNewsItem[] | null> =>
     map[appid] ?? []
 
-type DigestArgs = { gameName: string; title: string; body: string; lang: 'ru' | 'en' }
+type DigestArgs = { gameName: string; title: string; body: string; lang: 'ru' | 'en'; mode?: 'both' | 'en' }
 
 const okDigest = async () => ({
   tldr: 'Починили сеть и добавили режим.',
@@ -174,6 +175,42 @@ describe('runDigestSlice: пересказы отдельно от опроса'
 
     expect(res.digested).toBe(1)
     expect(res.cards).toEqual([730])
+  })
+
+  test('вердикт «не патч» убирает строку с карточки — и карточку сбрасываем', async () => {
+    // Карточка игры живёт неделю (lib/gamecache): без сброса «дорожная
+    // карта» стояла бы на ней патчем до конца срока
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+
+    const res = await runDigestSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async () => ({ tldr: '', scale: 'none' as const }),
+    })
+
+    expect(res.cards).toEqual([730])
+    expect(await getGameNews(db, 730)).toEqual([])
+    expect(await getUnsummarized(db)).toEqual([])
+  })
+
+  test('переопрос того же поста вердикт модели не отменяет', async () => {
+    // эвристика снова скажет «патч» — kind перепишется, а вердикт останется
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await runDigestSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async () => ({ tldr: '', scale: 'none' as const }),
+    })
+    await db.execute('UPDATE news_poll SET next_at = 0')
+    await runNewsSlice(db, {
+      nowSec: NOW + 200_000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      fetchNews: feedOf({ 730: [post(730, '1', 'Обновление игры', PATCH)] }),
+      digestFn: okDigest,
+    })
+    expect(await getGameNews(db, 730)).toEqual([])
   })
 
   test('на исходе бюджета пересказ не начинаем, а останавливаем фазу', async () => {
@@ -315,6 +352,117 @@ describe('runDigestSlice: пересказы отдельно от опроса'
     expect(res.digested).toBe(0)
     // запись легла в очередь пересказа и ждёт своего крона
     expect((await getUnsummarized(db, 10)).length).toBe(1)
+  })
+
+  /*
+   * Пересказы, записанные до проверки текста модели, сами не уходили: попытки
+   * сбрасывает только новое тело патча, а у старого оно прежнее. Здесь они
+   * пишутся мимо validateDigest — ровно так они и легли в базу тогда.
+   * «видеосettings» — дословно с патча Half-Life (appid 70) на выгрузке прода.
+   */
+  describe('битые пересказы из базы — обратно в очередь', () => {
+    const JUNK = 'Добавлены новые видеосettings и исправлены вылеты при запуске.'
+    const FIXED = 'Добавлены новые настройки графики и исправлены вылеты при запуске.'
+    const CLEAN = 'Починили сеть и добавили режим.'
+
+    async function row(db: Db, appid: number) {
+      const res = await db.execute({
+        sql: 'SELECT tldr, scale, tldr_tries FROM news_items WHERE appid = ? AND gid = ?',
+        args: [appid, '1'],
+      })
+      const r = res.rows[0]
+      return { tldr: r.tldr, scale: r.scale, tries: Number(r.tldr_tries) }
+    }
+
+    test('битый пересказ переписан заново, честный не тронут, карточка сброшена', async () => {
+      const db = await freshDb()
+      await seedPatch(db, 70, '1')
+      await seedPatch(db, 730, '1')
+      await setNewsDigest(db, 70, '1', { tldr: JUNK, scale: 'major' }, NOW)
+      await setNewsDigest(db, 730, '1', { tldr: CLEAN, scale: 'major' }, NOW)
+      // до уборки обоим в очередь хода нет: пересказ есть
+      expect(await getUnsummarized(db, 10)).toHaveLength(0)
+
+      const звали: string[] = []
+      const res = await runDigestSlice(db, {
+        nowSec: NOW + 4000,
+        deadlineAt: Date.now() + ЗАПАС_MS,
+        digestFn: async (a: DigestArgs) => {
+          звали.push(a.gameName)
+          return { tldr: FIXED, scale: 'major' as const }
+        },
+      })
+
+      expect(звали).toEqual(['Игра 70'])
+      expect(res).toMatchObject({ digested: 1, stopped: 'done' })
+      expect(res.cards).toEqual([70])
+      // попытки — с нуля: новый пересказ стал первой
+      expect(await row(db, 70)).toEqual({ tldr: FIXED, scale: 'major', tries: 1 })
+      expect(await row(db, 730)).toMatchObject({ tldr: CLEAN, scale: 'major' })
+    })
+
+    // hotfix у пересказанного патча поставила сама модель; с ним
+    // getUnsummarized строку не взял бы никогда, и патч остался бы без пересказа
+    test('масштаб hotfix от модели снят — иначе в очередь не вернуться', async () => {
+      const db = await freshDb()
+      await seedPatch(db, 70, '1')
+      await setNewsDigest(db, 70, '1', { tldr: JUNK, scale: 'hotfix' }, NOW)
+
+      let звали = 0
+      await runDigestSlice(db, {
+        nowSec: NOW + 4000,
+        deadlineAt: Date.now() + ЗАПАС_MS,
+        digestFn: async () => {
+          звали++
+          return null
+        },
+      })
+
+      expect(звали).toBe(1)
+      expect(await row(db, 70)).toEqual({ tldr: null, scale: null, tries: 1 })
+      expect(await getUnsummarized(db, 10)).toHaveLength(1)
+    })
+
+    test('без ключа мусор всё равно снимается со страниц, пересказ подождёт', async () => {
+      const db = await freshDb()
+      await seedPatch(db, 70, '1')
+      await setNewsDigest(db, 70, '1', { tldr: JUNK, scale: 'major' }, NOW)
+      vi.stubEnv('ANTHROPIC_API_KEY', '')
+      try {
+        const res = await runDigestSlice(db, { nowSec: NOW + 4000, deadlineAt: Date.now() + ЗАПАС_MS })
+        expect(res).toMatchObject({ stopped: 'unavailable', cards: [70] })
+      } finally {
+        vi.unstubAllEnvs()
+      }
+      expect(await row(db, 70)).toEqual({ tldr: null, scale: 'major', tries: 0 })
+      expect(await getUnsummarized(db, 10)).toHaveLength(1)
+    })
+
+    // Уборка — раз на базу: новые ответы бракует validateDigest, и читать все
+    // пересказы на каждом звене незачем
+    test('второй прогон уборку не повторяет', async () => {
+      const db = await freshDb()
+      await seedPatch(db, 70, '1')
+      await runDigestSlice(db, { nowSec: NOW + 4000, deadlineAt: Date.now() + ЗАПАС_MS, digestFn: noDigest })
+      await setNewsDigest(db, 70, '1', { tldr: JUNK, scale: 'major' }, NOW)
+
+      // Считаются русские пересказы: запись с русским и без английского
+      // законно встаёт в английский догон (getUnsummarizedEn, режим 'en'), и
+      // к уборке он отношения не имеет — русского он не переписывает
+      let звали = 0
+      const res = await runDigestSlice(db, {
+        nowSec: NOW + 4000,
+        deadlineAt: Date.now() + ЗАПАС_MS,
+        digestFn: async (a: DigestArgs) => {
+          if (a.mode !== 'en') звали++
+          return null
+        },
+      })
+
+      expect(звали).toBe(0)
+      expect(res.cards).toEqual([])
+      expect((await row(db, 70)).tldr).toBe(JUNK)
+    })
   })
 })
 
@@ -725,6 +873,29 @@ describe('пересказ по-английски', () => {
       titleEn: 'Game update',
     })
     expect(CYRILLIC.test(item!.tldrEn!)).toBe(false)
+  })
+
+  test('вердикт «не патч» — ответ, а не отказ: строка снята, догону её не переводить', async () => {
+    // Пересказ вердикта пустой по договору (validateDigest), и английский у
+    // него null: переводить нечего. Запись уходит из обеих очередей, а
+    // карточка — в сброс, как у русского вердикта
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    const modes: Array<string | undefined> = []
+    const res = await runDigestSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async (a) => {
+        modes.push(a.mode)
+        return { tldr: '', tldrEn: null, titleEn: null, scale: 'none' as const }
+      },
+    })
+    expect(res).toMatchObject({ digested: 1, cards: [730], stopped: 'done' })
+    // один вызов: в английский догон запись с пустым русским не встаёт
+    expect(modes).toEqual([undefined])
+    expect(await getGameNews(db, 730)).toEqual([])
+    expect(await getUnsummarized(db)).toEqual([])
+    expect(await getUnsummarizedEn(db)).toEqual([])
   })
 
   test('английский не вышел — русский записан, английский ждёт догона', async () => {

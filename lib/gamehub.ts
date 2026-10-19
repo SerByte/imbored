@@ -16,9 +16,15 @@
  * попадали и в первую сотню. Каталог решает другое: какая игра стоит на
  * полке (см. HUB_MIN_WEIGHT) и хватает ли полке игр (HUB_MIN_SHELF).
  *
- * Модуль чистый: из других модулей — только типы.
+ * Рядом с жанрами — подборки по факту (HUB_FACETS): «с другом», «на одном
+ * экране», «бесплатные», «на 20 минут». Их ищут не жанром, а вопросом, и
+ * ответить на него может только то, что Steam отметил у игры сам.
+ *
+ * Модуль чистый: из других модулей — типы и словарь соперничества
+ * (VERSUS_TAGS из lib/gametraits, тоже чистого, без базы).
  */
-import type { SimilarGame } from './db'
+import type { FacetQuery, SimilarGame } from './db'
+import { VERSUS_TAGS } from './gametraits'
 import type { Locale } from './i18n'
 
 /**
@@ -176,6 +182,255 @@ export function hubTagOf(slug: string): string | null {
   return null
 }
 
+/**
+ * С какой длины захода игра перестаёт быть «на 20 минут»: та же граница, на
+ * которой строка «Сессия» карточки говорит «~20 мин» (sessionWords в
+ * lib/gametraits). Подборка обещает ровно то, что потом скажет карточка
+ * каждой её игры, — не больше.
+ */
+export const SHORT_SESSION_MIN = 30
+
+/**
+ * Подборка по факту — страница /games/<slug> рядом со страницами жанров.
+ *
+ * Зачем. «Во что поиграть с другом», «игры на двоих на одном компьютере»,
+ * «бесплатные игры» ищут чаще любого жанра, и жанром на них не ответить:
+ * кооператив — не тег-жанр, а режим, который Steam отмечает категорией
+ * («Сетевой кооператив», «Общий/разделённый экран»), бесплатность — флагом
+ * цены, а длина захода — семантикой (lib/semantics: теги, уточнённые
+ * разобранными отзывами). Данные лежали в каталоге
+ * (замер на нём: 1559 живых игр с кооперативом, 623 — с общим экраном, 882
+ * бесплатных), а страницы, которая ими отвечает, не было.
+ *
+ * Механика жанра — без изменений: тот же сегмент app/games/[tag], те же
+ * сорок игр по числу отзывов, тот же ISR на сутки, порог «тонкой» страницы,
+ * разметка, карточка для чатов и карта сайта. Отличается только отбор
+ * (query) и то, куда страница ведёт дальше (party).
+ *
+ * Адрес — латиницей и навсегда, как у жанров, и не совпадает ни с одним из
+ * них: сегмент один, и совпавший адрес отдал бы одну страницу вместо двух
+ * (сторож в lib/gamehub.test.ts).
+ */
+export type HubFacet = {
+  slug: string
+  /** h1 и имя в крошках — как называют список */
+  title: string
+  /** <title> и og:title — как его ищут; начинается с title */
+  heading: string
+  /** пилюля на хабе /games — коротко */
+  label: string
+  /**
+   * Честное основание списка под заголовком — продолжение фразы «40 игр — …»,
+   * поэтому со строчной: по какой отметке отобрано и чего в списке нет.
+   * Подборка — утверждение о каждой игре, и человек вправе знать, откуда оно.
+   */
+  basis: string
+  /** Отбор в базе — topGamesByFacet в lib/db */
+  query: FacetQuery
+  /**
+   * Что выбросить уже по строке игры, после выборки:
+   *   • 'versus' — играют друг против друга (playsAgainst): «с другом» —
+   *     вопрос про то, чтобы проходить вместе, и Dota 2 на нём — ответ на
+   *     другой вопрос, хотя кооператив у Dota в категориях отмечен;
+   *   • 'match' — заход короткий, но это матч (карточка называет его
+   *     «Матч», sessionTrait в lib/gametraits): «на 20 минут» — про то, что
+   *     можно бросить, а матч посреди не бросишь.
+   */
+  drop?: 'versus' | 'match'
+  /**
+   * Вдвоём ли в неё играют: тогда под карточкой «Позвать в эту игру»
+   * (комната с ней первой картой), а главный выход страницы — /compat,
+   * «что есть у вас обоих». Одиночным подборкам — свой выход, как у жанров.
+   */
+  party: boolean
+  /**
+   * Тексты по-английски — рядом с русскими, а не отдельным словарём (как у
+   * VIBE_PRESETS в lib/presets): так они не разъедутся. Правила те же: title —
+   * с заглавной и множественным числом, heading начинается с title, basis —
+   * продолжение фразы «40 games — …», со строчной и с точкой. Русские поля
+   * остаются как были; на языке страницы их отдаёт facetCopy.
+   */
+  en: FacetCopy
+}
+
+/** Тексты подборки на одном языке — то, что facetCopy отдаёт странице */
+export type FacetCopy = Pick<HubFacet, 'title' | 'heading' | 'label' | 'basis'>
+
+/**
+ * Подборки в порядке показа. Категории Steam — числами, как их отдаёт
+ * appdetails: 9 «Кооператив», 38 «Сетевой кооператив»; 24 «Общий/разделённый
+ * экран», 37 «Игрок против игрока (общий экран)», 39 «Кооператив (общий
+ * экран)». Списки свои, а не COOP_IDS из lib/steamcats: тот отвечает подбору
+ * «можно ли с друзьями», и общий экран там значит «вместе» без разбора, а
+ * здесь «с другом» и «на одном экране» — два разных вопроса.
+ *
+ * Русская озвучка — следующая кандидатка тем же механизмом, но не раньше,
+ * чем ru_lang доедет до каталога: сейчас подборка вышла бы тонкой.
+ */
+export const HUB_FACETS: readonly HubFacet[] = [
+  {
+    slug: 'coop',
+    title: 'Кооперативные игры',
+    heading: 'Кооперативные игры — во что поиграть с другом',
+    label: 'С другом',
+    basis:
+      'с отметкой Steam «Кооператив» или «Сетевой кооператив», кроме тех, где по тегам игроков соперничество весит больше: у MOBA и киберспортивных шутеров кооператив в Steam тоже отмечен, но играют там друг против друга.',
+    query: { kind: 'categories', ids: [9, 38] },
+    drop: 'versus',
+    party: true,
+    en: {
+      title: 'Co-op games',
+      heading: 'Co-op games — what to play with a friend',
+      label: 'With a friend',
+      basis:
+        'marked “Co-op” or “Online Co-op” on Steam, except the ones where player tags lean more toward competition: MOBAs and esports shooters are marked co-op on Steam too, but there you play against each other.',
+    },
+  },
+  {
+    slug: 'split-screen',
+    title: 'Игры на двоих на одном компьютере',
+    heading: 'Игры на двоих на одном компьютере — с общим экраном',
+    label: 'На одном экране',
+    basis:
+      'с отметкой Steam «Общий/разделённый экран»: вдвоём за одним компьютером, второй геймпад — и вперёд. И вместе, и друг против друга.',
+    query: { kind: 'categories', ids: [24, 37, 39] },
+    party: true,
+    en: {
+      title: 'Two-player games on one PC',
+      heading: 'Two-player games on one PC — shared or split screen',
+      label: 'Split screen',
+      basis:
+        'marked “Shared/Split Screen” on Steam: two of you at one computer, grab a second controller and go. Both co-op and head-to-head.',
+    },
+  },
+  {
+    slug: 'free',
+    title: 'Бесплатные игры',
+    heading: 'Бесплатные игры в Steam — лучшие по отзывам',
+    label: 'Бесплатные',
+    basis: 'те, что Steam отдаёт бесплатно: скачать и играть, без покупки.',
+    query: { kind: 'free' },
+    party: false,
+    en: {
+      title: 'Free games',
+      heading: 'Free games on Steam — the best, by reviews',
+      label: 'Free',
+      basis: 'ones Steam gives away for free: download and play, no purchase needed.',
+    },
+  },
+  {
+    slug: 'short',
+    title: 'Игры на 20 минут',
+    heading: 'Игры на 20 минут — когда времени на один заход',
+    label: 'На 20 минут',
+    // Не «по отзывам»: минуты — приор по тегам, который отзывы только тянут к
+    // себе (вес n/(n+20) в lib/semantics), а порог уверенности проходят уже
+    // восемь разобранных отзывов — вес 8/28, и число больше чем на две трети
+    // из тегов. Выдать его за мнение игроков — то, от чего entryTrait в
+    // lib/gametraits отказывается прямо. И без второго тире сразу за числом:
+    // строка читается как «40 игр — те, где…»
+    basis:
+      'те, где за один заход играют минут двадцать: так выходит по тегам и разобранным отзывам игроков. Это не сколько игру проходить, а сколько играть за раз, — и матчей, которые посреди не бросишь, здесь нет.',
+    query: { kind: 'session', belowMinutes: SHORT_SESSION_MIN },
+    drop: 'match',
+    party: false,
+    // Тот же довод по-английски: «judging by tags and … reviews», а не «per
+    // reviews» — так глоссарий передаёт «по отзывам» (docs/i18n.md), а минуты
+    // здесь не мнение игроков
+    en: {
+      title: '20-minute games',
+      heading: '20-minute games — when you only have time for one sitting',
+      label: '20 minutes',
+      basis:
+        'ones where a single sitting runs about twenty minutes, judging by tags and analyzed player reviews. That’s how long you play at a time, not how long the game takes to finish — and there are no matches here you can’t drop halfway.',
+    },
+  },
+]
+
+/** Подборка по адресу; null — такой подборки нет */
+export function hubFacetOf(slug: string): HubFacet | null {
+  return HUB_FACETS.find((f) => f.slug === slug) ?? null
+}
+
+/** Адрес страницы подборки — тот же сегмент, что у жанров */
+export function facetPath(facet: HubFacet): string {
+  return `/games/${facet.slug}`
+}
+
+/**
+ * Тексты подборки на языке страницы: заголовок, <title>, пилюля и основание
+ * списка. Для ru — ровно русские поля HUB_FACETS, как было.
+ */
+export function facetCopy(facet: HubFacet, locale: Locale = 'ru'): FacetCopy {
+  if (locale === 'en') return facet.en
+  const { title, heading, label, basis } = facet
+  return { title, heading, label, basis }
+}
+
+/** Теги, в которых играют вместе против игры */
+const TOGETHER_TAGS: ReadonlySet<string> = new Set([
+  'Co-op',
+  'Online Co-Op',
+  'Local Co-Op',
+  'Co-op Campaign',
+  'PvE',
+])
+
+/**
+ * Играют ли в неё друг против друга, а не вместе, — для подборки «с другом».
+ *
+ * Категорий Steam для этого мало, замер на верхушке «Кооператива» по
+ * отзывам: у Dota 2 категории [1, 9] — «Кооператив» есть, PvP нет; у Rainbow
+ * Six и Apex отмечены и PvP, и кооператив — как и у Terraria, Elden Ring и
+ * Left 4 Dead 2, где PvP побочный. Отличает их то, за что игру отмечают
+ * игроки, — теги. Правило: голосов за соперничество БОЛЬШЕ, чем за
+ * кооператив.
+ *
+ * Суммой по всем тегам игры, а не самым весомым из двенадцати верхних (как
+ * берёт game_tags), — проверено на каталоге. И кооператив, и соперничество у
+ * игры размазаны по нескольким тегам («Co-op Campaign» и «Local Co-Op»;
+ * «PvP», «Competitive» и «eSports»), и у Divinity: Original Sin 2 оба
+ * кооперативных тега стоят тринадцатым и четырнадцатым — за окном, где
+ * одиночный PvP-тег (арена) выигрывал, и лучший кооперативный RPG выпадал из
+ * «с другом». Суммой из ста двадцати верхних «кооперативных» уходят
+ * четырнадцать — Dota, Siege, Apex, Overwatch, Marvel Rivals, THE FINALS,
+ * For Honor, Mordhau…, — а Divinity, Sea of Thieves (PvP 616 при кооперативе
+ * 1413) и Helldivers 2 остаются.
+ *
+ * Что считать соперничеством — словарь VERSUS_TAGS, тот же, по которому
+ * карточка зовёт заход «Матчем» (isVersus в lib/gametraits). Вопросы при этом
+ * разные, и правила тоже. isVersus спрашивает «есть ли противник-человек» и
+ * отвечает «да» на PvP-категорию или на один такой тег среди десяти главных;
+ * здесь спрашивается «вместе или друг против друга», и голоса взвешиваются:
+ * PvP у Sea of Thieves в главных стоит, но кооператив у неё весит вдвое
+ * больше. Поэтому на /games/coop «Матч» на карточке бывает — и честно: в Dead
+ * by Daylight и ARC Raiders идут с другом одной командой против других людей,
+ * это и «с другом», и матч. Чего не бывает — «Матча» у кампании на двоих: у It
+ * Takes Two ([1, 9, 38, 39, 24]) нет ни PvP-категории, ни таких тегов, и она
+ * «Сессия» и на карточке, и в подборке (сторож в app/games/page.test.ts).
+ *
+ * Общий словарь шире того, что стоял здесь сначала, — плюс «Online PvP», «2D
+ * Fighter» и «3D Fighter». На выгрузке прода от 24.09.2026 из восьмидесяти
+ * верхних «кооперативных» по отзывам (столько читает страница) это меняет
+ * одну игру — уходит Brawlhalla, платформенный файтинг (Fighting, 2D Fighter
+ * и eSports перевешивают три кооперативных тега). По всему пулу — шестнадцать,
+ * все с тегами файтинга; среди них и beat 'em up на двоих вроде Little Fighter
+ * 2, но до сорока мест страницы они не достают.
+ *
+ * Нет ни тех, ни других тегов — false: кооператив отмечен категорией, и
+ * спорить с ней нечем.
+ */
+export function playsAgainst(tags: Readonly<Record<string, number>>): boolean {
+  let versus = 0
+  let together = 0
+  for (const [tag, votes] of Object.entries(tags)) {
+    if (!(votes > 0)) continue
+    if (VERSUS_TAGS.has(tag)) versus += votes
+    if (TOGETHER_TAGS.has(tag)) together += votes
+  }
+  return versus > together
+}
+
 /** Сколько тегов игры лежит в game_tags: хвост на выборку почти не влияет, а строк экономит кратно */
 export const TAGS_PER_GAME = 12
 
@@ -211,6 +466,17 @@ export function primaryGenre(tags: Readonly<Record<string, number>>): string | n
     ({ tag, weight }) => Object.hasOwn(HUB_GENRES, tag) && weight >= HUB_MIN_WEIGHT,
   )
   return hit ? hit.tag : null
+}
+
+/**
+ * Стоит ли игра на странице этого жанра — то же правило, что у primaryGenre
+ * и у самой страницы: тег среди её двенадцати в game_tags и не легче
+ * HUB_MIN_WEIGHT. Им же выдача «Рогалики из твоей библиотеки» (genre в
+ * lib/candidates) отбирает свои: игра, которую страница жанра не показала бы,
+ * не должна приехать и в выдачу, позванную с неё.
+ */
+export function inGenre(tags: Readonly<Record<string, number>> | undefined, tag: string): boolean {
+  return !!tags && storedTagWeights(tags).some((t) => t.tag === tag && t.weight >= HUB_MIN_WEIGHT)
 }
 
 /** Игр на странице жанра — верх по отзывам, для которых жанр главный */

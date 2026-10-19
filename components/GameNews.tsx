@@ -165,10 +165,21 @@ function Row({
               {heading}
             </span>
           )}
-          <span className="flex items-center gap-3">
-            <NewsDate at={item.publishedAt} locale={locale} />
-            {item.tldr && !open && <span className="text-xs text-dim truncate">{item.tldr}</span>}
-          </span>
+          {/*
+            Дата и пересказ — каждый своей строкой, как в ленте (PatchRow), а
+            не одним рядом. В ряду пересказ с truncate сжимал дату до самого
+            длинного слова: на проде, /game/730, при 1440 даты ломались в две
+            строки и левый край пересказа гулял от 309 до 374 px, а на 390 —
+            дата в три строки и пересказу 128–136 px, около двадцати знаков.
+            Одного shrink-0 у даты мало: на телефоне пересказу тогда осталось бы
+            62–83 px. Своей строкой он получает всю колонку и две строки — это
+            60–70 знаков на 390 и весь пересказ на десктопе. Сторож —
+            lib/newsrow.test.ts.
+          */}
+          <NewsDate at={item.publishedAt} locale={locale} />
+          {item.tldr && !open && (
+            <span className="line-clamp-2 text-xs leading-relaxed text-dim">{item.tldr}</span>
+          )}
         </div>
         <ScaleBadge scale={item.scale} locale={locale} />
         {/* Без tap и без relative: любой из них сделал бы рамкой ::before

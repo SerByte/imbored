@@ -37,6 +37,58 @@ export function flight(node: unknown, islands: ReadonlyMap<unknown, string>): un
   return walk(node)
 }
 
+/**
+ * Картинки, которые Flight превратит в подсказку предзагрузки
+ * (`:HL[…,"image"]` в RSC-части страницы), — по src, а без него по srcSet.
+ *
+ * Подсказка едет и с ПРЕФЕТЧЕМ страницы, и браузер исполняет её на той
+ * странице, где стоит ссылка: префетч /games из шапки качал обложки хаба
+ * на /support, на каждой карточке игры и на каждом патче. Поэтому
+ * страница, на которую ведут ссылки с чужих страниц, обязана отдавать
+ * подсказку только той картинке, что действительно нужна ей самой, —
+ * а лучше никакой.
+ *
+ * Условие — то же, что у React (getChildFormatContext, case "img", в
+ * react-server-dom-turbopack-server): подсказки нет у loading="lazy", у
+ * fetchPriority="low", у src/srcSet вида data: и у картинки внутри
+ * <picture> или <noscript>. Островки обходятся тоже: их собственный вывод
+ * Flight не рендерит, а вот серверная разметка, переданная им в children
+ * (капсула внутри <Link>), идёт через тот же рендер — и подсказку даёт.
+ * Совпадение с настоящим React держит lib/testing/flight.test.ts.
+ */
+export function imageHints(tree: unknown): string[] {
+  const out: string[] = []
+  const isData = (v: unknown) => typeof v === 'string' && /^data:/i.test(v)
+  const walk = (n: unknown, scoped: boolean): void => {
+    if (Array.isArray(n)) return n.forEach((x) => walk(x, scoped))
+    if (n === null || typeof n !== 'object') return
+    const rec = n as { tag?: unknown; props?: Record<string, unknown> }
+    if (typeof rec.tag === 'string' && rec.props) {
+      const p = rec.props
+      const src = p.src
+      const srcSet = p.srcSet
+      if (
+        rec.tag === 'img' &&
+        !scoped &&
+        p.loading !== 'lazy' &&
+        p.fetchPriority !== 'low' &&
+        Boolean(src || srcSet) &&
+        (src == null || typeof src === 'string') &&
+        (srcSet == null || typeof srcSet === 'string') &&
+        !isData(src) &&
+        !isData(srcSet)
+      ) {
+        out.push(String(src ?? srcSet))
+      }
+      walk(p, scoped || rec.tag === 'picture' || rec.tag === 'noscript')
+      return
+    }
+    Object.values(n).forEach((v) => walk(v, scoped))
+  }
+  walk(tree, false)
+  return out
+}
+
 /** Видимый текст раскрытой страницы: строки и числа из children подряд */
 export function textOf(node: unknown): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node)
@@ -59,4 +111,24 @@ export function islandsOf(node: unknown, name?: string): Array<Record<string, un
   }
   walk(node)
   return out
+}
+
+/**
+ * className первого элемента с этим тегом в раскрытой странице, обходом в
+ * порядке разметки; undefined — такого тега нет. Для h1 героя и подобных
+ * единичных элементов, чей класс и есть проверяемое поведение.
+ */
+export function classOfTag(node: unknown, tag: string): string | undefined {
+  let cls: string | undefined
+  const walk = (n: unknown): void => {
+    if (cls !== undefined || n === null || typeof n !== 'object') return
+    const rec = n as { tag?: string; props?: { className?: unknown } }
+    if (rec.tag === tag) {
+      cls = String(rec.props?.className ?? '')
+      return
+    }
+    Object.values(n).forEach(walk)
+  }
+  walk(node)
+  return cls
 }

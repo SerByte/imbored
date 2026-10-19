@@ -1,5 +1,14 @@
-import { ALIVE_POOL_G, loadTagStats, upsertNeighbors, type Db } from '../lib/db'
-import { buildNeighbors, type Neighbor, type NeighborGame } from '../lib/neighbors'
+import {
+  ALIVE_POOL_G,
+  loadTagStats,
+  parseIdList,
+  parseSemantics,
+  SEMANTICS_JOIN,
+  upsertNeighbors,
+  type Db,
+} from '../lib/db'
+import { buildNeighbors, playModeOf, type Neighbor, type NeighborGame } from '../lib/neighbors'
+import { SEMANTICS_MIN_CONFIDENCE } from '../lib/semantics'
 import { tagWeightFrom } from '../lib/tagweight'
 
 /**
@@ -15,33 +24,55 @@ const PAGE = 500
 
 /**
  * Векторы живых игр из game_tags — топ тегов каждой игры, тот же, по которому
- * идёт полка по тегу и пул открытий. Одним чтением: база локальная, а соседей
- * без всех векторов сразу не посчитать.
+ * идёт полка по тегу и пул открытий, — и то, по чему соседи судят, как в игру
+ * играют (lib/neighbors): режим по категориям Steam, доля положительных
+ * отзывов и уверенная семантика. Двумя чтениями, а не одним JOIN: строка игры
+ * с семантикой повторилась бы на каждый из двенадцати её тегов. База
+ * локальная, а соседей без всех векторов сразу не посчитать.
+ *
+ * Семантика ниже SEMANTICS_MIN_CONFIDENCE не кладётся: по одним тегам она
+ * повторяет сами теги (см. NeighborFeel), и поправка за ощущение услышала бы
+ * их второй раз.
  */
 export async function loadNeighborGames(db: Db): Promise<NeighborGame[]> {
-  const res = await db.execute(
-    `SELECT g.appid, g.name, g.reviews_total, gt.tag, gt.weight
-     FROM games g JOIN game_tags gt ON gt.appid = g.appid
+  const games = await db.execute(
+    `SELECT g.appid, g.name, g.reviews_total, g.reviews_percent, g.categories_json, s.json AS semantics_json
+     FROM games g ${SEMANTICS_JOIN}
      WHERE ${ALIVE_POOL_G}
      ORDER BY g.appid`,
   )
   const byAppid = new Map<number, NeighborGame>()
-  for (const r of res.rows as unknown as Array<{
+  for (const r of games.rows as unknown as Array<{
     appid: number
     name: string
     reviews_total: number | null
-    tag: string
-    weight: number
+    reviews_percent: number | null
+    categories_json: string | null
+    semantics_json: string | null
   }>) {
     const appid = Number(r.appid)
-    let g = byAppid.get(appid)
-    if (!g) {
-      g = { appid, name: String(r.name ?? ''), tags: {}, reviewsTotal: Number(r.reviews_total ?? 0) }
-      byAppid.set(appid, g)
+    const g: NeighborGame = { appid, name: String(r.name ?? ''), tags: {}, reviewsTotal: Number(r.reviews_total ?? 0) }
+    const mode = playModeOf(parseIdList(r.categories_json))
+    if (mode) g.mode = mode
+    if (r.reviews_percent !== null && r.reviews_percent !== undefined) g.percent = Number(r.reviews_percent)
+    const sem = parseSemantics(r.semantics_json)
+    if (sem && sem.confidence >= SEMANTICS_MIN_CONFIDENCE) {
+      g.feel = { session: sem.session.bucket, pace: sem.axes.pace }
     }
-    g.tags[String(r.tag)] = Number(r.weight)
+    byAppid.set(appid, g)
   }
-  return [...byAppid.values()]
+  const tags = await db.execute(
+    `SELECT gt.appid, gt.tag, gt.weight
+     FROM games g JOIN game_tags gt ON gt.appid = g.appid
+     WHERE ${ALIVE_POOL_G}`,
+  )
+  for (const r of tags.rows as unknown as Array<{ appid: number; tag: string; weight: number }>) {
+    const g = byAppid.get(Number(r.appid))
+    if (g) g.tags[String(r.tag)] = Number(r.weight)
+  }
+  // Игра пула без единой строки game_tags соседей не получает и соседом не
+  // бывает — как и при прежнем JOIN
+  return [...byAppid.values()].filter((g) => Object.keys(g.tags).length > 0)
 }
 
 /** Счёт на хранение: четыре знака — порядок тот же, а пересборка не переписывает строки из-за шума */

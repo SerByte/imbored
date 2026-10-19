@@ -183,6 +183,26 @@ describe('превью в мессенджерах', () => {
     expect(offenders, 'без generateStaticParams revalidate не значит ничего').toEqual([])
   })
 
+  /**
+   * Вторая половина того же правила: зарегистрированный сегмент держит
+   * картинку в кэше, только если ответ не несёт своего Cache-Control. Голый
+   * new ImageResponse ставит `max-age=0`, app-route его не переписывает, и на
+   * проде каждый заход в карточку игры, патча, жанра или выбора отвечал
+   * STALE с перерисовкой (lib/ogresponse.ts). Сюда же — card.png портрета и
+   * итогов года: это не opengraph-image, но кэш у них тот же.
+   */
+  test('картинка с revalidate рисуется через isrImage, а не голым ImageResponse', () => {
+    const cached = appFiles().filter(
+      ([, src]) => /export const revalidate\b/.test(src) && /\bImageResponse\b|\bisrImage\b/.test(src),
+    )
+    // семь карточек динамических сегментов, итоги года и две card.png
+    expect(cached.length, 'картинок с revalidate не найдено').toBeGreaterThanOrEqual(10)
+    const offenders = cached
+      .filter(([, src]) => /new ImageResponse\(/.test(src) || !/\bisrImage\(/.test(src))
+      .map(([file]) => path.relative(ROOT, file).split(path.sep).join('/'))
+    expect(offenders, 'max-age=0 от next/og обнуляет срок ISR — см. lib/ogresponse.ts').toEqual([])
+  })
+
   test('все карточки рисуются в 1200×630 — это то, что показывают Telegram и Discord', () => {
     const cards = appFiles().filter(([f]) => path.basename(f) === 'opengraph-image.tsx')
     expect(cards.length, 'карточек не найдено').toBeGreaterThanOrEqual(3)

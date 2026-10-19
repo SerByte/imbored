@@ -271,6 +271,15 @@ export type SharedPickView = { name: string; reason: string; kind: PickKind }
  * Тексты страницы и карточки в чате — одни на обе, как inviteCopy у пати:
  * заголовок вкладки и превью обязаны говорить одно. null — выбора нет
  * (истёк, удалён, опечатка): карточка остаётся приглашением.
+ *
+ * Описание (оно же og:description и twitter:description) — причина В
+ * КАВЫЧКАХ, как цитата на самой странице и на карточке в чате. Причина
+ * обращена к тому, кто делился («У тебя в «Terraria» уже 130 ч… вернись и
+ * проверь»), и голой строкой под заголовком «imbored выбрал мне на вечер»
+ * превью читалось как сказанное получателю: будто это он наиграл сто
+ * тридцать часов в игру, которой у него, может, и нет. Кавычки делают её
+ * тем, что она есть, — словами imbored отправителю. Место под них берётся
+ * из того же потолка сниппета, а не сверх него.
  */
 export function pickCopy(
   p: SharedPickView | null,
@@ -288,7 +297,8 @@ export function pickCopy(
   const name = quoted(p.name, locale)
   return {
     title: p.kind === 'daily' ? copy.dailyTitle(name) : copy.playTitle(name),
-    description: clip(p.reason, DESCRIPTION_MAX) ?? p.reason.slice(0, DESCRIPTION_MAX),
+    // −2 — на сами кавычки («» или “”): с ними описание не длиннее DESCRIPTION_MAX
+    description: quoted(clip(p.reason, DESCRIPTION_MAX - 2) ?? p.reason.slice(0, DESCRIPTION_MAX - 2), locale),
     eyebrow: p.kind === 'daily' ? copy.dailyEyebrow : copy.playEyebrow,
     foot: copy.foot,
   }
@@ -298,7 +308,7 @@ export function pickCopy(
  * Тексты pickCopy по языкам — по глоссарию: «Выбор на вечер» — Tonight's pick,
  * «Моя игра дня» — My game of the day, «imbored выбрал мне на вечер» —
  * imbored picked my game for tonight. Описание выбора — сама причина: она уже
- * на языке ссылки, переводить её здесь нечего.
+ * на языке ссылки, переводить её здесь нечего, — в кавычках языка страницы.
  */
 const PICK_COPY = {
   ru: {

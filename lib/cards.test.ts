@@ -57,6 +57,7 @@ function set(metas: GameMeta[], games: LibraryGame[]): CandidateSet {
     tagWeight: null,
     playtimeHidden: false,
     seed: null,
+    genre: null,
     candidates: [],
     actual: [],
     own: [],

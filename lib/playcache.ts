@@ -45,7 +45,7 @@ import { DEFAULT_LOCALE, type Locale } from './i18n'
 import { createLocalStore } from './localstore'
 import { parseLean, type Lean } from './mood'
 import { parseNudge } from './nudge'
-import { parseSeedRef, type Deal, type PlayPick } from './playflow'
+import { parseGenreRef, parseSeedRef, type Deal, type PlayPick } from './playflow'
 import type { ContinueGame, Focus } from './recommend'
 import type { Mood } from './types'
 import { forgetsWith, PLAY_BANS_KEY, PLAY_DEAL_KEY } from './playforget'
@@ -117,6 +117,11 @@ export type PlayCache = {
  * только когда она есть: ключ без затравки — тот же, что до неё, и записи,
  * уже лежащие во вкладках, по-прежнему узнаются.
  *
+ * Жанр с адреса (/play?…&genre=, см. parseGenreParam) — по той же причине:
+ * обычная выдача не должна вставать на месте рогаликов, о которых просили со
+ * страницы жанра. Своей частью с меткой «g:» — с затравкой её не спутать, — и
+ * тоже только когда он есть.
+ *
  * Язык страницы — тоже в ключе, последней частью и только не русский.
  * Хранилище вкладки одно на /play и /en/play: переключатель языка ведёт на
  * тот же адрес с тем же запросом, и без языка в ключе английская страница
@@ -129,6 +134,7 @@ export function playCacheKey(q: {
   roulette: boolean
   lean: Lean | null
   seed?: number | null
+  genre?: string | null
   locale?: Locale
 }): string {
   return [
@@ -137,6 +143,7 @@ export function playCacheKey(q: {
     q.roulette ? 'roulette' : '',
     q.lean ?? '',
     ...(q.seed ? [String(q.seed)] : []),
+    ...(q.genre ? [`g:${q.genre}`] : []),
     ...(q.locale && q.locale !== DEFAULT_LOCALE ? [q.locale] : []),
   ].join('|')
 }
@@ -191,6 +198,8 @@ function parseDeal(x: unknown): Deal | null {
     scope: d.scope,
     // Записи до «Как «X», но…» поля не несут — это обычная выдача
     seed: parseSeedRef(d.seed),
+    // Записи до жанра со страницы /games — тоже: выдача без него
+    genre: parseGenreRef(d.genre),
     // Записи до подталкиваний — тоже: выдача без него
     nudge: parseNudge(d.nudge),
     nowSec: d.nowSec,

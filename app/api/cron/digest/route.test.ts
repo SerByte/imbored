@@ -94,7 +94,12 @@ describe('/api/cron/digest', () => {
     })
     expect((await ask()).status).toBe(202)
     await settled()
-    expect(revalidated).toEqual(['/game/730', '/game/570'].flatMap(routePaths))
+    // и архивы обновлений тех же игр: пересказ там — главное в строке.
+    // «сброшено» ниже — по-прежнему число игр, а не адресов. Каждый адрес —
+    // в обеих языковых копиях маршрута (revalidateSitePath)
+    expect(revalidated.sort()).toEqual(
+      ['/game/570', '/game/570/news', '/game/730', '/game/730/news'].flatMap(routePaths).sort(),
+    )
     const mark = await lastMark()
     expect(mark).not.toHaveProperty('cards')
     expect(mark).toMatchObject({ digested: 2, сброшено: 2, итого: { digested: 2, сброшено: 2 } })

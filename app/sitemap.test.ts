@@ -1,6 +1,15 @@
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { replaceGameTags, setNewsDigest, setNewsDigestEn, upsertGameMeta, upsertNewsItems, type Db } from '@/lib/db'
+import {
+  replaceGameTags,
+  setNewsDigest,
+  setNewsDigestEn,
+  upsertGameMeta,
+  upsertNewsItems,
+  type Db,
+  type StoredNews,
+} from '@/lib/db'
+import { HUB_MIN_SHELF } from '@/lib/gamehub'
 import { freshDb } from '@/lib/testing/route'
 import sitemap from './sitemap'
 
@@ -87,7 +96,96 @@ describe('карта сайта и осечка базы', () => {
     errors.mockRestore()
     expect(got).toContain('/')
     expect(got).toContain('/games')
+    // жанры известны без базы — переживают и сборку без неё, на обоих языках
+    expect(got).toContain('/games/open-world')
+    expect(got).toContain('/en/games/open-world')
+    // подборки — нет: их страницы на такой сборке собраны пустыми и закрыты от индекса
+    expect(got).not.toContain('/games/coop')
+    expect(got).not.toContain('/en/games/coop')
     expect(got).not.toContain('/game/730')
+  })
+
+  /*
+   * Подборка — отбор каталога, а не список руками, как жанры, и бывает
+   * тонкой: «на 20 минут» ждёт уверенной семантики. Короче полки хаба
+   * страница закрыта от индекса (thinList), и адрес в карте был бы «Submitted
+   * URL marked noindex». В карте — ровно то, что страница пускает в поиск.
+   */
+  test('подборка — в карте, только когда её страница идёт в поиск', async () => {
+    const coop = async (appid: number) => {
+      await upsertGameMeta(
+        db,
+        {
+          appid,
+          name: `Игра ${appid}`,
+          tags: { 'Online Co-Op': 1000 },
+          genres: [],
+          categories: [1, 9, 38],
+          reviewsTotal: 1000 + appid,
+        },
+        T0,
+      )
+      await replaceGameTags(db, appid, [{ tag: 'Online Co-Op', weight: 1000 }])
+    }
+    for (let i = 1; i < HUB_MIN_SHELF; i++) await coop(1000 + i)
+    let got = await urls()
+    expect(got).not.toContain('/games/coop')
+    expect(got).not.toContain('/en/games/coop')
+    // без уверенной семантики «на 20 минут» нечем ответить — и в карте её нет
+    expect(got).not.toContain('/games/short')
+
+    await coop(1000 + HUB_MIN_SHELF)
+    got = await urls()
+    expect(got).toContain('/games/coop')
+    expect(got.filter((u) => u === '/games/coop')).toHaveLength(1)
+    expect(got).not.toContain('/games/short')
+    expect(got).not.toContain('/en/games/short')
+
+    // Подборка — как жанр: на обоих языках, и у каждой версии — обе и x-default
+    const entries = (await sitemap()).filter((e) => /\/games\/coop$/.test(new URL(e.url).pathname))
+    expect(entries.map((e) => new URL(e.url).pathname).sort()).toEqual(['/en/games/coop', '/games/coop'])
+    for (const e of entries) {
+      expect(e.alternates?.languages).toEqual({
+        ru: 'http://localhost:3000/games/coop',
+        en: 'http://localhost:3000/en/games/coop',
+        'x-default': 'http://localhost:3000/games/coop',
+      })
+    }
+  })
+
+  /*
+   * Архив обновлений игры — в карте, только когда в нём есть своё: не меньше
+   * трёх пересказанных крупных патчей (lib/patcharchive). lastmod — свежий
+   * патч или пересказ, а не updated_at строки (sitemapPatchArchives).
+   */
+  test('архив обновлений — от трёх пересказов, с датой последней перемены', async () => {
+    const news = (gid: string, at: number): StoredNews => ({
+      appid: 730,
+      gid,
+      title: 'Обновление',
+      url: '',
+      publishedAt: at,
+      kind: 'patch',
+      scale: 'major',
+      blocks: [],
+      bodyHash: `h${gid}`,
+      rank: 9000,
+    })
+    await upsertNewsItems(db, [news('1', T0 - 300), news('2', T0 - 200)], T0)
+    for (const gid of ['1', '2']) await setNewsDigest(db, 730, gid, { tldr: 'коротко', scale: 'major' }, T0)
+    expect(await urls()).not.toContain('/game/730/news')
+
+    await upsertNewsItems(db, [news('3', T0 - 100)], T0)
+    await setNewsDigest(db, 730, '3', { tldr: 'коротко', scale: 'major' }, T0 + 60)
+    const entry = (await sitemap()).find((e) => new URL(e.url).pathname === '/game/730/news')
+    expect(entry?.lastModified).toEqual(new Date((T0 + 60) * 1000))
+    // Своё у архива — русские пересказы: английский двойник без своих стоял бы
+    // с noindex, и в карте его нет — ни адресом, ни hreflang
+    expect(await urls()).not.toContain('/en/game/730/news')
+    expect(entry?.alternates?.languages).toEqual({
+      ru: 'http://localhost:3000/game/730/news',
+      'x-default': 'http://localhost:3000/game/730/news',
+    })
   })
 
   test('на сборке getDb() бросает сам (нет TURSO_DATABASE_URL) — и это не роняет build', async () => {

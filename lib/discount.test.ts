@@ -5,6 +5,7 @@ import {
   discountOf,
   discountTrustedUntil,
   discountView,
+  lapsedRegularPrice,
   trustedPrice,
 } from './discount'
 import type { GameMeta } from './types'
@@ -259,5 +260,30 @@ describe('срок скидки по-английски', () => {
         expect(label, `${left} ${calendar}`).not.toMatch(CYRILLIC)
       }
     }
+  })
+})
+
+/**
+ * Обычная цена погасшей распродажи — подписанная строка героя карточки, пока
+ * сверка каталога не переснимет цену. Ценой она не становится: trustedPrice
+ * по-прежнему null, и в разметку и суммы она не попадает.
+ */
+describe('lapsedRegularPrice', () => {
+  test('срок акции вышел или замер протух — обычная цена той же пары', () => {
+    expect(lapsedRegularPrice(onSale({ discountEndsAt: NOW - 1 }), NOW)).toBe(1999)
+    expect(lapsedRegularPrice(onSale({ priceAt: NOW - PRICE_TRUST_SEC - 1 }), NOW)).toBe(1999)
+    // и trustedPrice при этом молчит, как прежде
+    expect(trustedPrice(onSale({ discountEndsAt: NOW - 1 }), NOW)).toBeNull()
+  })
+
+  test('живая скидка и обычная цена — null: их показывает trustedPrice', () => {
+    expect(lapsedRegularPrice(onSale(), NOW)).toBeNull()
+    expect(lapsedRegularPrice({ priceFinal: 1999, priceInitial: 1999, discountPercent: 0, priceAt: NOW - 30 * DAY }, NOW)).toBeNull()
+  })
+
+  test('пары «было — стало» нет — сказать нечего', () => {
+    expect(lapsedRegularPrice(onSale({ priceInitial: undefined, discountEndsAt: NOW - 1 }), NOW)).toBeNull()
+    expect(lapsedRegularPrice(onSale({ priceInitial: 999, discountEndsAt: NOW - 1 }), NOW)).toBeNull()
+    expect(lapsedRegularPrice({}, NOW)).toBeNull()
   })
 })

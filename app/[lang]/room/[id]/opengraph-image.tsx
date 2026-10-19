@@ -1,6 +1,6 @@
-import { ImageResponse } from 'next/og'
 import { ogFonts, ogGlow, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { ArtBackdrop, ogArt } from '@/lib/ogcard'
+import { isrImage } from '@/lib/ogresponse'
 import { CANVAS_WIDE } from '@/lib/ogwall'
 import { inviteCopy } from '@/lib/roominvite'
 import { loadRoomInvite, ROOM_ID_RE } from './invite'
@@ -65,6 +65,12 @@ export const revalidate = 300
  *
  * Картинку тянет краулер мессенджера — у одной разосланной ссылки таких
  * заходов столько, скольким её переслали.
+ *
+ * Регистрации мало, нужна и вторая половина: ответ без своего Cache-Control.
+ * С ● в листинге карточки всё равно перерисовывались на каждом заходе — уже
+ * не MISS, а STALE: `max-age=0` от next/og обнулял срок записи ISR. Поэтому
+ * картинка собирается isrImage, а не голым ImageResponse (lib/ogresponse.ts;
+ * сторож обеих половин — lib/social.test.ts).
  */
 export async function generateStaticParams(): Promise<Array<Record<string, string>>> {
   return []
@@ -94,7 +100,7 @@ export default async function Image({ params }: { params: Promise<{ lang: string
   const artRef = invite?.matched ? invite.matchedArt : invite?.seedArt
   const art = artRef ? await ogArt(artRef) : null
 
-  return new ImageResponse(
+  return isrImage(
     (
       <div
         style={{

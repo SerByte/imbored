@@ -179,6 +179,33 @@ export function trustedPrice(
 }
 
 /**
+ * Обычная цена игры, чью погасшую распродажу trustedPrice спрятал, — или null.
+ *
+ * Прятать акционное число правильно, а вот герой карточки без цены, но с
+ * «Steam возвращает деньги» под кнопками читался сбоем: так неделями стояли
+ * Hades ($24.99) и ICARUS — до перезамера, который сверка каталога теперь
+ * делает сама (deadDeals в stalePriceAppids), а карточка видит на своей
+ * недельной перегенерации.
+ *
+ * Это не та подстановка, которую запрещает докблок trustedPrice. Там
+ * price_initial выдавался бы за цену, а «акция кончилась» и «продлена» отсюда
+ * неразличимы. Здесь он подписан как то, чем и является, — цена без скидки
+ * по словам Steam, «было» той же пары, — и правдив в обоих случаях: кончилась
+ * акция — столько и стоит, продлена — в магазине дешевле написанного. Ценой
+ * при этом он не становится: ни в Offer разметки, ни в суммы, ни на плитки
+ * /play он не идёт — только подписанной строкой героя карточки.
+ */
+export function lapsedRegularPrice(
+  meta: Parameters<typeof discountOf>[0],
+  nowSec: number,
+): number | null {
+  const { priceFinal, priceInitial, discountPercent } = meta
+  if (priceFinal === undefined || priceInitial === undefined) return null
+  if (!discountPercent || discountPercent <= 0 || priceInitial <= priceFinal) return null
+  return trustedPrice(meta, nowSec) === null ? priceInitial : null
+}
+
+/**
  * Скидка вместе с подписью срока — то, что уезжает клиенту одним куском.
  *
  * urgency: false — скидка без «до 17 августа». Срок распродажи — давление

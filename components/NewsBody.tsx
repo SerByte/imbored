@@ -81,6 +81,16 @@ export function NewsBody({
       при overflow-wrap: normal такой кусок просто уезжает за край. Замерено
       на 375 px: подпись ссылки шириной 365 px в колонке 293 вылезала на 72 px
       и обрезалась предком, то есть хвост адреса было не прочитать.
+
+      До пунктов списка этого мало. Пункт — flex-ряд «точка + текст», и текст
+      в нём — flex-элемент с min-width: auto, то есть не уже своего
+      min-content, а break-word min-content не уменьшает. Неразрывный кусок
+      растягивал span за край: на проде, 375 px, пункт Satisfactory с
+      «(UFGFAnimInstanceFactory::AudioEventCallback)» лёг до 375 при панели до
+      355 и обрезался на «…AudioEventCallba». Поэтому у текста пункта min-w-0:
+      сжаться ему разрешено, а переносит уже break-words отсюда. Это точечнее,
+      чем overflow-wrap: anywhere на корне, — тот снизил бы min-content всего
+      тела. Сторож — lib/newsrow.test.ts.
     */
     <div
       lang={textLangOn(locale, blocksToText(blocks))}
@@ -117,7 +127,9 @@ export function NewsBody({
                   {/* точка, а не маркер списка: у Steam пункты бывают в
                       несколько строк, и висячий отступ читается лучше */}
                   <span aria-hidden className="mt-[7px] size-1 rounded-full bg-ember shrink-0" />
-                  <span>
+                  {/* min-w-0 — иначе break-words с корня сюда не доходит
+                      (почему — в комментарии у корня) */}
+                  <span className="min-w-0">
                     <Runs runs={item} />
                   </span>
                 </li>

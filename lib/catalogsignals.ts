@@ -3,17 +3,27 @@
  *
  * Каталог собирается руками (seed → promote → publish), и с 15 августа его
  * никто не пересобирал: у 4615 из 5000 страниц игр lastmod ровно тот день.
- * Застывшее тут не безобидно. reviews_total и reviews_percent стоят в meta
- * description /game/* и в порядке пула; ccu — главный сигнал живости
+ * Застывшее тут не безобидно. reviews_total и reviews_percent стоят в порядке
+ * пула и в порогах живости, отзывы на всех языках — в кольце и meta
+ * description /game/*, на хабах и в /play; ccu — главный сигнал живости
  * совместной игры, и по нему рантайм (filterActual → judgeLiveness) решает,
- * звать ли её «с друзьями». Опустевшие в сентябре серверы по-прежнему
- * проходили бы фильтр пати по августовскому замеру.
+ * звать ли её «с друзьями» и «Один»: кооп без одиночного режима тому, кто
+ * играет один, достаётся только при живой толпе (playContextOf, 'alone').
+ * Опустевшие в сентябре серверы по-прежнему проходили бы фильтр пати по
+ * августовскому замеру, а мёртвый кооп вроде Never Split the Party вставал бы
+ * героем у того, кто ответил «Один».
  *
  * Полная пересборка — это обход 170 тысяч игр, секреты Turso в GitHub и
  * data/catalog.db артефактом; решение за владельцем. Здесь лёгкая половина,
  * которой хватает без всего этого: обновить замеры у того, что уже в пуле.
  *
- *   • Отзывы — GetItems с include_reviews, двести игр одним запросом.
+ *   • Отзывы — GetItems с include_reviews, двести игр одним запросом. В
+ *     ответе две шкалы: англоязычная — для порогов и порядка пула — и все
+ *     языки, которые видят люди (shownReviews в lib/gametraits). Русские —
+ *     вторым запросом той же пачки, в русском контексте.
+ *   • Пульс — отзывы за последний месяц, по игре за запрос и только у верха
+ *     пула и у разгромленных, снятых с подбора (refreshReviewPulse ниже):
+ *     ходит в магазин, а не в API, и потому скупо.
  *   • Онлайн — по игре за запрос (другого API нет), и только у совместных:
  *     живость гейтит только их, ровно как в promote-catalog.
  *   • Цены — тот же GetItems, но в регионе цен (lib/deals), той же пачкой, и
@@ -34,8 +44,17 @@
  *     ISR, хотя собранная страница скидки обычно и не видела. Еженедельный
  *     замер всего пула платил бы так на каждой распродаже, а бюджет ISR и без
  *     того выбран. Свежесть своей цены держат заходы людей (refreshDeals); при
- *     постоянном регионе сверка спрашивает цены только у новичков без замера
- *     и у скрытых.
+ *     постоянном регионе сверка спрашивает цены только у новичков без замера,
+ *     у скрытых и у погасших распродаж.
+ *     Погасшая распродажа — единственное исключение из «свою не трогаем».
+ *     Акционную пару, которой уже не верят (срок вышел или замер без срока
+ *     старше PRICE_TRUST_SEC), trustedPrice прячет целиком, и герой карточки
+ *     стоял без цены, пока до игры не дойдёт заход человека: на проде так
+ *     неделями молчали Hades, ICARUS и Among Us. Перезамер такой строки цену
+ *     только возвращает, а стоит ISR не больше обычного: кончилась скидка —
+ *     ложится обычная цена, и карточка покажет её на своей недельной
+ *     перегенерации; идёт новая — её конец, как у любой скидки, — одна запись
+ *     в revalidateEndedDeals.
  *
  * Очередь — колонка reviews_at: сперва ни разу не сверенные, потом самые
  * давние (catalogSignalsQueue). Ни alive, ни signals_at здесь не пишутся:
@@ -47,26 +66,37 @@
  * vitest собирает только lib/.
  */
 
-import { callStoreItems, STORE_ITEMS_BATCH } from './catalog'
+import { callStoreItems, STORE_ITEMS_BATCH, STORE_PACE_MS } from './catalog'
 import { sliceClock } from './cron'
 import {
   catalogSignalsQueue,
+  reviewPulseQueue,
   stalePriceAppids,
   updateCatalogSignals,
   updateGamePrices,
+  updateReviewPulse,
   type Db,
   type PriceQuote,
 } from './db'
 import { fetchStorePrices } from './deals'
 import { logSwallowed } from './errlog'
-import { CCU_TIMEOUT_MS, fetchCurrentPlayers, pollPlayerCounts } from './ingest'
+import {
+  CCU_TIMEOUT_MS,
+  fetchCurrentPlayers,
+  fetchRecentPulse,
+  pollPlayerCounts,
+  type RecentPulse,
+} from './ingest'
+import { pace } from './pace'
 import { priceRegion } from './steamregion'
 
 /**
  * Раз в сколько сверять игру. Неделя: пул — около шести тысяч игр, и при
- * пачке в двести это тридцать запросов отзывов и пара тысяч замеров онлайна в
- * неделю — капля на фоне лимитов Steam, а для фильтра живости и процента в
- * сниппете недельная точность с запасом.
+ * пачке в двести это тридцать пачек в неделю, по два GetItems на пачку
+ * (англоязычные вместе со всеми языками и русские, см. fetchStoreReviews), —
+ * около шестидесяти запросов отзывов и пара тысяч замеров онлайна в неделю.
+ * Капля на фоне лимитов Steam, а для фильтра живости и процента в сниппете
+ * недельная точность с запасом.
  */
 export const SIGNALS_MAX_AGE_SEC = 7 * 86_400
 
@@ -94,17 +124,64 @@ export const SIGNALS_MAX_BATCHES = 5
  */
 const REVIEWS_MS_PER_APP = 50
 
-export type StoreReviews = { total: number; percent: number }
+/** Сколько отзывов и доля положительных, 0…100 */
+export type ReviewScale = { total: number; percent: number }
 
-type ReviewSummary = { review_count?: unknown; percent_positive?: unknown }
-type ReviewsResponse = {
-  response?: {
-    store_items?: Array<{
-      appid?: number
-      id?: number
-      reviews?: { summary_filtered?: ReviewSummary; summary_language_specific?: ReviewSummary }
-    }>
+/** Все языки — с оценкой Steam словами той же сводки (EUserReviewScore 1…9) */
+export type AllReviews = ReviewScale & { score: number | null }
+
+/**
+ * Отзывы игры по одной сверке. Сама пара — англоязычная шкала порогов и
+ * порядка пула (почему — у parseStoreReviews); рядом — то, что видят люди.
+ */
+export type StoreReviews = ReviewScale & {
+  /** Все языки (summary_filtered) — кольцо /game, хабы и /play (shownReviews) */
+  all?: AllReviews
+  /** На русском — второй GetItems той же пачки в русском контексте */
+  ru?: ReviewScale
+}
+
+type ReviewSummary = {
+  review_count?: unknown
+  percent_positive?: unknown
+  review_score?: unknown
+}
+type ReviewsItem = {
+  appid?: number
+  id?: number
+  reviews?: { summary_filtered?: ReviewSummary; summary_language_specific?: ReviewSummary }
+}
+type ReviewsResponse = { response?: { store_items?: ReviewsItem[] } }
+
+/**
+ * Пара из сводки, или null. Ноль отзывов значением не считается: у игры пула
+ * их по построению десятки и больше (иначе её отсеял бы промоут), и ноль —
+ * это сбой ответа, а не новость. Записанный, он выкинул бы игру из выдачи как
+ * мусорный хвост.
+ */
+function scaleOf(s: ReviewSummary | undefined): ReviewScale | null {
+  const total = s?.review_count
+  const percent = s?.percent_positive
+  const ok =
+    typeof total === 'number' &&
+    Number.isInteger(total) &&
+    total > 0 &&
+    typeof percent === 'number' &&
+    percent >= 0 &&
+    percent <= 100
+  return ok ? { total, percent: Math.round(percent) } : null
+}
+
+/** Игры ответа по appid — пропуская строки без него */
+function itemsOf(json: unknown): Map<number, ReviewsItem> {
+  const items = (json as ReviewsResponse)?.response?.store_items
+  const out = new Map<number, ReviewsItem>()
+  if (!Array.isArray(items)) return out
+  for (const it of items) {
+    const appid = it.appid ?? it.id
+    if (typeof appid === 'number' && appid > 0) out.set(appid, it)
   }
+  return out
 }
 
 /**
@@ -112,7 +189,7 @@ type ReviewsResponse = {
  * игра в ответе есть, а отзывов на нужном языке нет. Игр, про которые Steam
  * промолчал, в карте нет вовсе.
  *
- * Берём summary_language_specific, а не summary_filtered, и это про
+ * Пара берётся из summary_language_specific, а не summary_filtered, и это про
  * непрерывность шкалы. Посев каталога читал отзывы из поиска магазина с
  * l=english, то есть англоязычные: у CS2 в каталоге 2 593 099, а всех —
  * 9 878 407. Контекст запроса английский (STORE_LANGUAGE), и language_specific
@@ -120,40 +197,82 @@ type ReviewsResponse = {
  * (MIN_REVIEWS_TAIL, PANNED_MIN_SAMPLE) и порядок пула поехали бы скачком у
  * сверенной половины каталога против несверенной.
  *
- * Ноль отзывов значением не считается: у игры пула их по построению десятки
- * и больше (иначе её отсеял бы промоут), и ноль — это сбой ответа, а не
- * новость. Записанный, он выкинул бы игру из выдачи как мусорный хвост.
+ * Но людям эта шкала не годится: «96% из 165 тыс.» у Isaac на хабе против
+ * «459 857» на его карточке. Поэтому summary_filtered — все языки — едет
+ * рядом, полем all, из того же ответа и без лишнего запроса: показывают
+ * людям его (shownReviews в lib/gametraits). С ним — оценка Steam словами из
+ * той же сводки, чтобы слово и доля не разошлись.
  */
 export function parseStoreReviews(json: unknown): Map<number, StoreReviews | null> {
-  const items = (json as ReviewsResponse)?.response?.store_items
   const out = new Map<number, StoreReviews | null>()
-  if (!Array.isArray(items)) return out
-  for (const it of items) {
-    const appid = it.appid ?? it.id
-    if (typeof appid !== 'number' || appid <= 0) continue
-    const s = it.reviews?.summary_language_specific
-    const total = s?.review_count
-    const percent = s?.percent_positive
-    const ok =
-      typeof total === 'number' &&
-      Number.isInteger(total) &&
-      total > 0 &&
-      typeof percent === 'number' &&
-      percent >= 0 &&
-      percent <= 100
-    out.set(appid, ok ? { total, percent: Math.round(percent) } : null)
+  for (const [appid, it] of itemsOf(json)) {
+    const lang = scaleOf(it.reviews?.summary_language_specific)
+    if (!lang) {
+      out.set(appid, null)
+      continue
+    }
+    const filtered = it.reviews?.summary_filtered
+    const all = scaleOf(filtered)
+    const score = filtered?.review_score
+    out.set(
+      appid,
+      all
+        ? {
+            ...lang,
+            all: {
+              ...all,
+              score: typeof score === 'number' && Number.isInteger(score) && score >= 1 && score <= 9 ? score : null,
+            },
+          }
+        : lang,
+    )
   }
   return out
 }
 
-/** Отзывы пачки игр одним запросом. Сбой — исключение: вызывающий не пишет ничего. */
+/**
+ * Отзывы на языке контекста запроса — для второго, русского GetItems. Только
+ * те, у кого они есть: «на русском нет» и «Steam промолчал» здесь одно и то
+ * же — записывать нечего.
+ */
+export function parseLangReviews(json: unknown): Map<number, ReviewScale> {
+  const out = new Map<number, ReviewScale>()
+  for (const [appid, it] of itemsOf(json)) {
+    const lang = scaleOf(it.reviews?.summary_language_specific)
+    if (lang) out.set(appid, lang)
+  }
+  return out
+}
+
+/**
+ * Отзывы пачки игр: англоязычные и все языки — одним запросом, русские —
+ * вторым. Сбой первого — исключение: вызывающий не пишет ничего. Сбой
+ * второго — строка в журнал и пачка без русских: это подпись на карточке, а
+ * не повод терять сверку двухсот игр. Запрос — в api.steampowered.com
+ * (pace 'steam-api', 0.4 с), то есть одна лишняя пачка из двухсот, а не
+ * двести походов в магазин по одной игре.
+ */
 export async function fetchStoreReviews(
   appids: number[],
   fetchFn: typeof fetch = fetch,
 ): Promise<Map<number, StoreReviews | null>> {
   if (!appids.length) return new Map()
   const json = await callStoreItems(appids, { include_reviews: true }, fetchFn, REVIEWS_MS_PER_APP)
-  return parseStoreReviews(json)
+  const out = parseStoreReviews(json)
+  const known = appids.filter((id) => out.get(id))
+  if (!known.length) return out
+  try {
+    const ru = parseLangReviews(
+      await callStoreItems(known, { include_reviews: true }, fetchFn, REVIEWS_MS_PER_APP, 'russian'),
+    )
+    for (const [appid, r] of ru) {
+      const base = out.get(appid)
+      if (base) out.set(appid, { ...base, ru: r })
+    }
+  } catch (err) {
+    logSwallowed('catalog-signals:reviews-ru', err, { batch: known.length })
+  }
+  return out
 }
 
 export type SignalsResult = {
@@ -239,9 +358,10 @@ export async function refreshCatalogSignals(
     // из-за цен. Их отказ пачку не останавливает: отзывы с отметками пишутся
     // всё равно, а цены этих игр переснимет первый же заход человека
     // (refreshDeals) или следующий круг.
-    // Спрашиваем только игры без цены своего региона: срок без предела, и
-    // stalePriceAppids оставляет ровно «ни разу не мерили», «чужой регион» и
-    // «не продаётся» (почему не всех — в шапке). Нет таких — нет и запроса
+    // Спрашиваем только игры без показанной цены своего региона: срок без
+    // предела, и stalePriceAppids оставляет ровно «ни разу не мерили», «чужой
+    // регион», «не продаётся» и погасшую распродажу (почему не всех — в
+    // шапке). Нет таких — нет и запроса
     let quotes: PriceQuote[] = []
     try {
       const unpriced = await stalePriceAppids(
@@ -251,7 +371,7 @@ export async function refreshCatalogSignals(
         now,
         due.length,
         cc,
-        { hidden: true },
+        { hidden: true, deadDeals: true },
       )
       if (unpriced.length) quotes = await pricesOf(unpriced, cc)
     } catch (err) {
@@ -291,4 +411,112 @@ export async function refreshCatalogSignals(
   // Потолок пачек выбран, а устаревшие, может быть, остались
   result.stopped = 'budget'
   return result
+}
+
+/**
+ * Пульс отзывов: за последний месяц, все языки — строка под кольцом /game
+ * («за 30 дней до 3 октября: 71% — ниже, чем за всё время»). «Раньше
+ * ругали — сейчас хвалят» и обратное — факт для решения, которого не видно
+ * ни по одной сводке за всё время.
+ *
+ * Запрос — по игре (appreviews, num_per_page=0, ответ в пару сотен байт), в
+ * store.steampowered.com через тот же pace('steam-store'), что у крона
+ * карточек, и шаг пульса — это полкарточки, не обогащённой в этом звене.
+ * Поэтому пульс скупой: не больше PULSE_PER_LINK игр на звено и только верх
+ * пула (PULSE_TOP, reviewPulseQueue) — у хвоста полусотни отзывов в месяц
+ * нет, и строке там нечего сказать, — плюс разгромленные, снятые с подбора
+ * (PULSE_PANNED_TOP): их вердикт молчит по месяцу похвал. При девяти звеньях
+ * в сутки это около четырёхсот замеров в неделю, то есть круг — неделя с
+ * небольшим; без модели звеньев больше, и круг короче.
+ */
+export const PULSE_TOP = 400
+
+/**
+ * Сколько разгромленных, снятых с подбора, ходит в очередь пульса — по числу
+ * отзывов. В каталоге их полсотни (data/catalog.db на 24.09.2026 — 48), так
+ * что потолок берёт всех, а держит очередь, если курация однажды снимет
+ * больше.
+ */
+export const PULSE_PANNED_TOP = 50
+
+/** Потолок замеров пульса на звено — см. PULSE_TOP */
+export const PULSE_PER_LINK = 6
+
+/** Пульс моложе этого не перемеряем: шаг тот же, что у сверки, — неделя */
+export const PULSE_MAX_AGE_SEC = SIGNALS_MAX_AGE_SEC
+
+/**
+ * Показанный пульс старше этого переписывается любым новым замером, сдвинулся
+ * он или нет (updateReviewPulse в lib/db). Половина срока показа
+ * (PULSE_SHOW_MAX_AGE_SEC в lib/gamepage, 30 суток): проверка приходит раз в
+ * неделю с небольшим (PULSE_MAX_AGE_SEC), и даже вдвое реже устоявшийся месяц
+ * освежается раньше, чем строка с ним состарится и пропадёт. Больше — и
+ * строка рискует состариться между проверками; меньше — и месяц, в котором
+ * ничего не случилось, переписывался бы чаще, каждый раз записью ISR.
+ * Сторож соотношения — в lib/catalogsignals.test.ts.
+ */
+export const PULSE_RESHOW_SEC = 15 * 86_400
+
+/** Отказов подряд, после которых звено пульса встаёт: магазин закрылся от нас */
+const PULSE_FAIL_STREAK = 2
+
+export type PulseResult = {
+  /** Игр с отметкой пульса — и с числами, и тех, про кого Steam промолчал */
+  measured: number
+  /** done — очередь пуста; budget — потолок звена или срок; blocked — отказы */
+  stopped: 'done' | 'budget' | 'blocked'
+}
+
+/**
+ * Одно звено пульса. Пишется всё, что успело приехать, одной пачкой в конце —
+ * и при сроке, и при отказах: недомеренные дождутся следующего звена.
+ */
+export async function refreshReviewPulse(
+  db: Db,
+  opts: {
+    deadlineAt: number
+    nowSec?: number
+    limit?: number
+    /** подменяется в тестах: иначе прогон уходит и в сеть, и в лимитер темпа */
+    fetchPulse?: (appid: number, nowSec: number) => Promise<RecentPulse | undefined>
+  },
+): Promise<PulseResult> {
+  const now = opts.nowSec ?? Math.floor(Date.now() / 1000)
+  const limit = opts.limit ?? PULSE_PER_LINK
+  const pulseOf =
+    opts.fetchPulse ??
+    (async (appid: number, at: number) => {
+      // Общий ключ с appdetails, appreviews и лентой новостей — и тот же шаг
+      await pace('steam-store', STORE_PACE_MS)
+      return fetchRecentPulse(appid, at)
+    })
+
+  const due = await reviewPulseQueue(db, {
+    top: PULSE_TOP,
+    panned: PULSE_PANNED_TOP,
+    before: now - PULSE_MAX_AGE_SEC,
+    limit,
+  })
+  const rows: Array<{ appid: number; pulse: RecentPulse | undefined }> = []
+  let stopped: PulseResult['stopped'] = due.length < limit ? 'done' : 'budget'
+  let streak = 0
+  const часы = sliceClock(opts.deadlineAt)
+  for (const appid of due) {
+    if (!часы.next()) {
+      stopped = 'budget'
+      break
+    }
+    try {
+      rows.push({ appid, pulse: await pulseOf(appid, now) })
+      streak = 0
+    } catch (err) {
+      logSwallowed('catalog-signals:pulse', err, { appid })
+      if (++streak >= PULSE_FAIL_STREAK) {
+        stopped = 'blocked'
+        break
+      }
+    }
+  }
+  await updateReviewPulse(db, rows, now, { reshowBefore: now - PULSE_RESHOW_SEC })
+  return { measured: rows.length, stopped }
 }

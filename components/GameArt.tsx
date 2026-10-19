@@ -1,7 +1,17 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { artCandidates, artSrcSet, type ArtVariant, type GameArtUrls } from '@/lib/art'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import {
+  artCandidates,
+  artSrcSet,
+  brokenImageSrc,
+  HERO_SIZES,
+  nextArtTry,
+  PORTRAIT_HERO_MEDIA,
+  type ArtTry,
+  type ArtVariant,
+  type GameArtUrls,
+} from '@/lib/art'
 import { TypeCover } from './TypeCover'
 
 /**
@@ -28,6 +38,7 @@ export function GameArt({
   fetchPriority,
   fade = false,
   anchor = null,
+  portrait = false,
 }: {
   appid: number
   name: string
@@ -62,21 +73,51 @@ export function GameArt({
    * типографскую обложку (герой, колода). У игр Steam не используется.
    */
   anchor?: { appid: number; name: string } | null
+  /**
+   * Герой на портретном экране — вертикальный постер вместо library_hero.
+   *
+   * library_hero — полоса 1920×620, а герой на телефоне — стоячий бокс
+   * (78svh и выше). object-cover вписывал полосу по высоте и показывал
+   * 10–23% её ширины, растянутые в 2–4 раза: на /pick у Ravenswatch другу
+   * доставалось фиолетово-золотое пятно, по которому игру не узнать. Постер
+   * 600×900 (library_capsule или плоский library_600x900) в тот же бокс
+   * ложится почти целиком, и это та же картинка, что Steam сам ставит в
+   * библиотеку. Весит столько же (Terraria: 203 КБ против 220 КБ).
+   *
+   * Только по просьбе: у героев /play и /daily поверх арта стоит логотип
+   * игры (HeroTitle), а у постера свой, впечатанный, — их было бы два.
+   * Не загрузился постер — назад к library_hero (posterFailed), а не дальше
+   * по цепочке к капсуле. Плоский library_600x900 есть не у всех: у игр,
+   * вышедших после перехода Valve на хэшированные пути, его нет вовсе, и
+   * 404 приходит ещё до гидрации — его ловит проверка при монтировании.
+   */
+  portrait?: boolean
 }) {
   const source = { appid, art, headerImage }
   const candidates = artCandidates(source, variant)
   // Состояние сбрасывается при смене игры без useEffect: обновление во время
   // рендера — штатный приём React для «состояния, зависящего от пропсов»
-  const [tried, setTried] = useState({ appid, idx: 0 })
+  const [tried, setTried] = useState<ArtTry>({ appid, idx: 0, posterFailed: false })
   const [loaded, setLoaded] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
   if (tried.appid !== appid) {
-    setTried({ appid, idx: 0 })
+    setTried({ appid, idx: 0, posterFailed: false })
     if (loaded) setLoaded(false)
   }
 
   const idx = tried.appid === appid ? tried.idx : 0
   const src = candidates[idx]
+  const posterFailed = tried.appid === appid && tried.posterFailed
+  // Постер для портретного экрана — пока герой на первом кандидате и
+  // постер не отказал (см. portrait)
+  const posterSet =
+    portrait && variant === 'hero' && appid > 0 && idx === 0 && !posterFailed
+      ? artSrcSet(source, 'poster')
+      : undefined
+
+  // Отказ картинки — один разбор на оба пути, onError и проверку ниже:
+  // постер — назад к полосе героя, остальное — следующий кандидат
+  const fail = (url: string) => setTried((t) => nextArtTry(t, { appid, idx, url, posterSet }))
 
   // Кэшированная картинка может быть готова до подписки на onLoad
   useEffect(() => {
@@ -84,6 +125,28 @@ export function GameArt({
     const el = imgRef.current
     if (el?.complete && el.naturalWidth > 0) setLoaded(true)
   }, [fade, loaded, src])
+
+  /*
+   * ОТКАЗ ДО ГИДРАЦИИ. Картинку из серверной разметки браузер качает сразу,
+   * а React вешает на неё onError только при гидрации и уже случившуюся
+   * ошибку не повторяет. Герою /pick на телефоне это стоило картинки целиком:
+   * сканер предзагрузки просит плоский library_600x900_2x первым, 404 у игры
+   * без плоских путей приходит за сотни миллисекунд, а гидрация — дольше
+   * секунды. onError так и не звучал, и вместо героя оставалась битая
+   * картинка с alt="" поверх тёмного фона. Так же молча вставала и цепочка
+   * кандидатов у любого серверного героя.
+   *
+   * Поэтому один раз при монтировании смотрим, не отказала ли она уже, — тем
+   * же приёмом, что у логотипа в HeroTitle. Дальше события приходят живыми:
+   * и новые кандидаты, и <img>, который React создаёт сам, подписаны до
+   * своего запроса. Сработали оба пути на один отказ — nextArtTry второй
+   * гасит.
+   */
+  const failedBeforeMount = useEffectEvent((url: string) => fail(url))
+  useEffect(() => {
+    const url = brokenImageSrc(imgRef.current)
+    if (url) failedBeforeMount(url)
+  }, [])
 
   /*
    * Игре не из Steam картинок взять неоткуда — вместо заглушки типографская
@@ -120,23 +183,39 @@ export function GameArt({
   // srcSet имеет смысл только пока показываем самый крупный вариант: на
   // запасных ссылках размеры уже другие
   const srcSet = idx === 0 ? artSrcSet(source, variant) : undefined
+  const slot = sizes ?? (variant === 'hero' ? HERO_SIZES : undefined)
 
-  return (
+  const img = (
     // eslint-disable-next-line @next/next/no-img-element
     <img
       ref={imgRef}
       src={src}
       srcSet={srcSet}
-      sizes={srcSet ? (sizes ?? (variant === 'hero' ? '100vw' : undefined)) : undefined}
+      sizes={srcSet ? slot : undefined}
       alt=""
       loading={eager ? 'eager' : 'lazy'}
       fetchPriority={fetchPriority}
-      onError={() => setTried((t) => ({ appid, idx: t.idx + 1 }))}
+      onError={(e) => fail(e.currentTarget.currentSrc)}
       onLoad={fade ? () => setLoaded(true) : undefined}
       data-art-fade={fade ? '' : undefined}
       data-loaded={fade && loaded ? '' : undefined}
       className={className}
     />
+  )
+  if (!posterSet) return img
+  /*
+   * <picture> с display: contents — бокса у обёртки нет, картинка по-прежнему
+   * absolute-слой героя. Цена: React не ставит preload в <head> для <img>
+   * внутри <picture>. Герою с fetchPriority="high" это стоит немного —
+   * картинка стоит первой в разметке страницы, и сканер предзагрузки
+   * находит её сразу, с тем же высоким приоритетом (замер сборки: запрос
+   * героя /pick и с preload, и без него уходит на 12–17 мс от начала).
+   */
+  return (
+    <picture className="contents">
+      <source media={PORTRAIT_HERO_MEDIA} srcSet={posterSet} sizes={slot} />
+      {img}
+    </picture>
   )
 }
 

@@ -14,6 +14,7 @@ import { seedable } from '@/lib/roomseed'
 import { pickCopy, quoted } from '@/lib/sharedpick'
 import { lp, toLocale, tr, type Locale } from '@/lib/i18n'
 import { localeAlternates, ogSite } from '@/lib/site'
+import { heroTitleClass } from '@/lib/titlesize'
 import { loadSharedPick, pickHasNear, reasonOn } from './load'
 
 /*
@@ -106,6 +107,9 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
           sizes="100vw"
           eager
           fetchPriority="high"
+          // На телефоне — постер игры, а не 19% полосы library_hero вдвое
+          // крупнее себя: друг по ссылке должен узнать игру (GameArt, portrait)
+          portrait
           fallback={null}
           className="absolute inset-0 h-full w-full object-cover"
         />
@@ -124,9 +128,12 @@ export default async function PickPage({ params }: { params: Promise<{ id: strin
             <Eyebrow className="mb-3">
               {eyebrow} · {dayLabel(dayKey(pick.createdAt), locale)}
             </Eyebrow>
-            {/* Кегль героя игры, как на /play и /daily: крупнее одно длинное
-                слово названия на телефоне не помещается */}
-            <h1 className="font-display text-display-lg [overflow-wrap:anywhere]">{meta.name}</h1>
+            {/* Кегль героя игры, как на /play и /daily, а у длинного имени —
+                ступенью ниже, как на карточке игры: восемь строк display-lg
+                закрывали причину. Слово шире колонки — тоже ступенью ниже, а
+                рвётся внутри только то, что не влезло и там. Всё это —
+                lib/titlesize */}
+            <h1 className={heroTitleClass(meta.name)}>{meta.name}</h1>
             {reason !== null && (
               <blockquote className="mt-5 text-lg leading-relaxed text-ink">{quoted(reason, locale)}</blockquote>
             )}

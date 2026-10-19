@@ -182,3 +182,54 @@ describe('граница загрузки не прячет страницу', (
     expect(guard).toBeLessThan(load)
   })
 })
+
+/**
+ * Титр главной не прячется после того, как его уже показали.
+ *
+ * Знак «Одна игра. И почему именно она.» — LCP главной, и он в статическом
+ * HTML. Его прятали дважды: .anim-page-in начинал первый кадр с opacity: 0,
+ * а после гидрации gsap.from гасил текст и проявлял заново. Chrome
+ * засчитывает текст в LCP, только когда главный поток рисует его видимым, —
+ * проявление ведёт композитор, и запись ждала гидрации. Замер на проде,
+ * телефон: FCP 1.8–1.95 с, LCP 2.5–2.8 с, а без прозрачности LCP = FCP.
+ * Откат ничего не ломает на экране — потому здесь текст.
+ */
+describe('первый экран главной виден с первого кадра', () => {
+  const css = fs.readFileSync(path.join(ROOT, 'app', 'globals.css'), 'utf8')
+  const keyframes = (name: string) => {
+    const at = css.indexOf(`@keyframes ${name} {`)
+    expect(at, `@keyframes ${name} не найден`).toBeGreaterThan(0)
+    // блок до закрывающей скобки верхнего уровня
+    let depth = 0
+    for (let i = css.indexOf('{', at); i < css.length; i++) {
+      if (css[i] === '{') depth++
+      else if (css[i] === '}' && --depth === 0) return css.slice(at, i + 1)
+    }
+    return ''
+  }
+
+  test('главная входит сдвигом, без прозрачности', () => {
+    const rule = css.match(/\.anim-page-in:has\(\.hero\)\s*\{([^}]*)\}/)
+    expect(rule, 'у главной снова общий page-in с проявлением').not.toBeNull()
+    const name = rule![1].match(/animation-name:\s*([\w-]+)/)?.[1]
+    expect(name).toBeDefined()
+    expect(keyframes(name!)).not.toMatch(/opacity/)
+  })
+
+  test('после гидрации вход не гасит титр, пришедший с сервера', () => {
+    const src = fs.readFileSync(path.join(ROOT, 'components', 'landing', 'scenes', 'Hero.tsx'), 'utf8')
+    const gate = src.indexOf('if (!fromServer) {')
+    expect(gate, 'вход титра больше не различает гидрацию и сборку на клиенте').toBeGreaterThan(0)
+    const end = src.indexOf('\n        }\n', gate)
+    for (const sel of ['data-hero-eyebrow', 'data-hero-wordmark', 'data-hero-lede']) {
+      const at = src.indexOf(`.from('[${sel}]'`)
+      expect(at, `${sel}: твин входа не найден`).toBeGreaterThan(0)
+      expect(at > gate && at < end, `${sel}: прячется и при гидрации`).toBe(true)
+      expect(src.indexOf(`.from('[${sel}]'`, at + 1), `${sel}: второй твин мимо условия`).toBe(-1)
+    }
+    // серверный снимок — false: при гидрации fromServer истинно
+    expect(src).toMatch(/useSyncExternalStore\(noSubscribe, onClient, onServer\)/)
+    expect(src).toMatch(/const onServer = \(\) => false/)
+    expect(src).toMatch(/useState\(!clientRender\)/)
+  })
+})

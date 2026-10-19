@@ -1,8 +1,8 @@
-import { ImageResponse } from 'next/og'
 import { clip } from '@/lib/clip'
 import { dateLabel } from '@/lib/freshness'
 import { ogFonts, ogGlow, OG_BG, OG_DIM, OG_EMBER, OG_INK } from '@/lib/og'
 import { ArtBackdrop, ogArt } from '@/lib/ogcard'
+import { isrImage } from '@/lib/ogresponse'
 import { CANVAS_WIDE } from '@/lib/ogwall'
 import { loadPatch, patchHeading } from './load'
 import { isLocale, tr } from '@/lib/i18n'
@@ -73,7 +73,7 @@ export default async function Image({ params }: { params: Promise<{ lang: string
     ? `${kind} · ${dateLabel(item.publishedAt, { year: true, locale })}`
     : tr(locale, { ru: 'Пересказы патчей по-русски', en: 'Patch notes, in short' })
 
-  return new ImageResponse(
+  return isrImage(
     (
       <div
         style={{

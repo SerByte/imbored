@@ -8,6 +8,7 @@ import { StatusLine } from '@/components/StatusLine'
 import { steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
 import { lp, tr } from '@/lib/i18n'
+import { ownedNearStore } from '@/lib/ownednear'
 import { forgetPlay } from '@/lib/playforget'
 import { timeHiddenStore } from '@/lib/playtime'
 import { forgetSessionHint } from '@/lib/sessionhint'
@@ -149,6 +150,11 @@ export function SignOut({ verified, feedLink = false }: { verified: boolean; fee
     forgetPlay()
     // Его «время скрыто» (lib/playtime) — не про следующего на этом устройстве
     timeHiddenStore.set(null)
+    // И его «Похожее уже есть у тебя» (lib/ownednear): хранилище модульное и
+    // переживает переход роутера, а гостю OwnedLaunch ничего не спросит и
+    // список не перезапишет — «Назад» на ту же карточку показал бы вышедшему
+    // его полку с наигранным и «Запустить»
+    ownedNearStore.set(null)
     if (reply === 'partial') {
       // Здесь вышел — кука погашена, и всё стёртое выше стёрто по праву. А
       // «везде» не сделано: сказать это и дать повторить (докблок выше)

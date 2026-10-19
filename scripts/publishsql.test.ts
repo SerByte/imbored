@@ -100,6 +100,46 @@ describe('публикация каталога: трейлер', () => {
   })
 })
 
+/*
+ * Название в облаке бывает русским: его клал крон карточек (appdetails с
+ * l=russian) поверх английского, до правила двух названий (nameSql в lib/db).
+ * Локальный каталог везёт английское — и заливка обязана разложить их так
+ * же, как апсерт: английское в name, русское вторым, а не выбросить его.
+ */
+describe('публикация каталога: два названия', () => {
+  const cols = ['appid', 'name', 'updated_at'] as const
+
+  async function заливаем(облако: { name: string; name_ru: string | null }, локально: string) {
+    const db = await createDb(':memory:')
+    await db.execute({
+      sql: 'INSERT INTO games (appid, name, name_ru, updated_at) VALUES (292030, ?, ?, 0)',
+      args: [облако.name, облако.name_ru],
+    })
+    await db.execute({
+      sql: `INSERT INTO games (${cols.join(', ')}) VALUES (292030, ?, 1)
+            ON CONFLICT(appid) DO UPDATE SET ${buildSetList(cols)}`,
+      args: [локально],
+    })
+    const r = await db.execute('SELECT name, name_ru FROM games')
+    return { ...(r.rows[0] as unknown as { name: string; name_ru: string | null }) }
+  }
+
+  const EN = 'The Witcher 3: Wild Hunt'
+  const RU = 'Ведьмак 3: Дикая Охота'
+
+  test('русское в облаке уходит вторым названием, английское встаёт на место', async () => {
+    expect(await заливаем({ name: RU, name_ru: null }, EN)).toEqual({ name: EN, name_ru: RU })
+  })
+
+  test('уже разложенные названия заливка не трогает', async () => {
+    expect(await заливаем({ name: EN, name_ru: RU }, EN)).toEqual({ name: EN, name_ru: RU })
+  })
+
+  test('русское из локального каталога английское в облаке не затирает', async () => {
+    expect(await заливаем({ name: EN, name_ru: null }, RU)).toEqual({ name: EN, name_ru: RU })
+  })
+})
+
 describe('публикация каталога: замеры не откатываются к старым', () => {
   const ЗАМЕРЫ = [
     'appid', 'name', 'price_final', 'price_initial', 'discount_percent', 'discount_ends_at',
@@ -201,6 +241,33 @@ describe('публикация каталога: замеры не откаты�
     expect(r.rows.map((x) => [x.appid, x.reviews_total, x.reviews_percent])).toEqual([
       [1, 2620088, 85],
       [2, 120, 55],
+    ])
+  })
+
+  /*
+   * Месяц отзывов в облаке меряет пульс, и по reviews_30d судит живость
+   * совместной игры без замера онлайна. Промоутный снимок поверх него
+   * откатил бы число к дню промоута, а свежий пульс под кольцом остался бы
+   * рядом — с другим числом за тот же месяц.
+   */
+  test('отзывы за 30 дней, замеренные пульсом, заливка не откатывает к промоуту', async () => {
+    // reviews_recent_checked_at в заливку не входит, как и reviews_at
+    const cols = ['appid', 'name', 'reviews_30d', 'updated_at'] as const
+    const db = await createDb(':memory:')
+    await db.execute(`INSERT INTO games (appid, name, reviews_30d, reviews_recent_checked_at, updated_at)
+                      VALUES (1, 'Замеренная', 7948, ${ВЧЕРА}, 0),
+                             (2, 'Не замеренная', 40, NULL, 0)`)
+    for (const [appid, recent] of [[1, 5100], [2, 61]]) {
+      await db.execute({
+        sql: `INSERT INTO games (${cols.join(', ')}) VALUES (?, 'x', ?, 1)
+              ON CONFLICT(appid) DO UPDATE SET ${buildSetList(cols)}`,
+        args: [appid, recent],
+      })
+    }
+    const r = await db.execute('SELECT appid, reviews_30d FROM games ORDER BY appid')
+    expect(r.rows.map((x) => [x.appid, x.reviews_30d])).toEqual([
+      [1, 7948],
+      [2, 61],
     ])
   })
 })

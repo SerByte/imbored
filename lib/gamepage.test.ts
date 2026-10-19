@@ -6,6 +6,7 @@ import {
   setGameJson,
   upsertGameMeta,
   upsertNeighbors,
+  upsertNewsItems,
   upsertSemantics,
   type Db,
 } from './db'
@@ -21,7 +22,12 @@ import {
   nearGames,
   pickSimilar,
   prosConsOn,
+  PULSE_MIN_GAP,
+  PULSE_MIN_RECENT,
+  PULSE_SHOW_MAX_AGE_SEC,
   reviewFacts,
+  reviewPulse,
+  RU_MIN_REVIEWS,
   SESSION_MIN_CONFIDENCE,
   sessionTrait,
   SIMILAR_CANDIDATES,
@@ -63,6 +69,105 @@ describe('loadGamePage', () => {
   test('незнакомый appid — null, чтобы краулер получил 404 после одного чтения', async () => {
     await withDb()
     expect(await loadGamePage(999_999_999)).toBeNull()
+  })
+
+  /*
+   * Строка ленты на карточке — заголовок-ссылка на страницу патча, а та
+   * сверяет запись с нынешним правилом классификатора и «дорожной карте»
+   * отвечает 404 (loadPatch). Карточка обязана решать так же: иначе из её
+   * серверного HTML вела бы ссылка в 404, а «Looking Ahead» стоял бы в ленте
+   * патчем, пока опрос не перепишет kind.
+   */
+  test('лента патчей на карточке — по нынешнему правилу, а не по записанному kind', async () => {
+    const db = await withDb()
+    await addGame(db, 10)
+    const post = (gid: string, title: string, publishedAt: number) => ({
+      appid: 10,
+      gid,
+      title,
+      url: `https://store.steampowered.com/news/app/10/view/${gid}`,
+      publishedAt,
+      kind: 'patch' as const,
+      scale: 'major' as const,
+      blocks: [{ kind: 'p' as const, runs: [{ text: 'Исправлен вылет при загрузке.' }] }],
+      bodyHash: `h${gid}`,
+      rank: 5000,
+    })
+    await upsertNewsItems(
+      db,
+      [
+        post('1', 'Патч 2.31', NOW - 200),
+        // записано патчем до правки классификатора
+        post('2', 'Marathon: дорожная карта обновлений на 2026 год', NOW - 100),
+      ],
+      NOW,
+    )
+    const page = await loadGamePage(10)
+    expect(page?.news.map((n) => n.gid)).toEqual(['1'])
+  })
+
+  /*
+   * Правилу нужно тело, и отсев идёт в памяти — после LIMIT. Без дочитывания
+   * «дорожная карта» среди восьми свежих съедала бы место настоящего патча, и
+   * за окном ленты опроса так оставалось бы навсегда: kind такой записи никто
+   * не перепишет.
+   */
+  test('отсеянная строка не съедает место: в ленте карточки всё равно восемь патчей', async () => {
+    const db = await withDb()
+    await addGame(db, 11)
+    const post = (gid: string, title: string, publishedAt: number) => ({
+      appid: 11,
+      gid,
+      title,
+      url: `https://store.steampowered.com/news/app/11/view/${gid}`,
+      publishedAt,
+      kind: 'patch' as const,
+      scale: 'major' as const,
+      blocks: [{ kind: 'p' as const, runs: [{ text: 'Исправлен вылет при загрузке.' }] }],
+      bodyHash: `h${gid}`,
+      rank: 5000,
+    })
+    const patches = Array.from({ length: 9 }, (_, i) => post(`p${i}`, `Патч 2.${i}`, NOW - 1000 - i * 100))
+    await upsertNewsItems(
+      db,
+      [
+        // самая свежая запись — дорожная карта, записанная патчем старым правилом
+        post('roadmap', 'Marathon: дорожная карта обновлений на 2026 год', NOW - 10),
+        ...patches,
+      ],
+      NOW,
+    )
+    const page = await loadGamePage(11)
+    expect(page?.news.map((n) => n.gid)).toEqual(patches.slice(0, 8).map((p) => p.gid))
+    // девятый настоящий патч не влез — под лентой ссылка на архив
+    expect(page?.newsMore).toBe(true)
+  })
+
+  /*
+   * «Есть ли ещё» — по патчам, а не по строкам: девятая строка, которую
+   * правило отсеивает, архиву ничего не добавит, и ссылка на него повторила
+   * бы ленту карточки.
+   */
+  test('восемь патчей и дорожная карта — лента полна, но архиву добавить нечего', async () => {
+    const db = await withDb()
+    await addGame(db, 12)
+    const post = (gid: string, title: string, publishedAt: number) => ({
+      appid: 12,
+      gid,
+      title,
+      url: `https://store.steampowered.com/news/app/12/view/${gid}`,
+      publishedAt,
+      kind: 'patch' as const,
+      scale: 'major' as const,
+      blocks: [{ kind: 'p' as const, runs: [{ text: 'Исправлен вылет при загрузке.' }] }],
+      bodyHash: `h${gid}`,
+      rank: 5000,
+    })
+    const patches = Array.from({ length: 8 }, (_, i) => post(`p${i}`, `Патч 3.${i}`, NOW - 1000 - i * 100))
+    await upsertNewsItems(db, [post('roadmap', 'Marathon: дорожная карта обновлений на 2026 год', NOW - 10), ...patches], NOW)
+    const page = await loadGamePage(12)
+    expect(page?.news.map((n) => n.gid)).toEqual(patches.map((p) => p.gid))
+    expect(page?.newsMore).toBe(false)
   })
 
   /**
@@ -138,6 +243,71 @@ describe('loadGamePage', () => {
     expect(page?.reviewsSummary).toBeNull()
     expect(page?.prosCons?.pros).toEqual(['красиво'])
     expect(чтенийИгры).toBe(1)
+  })
+
+  /*
+   * Фильтр после модели появился позже, чем сотни карточек в базе, а
+   * пересобирает их крон раз в полгода. Поэтому битое прячется и при чтении:
+   * «…справедливо'],» на /game/317400 и «неработает» на /game/730 уходят со
+   * страницы и из её сниппета сразу, без похода в модель.
+   */
+  test('битые пункты, уже лежащие в базе, на страницу не идут', async () => {
+    const db = await withDb()
+    await addGame(db, 50)
+    await setGameJson(db, 50, 'pros_cons_json', {
+      pros: ["Сложность хорошо подобрана, справедливо'],", 'Атмосферные уровни'],
+      cons: ['Античит система полностью неэффективна и неработает', 'Короткая кампания'],
+      source: 'claude',
+    })
+    expect((await loadGamePage(50))?.prosCons).toEqual({
+      pros: ['Атмосферные уровни'],
+      cons: ['Короткая кампания'],
+      source: 'claude',
+    })
+  })
+
+  test('плюсы все битые — блока нет, а не одни жалобы', async () => {
+    const db = await withDb()
+    await addGame(db, 60)
+    await setGameJson(db, 60, 'pros_cons_json', {
+      pros: ['Отличный модификация Quake'],
+      cons: ['Короткая кампания'],
+      source: 'claude',
+    })
+    expect((await loadGamePage(60))?.prosCons).toBeNull()
+  })
+
+  /*
+   * На CS2 минус «Разработчики не обновляют игру и забросили её развитие» стоял
+   * над восемью патчами за три недели в «Что нового» той же страницы. Отзыв
+   * мог писаться в затишье, но страница со свежими патчами с собой не спорит.
+   */
+  test('«не обновляют» не спорит со свежими патчами на той же странице', async () => {
+    const db = await withDb()
+    await addGame(db, 730)
+    const prosCons = {
+      pros: ['Точная стрельба'],
+      cons: ['Разработчики не обновляют игру и забросили её развитие', 'Много читеров'],
+      source: 'claude' as const,
+    }
+    await setGameJson(db, 730, 'pros_cons_json', prosCons)
+    // патч полугодовой давности — утверждению не противоречит
+    const nowSec = Math.floor(Date.now() / 1000)
+    const patch = {
+      appid: 730,
+      title: 'Обновление',
+      url: 'https://store.steampowered.com/news/app/730/view/1',
+      kind: 'patch' as const,
+      scale: 'hotfix' as const,
+      blocks: [{ kind: 'p' as const, runs: [{ text: 'правки' }] }],
+      bodyHash: 'h',
+      rank: 0,
+    }
+    await upsertNewsItems(db, [{ ...patch, gid: '1', publishedAt: nowSec - 200 * 86_400 }], nowSec)
+    expect((await loadGamePage(730))?.prosCons?.cons).toEqual(prosCons.cons)
+
+    await upsertNewsItems(db, [{ ...patch, gid: '2', publishedAt: nowSec - 5 * 86_400 }], nowSec)
+    expect((await loadGamePage(730))?.prosCons?.cons).toEqual(['Много читеров'])
   })
 })
 
@@ -437,56 +607,114 @@ describe('готовые соседи на карточке', () => {
  * Страница игры называется «стоит ли играть», а кольцо с процентом рисовалось
  * только из сводки отзывов, которую наполняет крон. В каталоге на тысячу игр
  * её нет у 278 — то есть 28% страниц не отвечали на вопрос из собственного
- * заголовка, при том что процент и количество лежат в той же строке базы и
- * заполнены у всех до одной.
+ * заголовка.
+ *
+ * Запасным путём тогда стали reviews_total и reviews_percent — «заполненные у
+ * всех». Но это англоязычная шкала порогов: Hades с ней — «98% из 143 тыс.»
+ * при 309 тысячах, и хаб с /play показывали те же урезанные числа. Теперь
+ * кольцо, хабы и /play читают одно правило (shownReviews): все языки из
+ * сверки каталога, а сводка карточки — только пока сверка до игры не дошла.
  */
 describe('reviewFacts', () => {
   const summary = { scoreDesc: 'Very Positive', totalPositive: 90, totalNegative: 10 }
+  /** Все языки из сверки каталога — то, что видят люди */
+  const all = (total: number, percent: number, score?: number) => ({
+    reviewsAllTotal: total,
+    reviewsAllPercent: percent,
+    ...(score === undefined ? {} : { reviewsAllScore: score }),
+  })
 
-  test('сводка точнее: процент считается из сырых количеств', () => {
-    expect(reviewFacts({ reviewsPercent: 50, reviewsTotal: 2 }, summary)).toEqual({
-      percent: 90,
-      total: 100,
-      label: 'Very Positive',
+  test('все языки из сверки — первыми, и слово Steam той же сводки', () => {
+    // Сводка карточки старше (её перечитывают раз в полгода) и на плитках
+    // хабов и /play её нет — одна игра везде одним числом только так
+    expect(reviewFacts(all(309_180, 98, 9), summary)).toEqual({
+      percent: 98,
+      total: 309_180,
+      label: 'Overwhelmingly Positive',
     })
   })
 
-  test('без сводки берутся колонки — ровно тот случай, ради которого всё и делалось', () => {
-    expect(reviewFacts({ reviewsPercent: 95, reviewsTotal: 13_440 }, null)).toEqual({
-      percent: 95,
-      total: 13_440,
-      label: null,
-    })
+  test('сверка до игры не дошла — сводка карточки: процент из сырых количеств', () => {
+    expect(reviewFacts({}, summary)).toEqual({ percent: 90, total: 100, label: 'Very Positive' })
+  })
+
+  test('англоязычная шкала порогов не показывается никогда — ни одна, ни рядом со сводкой', () => {
+    // Hades: 142 783 англоязычных из 309 тысяч — «из 143 тыс. отзывов» выдавало
+    // треть за целое
+    const english = { reviewsPercent: 98, reviewsTotal: 142_783 } as Parameters<typeof reviewFacts>[0]
+    expect(reviewFacts(english, null)).toBeNull()
+    expect(reviewFacts(english, summary)).toEqual({ percent: 90, total: 100, label: 'Very Positive' })
   })
 
   /**
    * Числа — факт площадки, и мы их пересказываем. Словесная шкала — её
    * суждение, и придумывать его за неё нельзя, как бы ни хотелось заполнить
-   * пустое место словом.
+   * пустое место словом. И слово одной сводки к числам другой не пришивается:
+   * на границе вышло бы «Очень положительные» при 79%.
    */
-  test('слово без сводки не выдумывается', () => {
-    expect(reviewFacts({ reviewsPercent: 97, reviewsTotal: 60_000 }, null)?.label).toBeNull()
+  test('слово без оценки той же сводки не выдумывается и не берётся у соседней', () => {
+    expect(reviewFacts(all(60_000, 97), null)?.label).toBeNull()
+    expect(reviewFacts(all(60_000, 79), summary)?.label).toBeNull()
+    expect(reviewFacts(all(60_000, 97, 0), null)?.label).toBeNull()
   })
 
   test('пустая сводка не считается сводкой', () => {
     const empty = { scoreDesc: 'No user reviews', totalPositive: 0, totalNegative: 0 }
-    expect(reviewFacts({ reviewsPercent: 80, reviewsTotal: 10 }, empty)).toEqual({
-      percent: 80,
-      total: 10,
-      label: null,
-    })
+    expect(reviewFacts({}, empty)).toBeNull()
+    expect(reviewFacts(all(10, 80), empty)).toEqual({ percent: 80, total: 10, label: null })
   })
 
   test('когда нечего показать — null, а не ноль процентов', () => {
     expect(reviewFacts({}, null)).toBeNull()
-    expect(reviewFacts({ reviewsPercent: 90 }, null)).toBeNull()
-    expect(reviewFacts({ reviewsTotal: 100 }, null)).toBeNull()
-    expect(reviewFacts({ reviewsPercent: 90, reviewsTotal: 0 }, null)).toBeNull()
+    expect(reviewFacts({ reviewsAllPercent: 90 }, null)).toBeNull()
+    expect(reviewFacts({ reviewsAllTotal: 100 }, null)).toBeNull()
+    expect(reviewFacts(all(0, 90), null)).toBeNull()
   })
 
-  test('процент из колонок зажимается в 0…100', () => {
-    expect(reviewFacts({ reviewsPercent: 140, reviewsTotal: 5 }, null)?.percent).toBe(100)
-    expect(reviewFacts({ reviewsPercent: -3, reviewsTotal: 5 }, null)?.percent).toBe(0)
+  test('процент зажимается в 0…100', () => {
+    expect(reviewFacts(all(5, 140), null)?.percent).toBe(100)
+    expect(reviewFacts(all(5, -3), null)?.percent).toBe(0)
+  })
+})
+
+/**
+ * Пульс отзывов под кольцом карточки: последний месяц и русскоязычные.
+ * «Раньше ругали — сейчас хвалят» и что думают игроки на русском — факты для
+ * решения, которых не показывал ни один экран.
+ */
+describe('reviewPulse', () => {
+  // 3 октября 2023 UTC — дата замера в подписи
+  const AT = Date.UTC(2023, 9, 3, 12) / 1000
+  const ring = { percent: 97, total: 309_180, label: 'Overwhelmingly Positive' }
+  const pulse = (over: Partial<GameMeta> = {}) =>
+    meta(1, { reviewsRecentTotal: 7948, reviewsRecentPercent: 71, reviewsRecentAt: AT, ...over })
+
+  test('месяц разошёлся со всем временем — строка с датой и сравнением с кольцом', () => {
+    expect(reviewPulse(pulse(), ring, AT + 86_400)).toEqual([
+      { label: 'За 30 дней до 3 октября', value: '71% положительных из 7 948 отзывов — ниже, чем за всё время' },
+    ])
+    expect(reviewPulse(pulse({ reviewsRecentPercent: 95 }), { ...ring, percent: 80 }, AT)[0].value).toMatch(
+      /— выше, чем за всё время$/,
+    )
+  })
+
+  test('совпадающий месяц, полупустой месяц и давний замер — строки нет', () => {
+    expect(reviewPulse(pulse({ reviewsRecentPercent: 97 - PULSE_MIN_GAP + 1 }), ring, AT)).toEqual([])
+    expect(reviewPulse(pulse({ reviewsRecentTotal: PULSE_MIN_RECENT - 1 }), ring, AT)).toEqual([])
+    expect(reviewPulse(pulse(), ring, AT + PULSE_SHOW_MAX_AGE_SEC + 1)).toEqual([])
+    // без кольца сравнивать не с чем
+    expect(reviewPulse(pulse(), null, AT)).toEqual([])
+  })
+
+  test('на русском — простым фактом, от двух сотен отзывов', () => {
+    const ru = meta(1, { reviewsRuTotal: 16_893, reviewsRuPercent: 96 })
+    expect(reviewPulse(ru, ring, AT)).toEqual([{ label: 'На русском', value: '96% положительных из 16 893 отзывов' }])
+    expect(reviewPulse(meta(1, { reviewsRuTotal: RU_MIN_REVIEWS - 1, reviewsRuPercent: 96 }), ring, AT)).toEqual([])
+  })
+
+  test('вывод от часов внутри срока показа не зависит — недельный кэш карточки', () => {
+    const m = pulse({ reviewsRuTotal: 16_893, reviewsRuPercent: 96 })
+    expect(reviewPulse(m, ring, AT + 6 * 86_400)).toEqual(reviewPulse(m, ring, AT))
   })
 })
 
@@ -522,6 +750,28 @@ describe('вердикт мёртвой игре', () => {
     expect(
       deadVerdict(dead({ deadReason: 'panned', categories: [2], reviewsPercent: 72, reviewsTotal: 5_000 })),
     ).toBeNull()
+  })
+
+  /*
+   * «Большинство отзывов отрицательные» — за всё время. Починенную игру,
+   * которую за последний месяц хвалят, это суждение не описывает, а строка
+   * пульса под кольцом спорила бы с ним в сантиметре.
+   */
+  test('разгромленная, но за месяц её хвалят — молчим; без часов и по давнему замеру — нет', () => {
+    const panned = dead({
+      deadReason: 'panned',
+      categories: [2],
+      reviewsPercent: 31,
+      reviewsTotal: 5_000,
+      reviewsRecentTotal: 120,
+      reviewsRecentPercent: 82,
+      reviewsRecentAt: NOW - 86_400,
+    })
+    expect(deadVerdict(panned, NOW)).toBeNull()
+    expect(deadVerdict(panned)).toMatch(/отрицательные/)
+    expect(deadVerdict(panned, NOW + PULSE_SHOW_MAX_AGE_SEC + 86_400)).toMatch(/отрицательные/)
+    expect(deadVerdict({ ...panned, reviewsRecentPercent: 55 }, NOW)).toMatch(/отрицательные/)
+    expect(deadVerdict({ ...panned, reviewsRecentTotal: 12 }, NOW)).toMatch(/отрицательные/)
   })
 
   test('без свежих чисел спорить нечем — верим курации', () => {
@@ -645,6 +895,80 @@ describe('gameDescription', () => {
     const d = gameDescription({ meta: meta(1, { name }), facts, prosCons, verdict: null })
     expect(d.length).toBeLessThanOrEqual(DESCRIPTION_MAX)
   })
+
+  /*
+   * /game/335300 — «Очень положительные» 84%, а в сниппете одна жалоба: имя в
+   * 40 знаков, первый плюс не влез целиком, и следом встал короткий минус.
+   * Тот же текст — og:description и twitter:description, то есть и превью в
+   * мессенджерах. «Любят» и «Ругают» теперь пара: минус — только при плюсе,
+   * если плюсы у игры вообще есть.
+   */
+  describe('«Любят» и «Ругают» — пара', () => {
+    const DS2 = 'DARK SOULS™ II: Scholar of the First Sin'
+    const DS2_FACTS = { percent: 84, total: 132_477, label: null }
+    const FACTS_LINE = `84% из ${(132_477).toLocaleString('ru-RU')} отзывов — положительные.`
+    const LONG_PRO = 'Огромное количество контента и вариантов прохождения на любой вкус'
+    const PRO = 'Интересная система боевых статов и построения персонажей'
+    const CON = 'Враги часто стоят в засадах и много групповых боёв'
+
+    test('первый плюс не влез — берётся следующий, а не одна жалоба', () => {
+      expect(LONG_PRO).toHaveLength(66)
+      const d = gameDescription({
+        meta: meta(335300, { name: DS2 }),
+        facts: DS2_FACTS,
+        prosCons: { pros: [LONG_PRO, PRO], cons: [CON], source: 'claude' },
+        verdict: null,
+      })
+      expect(d).toBe(`${DS2}: ${FACTS_LINE} Любят: ${PRO}.`)
+      expect(d.length).toBeLessThanOrEqual(DESCRIPTION_MAX)
+    })
+
+    test('ни один плюс не влез — жалоба без плюса в сниппет не идёт', () => {
+      const d = gameDescription({
+        meta: meta(335300, { name: DS2 }),
+        facts: DS2_FACTS,
+        prosCons: { pros: [LONG_PRO], cons: [CON], source: 'claude' },
+        verdict: null,
+      })
+      expect(d).toBe(`${DS2}: ${FACTS_LINE}`)
+    })
+
+    // Пара ломается, только когда плюс был и не влез. Модель, которая честно
+    // не нашла плюсов у провальной игры, — это ответ отзывов, а не перекос
+    test('плюсов нет вовсе (провальная игра) — жалоба встаёт одна', () => {
+      const d = gameDescription({
+        meta: meta(1, { name: 'X' }),
+        facts: { percent: 25, total: 900, label: null },
+        prosCons: { pros: [], cons: [CON], source: 'claude' },
+        verdict: null,
+      })
+      expect(d).toBe(`X: 25% из 900 отзывов — положительные. Ругают: ${CON}.`)
+    })
+
+    test('плюс и минус влезают оба — встают оба; минус — первый, что влез', () => {
+      const d = gameDescription({
+        meta: meta(1, { name: 'X' }),
+        facts: { percent: 81, total: 900, label: null },
+        prosCons: { pros: [PRO], cons: [CON, 'Много групповых боёв'], source: 'claude' },
+        verdict: null,
+      })
+      expect(d).toBe(`X: 81% из 900 отзывов — положительные. Любят: ${PRO}. Ругают: Много групповых боёв.`)
+    })
+
+    // Хвост «DARK SOULS™…» после плюса — не описание, а обрубок имени
+    test('в узкий остаток описание магазина не встаёт обрубком', () => {
+      const d = gameDescription({
+        meta: meta(335300, {
+          name: DS2,
+          shortDescription: `${DS2} — продолжение легендарной серии, в которой каждый шаг даётся с боем.`,
+        }),
+        facts: DS2_FACTS,
+        prosCons: { pros: [PRO], cons: [], source: 'claude' },
+        verdict: null,
+      })
+      expect(d).toBe(`${DS2}: ${FACTS_LINE} Любят: ${PRO}.`)
+    })
+  })
 })
 
 describe('причина смерти из базы', () => {
@@ -754,6 +1078,107 @@ describe('«Чем выделяется» и длина сессии', () => {
     expect(async?.label).toBe('Сессия')
     // одиночный режим есть — это не матч, даже если по сети тоже играют
     expect(sessionTrait({ categories: [1, 2], semantics: semantics({})})?.label).toBe('Сессия')
+  })
+
+  /*
+   * Кооп-кампания — не матч. Категории и теги (первые по голосам) сняты с
+   * каталога продакшна. /game/1426210 писал «Матч: ~30 мин» у It Takes Two:
+   * playMode у неё 'coop' (одиночного режима нет), и прежнее правило считало
+   * матчем любой мультиплеер без одиночного. Та же строка едет на героя /play,
+   * в колоду пати и на полки жанров — компания, выбирающая вечер, видела
+   * десятичасовую кампанию тридцатиминутным матчем.
+   *
+   * PvP-категорией одной не обойтись: у Dota 2 её нет ([1, 9]), а матч у неё
+   * самый что ни на есть — его выдают теги.
+   */
+  const IT_TAKES_TWO = {
+    categories: [1, 9, 38, 39, 24],
+    tags: {
+      'Co-op': 1486, Multiplayer: 1078, 'Split Screen': 892, 'Local Co-Op': 864, 'Online Co-Op': 733,
+      Puzzle: 681, Adventure: 564, 'Story Rich': 468, 'Local Multiplayer': 407, 'Co-op Campaign': 407,
+    },
+  }
+  const A_WAY_OUT = {
+    categories: [1, 9, 38, 39, 24],
+    tags: {
+      'Online Co-Op': 1300, 'Co-op': 1164, 'Split Screen': 993, 'Story Rich': 872, 'Local Co-Op': 845,
+      Multiplayer: 658, 'Action-Adventure': 529, Action: 486, Adventure: 438, Crime: 396,
+    },
+  }
+  const HELLDIVERS_2 = {
+    categories: [1, 9, 38],
+    tags: {
+      'Online Co-Op': 847, PvE: 759, 'Third-Person Shooter': 730, Multiplayer: 719, Shooter: 654,
+      Action: 645, 'Co-op': 584, 'Sci-fi': 575, 'Extraction Shooter': 551, Capitalism: 516,
+    },
+  }
+  const DOTA_2 = {
+    categories: [1, 9],
+    tags: {
+      'Free to Play': 3010, MOBA: 1019, Multiplayer: 778, Strategy: 723, eSports: 598,
+      'Team-Based': 554, Competitive: 422, Action: 401, 'Online Co-Op': 378, PvP: 308,
+    },
+  }
+  const AMONG_US = {
+    categories: [1, 49, 36, 47, 9, 38, 48, 27],
+    tags: { Multiplayer: 1080, 'Online Co-Op': 735, 'Social Deduction': 734, Space: 682, Survival: 567 },
+  }
+  const CS2 = {
+    categories: [1, 27],
+    tags: { FPS: 1160, Shooter: 834, Multiplayer: 795, Competitive: 681, Action: 604 },
+  }
+  const REMATCH = {
+    categories: [1, 9, 38, 27],
+    tags: { Sports: 900, 'Football (Soccer)': 800, Multiplayer: 700, PvP: 600, eSports: 500, 'Online Co-Op': 400 },
+  }
+
+  test('кооп-кампания — «Сессия», а не «Матч»', () => {
+    const s = semantics({ minutes: 30 })
+    expect(sessionTrait({ ...IT_TAKES_TWO, semantics: s })).toEqual({ label: 'Сессия', value: '~40 мин' })
+    expect(sessionTrait({ ...A_WAY_OUT, semantics: s })?.label).toBe('Сессия')
+    // кооп против ботов — тоже заход, а не матч: противника-человека нет
+    expect(sessionTrait({ ...HELLDIVERS_2, semantics: semantics({ minutes: 40 }) })?.label).toBe('Сессия')
+  })
+
+  test('настоящий матч остаётся матчем — по категориям PvP или по тегам', () => {
+    const s = semantics({ minutes: 35 })
+    // Dota 2: PvP-категории нет, матч выдают теги
+    expect(sessionTrait({ ...DOTA_2, semantics: s })).toEqual({ label: 'Матч', value: '~35 мин' })
+    expect(sessionTrait({ ...REMATCH, semantics: s })?.label).toBe('Матч')
+    expect(sessionTrait({ ...AMONG_US, semantics: semantics({ minutes: 15 }) })).toEqual({
+      label: 'Матч',
+      value: '~15 мин',
+    })
+    // сетевая игра без коопа — матч, как и прежде, тегов не спрашиваем
+    expect(sessionTrait({ ...CS2, semantics: s })?.label).toBe('Матч')
+    expect(sessionTrait({ categories: [1, 27], semantics: s })?.label).toBe('Матч')
+  })
+
+  test('PvP в хвосте тегов кооп матчем не делает', () => {
+    // Хвост тегов — шум единичных голосов: у хоррор-кооперативов вроде
+    // MIMESIS «PvP» стоит девятнадцатым из двадцати
+    const tail: Record<string, number> = { PvP: 5 }
+    for (let i = 0; i < 19; i++) tail[`Тег ${i}`] = 1000 - i * 10
+    expect(sessionTrait({ categories: [1, 9, 38], tags: tail, semantics: semantics({}) })?.label).toBe(
+      'Сессия',
+    )
+  })
+
+  test('без тегов кооп судится по одним категориям', () => {
+    // страница со старой метой: «Сессия» — осторожная сторона, «Матч» обещал бы противника
+    expect(sessionTrait({ categories: [1, 9], semantics: semantics({}) })?.label).toBe('Сессия')
+    expect(sessionTrait({ categories: [1, 49, 9], semantics: semantics({}) })?.label).toBe('Матч')
+  })
+
+  test('карточка игры передаёт теги в строку сессии', () => {
+    expect(gameTraits({ ...DOTA_2, semantics: semantics({}) }, null)).toContainEqual({
+      label: 'Матч',
+      value: '~40 мин',
+    })
+    expect(gameTraits({ ...IT_TAKES_TWO, semantics: semantics({}) }, null)).toContainEqual({
+      label: 'Сессия',
+      value: '~40 мин',
+    })
   })
 
   test('«Чем выделяется» — русскими подписями, по порядку характерности', () => {
@@ -1076,19 +1501,19 @@ describe('английская карточка', () => {
     meta(1, { name: 'Dirty Bomb', alive: false, signalsAt: NOW, categories: [1, 36], ...over })
 
   test('вердикт мёртвой игре — по-английски, на каждую причину', () => {
-    expect(deadVerdict(dead({ deadReason: 'dead-multiplayer' }), 'en')).toBe(
+    expect(deadVerdict(dead({ deadReason: 'dead-multiplayer' }), NOW, 'en')).toBe(
       "Hardly anyone plays this online game anymore — you probably won't find a match.",
     )
-    expect(deadVerdict(dead({ deadReason: 'panned', categories: [2], reviewsPercent: 31, reviewsTotal: 5_000 }), 'en')).toBe(
+    expect(deadVerdict(dead({ deadReason: 'panned', categories: [2], reviewsPercent: 31, reviewsTotal: 5_000 }), NOW, 'en')).toBe(
       "Most reviews are negative — players don't recommend it.",
     )
-    expect(deadVerdict(dead({ deadReason: 'asset-flip', categories: [2] }), 'en')).toBe(
+    expect(deadVerdict(dead({ deadReason: 'asset-flip', categories: [2] }), NOW, 'en')).toBe(
       "It has almost no reviews — there's nothing to judge it by yet.",
     )
-    expect(deadVerdict(dead({}), 'en')).toBe("We've taken it out of our picks: our data says it's not the best choice right now.")
+    expect(deadVerdict(dead({}), NOW, 'en')).toBe("We've taken it out of our picks: our data says it's not the best choice right now.")
     // правило то же: свежие числа спорят с курацией — молчим на обоих языках
-    expect(deadVerdict(dead({ deadReason: 'dead-multiplayer', ccu: 2_400 }), 'en')).toBeNull()
-    expect(deadVerdict(meta(1), 'en')).toBeNull()
+    expect(deadVerdict(dead({ deadReason: 'dead-multiplayer', ccu: 2_400 }), NOW, 'en')).toBeNull()
+    expect(deadVerdict(meta(1), NOW, 'en')).toBeNull()
     // без языка — русская фраза, как была
     expect(deadVerdict(dead({ deadReason: 'dead-multiplayer' }))).toMatch(/почти не осталось людей/)
   })
@@ -1151,7 +1576,7 @@ describe('английская карточка', () => {
   })
 
   test('вердикт идёт первым и на английском', () => {
-    const verdict = deadVerdict(dead({ deadReason: 'dead-multiplayer' }), 'en')
+    const verdict = deadVerdict(dead({ deadReason: 'dead-multiplayer' }), NOW, 'en')
     const d = gameDescription({ meta: meta(1, { name: 'Dirty Bomb' }), facts: { percent: 76, total: 90_000, label: null }, prosCons: null, verdict }, 'en')
     expect(d).toBe("Dirty Bomb: Hardly anyone plays this online game anymore — you probably won't find a match. 76% of 90,000 reviews are positive.")
   })
@@ -1272,5 +1697,149 @@ describe('пересказ патча на карточке — на языке 
       'Обновление 1.5: новая карта',
     )
     expect(cardNews({ ...ruPost, titleEn: 'Update 1.5: a new map' }).title).toBe('Обновление 1.5: новая карта')
+  })
+})
+
+/*
+ * Правки цикла 3 на английской карточке: пульс отзывов, «разгромленная, но за
+ * месяц хвалят», пара плюсов в сниппете, матч только против людей, отсев
+ * ленты патчей и проверка пунктов модели при чтении — те же правила, только
+ * английскими строками.
+ */
+describe('английская карточка: пульс, пара плюсов, лента и матч', () => {
+  // 3 октября 2023 UTC — дата замера в подписи
+  const AT = Date.UTC(2023, 9, 3, 12) / 1000
+  const ring = { percent: 97, total: 309_180, label: 'Overwhelmingly Positive' }
+
+  test('пульс за месяц — по-английски, строки «На русском» на /en нет', () => {
+    const m = meta(1, {
+      reviewsRecentTotal: 7948,
+      reviewsRecentPercent: 71,
+      reviewsRecentAt: AT,
+      reviewsRuTotal: 16_893,
+      reviewsRuPercent: 96,
+    })
+    expect(reviewPulse(m, ring, AT + 86_400, 'en')).toEqual([
+      { label: '30 days to October 3', value: '71% positive out of 7,948 reviews — lower than overall' },
+    ])
+    expect(reviewPulse({ ...m, reviewsRecentPercent: 95 }, { ...ring, percent: 80 }, AT, 'en')[0].value).toMatch(
+      /— higher than overall$/,
+    )
+    expect(JSON.stringify(reviewPulse(m, ring, AT, 'en'))).not.toMatch(CYRILLIC)
+    expect(reviewPulse(meta(1, { reviewsRuTotal: 16_893, reviewsRuPercent: 96 }), ring, AT, 'en')).toEqual([])
+    // без языка — как было, обе строки по-русски
+    expect(reviewPulse(m, ring, AT + 86_400)).toEqual([
+      { label: 'За 30 дней до 3 октября', value: '71% положительных из 7 948 отзывов — ниже, чем за всё время' },
+      { label: 'На русском', value: '96% положительных из 16 893 отзывов' },
+    ])
+  })
+
+  test('разгромленная, но за месяц её хвалят — молчим и на английском', () => {
+    const panned = meta(1, {
+      name: 'X',
+      alive: false,
+      signalsAt: NOW,
+      deadReason: 'panned',
+      categories: [2],
+      reviewsPercent: 31,
+      reviewsTotal: 5_000,
+      reviewsRecentTotal: 120,
+      reviewsRecentPercent: 82,
+      reviewsRecentAt: NOW - 86_400,
+    })
+    expect(deadVerdict(panned, NOW, 'en')).toBeNull()
+    expect(deadVerdict(panned, undefined, 'en')).toBe("Most reviews are negative — players don't recommend it.")
+  })
+
+  describe('«Loved for» и «Criticized for» — пара и по-английски', () => {
+    const name = 'DARK SOULS™ II: Scholar of the First Sin'
+    const facts = { percent: 84, total: 132_477, label: null }
+    const head = `${name}: 84% of 132,477 reviews are positive.`
+    const LONG_PRO = 'A huge amount of content and ways to play through it for every taste out there'
+    const PRO = 'Deep stat system and character builds'
+    const CON = 'Enemies love ambushes and group fights'
+
+    test('первый плюс не влез — берётся следующий, а не одна жалоба', () => {
+      const d = gameDescription(
+        { meta: meta(335300, { name }), facts, prosCons: { pros: [LONG_PRO, PRO], cons: [CON], source: 'claude' }, verdict: null },
+        'en',
+      )
+      expect(d).toBe(`${head} Loved for: ${PRO}.`)
+    })
+
+    test('ни один плюс не влез — жалоба без плюса в сниппет не идёт', () => {
+      const d = gameDescription(
+        { meta: meta(335300, { name }), facts, prosCons: { pros: [LONG_PRO], cons: [CON], source: 'claude' }, verdict: null },
+        'en',
+      )
+      expect(d).toBe(head)
+    })
+
+    test('плюсов нет вовсе — жалоба встаёт одна', () => {
+      const d = gameDescription(
+        {
+          meta: meta(1, { name: 'X' }),
+          facts: { percent: 25, total: 900, label: null },
+          prosCons: { pros: [], cons: [CON], source: 'claude' },
+          verdict: null,
+        },
+        'en',
+      )
+      expect(d).toBe(`X: 25% of 900 reviews are positive. Criticized for: ${CON}.`)
+    })
+  })
+
+  test('матч — только против людей, и по-английски', () => {
+    const s = semantics({ minutes: 35 })
+    // Dota 2: PvP-категории нет, матч выдают теги
+    expect(
+      sessionTrait({ categories: [1, 9], tags: { 'Free to Play': 3010, MOBA: 1019, eSports: 598 }, semantics: s }, 'en'),
+    ).toEqual({ label: 'Match', value: '~35 min' })
+    // кооп-кампания на двоих — заход, а не матч
+    expect(
+      sessionTrait({ categories: [1, 9, 38, 39, 24], tags: { 'Co-op': 1486, 'Story Rich': 468 }, semantics: s }, 'en'),
+    ).toEqual({ label: 'Session', value: '~40 min' })
+  })
+
+  test('лента патчей на /en — тот же отсев, заголовок «{Game} update»', async () => {
+    const db = await withDb()
+    await addGame(db, 13)
+    const post = (gid: string, title: string, publishedAt: number) => ({
+      appid: 13,
+      gid,
+      title,
+      url: `https://store.steampowered.com/news/app/13/view/${gid}`,
+      publishedAt,
+      kind: 'patch' as const,
+      scale: 'major' as const,
+      blocks: [{ kind: 'p' as const, runs: [{ text: 'Исправлен вылет при загрузке.' }] }],
+      bodyHash: `h${gid}`,
+      rank: 5000,
+    })
+    await upsertNewsItems(
+      db,
+      [post('1', 'Патч 2.31', NOW - 200), post('2', 'Marathon: дорожная карта обновлений на 2026 год', NOW - 100)],
+      NOW,
+    )
+    const page = await loadGamePage(13, 'en')
+    expect(page?.news.map((n) => n.gid)).toEqual(['1'])
+    expect(page?.news[0].title).toBe('Игра 13 update')
+    expect(page?.newsMore).toBe(false)
+  })
+
+  test('битые пункты английского слота на страницу не идут', async () => {
+    const db = await withDb()
+    await addGame(db, 51)
+    await setGameJson(db, 51, 'pros_cons_json', {
+      pros: ['Атмосферные уровни'],
+      cons: ['Короткая кампания'],
+      source: 'claude',
+      en: { pros: ["Fair difficulty, well tuned'],", 'Atmospheric levels'], cons: ['Short campaign'] },
+    })
+    expect((await loadGamePage(51, 'en'))?.prosCons).toEqual({
+      pros: ['Atmospheric levels'],
+      cons: ['Short campaign'],
+      source: 'claude',
+    })
   })
 })

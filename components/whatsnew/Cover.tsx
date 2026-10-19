@@ -99,6 +99,11 @@ export function Cover({
         className="absolute inset-0"
         style={{ y: reduced ? 0 : artY, scale: reduced ? 1 : artScale }}
       >
+        {/* Высокий приоритет — как у героя карточки игры и /pick: обложка —
+            первая большая картинка ленты, и React переносит приоритет в свой
+            preload в <head>, который иначе уходил Low. Chrome поднимает её
+            и сам, но лишь когда раскладка покажет её в экране — то есть
+            после того, как запросы миниатюр строк уже встали в очередь */}
         <GameArt
           appid={item.appid}
           name={name}
@@ -106,6 +111,7 @@ export function Cover({
           art={meta?.art}
           variant="hero"
           eager
+          fetchPriority="high"
           className="h-full w-full object-cover"
         />
       </m.div>

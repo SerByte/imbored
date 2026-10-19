@@ -89,3 +89,39 @@ describe('герой страницы игры', () => {
     expect(read('components', 'GameArt.tsx')).toMatch(/fetchPriority=\{fetchPriority\}/)
   })
 })
+
+/**
+ * Обложка /whatsnew и её размытая заливка — один файл, а не два.
+ *
+ * Заливка (components/whatsnew/Stage) начинается с арта обложки и рисовала
+ * его одним src, то есть library_hero, а обложка по srcSet на ретине брала
+ * library_hero_2x. Замер на проде, 1440×900 при DPR 2: 1 265 702 + 396 673
+ * байт за одну картинку, причём вторая — под blur-3xl, прозрачностью 0.34 и
+ * скримом bg/55. С тем же srcSet и тем же sizes браузер выбирает того же
+ * кандидата и берёт его из кэша. Откат снова ничего не ломает на экране —
+ * отсюда сторож по тексту, как и выше.
+ */
+describe('обложка /whatsnew', () => {
+  const page = withoutComments(read('app', '[lang]', 'whatsnew', 'page.tsx'))
+  const stage = withoutComments(read('components', 'whatsnew', 'Stage.tsx'))
+  const cover = gameArts(withoutComments(read('components', 'whatsnew', 'Cover.tsx')))
+
+  test('заливка получает арт и srcSet обложки из одного источника', () => {
+    expect(page).toMatch(/initialWash=\{artCandidates\(heroArt, 'hero'\)\[0\]\}/)
+    expect(page).toMatch(/initialWashSrcSet=\{artSrcSet\(heroArt, 'hero'\)\}/)
+  })
+
+  test('заливка с артом обложки выбирает по тем же sizes, что герой GameArt', () => {
+    expect(stage).toMatch(/srcSet=\{coverWash \? initialWashSrcSet : undefined\}/)
+    expect(stage).toMatch(/sizes=\{coverWash \? HERO_SIZES : undefined\}/)
+    expect(read('components', 'GameArt.tsx')).toMatch(/variant === 'hero' \? HERO_SIZES/)
+  })
+
+  test('обложка — герой со своим sizes по умолчанию и высоким приоритетом', () => {
+    expect(cover).toHaveLength(1)
+    expect(cover[0]).toMatch(/variant="hero"/)
+    // свой sizes у обложки развёл бы её с заливкой
+    expect(sizesOf(cover[0]!)).toBeUndefined()
+    expect(cover[0]).toMatch(/fetchPriority="high"/)
+  })
+})

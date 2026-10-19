@@ -7,6 +7,7 @@ import { NeedSteam } from '@/components/NeedSteam'
 import { SteamLaunch } from '@/components/SteamLaunch'
 import { focusAdrift } from '@/lib/focushandoff'
 import { lp, tr } from '@/lib/i18n'
+import { ownedNearStore, parseOwnedNear } from '@/lib/ownednear'
 import { forgetPlanned } from '@/lib/planforget'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
@@ -93,18 +94,25 @@ const takeLost = (el: HTMLElement | null) => {
  * Адрес страницы для входа — на её языке (lp): steamLoginFor берёт язык из
  * пути, и вход с /en/game/730 возвращает на английскую версию сайта, а не на
  * русскую.
+ *
+ * near — спросить заодно «Похожее уже есть у тебя» (lib/ownednear): тот же
+ * запрос с near=1, а список уходит в ownedNearStore — его рисует
+ * components/OwnedNear у «Похожих», ниже по странице. Решает страница: только
+ * там, где соседи готовые (getNeighbors), — роут берёт своих из них же.
  */
 export function OwnedLaunch({
   appid,
   name,
   finishable,
   follow,
+  near = false,
   className = '',
 }: {
   appid: number
   name: string
   finishable: boolean
   follow: boolean
+  near?: boolean
   className?: string
 }) {
   const locale = useLocale()
@@ -122,16 +130,20 @@ export function OwnedLaunch({
   useEffect(() => {
     if (!hasSession) return
     let live = true
-    fetch(`/api/session/owns?appid=${appid}`)
-      .then((r) => (r.ok ? (r.json() as Promise<{ owned?: unknown; plan?: unknown; done?: unknown }>) : null))
+    fetch(`/api/session/owns?appid=${appid}${near ? '&near=1' : ''}`)
+      .then((r) =>
+        r.ok ? (r.json() as Promise<{ owned?: unknown; plan?: unknown; done?: unknown; near?: unknown }>) : null,
+      )
       .then((d) => {
-        if (live && d) setOwns({ appid, owned: d.owned === true, plan: d.plan === true, done: d.done === true })
+        if (!live || !d) return
+        setOwns({ appid, owned: d.owned === true, plan: d.plan === true, done: d.done === true })
+        if (near) ownedNearStore.set({ appid, games: parseOwnedNear(d.near) })
       })
       .catch(() => {})
     return () => {
       live = false
     }
-  }, [appid, hasSession])
+  }, [appid, hasSession, near])
 
   if (!owns || owns.appid !== appid || !owns.owned) return null
   return (

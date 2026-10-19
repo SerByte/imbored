@@ -36,6 +36,27 @@ const CHROME = [
  */
 const HIGH_TRAFFIC = ['components/landing/scenes/Repertoire.tsx']
 
+/**
+ * Страницы в ISR, куда приходят из поиска и по ссылкам, — пять тысяч
+ * карточек игр, патчи, архивы обновлений игр, хаб и жанры. Не обвязка, но
+ * каждая из них — чья-то первая страница, и ссылка на динамический раздел
+ * без prefetch={false} будит его функцию на каждом таком заходе. Так было
+ * у моста «Что нового» внизу патча: ~530 патчей в индексе, и каждый
+ * докрученный до низа звал /whatsnew (MISS и private, no-store на проде).
+ * Тот же мост стоит внизу архива обновлений.
+ *
+ * Проверяются только буквальные адреса: вычисляемые здесь — это сами
+ * карточки игр и патчей (gameHref, newsPath), статические страницы, которым
+ * префетч ничего не стоит.
+ */
+const ISR_PAGES = [
+  'app/[lang]/game/[appid]/page.tsx',
+  'app/[lang]/game/[appid]/news/[gid]/page.tsx',
+  'app/[lang]/game/[appid]/news/page.tsx',
+  'app/[lang]/games/page.tsx',
+  'app/[lang]/games/[tag]/page.tsx',
+]
+
 /** Код без комментариев: объяснение правки не должно попадать под проверку. */
 function code(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\{\s*\}/g, '').replace(/^\s*\/\/[^\n]*/gm, '')
@@ -105,5 +126,22 @@ describe('навигация не будит динамические разде
       offenders,
       'ссылка навигации на динамический раздел префетчится — поставь prefetch={navPrefetch(href)}',
     ).toEqual([])
+  })
+
+  test('страницы в ISR не префетчат динамические разделы буквальными ссылками', () => {
+    const offenders: string[] = []
+    let literals = 0
+    for (const file of ISR_PAGES) {
+      const src = code(fs.readFileSync(path.join(ROOT, file), 'utf8'))
+      expect(src, `${file}: страница перестала быть ISR — поправь список`).toMatch(/export const revalidate = /)
+      for (const m of src.matchAll(/<Link\b([^>]*)>/g)) {
+        const literal = m[1].match(/\bhref="([^"]+)"/)?.[1]
+        if (literal === undefined) continue
+        literals++
+        if (navPrefetch(literal) === false && !/\bprefetch=/.test(m[1])) offenders.push(`${file}: ${literal}`)
+      }
+    }
+    expect(literals, 'разбор не нашёл ни одной буквальной ссылки — сторож ослеп').toBeGreaterThan(3)
+    expect(offenders, 'ссылка со страницы в ISR будит динамический раздел — поставь prefetch={navPrefetch(href)}').toEqual([])
   })
 })

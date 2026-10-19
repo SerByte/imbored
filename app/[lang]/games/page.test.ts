@@ -4,10 +4,14 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GameArt } from '@/components/GameArt'
 import { SearchLauncher } from '@/components/SearchLauncher'
 import { TilePending } from '@/components/TilePending'
-import { replaceGameTags, upsertGameMeta, type Db } from '@/lib/db'
-import { flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
+import { SHELF_RAIL_SIZES } from '@/lib/art'
+import { replaceGameTags, upsertGameMeta, upsertSemantics, type Db } from '@/lib/db'
+import { facetCopy, HUB_FACETS, storedTagWeights } from '@/lib/gamehub'
+import type { GameMeta, GameSemantics } from '@/lib/types'
+import { flight as flightOf, imageHints, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
-import GenrePage, { generateMetadata as generateGenreMetadata } from './[tag]/page'
+import { loadGenre } from './[tag]/load'
+import GenrePage, { generateMetadata, generateStaticParams } from './[tag]/page'
 import { generateMetadata as generateHubMetadata } from './layout'
 import GamesHubPage from './page'
 
@@ -69,6 +73,12 @@ beforeEach(async () => {
       T0,
     )
     await replaceGameTags(db, appid, [{ tag: 'Open World', weight: 1000 }])
+    // Строка отзывов на плитке — все языки из сверки каталога (shownReviews),
+    // а не англоязычная шкала порогов выше: та на плитку не выходит
+    await db.execute({
+      sql: 'UPDATE games SET reviews_all_total = ?, reviews_all_percent = 91 WHERE appid = ?',
+      args: [30_000 - appid, appid],
+    })
   }
 })
 
@@ -98,6 +108,47 @@ describe('хаб /games', () => {
     expect(text.match(/"loading":"eager"/g)).toHaveLength(5)
     expect(text.match(/"loading":"lazy"/g)).toHaveLength(3)
   })
+
+  /*
+   * «Каталог» в шапке, ссылка в подвале и крошки каждой карточки игры
+   * префетчат хаб, и подсказки предзагрузки из его RSC-части браузер
+   * исполнял на той странице, где стоит ссылка: пять обложек первой полки
+   * (215 КБ, на ретине 401 КБ) на /support, на /privacy, на каждой
+   * карточке игры и каждом патче — мимо экрана. Капсулы eager, и Flight
+   * ставил на каждую `:HL[…,"image"]` (см. StaticGameCardBody).
+   */
+  test('префетч хаба не тащит его обложки на чужую страницу', async () => {
+    expect(imageHints(flight(await GamesHubPage()))).toEqual([])
+  })
+
+  /*
+   * Обёртка <picture> нужна только eager-обложкам: ленивым подсказку React не
+   * ставит и так. На всех 360 капсулах хаба она стоила бы ~20 КБ RSC-части и
+   * столько же HTML на каждую перегенерацию.
+   */
+  test('<picture> — только у eager-обложек', async () => {
+    const text = JSON.stringify(flight(await GamesHubPage()))
+    expect(text.match(/"tag":"picture"/g)).toHaveLength(5)
+  })
+
+  /*
+   * LCP хаба на телефоне — первая капсула, и в очереди она стояла Low рядом
+   * с четырьмя eager-соседями (3.7–3.8 с на проде). Высокий приоритет —
+   * ей одной: у всех сразу он не значил бы ничего.
+   */
+  test('высокий приоритет — только у первой капсулы первой полки', async () => {
+    const text = JSON.stringify(flight(await GamesHubPage()))
+    expect(text.match(/"fetchPriority":"high"/g)).toHaveLength(1)
+    const first = text.indexOf('"loading":"eager"')
+    expect(text.indexOf('"fetchPriority":"high"')).toBeGreaterThan(first)
+    expect(text.indexOf('"fetchPriority":"high"')).toBeLessThan(text.indexOf('"loading":"eager"', first + 1))
+  })
+
+  test('sizes капсулы — ширина ряда на каждом экране, а не одно число', async () => {
+    const text = JSON.stringify(flight(await GamesHubPage()))
+    expect(text).toContain(`"sizes":"${SHELF_RAIL_SIZES}"`)
+    expect(text).not.toMatch(/"sizes":"\d+px"/)
+  })
 })
 
 describe('страница жанра /games/<slug>', () => {
@@ -108,10 +159,192 @@ describe('страница жанра /games/<slug>', () => {
     expect(islandsOf(page, 'GameArt')).toEqual([])
     const text = JSON.stringify(page)
     expect(text).not.toContain('hero.jpg')
-    // номер места — угол обложки, «90% из …» — строка под названием
+    // номер места — угол обложки, «91% из 30 тыс.» — строка под названием:
+    // все языки, а не англоязычные «90% из 10 тыс.»
     expect(text).toContain('"className":"lib-badge badge-line tabular-nums","children":1')
-    expect(text).toMatch(/90%/)
+    expect(text).toMatch(/91% из 30 тыс\./)
+    expect(text).not.toMatch(/90%/)
     expect(text.match(/"loading":"eager"/g)).toHaveLength(3)
+  })
+
+  /*
+   * Страницу жанра префетчит крошка «Игры по жанрам → <жанр>» наверху
+   * каждой карточки игры: три eager-обложки уезжали подсказками на телефон,
+   * который смотрел совсем другую игру.
+   */
+  test('префетч страницы жанра не тащит её обложки на карточку игры', async () => {
+    expect(imageHints(flight(await GenrePage(params)))).toEqual([])
+  })
+})
+
+/**
+ * Подборки по факту — тот же сегмент /games/<slug>, что у жанров
+ * (lib/gamehub, HUB_FACETS). Здесь — то, ради чего они заведены: «с другом»
+ * не отдаёт верх списка Dota 2, «на 20 минут» не называет короткой то, что
+ * карточка называет матчем, а подборка про компанию ведёт в /compat и
+ * зовёт в комнату с игрой первой картой.
+ */
+describe('подборки /games/<slug>', () => {
+  /** Игра каталога с тегами и категориями — как её кладёт заливка */
+  async function seed(
+    appid: number,
+    over: Partial<GameMeta> & { tags: Record<string, number> },
+  ): Promise<void> {
+    const meta: GameMeta = {
+      appid,
+      name: `Игра ${appid}`,
+      genres: [],
+      categories: [2],
+      headerImage: `https://cdn.example/${appid}/header.jpg`,
+      reviewsTotal: 10_000,
+      reviewsPercent: 90,
+      ...over,
+    }
+    await upsertGameMeta(db, meta, T0)
+    await replaceGameTags(db, appid, storedTagWeights(meta.tags))
+  }
+
+  /** Семантика, которой карточка верит (confidence выше порога), — посреди не бросишь */
+  const sem = (minutes: number, over: Partial<GameSemantics> = {}): GameSemantics => ({
+    v: 1,
+    axes: { challenge: 50, complexity: 50, pace: 50 },
+    session: { bucket: minutes < 30 ? 'short' : 'medium', minutes, canStopAnytime: false },
+    timeToFun: { bucket: null, hours: null },
+    confidence: 0.7,
+    n: 60,
+    basis: 'tags+reviews',
+    ...over,
+  })
+
+  const facetParams = (tag: string) => ({ params: Promise.resolve({ tag }) })
+  /** Игры страницы по порядку — ссылки карточек (GameLink — это Link на /game/<appid>) */
+  const shown = async (tag: string) =>
+    islandsOf(flight(await GenrePage(facetParams(tag))), 'Link').flatMap((l) => {
+      const m = /^\/game\/(\d+)$/.exec(String(l.href))
+      return m ? [Number(m[1])] : []
+    })
+
+  test('адреса подборок собираются на сборке рядом с жанрами', () => {
+    const slugs = generateStaticParams().map((p) => p.tag)
+    for (const f of HUB_FACETS) expect(slugs).toContain(f.slug)
+    expect(slugs).toContain('open-world')
+    expect(new Set(slugs).size).toBe(slugs.length)
+  })
+
+  test('«с другом»: кооператив по отзывам, но без Dota — соперничество там весит больше', async () => {
+    // Dota: кооператив в категориях есть, а в тегах MOBA перевешивает его
+    await seed(570, {
+      categories: [1, 9],
+      tags: { 'Free to Play': 1000, MOBA: 339, Strategy: 330, 'Online Co-Op': 126 },
+      reviewsTotal: 900_000,
+    })
+    await seed(553850, { categories: [1, 9, 38], tags: { 'Online Co-Op': 1000, PvE: 896 }, reviewsTotal: 600_000 })
+    await seed(1426210, { categories: [1, 9, 38, 39, 24], tags: { 'Co-op': 1000, 'Split Screen': 900 } })
+    // без кооператива в категориях — не на этой странице, сколько бы ни было отзывов
+    await seed(730, { categories: [1, 27], tags: { FPS: 1000, PvP: 900 }, reviewsTotal: 2_500_000 })
+    expect(await shown('coop')).toEqual([553850, 1426210])
+  })
+
+  /*
+   * Подборка и карточка судят соперничество одним словарём тегов (VERSUS_TAGS
+   * в lib/gametraits), но разными вопросами: «с другом» — чьих голосов больше,
+   * «Матч» — есть ли противник-человек вообще. Кампании на двоих «Матч» не
+   * достаётся ни там, ни там: прежнее правило карточки звало матчем всякий
+   * кооп без одиночного режима, и It Takes Two на /games/coop стояла бы с
+   * «Матч: ~40 мин». А командная игра против людей честно бывает и тем, и тем.
+   */
+  test('«с другом»: у кампании на двоих — «Сессия», «Матч» — только у игры против людей', async () => {
+    await seed(1426210, {
+      categories: [1, 9, 38, 39, 24],
+      tags: { 'Co-op': 1486, 'Split Screen': 892, 'Local Co-Op': 864, 'Online Co-Op': 733, Puzzle: 681 },
+      reviewsTotal: 300_000,
+    })
+    // выживание командой против охотника: кооператив весит больше PvP — на странице, но это матч
+    await seed(381210, {
+      categories: [1, 49, 36, 9, 38],
+      tags: { Horror: 1000, 'Online Co-Op': 900, Survival: 800, PvP: 600 },
+      reviewsTotal: 200_000,
+    })
+    await upsertSemantics(db, [
+      { appid: 1426210, semantics: sem(40), computedAt: T0 },
+      { appid: 381210, semantics: sem(25), computedAt: T0 },
+    ])
+    const sessions = new Map((await loadGenre('coop'))!.games.map((g) => [g.appid, g.session]))
+    expect([...sessions.keys()]).toEqual([1426210, 381210])
+    expect(sessions.get(1426210)).toEqual({ label: 'Сессия', value: '~40 мин' })
+    expect(sessions.get(381210)).toEqual({ label: 'Матч', value: '~25 мин' })
+  })
+
+  test('«с другом» зовёт в комнату с игрой и в /compat, а не в квиз', async () => {
+    await seed(553850, { categories: [1, 9, 38], tags: { 'Online Co-Op': 1000 }, ccu: 50_000 })
+    const page = flight(await GenrePage(facetParams('coop')))
+    const links = islandsOf(page, 'Link').map((l) => ({ href: l.href, prefetch: l.prefetch }))
+    expect(links).toContainEqual({ href: '/room/new?game=553850', prefetch: false })
+    // /compat собирается на каждый запрос — без префетча (lib/nav)
+    expect(links).toContainEqual({ href: '/compat', prefetch: false })
+    expect(links.some((l) => l.href === '/quiz')).toBe(false)
+  })
+
+  test('«на одном экране» дуэли не выбрасывает: файтинг вдвоём на диване — тоже ответ', async () => {
+    await seed(389730, { categories: [2, 1, 49, 36, 37, 24], tags: { Fighting: 1000, PvP: 800 } })
+    await seed(268910, { categories: [2, 1, 9, 39, 24], tags: { 'Co-op': 1000 } })
+    await seed(553850, { categories: [1, 9, 38], tags: { 'Online Co-Op': 1000 } })
+    expect((await shown('split-screen')).sort((a, b) => a - b)).toEqual([268910, 389730])
+  })
+
+  test('бесплатные — по флагу Steam; одиночной подборке «Позвать» не к чему', async () => {
+    await seed(440, { categories: [1, 9, 38], tags: { FPS: 1000 }, isFree: true })
+    await seed(620, { categories: [2, 1, 9, 38], tags: { Puzzle: 1000 } })
+    expect(await shown('free')).toEqual([440])
+    const page = flight(await GenrePage(facetParams('free')))
+    expect(islandsOf(page, 'Link').some((l) => String(l.href).startsWith('/room/new'))).toBe(false)
+    expect(islandsOf(page, 'Link').some((l) => l.href === '/quiz')).toBe(true)
+  })
+
+  test('«на 20 минут» — только уверенная короткая сессия, и не матч', async () => {
+    // одиночная короткая — «Сессия: ~20 мин»
+    await seed(1942280, { categories: [2], tags: { Roguelite: 1000 } })
+    // сетевая без одиночного режима, бросить посреди нельзя — карточка скажет «Матч»
+    await seed(730, { categories: [1], tags: { FPS: 1000 } })
+    // короткая, но по одним тегам — неуверенно
+    await seed(10, { categories: [2], tags: { Casual: 1000 } })
+    // уверенная, но заход длинный
+    await seed(20, { categories: [2], tags: { CRPG: 1000 } })
+    // кооп без одиночного режима, но без противника-человека — не матч, а заход на двоих
+    await seed(30, { categories: [1, 9, 38, 39, 24], tags: { 'Co-op': 1000, Puzzle: 800 }, reviewsTotal: 20_000 })
+    await upsertSemantics(db, [
+      { appid: 1942280, semantics: sem(20), computedAt: T0 },
+      { appid: 730, semantics: sem(25), computedAt: T0 },
+      { appid: 10, semantics: sem(15, { confidence: 0.3, basis: 'tags' }), computedAt: T0 },
+      { appid: 20, semantics: sem(90), computedAt: T0 },
+      { appid: 30, semantics: sem(20), computedAt: T0 },
+    ])
+    expect(await shown('short')).toEqual([30, 1942280])
+    // выход — пресет «30 минут до сна», то же короткое настроение из своей библиотеки
+    const hrefs = islandsOf(flight(await GenrePage(facetParams('short'))), 'Link').map((l) => String(l.href))
+    expect(hrefs.some((h) => h.startsWith('/play?time=short'))).toBe(true)
+  })
+
+  test('<title> подборки отвечает на вопрос, а не «лучшие в жанре»; тонкая — вне индекса', async () => {
+    await seed(553850, { categories: [1, 9, 38], tags: { 'Online Co-Op': 1000 } })
+    const meta = await generateMetadata(facetParams('coop'))
+    expect(meta.title).toBe('Кооперативные игры — во что поиграть с другом')
+    expect(meta.alternates?.canonical).toBe('/games/coop')
+    // одна игра — не список, как у жанра (HUB_MIN_SHELF)
+    expect(meta.robots).toEqual({ index: false, follow: true })
+  })
+
+  test('незнакомый адрес — по-прежнему 404, а не пустая подборка', async () => {
+    expect(await generateMetadata(facetParams('co-op'))).toEqual({})
+  })
+})
+
+describe('хаб /games: ряд подборок над полками', () => {
+  test('каждая подборка — ссылкой без префетча', async () => {
+    const links = islandsOf(flight(await GamesHubPage()), 'Link')
+    for (const f of HUB_FACETS) {
+      expect(links).toContainEqual(expect.objectContaining({ href: `/games/${f.slug}`, prefetch: false }))
+    }
   })
 })
 
@@ -133,6 +366,8 @@ describe('английские хаб и страница жанра', () => {
     for (const s of ['Catalog', 'Games by genre', 'Open World', 'See all', 'Find a game for your mood']) {
       expect(text, s).toContain(s)
     }
+    // ряд подборок над полками — подписями своего языка (facetCopy)
+    for (const f of HUB_FACETS) expect(text, f.slug).toContain(facetCopy(f, 'en').label)
     expect(text).not.toMatch(CYR)
   })
 
@@ -152,7 +387,7 @@ describe('английские хаб и страница жанра', () => {
 
   test('жанр: заголовок жанра первым, строки карточек и описание без кириллицы', async () => {
     await latin()
-    const meta = await generateGenreMetadata(en({ tag: 'open-world' }))
+    const meta = await generateMetadata(en({ tag: 'open-world' }))
     // Жанр — первым и с заглавной, как по-русски: внутри фразы
     // («The best Open-world games…») заглавная читалась бы опечаткой
     expect(meta.title).toBe('Open-world games — the best on Steam, by reviews')
@@ -164,7 +399,11 @@ describe('английские хаб и страница жанра', () => {
     const text = textOf(page)
     expect(text).toContain('8 games where “Open World” is one of the main tags')
     expect(text).toContain('Other genres')
-    expect(text).toMatch(/90% of 10K/)
+    // те же числа, что у русской плитки: все языки (shownReviews), а не англоязычные «90% of 10K»
+    expect(text).toMatch(/91% of 30K/)
+    expect(text).not.toMatch(/90% of/)
+    // выход — квиз с жанром; заголовок жанра в кнопке — строчной первой буквой
+    expect(text).toContain('Pick open-world games from your library')
     expect(text).not.toMatch(CYR)
     expect(JSON.stringify(page)).not.toMatch(CYR)
   })
@@ -176,18 +415,83 @@ describe('английские хаб и страница жанра', () => {
    */
   test('жанр: превью на /en — та же карточка с английским alt, русская — от файла', async () => {
     const { size, contentType, alt } = await import('./[tag]/opengraph-image')
-    const enMeta = await generateGenreMetadata(en({ tag: 'open-world' }))
+    const enMeta = await generateMetadata(en({ tag: 'open-world' }))
     expect(enMeta.openGraph?.images).toEqual([
       {
         url: '/en/games/open-world/opengraph-image',
         width: size.width,
         height: size.height,
         type: contentType,
-        alt: 'Genre — imbored',
+        alt: 'Game collection — imbored',
       },
     ])
-    expect(alt).toBe('Жанр — imbored')
-    const ruMeta = await generateGenreMetadata({ params: Promise.resolve({ tag: 'open-world' }) })
+    // одна подпись на жанры и подборки: «Жанр» у «Кооперативных игр» был бы неправдой
+    expect(alt).toBe('Подборка игр — imbored')
+    const ruMeta = await generateMetadata({ params: Promise.resolve({ tag: 'open-world' }) })
     expect(ruMeta.openGraph).not.toHaveProperty('images')
+  })
+
+  /*
+   * /en/games/coop — те же игры и тот же отсев, что у русской (Dota уходит
+   * и здесь), а тексты — facetCopy: заголовок, <title>, основание списка,
+   * выход в /compat и «Позвать». Отсев «Матча» и «versus» от языка не
+   * зависит: он сверяется с русской подписью sessionTrait (load.ts, keeper).
+   */
+  test('подборка: тексты по-английски, игры и ссылки — те же, что у русской', async () => {
+    // Названия — латиницей сразу: latin() переписывает только то, что уже в базе
+    const seed = async (appid: number, over: Pick<GameMeta, 'categories' | 'tags' | 'reviewsTotal'>) => {
+      const meta: GameMeta = {
+        appid,
+        name: `Game ${appid}`,
+        genres: [],
+        headerImage: `https://cdn.example/${appid}/header.jpg`,
+        reviewsPercent: 90,
+        ccu: 50_000,
+        ...over,
+      }
+      await upsertGameMeta(db, meta, T0)
+      await replaceGameTags(db, appid, storedTagWeights(meta.tags))
+    }
+    await latin()
+    // Dota: кооператив в категориях есть, а в тегах MOBA перевешивает его
+    await seed(570, {
+      categories: [1, 9],
+      tags: { 'Free to Play': 1000, MOBA: 339, Strategy: 330, 'Online Co-Op': 126 },
+      reviewsTotal: 900_000,
+    })
+    await seed(553850, { categories: [1, 9, 38], tags: { 'Online Co-Op': 1000, PvE: 896 }, reviewsTotal: 600_000 })
+    const coop = facetCopy(HUB_FACETS[0], 'en')
+    const meta = await generateMetadata(en({ tag: 'coop' }))
+    expect(meta.title).toBe('Co-op games — what to play with a friend')
+    expect(meta.title).toBe(coop.heading)
+    expect(meta.alternates?.canonical).toBe('/en/games/coop')
+    expect(meta.robots).toEqual({ index: false, follow: true })
+    expect(JSON.stringify(meta)).not.toMatch(CYR)
+
+    const page = flight(await GenrePage(en({ tag: 'coop' })))
+    const text = textOf(page)
+    expect(text).toContain('Co-op games')
+    expect(text).toContain(`1 game — ${coop.basis} Sorted by number of Steam reviews.`)
+    for (const s of ['What you both own', 'Invite to this game', 'Other collections', 'Genres', 'Split screen']) {
+      expect(text, s).toContain(s)
+    }
+    expect(text).not.toMatch(CYR)
+    expect(JSON.stringify(page)).not.toMatch(CYR)
+    const links = islandsOf(page, 'Link').map((l) => ({ href: l.href, prefetch: l.prefetch }))
+    // адреса — без префикса: язык ставит сам Link
+    expect(links).toContainEqual({ href: '/room/new?game=553850', prefetch: false })
+    expect(links).toContainEqual({ href: '/compat', prefetch: false })
+    expect(links.some((l) => l.href === '/game/570')).toBe(false)
+  })
+
+  test('подборка «на 20 минут»: выход — пресет по-английски, тот же адрес выдачи', async () => {
+    const page = flight(await GenrePage(en({ tag: 'short' })))
+    const text = textOf(page)
+    expect(text).toContain('20-minute games')
+    expect(text).toContain('The list is still coming together')
+    expect(text).toContain('30 minutes before bed — from your library')
+    expect(text).not.toMatch(CYR)
+    const hrefs = islandsOf(page, 'Link').map((l) => String(l.href))
+    expect(hrefs.some((h) => h.startsWith('/play?time=short'))).toBe(true)
   })
 })
