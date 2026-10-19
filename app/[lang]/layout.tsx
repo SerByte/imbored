@@ -133,7 +133,7 @@ export function generateStaticParams(): Array<{ lang: string }> {
  *
  * 404 под /en этим не закрыта: на not-found Next ставит файлы корня ещё раз,
  * последним уровнем (errorMetadataItem в resolve-metadata), и images этого
- * уровня там нет — подписать её может только своя метадата not-found.tsx.
+ * уровня там нет — её подписывает своя метадата not-found.tsx.
  *
  * Размеры и тип — копия size и contentType карточки, а не импорт: модуль
  * карточки тянет next/og и шрифты в каждый рендер. Что они совпадают —

@@ -153,7 +153,8 @@ function enCard(locale: Locale, canonical: string) {
  * Голов у такой 404 две. В HTML сервера, пустой оболочке __next_error__,
  * Next собирает голову заново по not-found: layout по пути и файлы корня
  * последним уровнем (errorMetadataItem в resolve-metadata), generateMetadata
- * страницы туда не входит, и подпись там корневая (docs/i18n.md, п. 10). А
+ * страницы туда не входит, и подпись там ставит метадата границы —
+ * generateMetadata в app/[lang]/not-found.tsx (docs/i18n.md, п. 10). А
  * голову, которую видит браузер, клиент ставит из обычного прохода —
  * файловая карточка сегмента плюс то, что вернул generateMetadata (замер на
  * next dev, /en/game/999999999 до и после гидрации). Пустой объект оставлял
