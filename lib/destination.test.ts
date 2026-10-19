@@ -880,7 +880,7 @@ describe('тексты лендинга по-английски', () => {
 
   test('ответы квиза — над заголовком, подписями английского квиза', () => {
     expect(destinationPromise(playHref(MOOD), 'en')).toBe(
-      "A couple of hours · Unwind · Solo — got it. One last step: connect Steam and we'll pick one game from your library.",
+      "A few hours · Unwind · Solo — got it. One last step: connect Steam and we'll pick one game from your library.",
     )
     // адрес с языком — то же место
     expect(destinationPromise(`/en${playHref(MOOD)}`, 'en')).toBe(destinationPromise(playHref(MOOD), 'en'))

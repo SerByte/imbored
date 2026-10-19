@@ -74,9 +74,11 @@ const FAILS: Record<Locale, Record<string, FailCopy>> = {
       title: 'Too many tries',
       text: "The deck is built from your whole library, and there's a limit on that. Come back in a few minutes.",
     },
+    // Не калька «под»: по-английски игры прячет фильтр. Заголовок — тот же,
+    // что у этого отказа на /play: одно состояние — одни слова
     muted: {
-      title: "Everything is under “Don't suggest”",
-      text: "Everything that would go in the deck is under “Don't suggest”. You can change the filter on the mood screen.",
+      title: "All hidden by “Don't suggest”",
+      text: "Everything that would go in the deck is hidden by “Don't suggest”. You can change the filter on the mood screen.",
     },
   },
 }

@@ -8,12 +8,13 @@ import { loadSharedPick, reasonOn } from './load'
 import { isLocale, tr } from '@/lib/i18n'
 
 /*
- * Подпись картинки — без языка: alt — статический экспорт, один на обе версии
- * страницы, а generateImageMetadata сменил бы адрес карточки (…/opengraph-image/<id>)
- * у уже разосланных ссылок. Имя бренда читается одинаково на обоих языках;
- * что на картинке, говорят og:title и og:description страницы.
+ * Подпись картинки — русская, как была до перевода (docs/i18n.md, п. 10):
+ * alt — статический экспорт, один на обе версии страницы, и он и есть русская
+ * подпись. generateImageMetadata сменил бы адрес карточки (…/opengraph-image/<id>)
+ * у уже разосланных ссылок. Английскую подпись на /en ставит сама страница —
+ * своим openGraph.images с адресом этой же карточки (enCard в page.tsx).
  */
-export const alt = 'imbored'
+export const alt = 'Выбор на вечер — imbored'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 

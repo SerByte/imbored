@@ -272,6 +272,48 @@ describe('/en/pick: причина — только на своём языке',
   })
 })
 
+/*
+ * Подпись карточки превью (docs/i18n.md, п. 10). alt файловой карточки —
+ * константа модуля, и она русская, как до перевода: русская голова /pick не
+ * меняется ни на байт. /en ставит свой images — ту же карточку маршрута с
+ * английской подписью (enCard в page.tsx). Размеры и тип там — копия: если
+ * карточка сменит формат, тест это поймает.
+ */
+describe('подпись карточки /pick в превью', () => {
+  test('русская карточка подписана, как до перевода, — «Выбор на вечер — imbored»', async () => {
+    const { alt } = await import('./opengraph-image')
+    expect(alt).toBe('Выбор на вечер — imbored')
+  })
+
+  test('русская страница своего images не задаёт — карточку и её alt ставит файл', async () => {
+    const live = await share('pqrstuvwxyza', game(40, { name: 'Hades' }))
+    for (const params of [live, { params: Promise.resolve({ id: 'zzzzzzzz' }) }]) {
+      const meta = await generateMetadata(params)
+      expect(meta.openGraph).not.toHaveProperty('images')
+      expect(meta.twitter).not.toHaveProperty('images')
+    }
+  })
+
+  test('/en — та же карточка маршрута, но с английским alt; и у живого выбора, и у протухшего', async () => {
+    const { size, contentType } = await import('./opengraph-image')
+    await share('qrstuvwxyzab', game(41, { name: 'Hades' }), 'daily')
+    for (const id of ['qrstuvwxyzab', 'zzzzzzzz']) {
+      const meta = await generateMetadata({ params: Promise.resolve({ id, lang: 'en' }) })
+      expect(meta.openGraph?.images).toEqual([
+        {
+          url: `/en/pick/${id}/opengraph-image`,
+          width: size.width,
+          height: size.height,
+          type: contentType,
+          alt: "Tonight's pick — imbored",
+        },
+      ])
+      // twitter:image Next дозаполняет из openGraph сам — своего тут не нужно
+      expect(meta.twitter).not.toHaveProperty('images')
+    }
+  })
+})
+
 /** Класс h1 раскрытой страницы — заголовок героя один */
 function h1ClassOf(page: unknown): string {
   const cls = classOfTag(page, 'h1')

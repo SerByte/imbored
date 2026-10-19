@@ -13,7 +13,7 @@ const COPY = {
   en: {
     title: 'Find a game',
     description:
-      "Three questions — how much time, what vibe, solo or with friends — and one game from your library, plus a couple of store finds if yours run short. With an explanation of why it's the one.",
+      "Three questions — how much time, what vibe, solo or with friends — and one game from your library, plus a couple of store finds if yours run short. You'll see why it's the one.",
   },
 } satisfies Record<Locale, Metadata>
 
