@@ -10,7 +10,8 @@
  * Отдельным модулем, а не в lib/gamepage, где правило родилось: gamepage тянет
  * базу, errlog и серверные модули, а признак нужен и клиентским строкам ленты
  * патчей (PatchRow, GameNews). Из зависимостей — только lib/patchtitle, такой
- * же чистый и клиентобезопасный, и gamepage только реэкспортирует.
+ * же чистый и клиентобезопасный, и createElement из react — для
+ * withForeignRuns; gamepage только реэкспортирует.
  *
  * Это не hasCyrillic из lib/cyrillic («есть ли что беречь» — хватает одной
  * буквы) и не detectLang из lib/news («есть ли по-русски хоть что-то для
@@ -18,6 +19,7 @@
  * отвечает на него большинство букв.
  */
 
+import { createElement, type ReactNode } from 'react'
 import type { Locale } from './i18n'
 import { withoutGameName } from './patchtitle'
 
@@ -101,4 +103,51 @@ export function textLangOn(
   if (!text) return undefined
   const { cyr, lat } = lettersWithout(text, gameName)
   return cyr > lat ? 'ru' : undefined
+}
+
+/**
+ * lang куска данных — ника из Steam, названия игры: 'ru', когда на /en в нём
+ * перевешивает кириллица, и английский голос скринридера не читает его по
+ * буквам (WCAG 3.1.2). Аудитория сайта по большей части русскоязычная, так
+ * что русский ник на /en — частый случай, а не редкий.
+ *
+ * Только на /en. На русской странице атрибута нет, как не было: textLangOn
+ * там пометил бы латинский ник как 'en', а это уже другая правка, не
+ * перевод, и русская страница обязана остаться прежней до байта.
+ *
+ * Одно правило на совместимость (app/[lang]/compat/nick.tsx) и портрет
+ * (app/[lang]/portrait/[steamid]/portrait-text.tsx): раньше у каждой была
+ * своя копия.
+ */
+export function langOn(locale: Locale, text: string): 'ru' | undefined {
+  return locale === 'en' && textLangOn(locale, text) === 'ru' ? 'ru' : undefined
+}
+
+/**
+ * Текст с вкраплениями данных: на /en каждое вхождение русского ника или
+ * названия игры — своим <span lang="ru">, остальное наследует lang страницы.
+ *
+ * Фраза остаётся одним шаблоном tr() или одной строкой модели и режется уже
+ * готовой: склеивать её из кусков ради пометки значило бы собирать
+ * английский порядок слов из обрывков. Искать ник в английской фразе
+ * безопасно: кириллицы в шаблоне нет, и русский ник находит только сам себя.
+ *
+ * Нечего помечать (русская страница, латинские ники) — та же строка, одним
+ * текстовым узлом, как раньше. Есть что — массив кусков без общей обёртки:
+ * обёртку под флекс-родителя ставит withNicks (app/[lang]/compat/nick.tsx).
+ */
+export function withForeignRuns(
+  locale: Locale,
+  text: string,
+  runs: ReadonlyArray<string | null | undefined>,
+): ReactNode {
+  const marked = [...new Set(runs.filter((r): r is string => !!r && langOn(locale, r) === 'ru'))]
+    // Длинные первыми: «Вася Пупкин» раньше «Вася», иначе имя разрезалось бы по частям
+    .sort((a, b) => b.length - a.length)
+  if (!marked.length) return text
+  const escaped = marked.map((r) => r.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  // С группой split оставляет найденное на нечётных местах
+  return text
+    .split(new RegExp(`(${escaped.join('|')})`, 'g'))
+    .map((part, i) => (i % 2 ? createElement('span', { key: i, lang: 'ru' }, part) : part))
 }

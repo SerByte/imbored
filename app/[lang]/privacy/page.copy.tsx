@@ -426,7 +426,7 @@ const EN: PolicyCopy = {
     title: 'Privacy',
     description: 'What data imbored collects, where it’s stored and how to delete it.',
   },
-  updated: 'October 18, 2026',
+  updated: 'October 19, 2026',
   updatedLead: 'Updated ',
   eyebrow: 'Privacy',
   h1: 'What we know about you',
@@ -575,10 +575,10 @@ const EN: PolicyCopy = {
         <>
           <p>
             The same link opens your year in review: how much you played according to your library
-            snapshots, which games you launched for the first time and which ones appeared in your
+            snapshots, which games you launched for the first time and which ones were added to your
             library. Next to it are the dates of the snapshots it was counted from — they show
-            roughly when you visited the service. Appeared doesn’t mean bought: the service can’t
-            see purchases.
+            roughly when you visited the service. “Added” doesn’t mean bought: the service can’t see
+            purchases.
           </p>
           <p>
             When such a link is sent to a messaging app or social network, the platform fetches a

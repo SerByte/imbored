@@ -1,8 +1,6 @@
-import type { ReactNode } from 'react'
 import { dateLabel } from '@/lib/freshness'
 import { lp, type Locale } from '@/lib/i18n'
 import { personaLabel, playerFallback } from '@/lib/playername'
-import { textLangOn } from '@/lib/textlang'
 import type { WrappedYear } from '@/lib/wrapped'
 
 /*
@@ -20,35 +18,11 @@ export function playerName(steamid: string, persona: string | null, locale: Loca
 }
 
 /**
- * lang куска чужого текста — ника из Steam, названия игры: на /en русский ник
- * помечается 'ru', и английский голос скринридера не читает его по буквам.
- *
- * Только на /en. Русская страница остаётся без атрибута, как была:
- * textLangOn на ней пометил бы латиницу, а это уже другая правка, не перевод.
+ * lang куска чужого текста и текст с вкраплениями — ник или название игры
+ * внутри английского текста портрета, каждым вхождением в <span lang="ru">.
+ * Правило одно на сайт (lib/textlang.ts), здесь — точка импорта портрета.
  */
-export function langOn(locale: Locale, text: string): 'ru' | undefined {
-  return locale === 'en' && textLangOn(locale, text) === 'ru' ? 'ru' : undefined
-}
-
-/**
- * Текст с вкраплениями: русский ник или название игры внутри английского
- * текста портрета — каждым вхождением в <span lang="ru">. Текст модели и
- * шаблона — одна строка, и пометить ник иначе, чем разрезав её, нельзя.
- *
- * Только на /en и только то, что langOn признал русским; иначе — та же
- * строка, и русская цитата остаётся одним текстовым узлом, как была.
- */
-export function withForeignRuns(locale: Locale, text: string, runs: Array<string | null | undefined>): ReactNode {
-  const marked = [...new Set(runs.filter((r): r is string => !!r && langOn(locale, r) === 'ru'))]
-    // Длинные первыми: «Вася Пупкин» раньше «Вася», иначе имя разрезалось бы по частям
-    .sort((a, b) => b.length - a.length)
-  if (!marked.length) return text
-  const escaped = marked.map((r) => r.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  // С группой split оставляет найденное на нечётных местах
-  return text
-    .split(new RegExp(`(${escaped.join('|')})`, 'g'))
-    .map((part, i) => (i % 2 ? <span key={i} lang="ru">{part}</span> : part))
-}
+export { langOn, withForeignRuns } from '@/lib/textlang'
 
 /**
  * Превью английской страницы — своей записью, ради alt.

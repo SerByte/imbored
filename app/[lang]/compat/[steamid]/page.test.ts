@@ -410,7 +410,7 @@ describe('/compat/[steamid] на /en: русский ник помечен lang=
     const text = textOf(page)
     // Ник правда стоит на всех этих местах — иначе проверка ниже пуста
     expect(text).toContain(`${NICK}'s player portrait`)
-    expect(text).toContain(`${NICK} will see that you compared, and your percentage.`)
+    expect(text).toContain(`${NICK} will see your comparison and your match percentage.`)
     expect(text).toContain(`Not owned by: ${NICK}`)
     expect(text).toContain(`Not owned by: Mira, ${NICK}`)
     expect(islandsOf(page, 'SplitHeading').map((h) => h.children)).toEqual([`Mira × ${NICK}`])
@@ -426,7 +426,7 @@ describe('/compat/[steamid] на /en: русский ник помечен lang=
   test('приглашение гостю: заголовок и обещание отметки', async () => {
     const page = flight(await CompatPage(params({ steamid: OWNER, lang: 'en' })), ISLANDS)
     expect(textOf(page)).toContain(`${NICK} wants to compare libraries`)
-    expect(textOf(page)).toContain(`Once you sign in with Steam, ${NICK} will see that you compared.`)
+    expect(textOf(page)).toContain(`Once you sign in with Steam, ${NICK} will see that you compared libraries.`)
     expect(unmarked(page, NICK)).toEqual([])
   })
 

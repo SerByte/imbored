@@ -1,10 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { createElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
+import { withNicks } from '../app/[lang]/compat/nick'
+import * as portraitText from '../app/[lang]/portrait/[steamid]/portrait-text'
 import { NewsBody } from '../components/NewsBody'
 import type { NewsBlock } from './steamhtml'
-import { isRussianText, textLang, textLangOn } from './textlang'
+import { isRussianText, langOn, textLang, textLangOn, withForeignRuns } from './textlang'
 
 describe('isRussianText', () => {
   test('русское описание с латинскими названиями — русское', () => {
@@ -112,6 +115,54 @@ describe('textLangOn', () => {
     expect(textLangOn('en', 'Обновление Counter-Strike 2', 'Counter-Strike 2')).toBe('ru')
     expect(textLangOn('en', 'Counter-Strike 2 Update', 'Counter-Strike 2')).toBeUndefined()
     expect(textLangOn('en', 'Мор', 'Мор')).toBe('ru')
+  })
+})
+
+/**
+ * Ники и названия игр внутри английских фраз — одно правило на совместимость
+ * и портрет. Раньше у каждой страницы была своя копия langOn и разрезания
+ * фразы; теперь обе зовут lib/textlang, и вывод обязан остаться тем же:
+ * портрет — куски без обёртки, совместимость — те же куски в одном <span>.
+ */
+describe('langOn и withForeignRuns', () => {
+  const html = (node: ReactNode) => renderToStaticMarkup(createElement('p', null, node))
+
+  test('lang="ru" — только у русского текста и только на /en', () => {
+    expect(langOn('en', 'Костя')).toBe('ru')
+    expect(langOn('en', 'Mira')).toBeUndefined()
+    expect(langOn('en', '1337')).toBeUndefined()
+    // Русская страница без атрибутов, как была: латиница там не помечалась
+    expect(langOn('ru', 'Mira')).toBeUndefined()
+    expect(langOn('ru', 'Костя')).toBeUndefined()
+  })
+
+  test('каждое вхождение — своим узлом, длинное имя раньше своей части', () => {
+    expect(html(withForeignRuns('en', 'Костя Pro and Костя', ['Костя', 'Костя Pro', 'Mira']))).toBe(
+      '<p><span lang="ru">Костя Pro</span> and <span lang="ru">Костя</span></p>',
+    )
+    // Спецсимволы ника — буквально, а не регуляркой
+    expect(html(withForeignRuns('en', 'Hi, Вася (1.0)?', ['Вася (1.0)?']))).toBe('<p>Hi, <span lang="ru">Вася (1.0)?</span></p>')
+  })
+
+  test('нечего помечать — та же строка, одним текстовым узлом', () => {
+    expect(withForeignRuns('ru', 'Костя увидит у себя, что вы сравнились.', ['Костя'])).toBe(
+      'Костя увидит у себя, что вы сравнились.',
+    )
+    expect(withForeignRuns('en', 'Mira will see your comparison.', ['Mira', null, undefined])).toBe(
+      'Mira will see your comparison.',
+    )
+  })
+
+  test('портрет и совместимость зовут одно правило', () => {
+    expect(portraitText.langOn).toBe(langOn)
+    expect(portraitText.withForeignRuns).toBe(withForeignRuns)
+    // совместимость — те же куски, но в одном общем <span>: фраза стоит во
+    // flex-родителях, и без обёртки ник отъехал бы от «'s» на ширину зазора
+    expect(html(withNicks('en', "Костя's player portrait", ['Костя']))).toBe(
+      '<p><span><span lang="ru">Костя</span>&#x27;s player portrait</span></p>',
+    )
+    expect(withNicks('en', "Mira's player portrait", ['Mira'])).toBe("Mira's player portrait")
+    expect(withNicks('ru', 'Портрет игрока Костя', ['Костя'])).toBe('Портрет игрока Костя')
   })
 })
 

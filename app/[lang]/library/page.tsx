@@ -74,18 +74,24 @@ import { NeedSteam } from '@/components/NeedSteam'
 import { pickSnapshotDelta } from '@/lib/libdelta'
 import { playedShort, playtimeHidden } from '@/lib/playtime'
 import type { Metadata, ResolvingMetadata } from 'next'
-import { rootCard } from '@/lib/site'
+import { ownAddress } from '@/lib/site'
 import { WishlistShelf } from './WishlistShelf'
 
 /*
  * Язык — из params, а не getLocale(): у страницы есть тест деревом
  * (page.test.ts), а next/root-params вне сборки бросает при импорте.
- * Индексировать страницу нечего (robots), поэтому без alternates — только
- * вкладка и превью ссылки на языке страницы.
+ * Индексировать страницу нечего (robots), поэтому русская — без alternates и
+ * своего openGraph: только вкладка и превью ссылки. Английской свой openGraph
+ * нужен ради подписи карточки (docs/i18n.md, п. 10): корневая подписана
+ * по-русски, а переподписывает её ownAddress — вместе со своим адресом, как
+ * у каждого своего openGraph (lib/social.test.ts).
  */
-export async function generateMetadata(props: PageProps<'/[lang]/library'>, parent?: ResolvingMetadata): Promise<Metadata> {
+export async function generateMetadata(
+  props: PageProps<'/[lang]/library'>,
+  parent: ResolvingMetadata,
+): Promise<Metadata> {
   const locale = toLocale((await props.params).lang)
-  const copy = tr(locale, {
+  const text = tr(locale, {
     ru: {
       title: 'Библиотека',
       description: 'Вся твоя Steam-библиотека одной стеной: что заброшено, что ни разу не запускалось и сколько это стоило.',
@@ -95,8 +101,7 @@ export async function generateMetadata(props: PageProps<'/[lang]/library'>, pare
       description: "Your whole Steam library on one wall: what's abandoned, what's never been launched and what it all cost.",
     },
   })
-  // карточка корня на /en — с английской подписью (lib/site)
-  return { ...copy, ...(await rootCard(props, parent)) }
+  return locale === 'en' ? ownAddress('/library', text)(props, parent) : text
 }
 
 export const dynamic = 'force-dynamic'
@@ -1172,7 +1177,7 @@ function eveningsLeadEn({
     )
   }
   if (timeHidden) return 'What we picked for you and how it went. Minutes will show up once Steam shows your playtime again.'
-  if (pending) return 'What we picked for you and how it went. Minutes will catch up with the next library snapshot.'
+  if (pending) return 'What we picked for you and how it went. Minutes will show up with the next library snapshot.'
   return 'What we picked for you and how it went.'
 }
 
