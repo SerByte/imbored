@@ -8,7 +8,7 @@ import { SearchLauncher } from '@/components/SearchLauncher'
 import { topCatalogGames } from '@/lib/db'
 import { dayKey } from '@/lib/forgotten'
 import { hashString, mulberry32 } from '@/lib/daily'
-import { tr } from '@/lib/i18n'
+import { tr, type Locale } from '@/lib/i18n'
 import { getLocale } from '@/lib/i18n-server'
 import { getDb } from '@/lib/server'
 
@@ -103,12 +103,28 @@ async function shelf() {
 
 /**
  * Язык — из сегмента [lang] (next/root-params): 404 под /en/… рисуется
- * внутри английского layout и обязан говорить по-английски. Адрес вне всех
- * разделов приходит сюда же, но русским: next.config уводит его в
- * статическую app/[lang]/missing (lib/i18nroutes.ts).
+ * внутри английского layout и обязан говорить по-английски.
  */
 export default async function NotFound() {
-  const [games, locale] = await Promise.all([shelf(), getLocale()])
+  return <NotFoundView locale={await getLocale()} />
+}
+
+/**
+ * Сам экран 404 — отдельно от границы, потому что рисуют его двое.
+ *
+ * Граница not-found выше — для notFound() из страниц: /game/<нет такой>,
+ * /en/xyz, /quiz/xyz. HTML такого ответа в этой версии Next — пустая
+ * оболочка (<html id="__next_error__">), а экран дорисовывает клиент:
+ * граница not-found — клиентский error boundary, и серверный рендер React
+ * его не исполняет (подробно — в app/global-not-found.tsx).
+ *
+ * Адрес вне всех разделов (/xyz, /wp-login.php) next.config уводит в
+ * /_not-found, и там этот же экран рисует app/global-not-found.tsx —
+ * сервером, внутри того же корневого layout. Язык там не из сегмента (его
+ * у /_not-found нет), а русский явно: адрес без префикса — русский сайт.
+ */
+export async function NotFoundView({ locale }: { locale: Locale }) {
+  const games = await shelf()
 
   return (
     <div className="relative flex-1 overflow-hidden">
@@ -121,7 +137,7 @@ export default async function NotFound() {
           <Eyebrow tone="faint" className="sr-only">
             {tr(locale, { ru: 'Ошибка 404', en: 'Error 404' })}
           </Eyebrow>
-          <h1 className="font-display text-display-md">{tr(locale, { ru: 'Такой страницы нет', en: 'Page not found' })}</h1>
+          <h1 className="font-display text-display-md">{tr(locale, { ru: 'Такой страницы нет', en: 'This page doesn’t exist' })}</h1>
           <p className="max-w-md leading-relaxed text-dim">
             {tr(locale, {
               ru: 'Ссылка битая или игру убрали из каталога. Бывает — зато есть, во что поиграть.',
@@ -145,7 +161,7 @@ export default async function NotFound() {
           </Link>
           <Link href="/" className="btn-glass">
             <Icon name="home" size={18} />
-            {tr(locale, { ru: 'На главную', en: 'Home' })}
+            {tr(locale, { ru: 'На главную', en: 'Back to home' })}
           </Link>
         </div>
 

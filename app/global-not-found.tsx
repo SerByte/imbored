@@ -1,71 +1,51 @@
-// Стили — сами: global-not-found рендерится мимо корневого layout
-import './globals.css'
-import type { Metadata } from 'next'
-import { Manrope } from 'next/font/google'
+import type { Metadata, Viewport } from 'next'
+import RootLayout, { generateMetadata as rootMetadata, viewport as rootViewport } from './[lang]/layout'
+import { NotFoundView } from './[lang]/not-found'
+import Template from './[lang]/template'
 
 /**
- * 404 для адреса, который не дошёл ни до одного языка.
+ * 404 адреса вне всех разделов: /xyz, /wp-login.php, /.env, /xx/quiz.
  *
- * Корневой layout живёт под [lang] (app/[lang]/layout.tsx), и для адреса без
- * языка собрать 404 из него нельзя. Next отдаёт этот файл сам, мимо layout
- * (docs: not-found.md, global-not-found). Поэтому здесь всё своё: стили,
- * шрифт, тема и оба языка разом — по адресу не понять, чей он.
+ * Сюда такой адрес уводит правило afterFiles из next.config (garbageRewrites
+ * в lib/i18nroutes.ts) — в /_not-found, единственный маршрут, чей 404 Next
+ * рисует сервером целиком. Он же отвечает за всё, что не нашло маршрута
+ * вовсе (/_next, /_vercel без файла), и за dynamicParams = false мимо
+ * списка (/games/<нет такого жанра>).
  *
- * Сюда доезжает немногое: мусорный адрес вне разделов next.config уводит в
- * статическую 404 со шапкой (app/[lang]/missing, garbageRewrites в
- * lib/i18nroutes.ts), а адрес под языком и под разделом ловит
- * app/[lang]/[...missing]. Остаются служебные первые сегменты, которые
- * правило не трогает (/_next, /_vercel без маршрута).
+ * ПОЧЕМУ НЕ СТРАНИЦА С notFound(). Так было: правило уводило мусор в
+ * пререндеренную app/[lang]/missing, а она звала notFound(). В этой версии
+ * Next notFound() из страницы роняет серверный рендер целиком: граница
+ * not-found — клиентский error boundary (HTTPAccessFallbackBoundary), а
+ * серверный рендер React error boundary не исполняет. Next ловит отказ и
+ * отдаёт пустую оболочку <html id="__next_error__"> без lang, стилей, шапки
+ * и текста — экран дорисовывает клиент. Без скрипта страница была пустой,
+ * у всех — пустой первый кадр и без скрипта темы. До [lang] такой адрес
+ * отдавал встроенный /_not-found, собранный из корневого layout и
+ * not-found, — сервером, со шапкой, подвалом и полкой. Это возвращает его.
  *
- * Шрифт — тот же Manrope, что в корневом layout: --font-sans из globals.css
- * ссылается на его переменную, и без неё страница рисовалась бы system-ui
- * (not-found.md: global-not-found обязан подключить шрифты сам).
+ * Корневой layout здесь — тот же app/[lang]/layout.tsx с языком 'ru', а не
+ * копия: шапка, подвал, шрифты, скрипт темы и замок от тёмных читалок те же,
+ * что у любой страницы. Обёртка перехода — та же app/[lang]/template.tsx:
+ * граница not-found рисуется внутри неё, и экран 404 стоит в той же
+ * раскладке. Язык — русский: адрес без префикса — русский сайт, а /en/… сюда
+ * не приходит (его ловит app/[lang]/[...missing] своим языком).
  *
- * Тема — тем же скриптом, что в корневом layout: светлая у тех, кто её
- * выбрал, иначе тёмная по умолчанию. Ссылки — обычные <a>: клиентского
- * роутера здесь нет, и переход на главную — полная загрузка с layout.
+ * Метаданные и viewport — корневые русские: у /_not-found нет сегмента
+ * [lang], и generateMetadata корня здесь сам не вызывается. Код 404 и
+ * robots noindex Next ставит этому маршруту сам.
  */
-export const metadata: Metadata = {
-  title: 'Такой страницы нет · Page not found · imbored',
+export async function generateMetadata(): Promise<Metadata> {
+  return rootMetadata({ params: Promise.resolve({ lang: 'ru' }), children: null })
 }
 
-const manrope = Manrope({
-  variable: '--font-manrope',
-  subsets: ['latin', 'cyrillic'],
-})
-
-const THEME_SCRIPT = `try{if(localStorage.getItem('imbored-theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}`
+export const viewport: Viewport = rootViewport
 
 export default function GlobalNotFound() {
   return (
-    <html lang="ru" suppressHydrationWarning className={`${manrope.variable} h-full antialiased`}>
-      <body className="min-h-full font-sans overflow-x-hidden">
-        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
-        <main
-          id="main"
-          className="mx-auto flex min-h-svh w-full max-w-2xl flex-col items-center justify-center gap-10 px-5 py-16 text-center"
-        >
-          <p aria-hidden className="nf-code">
-            404
-          </p>
-          <div className="flex flex-col items-center gap-3">
-            <h1 className="font-display text-display-md">Такой страницы нет</h1>
-            <p className="max-w-md leading-relaxed text-dim">Ссылка битая или страницу убрали. Бывает.</p>
-            {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- клиентского роутера здесь нет */}
-            <a href="/" className="btn-ember px-6 py-3">
-              На главную
-            </a>
-          </div>
-          <div lang="en" className="flex flex-col items-center gap-3">
-            <h2 className="font-display text-display-sm">Page not found</h2>
-            <p className="max-w-md leading-relaxed text-dim">The link is broken or the page is gone. It happens.</p>
-            {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- клиентского роутера здесь нет */}
-            <a href="/en" className="btn-glass">
-              Go to the home page
-            </a>
-          </div>
-        </main>
-      </body>
-    </html>
+    <RootLayout params={Promise.resolve({ lang: 'ru' })}>
+      <Template>
+        <NotFoundView locale="ru" />
+      </Template>
+    </RootLayout>
   )
 }
