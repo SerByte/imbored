@@ -1,11 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import Link from '@/components/Link'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { GameArt } from '@/components/GameArt'
 import { TilePending } from '@/components/TilePending'
 import { GameNews } from '@/components/GameNews'
-import { GameShots } from '@/components/GameShots'
+import { GameShots, shotLabels } from '@/components/GameShots'
 import { OwnedLaunch } from '@/components/OwnedLaunch'
 import { PlayersNow } from '@/components/PlayersNow'
 import { DiscountEnds, PriceTag, PriceWhere } from '@/components/PriceTag'
@@ -1030,6 +1032,15 @@ describe('английская карточка: пульс, цена, архи�
       const similar = linkOf(page, quiz)
       expect(textOf(similar.children)).toBe(`Similar to “${NAME}”, for your mood`)
       expect(ruSpans(similar.children)).toEqual([NAME])
+      // Фраза — одним флекс-элементом рядом со стрелкой: .link-more — inline-flex
+      // с gap, и куски вокруг названия иначе вставали врозь (oneItem в page.tsx)
+      for (const link of [archive, similar]) {
+        const [phrase, arrow, ...rest] = link.children as Array<{ tag?: string; props?: { lang?: unknown } }>
+        expect(rest, 'у ссылки больше двух детей — фраза рассыпалась').toEqual([])
+        expect(phrase).toMatchObject({ tag: 'span' })
+        expect(phrase.props?.lang, 'обёртка без lang: свой lang — только у названия').toBeUndefined()
+        expect(textOf(arrow)).toBe('')
+      }
     })
 
     test('на русской — без атрибута и без <span>: разметка прежняя', async () => {
@@ -1069,5 +1080,62 @@ describe('английская карточка: пульс, цена, архи�
     expect(textOf(page)).not.toContain('Ведьмак')
     expect(jsonLdOf(page)[0]).not.toHaveProperty('alternateName')
     expect(jsonLdOf(page)[0]).toMatchObject({ name: 'The Witcher 3: Wild Hunt' })
+  })
+})
+
+/*
+ * Подписи блока «Скриншоты» (shotLabels в components/GameShots): alt первого
+ * кадра и имя карусели. Название — данные, и на /en оно бывает русским, а у
+ * части атрибута своего lang не бывает: английский голос читал бы такую
+ * подпись по буквам. Поэтому на /en название с кириллицей в подпись не
+ * встаёт; русская страница и латинское название — прежние подписи до байта.
+ */
+describe('подписи скриншотов', () => {
+  const SHOTS = ['https://cdn.example/730/s1.jpg', 'https://cdn.example/730/s2.jpg']
+
+  /** alt первого кадра в серверной разметке островка (слайдер сервер не рисует) */
+  function altOn(locale: Locale, name: string): string | undefined {
+    lang.locale = locale
+    const html = renderToStaticMarkup(createElement(GameShots, { images: SHOTS, name }))
+    return html.match(/<img [^>]*alt="([^"]*)"/)?.[1]
+  }
+
+  test.each([
+    'Marvel Человек-Паук 2',
+    'Одни из нас™: Часть II Обновленная версия',
+    // букв поровну: langOn пометки не ставит, а русское слово в английской подписи — то же чтение по буквам
+    'God of War Рагнарёк',
+  ])('на /en русское название в подпись не встаёт: %s', (name) => {
+    expect(shotLabels('en', name)).toEqual({ alt: 'Screenshot', label: 'Screenshots' })
+    expect(altOn('en', name)).toBe('Screenshot')
+  })
+
+  test('латинское название на /en — прежние подписи с названием', () => {
+    expect(shotLabels('en', 'Counter-Strike 2')).toEqual({
+      alt: 'Counter-Strike 2 screenshot',
+      label: 'Counter-Strike 2 screenshots',
+    })
+    expect(altOn('en', 'Counter-Strike 2')).toBe('Counter-Strike 2 screenshot')
+  })
+
+  test('русская страница — прежние подписи, и с русским названием тоже', () => {
+    for (const name of ['Marvel Человек-Паук 2', 'Counter-Strike 2']) {
+      expect(shotLabels('ru', name)).toEqual({ alt: `Скриншот — ${name}`, label: `Скриншоты — ${name}` })
+      expect(altOn('ru', name)).toBe(`Скриншот — ${name}`)
+    }
+  })
+
+  // Карусель сервер не рисует (ssr: false), поэтому её имя сторожит исходник:
+  // label — из тех же подписей, а не шаблон с названием мимо них
+  test('карусель и первый кадр подписаны одними shotLabels', () => {
+    const src = fs
+      .readFileSync(path.join(__dirname, '..', '..', '..', '..', 'components', 'GameShots.tsx'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/[^\n]*/gm, '')
+    const at = src.indexOf('<MorphSlider')
+    expect(at, '<MorphSlider> не найден — сторож ослеп').toBeGreaterThan(-1)
+    expect(src.slice(at, src.indexOf('/>', at))).toMatch(/\blabel=\{labels\.label\}/)
+    expect(src).toMatch(/\balt=\{labels\.alt\}/)
+    expect(src).toContain('const labels = shotLabels(locale, name)')
   })
 })

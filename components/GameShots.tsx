@@ -5,7 +5,8 @@ import dynamic from 'next/dynamic'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale } from '@/components/LocaleProvider'
 import { webglAvailable } from '@/components/morph/gl'
-import { tr } from '@/lib/i18n'
+import { hasCyrillic } from '@/lib/cyrillic'
+import { tr, type Locale } from '@/lib/i18n'
 import { pickShotSize, shotUrl, type ShotSize } from '@/lib/shots'
 
 /**
@@ -63,8 +64,34 @@ const SLIDES = 6
 /** Что удалось выяснить про среду; до первого замера — null */
 type Env = { gl: boolean; size: ShotSize }
 
+/**
+ * Подписи блока: alt первого кадра и имя карусели.
+ *
+ * Название игры — данные, и на /en оно бывает русским: games.name у части
+ * верха каталога держит русское имя магазина, пока его не перепишет
+ * английская запись (nameSql в lib/db). В тексте страницы такое название
+ * стоит своим lang="ru" (h1, ссылки — langOn в page.tsx), а у части атрибута
+ * своего lang не бывает: «Marvel Человек-Паук 2 screenshot» английский голос
+ * скринридера читал бы по буквам (WCAG 3.1.2). Поэтому на /en название с
+ * кириллицей в подпись не встаёт вовсе: игру называет h1 той же страницы, а
+ * блок — заголовок «Screenshots» над ним.
+ *
+ * Хватает одной буквы (hasCyrillic), а не перевеса, как у langOn: в «God of
+ * War Рагнарёк» букв поровну, и русское слово в английской подписи — то же
+ * чтение по буквам. Русская страница и латинское название на /en — прежние
+ * подписи до байта.
+ */
+export function shotLabels(locale: Locale, name: string): { alt: string; label: string } {
+  if (locale === 'en' && hasCyrillic(name)) return { alt: 'Screenshot', label: 'Screenshots' }
+  return {
+    alt: tr(locale, { ru: `Скриншот — ${name}`, en: `${name} screenshot` }),
+    label: tr(locale, { ru: `Скриншоты — ${name}`, en: `${name} screenshots` }),
+  }
+}
+
 export function GameShots({ images, name }: { images: string[]; name: string }) {
   const locale = useLocale()
+  const labels = shotLabels(locale, name)
   const shots = useMemo(() => images.slice(0, SLIDES), [images])
   const wrapRef = useRef<HTMLDivElement>(null)
 
@@ -156,7 +183,7 @@ export function GameShots({ images, name }: { images: string[]; name: string }) 
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={shotUrl(shots[0], 'small')}
-          alt={tr(locale, { ru: `Скриншот — ${name}`, en: `${name} screenshot` })}
+          alt={labels.alt}
           loading="lazy"
           className="absolute inset-0 h-full w-full object-cover"
         />
@@ -169,7 +196,7 @@ export function GameShots({ images, name }: { images: string[]; name: string }) 
               autoplay={visible && !reduced}
               autoplayDelay={4.5}
               showCaptions={false}
-              label={tr(locale, { ru: `Скриншоты — ${name}`, en: `${name} screenshots` })}
+              label={labels.label}
               onChange={setCurrent}
               onActivate={() => setOpen(current)}
               // Лайтбокс накрывает слайдер, но с экрана его не убирает:
