@@ -6,12 +6,12 @@ import { GameArt } from '@/components/GameArt'
 import { GameMorph } from '@/components/Morph'
 import { GameNews } from '@/components/GameNews'
 import { GameShots } from '@/components/GameShots'
-import { DiscountEnds, PriceTag, PriceWhere } from '@/components/PriceTag'
+import { DiscountEnds, PriceTag, PriceWhere } from '@/components/PriceTagView'
 import { ShownUntil } from '@/components/ShownUntil'
 import { Eyebrow, MetaLine } from '@/components/Labels'
-import { PlayersNow } from '@/components/PlayersNow'
+import { PlayersNow } from '@/components/PlayersNowView'
 import { ProgressRing } from '@/components/ProgressRing'
-import { RefundNote } from '@/components/RefundNote'
+import { RefundNote } from '@/components/RefundNoteView'
 import { OwnedLaunch } from '@/components/OwnedLaunch'
 import { OwnedNear } from '@/components/OwnedNear'
 import { sitemapGames } from '@/lib/db'
@@ -667,13 +667,20 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   «играли» и без пульса.
 
                   Поэтому часы — бесконечность, а не now + revalidate: вывод тот
-                  же, но PlayersNow клиентский (язык — из useLocale), и его
-                  пропсы лежат в RSC-части страницы. now + revalidate был бы
-                  там новым числом на каждой перегенерации — и новой записью
-                  ISR без единой видимой перемены. Бесконечность от часов не
-                  зависит, и «сейчас» с ней не наступает никогда.
+                  же, и от момента рендера не зависит даже аргумент. Строку
+                  рисует сервер (PlayersNowView, язык страницы — пропом), но
+                  стань она снова клиентским островком, её пропсы легли бы в
+                  RSC-часть страницы, и now + revalidate был бы там новым
+                  числом на каждой перегенерации — новой записью ISR без
+                  единой видимой перемены. Бесконечность от часов не зависит,
+                  и «сейчас» с ней не наступает никогда.
                 */}
-                <PlayersNow ccu={meta.ccu ?? null} ccuAt={meta.ccuAt} nowSec={Number.POSITIVE_INFINITY} />
+                <PlayersNow
+                  ccu={meta.ccu ?? null}
+                  ccuAt={meta.ccuAt}
+                  nowSec={Number.POSITIVE_INFINITY}
+                  locale={locale}
+                />
               </p>
             )}
             {/*
@@ -915,12 +922,13 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                       isFree={meta.isFree}
                       discount={deal}
                       size="hero"
+                      locale={locale}
                     />
                     <DiscountEnds discount={deal} />
                     {/* Чья это цена: у KZ и СНГ-доллара она другая. Только у
                         цены — «бесплатно» и «не продаётся» говорят сами */}
                     {!meta.isFree && !meta.storeHidden && price !== null && price > 0 && (
-                      <PriceWhere cc={meta.priceCc} />
+                      <PriceWhere cc={meta.priceCc} locale={locale} />
                     )}
                   </span>
                 </PriceLine>
@@ -942,8 +950,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 <span className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-sm">
                   <span className="text-dim">{tr(locale, { ru: 'обычная цена', en: 'regular price' })}</span>
                   {/* бесплатной строки здесь не бывает — её отсекает условие выше */}
-                  <PriceTag priceFinal={regular} cc={meta.priceCc ?? null} isFree={false} size="hero" />
-                  <PriceWhere cc={meta.priceCc} />
+                  <PriceTag priceFinal={regular} cc={meta.priceCc ?? null} isFree={false} size="hero" locale={locale} />
+                  <PriceWhere cc={meta.priceCc} locale={locale} />
                   <span className="basis-full text-xs text-dim">
                     {tr(locale, {
                       ru: 'Цену сняли во время скидки, а идёт ли она ещё, мы не знаем — в Steam может быть дешевле',
@@ -953,7 +961,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                 </span>
               )}
             </div>
-            {refund && <RefundNote tone="neutral" />}
+            {refund && <RefundNote tone="neutral" locale={locale} />}
           </div>
         </div>
       </section>

@@ -62,7 +62,7 @@ describe('playtimeHidden', () => {
 })
 
 /**
- * Строка «Похоже, Steam скрывает твоё время…» берёт шаг из PrivacyHelp, а не
+ * Строка «Похоже, Steam скрывает твоё время…» берёт шаг из PrivacyHelpView, а не
  * пишет свою копию: название галочки — слово из чужого интерфейса, и если
  * Steam его поменяет, правка должна быть одна.
  */
@@ -87,7 +87,9 @@ describe('строка о скрытом времени', () => {
     const hits = files.flatMap((f) =>
       code(f).includes('Всегда скрывать общее время игры') ? [f] : [],
     )
-    expect(hits).toEqual(['components/PrivacyHelp.tsx'])
+    // Шаг живёт в универсальной PrivacyHelpView: клиентская PrivacyHelp —
+    // только обёртка с языком из контекста, своих слов у неё нет
+    expect(hits).toEqual(['components/PrivacyHelpView.tsx'])
   })
 
   test('/play и /library показывают строку при скрытом времени', () => {

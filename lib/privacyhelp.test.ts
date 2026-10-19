@@ -5,6 +5,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import { LocaleProvider } from '../components/LocaleProvider'
 import { PlaytimeHiddenNote, PrivacyHelp } from '../components/PrivacyHelp'
+import * as View from '../components/PrivacyHelpView'
+import { LOCALES, type Locale } from './i18n'
 
 /**
  * «Я открыл — проверить» в панели скрытой библиотеки.
@@ -103,6 +105,53 @@ describe('панель скрытой библиотеки по-английск
     expect(out).toContain('Uncheck “Always keep my total playtime private even if users can see my game details”')
     expect(out).toMatch(/<a [^>]*href="\/en\?reconnect=1"[^>]*>reconnect your library<\/a>/)
     expect(out).not.toMatch(CYRILLIC)
+  })
+})
+
+/*
+ * Серверная /library рисует панель и строку о скрытом времени из
+ * components/PrivacyHelpView с языком страницы пропом — так они снова
+ * рендерятся на сервере и не едут в её клиентский бандл. Клиентские экраны
+ * зовут обёртку components/PrivacyHelp с языком из контекста. Разметка у них
+ * обязана быть одной: иначе один и тот же отказ Steam читался бы на /library
+ * и на /play по-разному, а русская страница перестала бы быть прежней.
+ */
+describe('панель: серверная View с языком пропом = клиентская обёртка в контексте', () => {
+  const inContext = (locale: Locale, el: ReturnType<typeof createElement>) =>
+    renderToStaticMarkup(createElement(LocaleProvider, { locale } as ComponentProps<typeof LocaleProvider>, el))
+
+  test.each(LOCALES)('%s: без действия, вход через Steam, повтор поля и проверка', (locale) => {
+    const variants: Array<Parameters<typeof PrivacyHelp>[0]> = [
+      {},
+      { retryHref: '/api/auth/steam?next=%2Flibrary' },
+      { onRetry: () => {} },
+      { onRetry: () => {}, retrying: true },
+    ]
+    for (const props of variants) {
+      // View — без провайдера: язык ей приходит только пропом
+      const server = renderToStaticMarkup(View.PrivacyHelp({ ...props, locale }))
+      expect(server, JSON.stringify(props)).toBe(inContext(locale, PrivacyHelp(props)))
+    }
+    expect(renderToStaticMarkup(View.PrivacyHelp({ locale }))).toContain(
+      locale === 'en' ? 'Steam is hiding your library' : 'Библиотека скрыта настройками Steam',
+    )
+  })
+
+  /*
+   * Ссылку «подключи заново» в строке рисует Link: префикс языка он ставит
+   * сам, по контексту страницы. Поэтому и серверная View здесь — в том же
+   * контексте, как на настоящей странице под корневым layout; текст и шаг она
+   * берут из пропа.
+   */
+  test.each(LOCALES)('%s: строка о скрытом времени', (locale) => {
+    for (const props of [{}, { className: 'mb-10 max-w-2xl' }]) {
+      expect(inContext(locale, createElement(View.PlaytimeHiddenNote, { ...props, locale }))).toBe(
+        inContext(locale, createElement(PlaytimeHiddenNote, props)),
+      )
+    }
+    expect(inContext(locale, createElement(View.PlaytimeHiddenNote, { locale }))).toContain(
+      locale === 'en' ? 'Looks like Steam is hiding your playtime' : 'Похоже, Steam скрывает твоё время в играх',
+    )
   })
 })
 

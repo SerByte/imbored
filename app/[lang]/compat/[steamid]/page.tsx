@@ -8,7 +8,7 @@ import { GameCardBody } from '@/components/GameCard'
 import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
 import { Magnet } from '@/components/Magnet'
-import { DiscountCorner, PriceTag } from '@/components/PriceTag'
+import { DiscountCorner, PriceTag } from '@/components/PriceTagView'
 import { SplitHeading } from '@/components/SplitHeading'
 import { commonTimeLine, verdict } from '@/lib/compat'
 import { tagLabel } from '@/lib/tagsru'
@@ -325,6 +325,7 @@ function PickCard({ pick, locale }: { pick: CompatPick; locale: Locale }) {
         isFree={pick.isFree}
         discount={pick.discount}
         showPercent={false}
+        locale={locale}
       />
       {pick.store && <span>{STORE_LABEL[pick.store] ?? pick.store}</span>}
     </span>
