@@ -126,7 +126,13 @@ export function PlayersNow({
         <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-ok anim-pulse-dot" />
       ) : null}
       <span className="tabular-nums">{fmtNumber(locale, ccu)}</span>{' '}
-      {свежий ? tr(locale, { ru: 'сейчас играют', en: 'playing now' }) : tr(locale, { ru: 'играли', en: 'were playing' })}
+      {/* По-английски прошедшее время согласуется с числом: «1 was playing»,
+          «1,234 were playing». Малые числа — ровно то, ради чего строка есть
+          (мёртвый мультиплеер, «New to you · 1 …» героя /play); русскому
+          «играли» согласовывать нечего */}
+      {свежий
+        ? tr(locale, { ru: 'сейчас играют', en: 'playing now' })
+        : tr(locale, { ru: 'играли', en: ccu === 1 ? 'was playing' : 'were playing' })}
     </span>
   )
 }
