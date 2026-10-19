@@ -116,6 +116,26 @@ describe('textLangOn', () => {
     expect(textLangOn('en', 'Counter-Strike 2 Update', 'Counter-Strike 2')).toBeUndefined()
     expect(textLangOn('en', 'Мор', 'Мор')).toBe('ru')
   })
+
+  /**
+   * Ничья букв — русскому голосу. Русское имя магазина «God of War Рагнарёк»
+   * (2322010 в копии базы) — восемь латинских на восемь кириллических, и с
+   * правилом «строго больше» h1 карточки и ссылка «Similar to “…”» на /en
+   * шли без lang: английский голос читал «Рагнарёк» по буквам.
+   */
+  test('ничья на английской — ru, на русской — по-прежнему без пометки', () => {
+    expect(textLangOn('en', 'God of War Рагнарёк')).toBe('ru')
+    expect(textLangOn('en', 'Hotfix для VR, фикс')).toBeUndefined()
+    // русская страница не меняется: ничья там и так читается русским голосом
+    expect(textLangOn('ru', 'God of War Рагнарёк')).toBeUndefined()
+    expect(textLang('God of War Рагнарёк')).toBeUndefined()
+  })
+
+  test('на английской согласован с isRussianText: ru ровно у русского текста', () => {
+    for (const text of ['Станьте вором в VR!', 'Hotfix для VR', 'Ёж и Щука', 'Rise, Tarnished', 'FPS фпс', 'God of War Рагнарёк', '1.0.3']) {
+      expect(textLangOn('en', text), text).toBe(isRussianText(text) ? 'ru' : undefined)
+    }
+  })
 })
 
 /**
@@ -134,6 +154,15 @@ describe('langOn и withForeignRuns', () => {
     // Русская страница без атрибутов, как была: латиница там не помечалась
     expect(langOn('ru', 'Mira')).toBeUndefined()
     expect(langOn('ru', 'Костя')).toBeUndefined()
+  })
+
+  test('название поровну латиницей и кириллицей — тоже lang="ru"', () => {
+    // h1 карточки игры и «Similar to “…”» зовут langOn, «All … updates» — withForeignRuns
+    expect(langOn('en', 'God of War Рагнарёк')).toBe('ru')
+    expect(langOn('ru', 'God of War Рагнарёк')).toBeUndefined()
+    expect(html(withForeignRuns('en', 'All God of War Рагнарёк updates', ['God of War Рагнарёк']))).toBe(
+      '<p>All <span lang="ru">God of War Рагнарёк</span> updates</p>',
+    )
   })
 
   test('каждое вхождение — своим узлом, длинное имя раньше своей части', () => {
