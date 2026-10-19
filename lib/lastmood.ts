@@ -1,6 +1,6 @@
 import { createLocalStore } from './localstore'
 import { parseLean, parseMood, type Lean } from './mood'
-import { playHref } from './presets'
+import { playHref } from './playhref'
 import type { Mood } from './types'
 
 /**
@@ -71,7 +71,9 @@ export function pickHref(last: LastMood | null, nowSec: number): string {
  *
  * Подпись прошлого настроения с её снимками — в lib/lastmoodcaption: ей нужен
  * квиз (moodCaption), а этот модуль едет в шапку каждой страницы
- * (components/PickLink). Почему это не мелочь — там же.
+ * (components/PickLink). Почему это не мелочь — там же. По той же причине
+ * playHref — из lib/playhref, а не из lib/presets: тот везёт за собой таблицы
+ * пресетов (lib/sharedchunk.test.ts).
  */
 export const nowSecond = (): number => Math.floor(Date.now() / 1000)
 export const pickHrefNow = (): string => pickHref(lastMoodStore.get(), nowSecond())

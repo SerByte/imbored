@@ -28,15 +28,16 @@
  * параметром lang у входа через Steam (loginCarry). next в лендинге и во
  * входе — всегда без языка: язык там — у лендинга и у lang.
  *
- * Импорты — разбор настроения из lib/mood, пресеты комнаты и разбор затравки
- * из lib/presets (у них самих — только такой же чистый lib/i18n) и lib/i18n:
+ * Импорты — разбор настроения из lib/mood, ключи пресетов комнаты и разбор
+ * затравки из lib/playhref (без зависимостей, кроме типов) и lib/i18n:
  * модуль читают и серверные страницы, и клиентский лендинг, и роут возврата
- * из Steam, и proxy.ts.
+ * из Steam, и proxy.ts. Не из lib/presets: ради разбора и ключа сюда ехали
+ * бы все пресеты с подписями на двух языках.
  */
 
 import { DEFAULT_LOCALE, LOCALES, lp, splitLocale, toLocale, type Locale } from './i18n'
 import { parseLean, parseMood } from './mood'
-import { parseGenreParam, parseSeedParam, roomPresetByKey, roomSeedOf } from './presets'
+import { isRoomPresetKey, parseGenreParam, parseSeedParam, roomSeedOf } from './playhref'
 
 /**
  * Места назначения — закрытый список (см. выше). Тексты лендинга к ним — в
@@ -79,12 +80,12 @@ const isDestination = (path: string): path is DestinationPath =>
  *
  * Настроение — все три оси разом или ничего: /play подставляет дефолты по
  * одной, и половина настроения в адресе стала бы словами, которых человек
- * не говорил. Порядок параметров тот же, что у playHref (lib/presets), —
+ * не говорил. Порядок параметров тот же, что у playHref (lib/playhref), —
  * адрес, собранный квизом, проходит сюда без изменений.
  *
  * Затравка «Как «X», но…» (seed) — тоже: гость шёл со страницы игры за
  * похожими на неё, и после входа выдача обязана быть ими, а не обычной.
- * Разбор — parseSeedParam из того же lib/presets: lib/recommend сюда не
+ * Разбор — parseSeedParam из того же lib/playhref: lib/recommend сюда не
  * тянем, модуль читают лендинг и proxy.ts.
  *
  * Жанр (genre) — так же: гость шёл со страницы «Рогалики» за своими
@@ -115,9 +116,10 @@ function playQuery(src: URLSearchParams): URLSearchParams {
 
 /**
  * Что из строки запроса новой комнаты едет через вход: выбранное хостом
- * настроение, ключом пресета (ROOM_PRESETS). Хост выбирал его до того, как
- * его развернуло на вход, и после входа комната создаётся сразу с ним — а не
- * заново с вопросом, на который он уже ответил. Чужой ключ отбрасывается.
+ * настроение, ключом пресета (ROOM_PRESETS; здесь — только их ключи,
+ * ROOM_PRESET_KEYS). Хост выбирал его до того, как его развернуло на вход, и
+ * после входа комната создаётся сразу с ним — а не заново с вопросом, на
+ * который он уже ответил. Чужой ключ отбрасывается.
  *
  * hint — подсказка с /play (roomBridgeHref в lib/presets): точного пресета под
  * настроение выдачи нет, и экран выбора лишь отмечает похожий. Едет через
@@ -126,17 +128,17 @@ function playQuery(src: URLSearchParams): URLSearchParams {
  * подсказку, комната всё равно создастся сразу.
  *
  * game — игра, в которую звали («Позвать в эту игру», roomSeedOf в
- * lib/presets): гость со страницы игры уходит на вход, и после входа комната
+ * lib/playhref): гость со страницы игры уходит на вход, и после входа комната
  * обязана создаться с ней первой картой. Едет рядом с любым из двух ключей —
  * это другой вопрос, не «какой вечер», а «с чего начать».
  */
 function roomQuery(src: URLSearchParams): URLSearchParams {
   const out = new URLSearchParams()
-  const preset = roomPresetByKey(src.get('preset'))
-  const hint = roomPresetByKey(src.get('hint'))
+  const preset = src.get('preset')
+  const hint = src.get('hint')
   const seed = roomSeedOf(src.get('game'))
-  if (preset) out.set('preset', preset.key)
-  else if (hint) out.set('hint', hint.key)
+  if (isRoomPresetKey(preset)) out.set('preset', preset)
+  else if (isRoomPresetKey(hint)) out.set('hint', hint)
   if (seed !== null) out.set('game', String(seed))
   return out
 }

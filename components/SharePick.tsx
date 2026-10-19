@@ -7,7 +7,7 @@ import { ShareLinkField, useShareLink } from '@/components/ShareLink'
 import { StatusLine } from '@/components/StatusLine'
 import { bounceTo } from '@/lib/destination'
 import { lp, tr } from '@/lib/i18n'
-import { pickShareUrl, type PickKind } from '@/lib/sharedpick'
+import { pickShareUrl, type PickKind } from '@/lib/pickurl'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
 type SharePickSource = {

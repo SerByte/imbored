@@ -1,7 +1,7 @@
 import { clip, DESCRIPTION_MAX } from './clip'
 import { PATCH_SINCE_LEADS } from './comeback'
-import { lp, type Locale } from './i18n'
-import { withRef } from './track'
+import type { Locale } from './i18n'
+import { PICK_KINDS, type PickKind } from './pickurl'
 import { CANDIDATE_SOURCES, type CandidateSource } from './types'
 
 /**
@@ -11,6 +11,15 @@ import { CANDIDATE_SOURCES, type CandidateSource } from './types'
  * адрес и тексты для страницы и карточки. Подпись — в lib/pickshare
  * (node:crypto), база — в lib/db.
  */
+
+/*
+ * Адрес выбора и виды выбора — в lib/pickurl: их берёт кнопка «Отправить
+ * другу» на /play и /daily (components/SharePick), и импорт отсюда вёз бы в
+ * первую загрузку обеих регулярки этого модуля и lib/comeback, которые
+ * собираются при загрузке модуля и которые сборщик не выбросит.
+ * Реэкспорт — чтобы прежние импорты из lib/sharedpick работали как были.
+ */
+export { PICK_KINDS, pickShareUrl, type PickKind } from './pickurl'
 
 /** Непрозрачный id — lib/pickshare newPickId */
 export const SHARED_PICK_ID_RE = /^[a-hjkmnp-z2-9]{12}$/
@@ -27,9 +36,6 @@ export const SHARED_PICK_TTL_SEC = 30 * 86_400
  * своим полным сроком (см. findSharedPick).
  */
 export const SHARED_PICK_REUSE_SEC = 86_400
-
-export const PICK_KINDS = ['play', 'daily'] as const
-export type PickKind = (typeof PICK_KINDS)[number]
 
 /**
  * Предложение говорит о деньгах: сумма, скидка, «бесплатная», «цена».
@@ -255,14 +261,6 @@ export function cleanReason(text: string): string {
 export function quoted(text: string, locale: Locale = 'ru'): string {
   if (locale === 'en') return `“${text.replace(/“/g, '‘').replace(/”/g, '’')}”`
   return `«${text.replace(/«/g, '„').replace(/»/g, '“')}»`
-}
-
-/**
- * Адрес выбора с меткой воронки — как roomShareUrl у пати. На 'en' — /en/pick/…:
- * получатель английской ссылки открывает английскую страницу, а не русскую.
- */
-export function pickShareUrl(origin: string, id: string, locale: Locale = 'ru'): string {
-  return withRef(`${origin}${lp(locale, `/pick/${id}`)}`, 'pick')
 }
 
 export type SharedPickView = { name: string; reason: string; kind: PickKind }
