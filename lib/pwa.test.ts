@@ -1,9 +1,19 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import manifest from '../app/manifest'
+import { GET as manifestEn } from '../app/manifest.en.webmanifest/route'
+import { LOCALIZED_SECTIONS, type Locale } from './i18n'
+import { manifestFor, manifestHref } from './manifest'
 import { SITE_DESCRIPTION, SITE_TITLE, siteDescription, siteTitle } from './site'
 import { THEME_COLOR } from './themecolor'
+
+// Корневой layout — ради его generateMetadata: шрифты next/font без
+// компилятора Next не грузятся, а классы шрифтов метаданным не нужны
+vi.mock('next/font/google', () => ({
+  Manrope: () => ({ variable: 'font-manrope' }),
+  JetBrains_Mono: () => ({ variable: 'font-jbmono' }),
+}))
 
 /**
  * Сторож установки на домашний экран.
@@ -73,12 +83,17 @@ describe('манифест', () => {
       expect(fs.existsSync(page), `${s.url}: нет ${path.relative(ROOT, page)}`).toBe(true)
     }
   })
+})
 
-  /**
-   * Требования Chrome к снимкам для окна установки: стороны от 320 до 3840,
-   * длинная не больше чем в 2,3 раза длиннее короткой, sizes совпадает с
-   * файлом. Нарушение не роняет ничего — снимок просто молча не показывается.
-   */
+/**
+ * Требования Chrome к снимкам для окна установки: стороны от 320 до 3840,
+ * длинная не больше чем в 2,3 раза длиннее короткой, sizes совпадает с
+ * файлом. Нарушение не роняет ничего — снимок просто молча не показывается.
+ * У каждого языка снимки свои, и проходить обязан каждый набор.
+ */
+describe.each(['ru', 'en'] as const)('снимки манифеста (%s)', (locale: Locale) => {
+  const m = manifestFor(locale)
+
   test('снимки есть в обеих раскладках и проходят требования Chrome', () => {
     const shots = m.screenshots ?? []
     expect(shots.map((s) => s.form_factor).sort()).toEqual(['narrow', 'wide'])
@@ -94,6 +109,93 @@ describe('манифест', () => {
       expect(s.form_factor === 'narrow' ? height > width : width > height, `${s.src}: раскладка`).toBe(true)
       expect(s.label, `${s.src}: подпись читает скринридер в окне установки`).toBeTruthy()
     }
+  })
+})
+
+/**
+ * Английский манифест. Один манифест на оба языка ставил с /en приложение с
+ * русским именем и описанием, а долгое нажатие на иконку вело в русский сайт.
+ */
+describe('английский манифест', () => {
+  const en = manifestFor('en')
+  const CYR = /[А-Яа-яЁё]/
+
+  test('ни буквы по-русски; имя и описание — те же, что у английского корня', () => {
+    expect(JSON.stringify(en)).not.toMatch(CYR)
+    expect(en.name).toBe(siteTitle('en'))
+    expect(en.description).toBe(siteDescription('en'))
+    expect(en.lang).toBe('en')
+  })
+
+  /*
+   * Свой id: с общим браузер считал бы обе версии одним приложением и
+   * переписывал бы его имя тем манифестом, который видел последним.
+   */
+  test('своё приложение: id и start_url — /en', () => {
+    expect(en.id).toBe('/en')
+    expect(en.start_url).toBe('/en')
+    expect(en.id).not.toBe(manifest().id)
+  })
+
+  test('ярлыки — в английские страницы, имена — как в английской навигации', () => {
+    expect(en.shortcuts?.map((s) => s.url)).toEqual(['/en/quiz', '/en/daily', '/en/rooms'])
+    expect(en.shortcuts?.map((s) => s.name)).toEqual(['Find a game', 'Game of the day', 'Party'])
+    const nav = fs.readFileSync(path.join(ROOT, 'components', 'HeaderNav.tsx'), 'utf8')
+    for (const s of en.shortcuts ?? []) expect(nav, s.name).toContain(`en: '${s.name}'`)
+    const bar = fs.readFileSync(path.join(ROOT, 'components', 'MobileNav.tsx'), 'utf8')
+    for (const s of en.shortcuts ?? []) if (s.short_name) expect(bar, s.short_name).toContain(`en: '${s.short_name}'`)
+  })
+
+  test('снимки — свои, английской главной, а не русские', () => {
+    const ru = new Set((manifest().screenshots ?? []).map((s) => s.src))
+    for (const s of en.screenshots ?? []) expect(ru.has(s.src), s.src).toBe(false)
+  })
+
+  /*
+   * Ответ — как у файлового app/manifest.ts: тот же JSON и тот же тип. Адрес
+   * — в корне, вне разделов: правило beforeFiles его не трогает
+   * (lib/i18nroutes.test.ts сам видит каталоги маршрутов корня).
+   */
+  test('/manifest.en.webmanifest отдаёт его как манифест', async () => {
+    const res = manifestEn()
+    expect(res.headers.get('content-type')).toBe('application/manifest+json')
+    expect(await res.text()).toBe(JSON.stringify(en))
+    expect(manifestHref('en')).toBe('/manifest.en.webmanifest')
+    expect(fs.existsSync(path.join(ROOT, 'app', manifestHref('en').slice(1), 'route.ts'))).toBe(true)
+    expect(LOCALIZED_SECTIONS as readonly string[]).not.toContain(manifestHref('en').slice(1))
+  })
+})
+
+/**
+ * Голова корневого layout на /en: манифест своего языка и подпись корневой
+ * карточки превью (docs/i18n.md, п. 10). Русская голова — как была: ни
+ * манифеста в метаданных (его ставит файловый app/manifest.ts), ни своих
+ * images (карточку и её alt ставит файл).
+ */
+describe('корневые метаданные', () => {
+  const meta = async (lang: Locale) => {
+    const { generateMetadata } = await import('../app/[lang]/layout')
+    return generateMetadata({ params: Promise.resolve({ lang }), children: null })
+  }
+
+  test('на /en — английский манифест и английская подпись карточки', async () => {
+    const { size, contentType } = await import('../app/[lang]/opengraph-image')
+    const m = await meta('en')
+    expect(m.manifest).toBe('/manifest.en.webmanifest')
+    expect(m.openGraph?.images).toEqual([
+      { url: '/en/opengraph-image', width: size.width, height: size.height, type: contentType, alt: siteTitle('en') },
+    ])
+    // twitter:image Next дозаполняет из openGraph сам — своего тут не нужно
+    expect(m.twitter).not.toHaveProperty('images')
+  })
+
+  test('на русском — ни манифеста, ни images: их ставят файлы', async () => {
+    const { alt } = await import('../app/[lang]/opengraph-image')
+    expect(alt).toBe(SITE_TITLE)
+    const m = await meta('ru')
+    expect(m).not.toHaveProperty('manifest')
+    expect(m.openGraph).not.toHaveProperty('images')
+    expect(m.twitter).not.toHaveProperty('images')
   })
 })
 

@@ -15,7 +15,8 @@ import { RefCapture } from '@/components/RefCapture'
 import { SearchLauncher } from '@/components/SearchLauncher'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Wordmark } from '@/components/Wordmark'
-import { htmlLang, isLocale, LOCALES, ogLocale, toLocale, tr } from '@/lib/i18n'
+import { htmlLang, isLocale, LOCALES, ogLocale, toLocale, tr, type Locale } from '@/lib/i18n'
+import { manifestHref } from '@/lib/manifest'
 import { appBaseUrl } from '@/lib/server'
 import { siteDescription, siteTitle } from '@/lib/site'
 import { THEME_COLOR } from '@/lib/themecolor'
@@ -115,6 +116,30 @@ export function generateStaticParams(): Array<{ lang: string }> {
   return LOCALES.map((lang) => ({ lang }))
 }
 
+/**
+ * Корневая карточка превью на /en — та же app/[lang]/opengraph-image.tsx, но
+ * с английской подписью (docs/i18n.md, п. 10).
+ *
+ * alt файловой карточки — константа модуля, одна на оба языка, и она русская:
+ * без этого og:image:alt и twitter:image:alt у каждой английской страницы без
+ * своей карточки (главная, квиз, приватность, поддержка, пати) говорили
+ * «imbored — во что поиграть». images своего уровня Next ставит вместо файла
+ * (mergeStaticMetadata), а twitter:image дозаполняет из openGraph сам.
+ * Русский images не объявляет и получает файловую карточку до байта: адрес с
+ * хешем, размеры и alt — оттуда. Хеша у английского адреса нет — его ставит
+ * только файловая метадата.
+ *
+ * Размеры и тип — копия size и contentType карточки, а не импорт: модуль
+ * карточки тянет next/og и шрифты в рендер каждой страницы. Совпадение
+ * сторожит lib/pwa.test.ts.
+ */
+function rootCard(locale: Locale): Pick<NonNullable<Metadata['openGraph']>, 'images'> {
+  if (locale !== 'en') return {}
+  return {
+    images: [{ url: '/en/opengraph-image', width: 1200, height: 630, type: 'image/png', alt: siteTitle('en') }],
+  }
+}
+
 export async function generateMetadata({ params }: LayoutProps<'/[lang]'>): Promise<Metadata> {
   const locale = toLocale((await params).lang)
   return {
@@ -137,9 +162,10 @@ export async function generateMetadata({ params }: LayoutProps<'/[lang]'>): Prom
      * сервиса, ни языка, ни типа. Telegram и Discord в таком случае показывают
      * голый домен вместо названия продукта.
      *
-     * Картинку сюда НЕ пишем: её даёт app/[lang]/opengraph-image.tsx, а файловая
-     * метадата приоритетнее объекта metadata (см. docs/generate-metadata) — то
-     * есть строка здесь была бы мёртвой и вводила бы в заблуждение при чтении.
+     * Картинку русскому сюда НЕ пишем: её даёт app/[lang]/opengraph-image.tsx.
+     * Английскому — та же карточка с английской подписью (rootCard выше):
+     * images своего уровня Next ставит вместо файла, так что строка не
+     * мёртвая, а заменяет русский alt файла.
      *
      * title/description намеренно не дублируются: Next подставляет в openGraph
      * те же значения, что и в обычные теги, когда они не заданы отдельно, — и
@@ -156,10 +182,18 @@ export async function generateMetadata({ params }: LayoutProps<'/[lang]'>): Prom
       type: 'website',
       siteName: 'imbored',
       locale: ogLocale(locale),
+      ...rootCard(locale),
     },
     twitter: {
       card: 'summary_large_image',
     },
+    /*
+     * Манифест на языке страницы: английский — свой файл с английским
+     * именем, ярлыками в /en и start_url /en (lib/manifest.ts). Русский здесь
+     * не объявляется: его ставит файловый app/manifest.ts, и русская голова
+     * не меняется ни на байт.
+     */
+    ...(locale === 'en' ? { manifest: manifestHref('en') } : {}),
   }
 }
 
@@ -182,8 +216,9 @@ export default async function RootLayout({ children, params }: LayoutProps<'/[la
    * Язык — из сегмента, а не из кук и заголовков: layout обязан остаться
    * статическим (см. Backstage ниже). Чужой сегмент сюда почти не доезжает:
    * адрес вне разделов (/xyz, /xx/play) rewrites уводят в статическую 404
-   * русской ветки, а /api/… — в свою JSON-404 (lib/i18nroutes.ts,
-   * app/api/[...missing]). Проверка — страховка: dynamicParams в корне не
+   * /_not-found, а /api/… — в свою JSON-404 (lib/i18nroutes.ts,
+   * app/api/[...missing]). /_not-found рисует этот же layout с языком 'ru'
+   * (app/global-not-found.tsx). Проверка — страховка: dynamicParams в корне не
    * выключен (см. generateStaticParams), и без неё мусорный адрес мог бы
    * отрисовать русскую страницу с кодом 200.
    */
