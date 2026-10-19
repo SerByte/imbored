@@ -42,9 +42,18 @@ describe('островки /play на /en', () => {
     const html = under('en', warmup())
     expect(html).not.toMatch(CYRILLIC)
     expect(html).toContain('One of 1,204')
-    expect(html).toContain('% read')
+    // Подпись кольца — «done»: одно «read» под числом читалось глаголом
+    expect(html).toContain('% done')
+    expect(html).toContain('>done</span>')
+    expect(html).not.toContain('% read')
     expect(html).toContain('in your library')
-    expect(html).toContain('of them you&#x27;ve never launched')
+    // «87 never launched» под «1,204 games in your library» — без кальки
+    // русского порядка «of them you've never launched»
+    expect(html).toMatch(/>87<\/span> never launched</)
+    expect(html).not.toContain('of them')
+    // Колонка во всю ширину: абсолютная строка статуса не берёт ширину у
+    // короткой «87 never launched» и не переносится
+    expect(html).toContain('class="warmup-ui relative flex flex-col items-center gap-7 w-full"')
   })
 
   test('экран ожидания при скрытом времени — строка о настройках Steam', () => {
@@ -66,6 +75,8 @@ describe('островки /play на /en', () => {
       expect(html).toContain('разобрано')
       expect(html).toContain('в библиотеке')
       expect(html).toContain('из них ты не открывал ни разу')
+      // Русская разметка колонки — прежняя до байта
+      expect(html).toContain('class="warmup-ui relative flex flex-col items-center gap-7"')
     }
   })
 
