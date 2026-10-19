@@ -11,7 +11,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { createDb, type Db } from '../lib/db'
+import { createDb, russianNamedGames, type Db } from '../lib/db'
 import { openCloud } from './opendb'
 
 function arg(name: string): string | undefined {
@@ -49,6 +49,11 @@ async function main() {
   console.log('строк тегов:     ', Number(t.tags).toLocaleString('ru-RU'))
   console.log('отсеяно живостью:', Number(t.dead))
   console.log('устаревших версий:', Number(t.old))
+  // Русское название в name без второго: строки до раскладки названий по
+  // колонкам (НАЗВАНИЕ в lib/db). На /en они идут русскими в <title> и og.
+  // Чинит npm run catalog:repair-names; часть из них — игры без английского
+  // названия вовсе, их скрипт называет отдельно и не трогает
+  console.log('русских названий без второго:', (await russianNamedGames(db)).length)
 
   const reasons = await db.execute(
     'SELECT dead_reason AS r, COUNT(*) AS n FROM games WHERE dead_reason IS NOT NULL GROUP BY r ORDER BY n DESC',

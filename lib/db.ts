@@ -3473,8 +3473,13 @@ export function keepRussianSql(col: string): string {
  * Различаем по букве (lib/cyrillic): русское к латинскому — латинское
  * остаётся, русское встаёт вторым; латинское к русскому — то же самое, но
  * русское в name было от прежней карточки, и оно уходит во второе. Так
- * строки, испорченные до этой правки, лечатся первой же английской записью —
- * прогревом или заливкой каталога, — без отдельного прохода по Steam.
+ * строки, испорченные до этой правки, лечатся первой же английской записью.
+ * Только ждать её пришлось бы долго: прогрев переписывает игру, лишь когда
+ * она протухла в чьей-то библиотеке, а заливка каталога пишет новые игры. На
+ * проде через неделю после правки русскими так и стояли 80 названий, и
+ * вылечено было одно, — поэтому та же английская запись есть и отдельным
+ * проходом: npm run catalog:repair-names (repairRussianNames в lib/catalog,
+ * отбор — russianNamedGames ниже). Счёт таких строк — в catalog:report.
  *
  * Русское к русскому — обычная замена: у игры нет английского названия
  * вовсе («ЕСТЬ ДВА СТУЛА», «Скуф на рыбалке» — магазин и по-английски зовёт
@@ -3537,6 +3542,39 @@ export function nameRuSql(): string {
 function ruStoreNameRuSql(): string {
   const latinAnswer = `NOT ${cyrillicName('excluded.name')} AND excluded.name IS NOT ('App ' || excluded.appid)`
   return `CASE WHEN ${latinAnswer} THEN NULL ELSE ${nameRuSql()} END`
+}
+
+/**
+ * Игры, у которых в name лежит русское название, а второго, name_ru, нет, —
+ * верх каталога первым.
+ *
+ * Это строки, испорченные до раскладки названий по колонкам (НАЗВАНИЕ выше):
+ * карточка (appdetails, l=russian) клала русское имя магазина поверх
+ * английского, а лечит такую строку только английская запись. Прогрев
+ * доходит до неё, лишь когда игра протухла в чьей-то библиотеке, а заливка
+ * каталога пишет только новые игры, — и на проде к 19.10.2026 так стояли 80
+ * игр из 5921: «Ведьмак 3: Дикая Охота — Обновлённое издание» (28-я по
+ * отзывам), «Одни из нас™: Часть I», «God of War Рагнарёк». На /en они
+ * шли русскими в <title>, og и JSON-LD, где пометить язык нечем, а
+ * английский поиск не находил «witcher 3» и «last of us».
+ *
+ * Сюда же попадают игры, у которых английского названия нет вовсе («ЕСТЬ ДВА
+ * СТУЛА», «Скуф на рыбалке») — это данные, и их отличает только ответ
+ * магазина по-английски (repairRussianNames в lib/catalog). Отрицательные
+ * appid — пул других магазинов, Steam о них не знает.
+ */
+export async function russianNamedGames(db: Db, limit = 10_000): Promise<Array<{ appid: number; name: string }>> {
+  const res = await db.execute({
+    sql: `SELECT appid, name FROM games
+          WHERE ${cyrillicName('name')} AND name_ru IS NULL AND appid > 0
+          ORDER BY COALESCE(reviews_total, 0) DESC, appid
+          LIMIT ?`,
+    args: [limit],
+  })
+  return (res.rows as unknown as Array<{ appid: number; name: string }>).map((r) => ({
+    appid: Number(r.appid),
+    name: String(r.name),
+  }))
 }
 
 /** Откуда у записи название — см. upsertGameMeta */
