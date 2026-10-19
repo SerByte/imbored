@@ -65,7 +65,27 @@ export async function generateMetadata({ params }: Params, parent: ResolvingMeta
   const { appid, lang } = await params
   const locale = toLocale(lang)
   const archive = await loadArchive(appid, locale)
-  if (!archive) return {}
+  /*
+   * 404 (архив — только у игры с патчами): голову такой 404 браузер берёт из
+   * этого ответа, и пустой объект оставлял на /en русский alt унаследованной
+   * карточки игры. Та же карточка с английским alt, что у найденного архива
+   * ниже, — как у 404 самой игры (missingMeta в ../page.tsx). Русская 404 —
+   * пустой объект, как была.
+   */
+  if (!archive) {
+    if (locale !== 'en') return {}
+    const images = (await parent).openGraph?.images?.map((img) =>
+      typeof img === 'object' && !(img instanceof URL) ? { ...img, alt: EN_CARD_ALT } : img,
+    )
+    return {
+      openGraph: {
+        ...ogSite(locale),
+        type: 'website',
+        url: lp(locale, `/game/${encodeURIComponent(appid)}/news`),
+        ...(images?.length ? { images } : {}),
+      },
+    }
+  }
   const { game, items } = archive
   const title = archiveTitleOn(game.name, locale)
   const description = archiveDescriptionOn(game.name, items, locale)

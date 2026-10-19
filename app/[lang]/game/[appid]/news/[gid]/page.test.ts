@@ -426,6 +426,39 @@ describe('карточка патча в чате', () => {
     expect(meta.openGraph).not.toHaveProperty('images')
     expect(meta.twitter).not.toHaveProperty('images')
   })
+
+  /*
+   * 404 (нет такого поста, не патч, кривой адрес): голову такой 404 браузер
+   * берёт из generateMetadata страницы, и пустой объект оставлял на /en
+   * русский alt файловой карточки. На /en — та же карточка с английским alt,
+   * на русской — пустой объект, как был.
+   */
+  test('нет такого патча: на /en — карточка с английским alt, на русской — пустой объект', async () => {
+    await render()
+    const { size, contentType } = await import('./opengraph-image')
+    for (const [appid, gid] of [[String(APPID), '1'], [String(APPID), 'nope'], ['abc', GID]]) {
+      const missing = await generateMetadata({ params: Promise.resolve({ appid, gid, lang: 'en' }) })
+      // только openGraph: заголовок, описание и noindex 404 — корневые, как были
+      expect(Object.keys(missing), gid).toEqual(['openGraph'])
+      expect(missing.openGraph, gid).toEqual({
+        siteName: 'imbored',
+        locale: 'en_US',
+        type: 'website',
+        url: `/en/game/${appid}/news/${gid}`,
+        images: [
+          {
+            url: `/en/game/${appid}/news/${gid}/opengraph-image`,
+            width: size.width,
+            height: size.height,
+            type: contentType,
+            alt: 'What changed in this patch — imbored',
+          },
+        ],
+      })
+      expect(JSON.stringify(missing)).not.toMatch(/[А-Яа-яЁё]/)
+      expect(await generateMetadata({ params: Promise.resolve({ appid, gid }) }), gid).toEqual({})
+    }
+  })
 })
 
 /*

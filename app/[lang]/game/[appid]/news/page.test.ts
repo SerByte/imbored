@@ -269,10 +269,27 @@ describe('архив обновлений игры на /en', () => {
     ])
   })
 
-  test('нет патчей — 404 и на английском', async () => {
+  /*
+   * Голову 404 браузер берёт из generateMetadata страницы: пустой объект
+   * оставлял на /en русский alt унаследованной карточки игры. Русская 404 —
+   * пустой объект, как была (тест «нет патчей, нет игры…» выше).
+   */
+  test('нет патчей — 404 и на английском, с карточкой игры под английским alt', async () => {
     await seed([patch('sale', 1, { kind: 'news' })], [])
     await expect(PatchArchivePage(params(undefined, 'en'))).rejects.toThrow()
-    expect(await meta(undefined, 'en')).toEqual({})
+    for (const appid of [String(APPID), '570', 'abc']) {
+      const missing = await meta(appid, 'en')
+      // только openGraph: заголовок, описание и noindex 404 — корневые, как были
+      expect(Object.keys(missing), appid).toEqual(['openGraph'])
+      expect(missing.openGraph, appid).toEqual({
+        siteName: 'imbored',
+        locale: 'en_US',
+        type: 'website',
+        url: `/en/game/${appid}/news`,
+        images: [{ url: 'https://imbored.cc/game/730/opengraph-image', alt: 'Is it worth playing? — imbored' }],
+      })
+      expect(JSON.stringify(missing)).not.toMatch(CYRILLIC)
+    }
   })
 
   test('путь над заголовком — ориентир «Breadcrumb», как у страницы жанра', async () => {
