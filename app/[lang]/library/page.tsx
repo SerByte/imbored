@@ -60,6 +60,7 @@ import { ShelfToStart } from '@/components/ShelfToStart'
 import { StatusLine } from '@/components/StatusLine'
 import { dateLabel } from '@/lib/freshness'
 import { storeUrlFor } from '@/lib/gamedesc'
+import { withForeignRuns } from '@/lib/textlang'
 import {
   askableNow,
   eveningPlayed,
@@ -969,20 +970,30 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
           стена сменилась, а скринридеру без этой строки поиск молчал бы —
           сработал ли и сколько нашлось. Строка та же, а не вторая рядом:
           обе — ответ на один запрос, и переход «нашлись три» → «ничего»
-          звучит сменой текста. */}
+          звучит сменой текста.
+
+          Запрос в строке — текст человека, а не наш: на /en русский запрос
+          («ведьмак») своим <span lang="ru">, как ник и название игры
+          (withForeignRuns), иначе английский голос читал бы его по буквам.
+          Фраза при этом остаётся одним шаблоном tr() — во всех трёх ветках
+          сразу; на русской странице — та же строка, как была. */}
       <StatusLine
         className={q && found.games.length === 0 ? 'text-dim text-sm' : 'sr-only'}
         text={
           !q
             ? null
-            : found.games.length > 0
-              ? foundLine(locale, q, found.games.length, view.filter !== 'all')
-              : view.filter === 'all' || found.counts.all === 0
-                ? tr(locale, { ru: `Ничего не нашлось по «${q}».`, en: `Nothing found for “${q}”.` })
-                : tr(locale, {
-                    ru: `На этой полке «${q}» нет — поищи на соседних: счётчики на чипсах показывают, где.`,
-                    en: `No “${q}” on this shelf — try the others: the numbers on the filters show where.`,
-                  })
+            : withForeignRuns(
+                locale,
+                found.games.length > 0
+                  ? foundLine(locale, q, found.games.length, view.filter !== 'all')
+                  : view.filter === 'all' || found.counts.all === 0
+                    ? tr(locale, { ru: `Ничего не нашлось по «${q}».`, en: `Nothing found for “${q}”.` })
+                    : tr(locale, {
+                        ru: `На этой полке «${q}» нет — поищи на соседних: счётчики на чипсах показывают, где.`,
+                        en: `No “${q}” on this shelf — try the others: the numbers on the filters show where.`,
+                      }),
+                [q],
+              )
         }
       />
       {q && found.games.length === 0 && (

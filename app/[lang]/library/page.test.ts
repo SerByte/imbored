@@ -8,6 +8,7 @@ import { GameCardBody } from '@/components/GameCard'
 import { LikedShelf } from '@/components/LikedShelf'
 import { NeedSteam } from '@/components/NeedSteam'
 import { SignOut } from '@/components/SignOut'
+import { StatusLine } from '@/components/StatusLine'
 import {
   issueFeedLink,
   logFeedback,
@@ -504,5 +505,80 @@ describe('/library на /en', () => {
       description: 'Вся твоя Steam-библиотека одной стеной: что заброшено, что ни разу не запускалось и сколько это стоило.',
     })
     expect(await meta('ru')).toEqual(await meta())
+  })
+})
+
+/**
+ * Строка поиска (StatusLine) повторяет запрос человека, а запрос — его текст,
+ * не наш. Аудитория по большей части русскоязычная, и русский запрос на
+ * /en/library — частый случай: без пометки английский голос скринридера читал
+ * бы «ведьмак» по буквам, а прогон i18n-audit видел бы кириллицу вне
+ * [lang=ru]. Поэтому на /en русский запрос — своим <span lang="ru">, во всех
+ * трёх ветках строки (нашлось, ничего, нет на этой полке), а фраза — одним
+ * шаблоном. Латинский запрос и русская страница — прежняя строка одним
+ * текстовым узлом.
+ */
+describe('/library: запрос в строке поиска', () => {
+  /** Библиотека не меньше SEARCH_FROM: только над такой стоит поиск */
+  const SHELF: Array<{ appid: number; name: string; minutes: number }> = [
+    { appid: 501, name: 'Ведьмак 3', minutes: 600 },
+    { appid: 502, name: 'Гамма', minutes: 600 },
+    ...Array.from({ length: 10 }, (_, i) => ({ appid: 510 + i, name: `Puzzle ${i + 1}`, minutes: 0 })),
+  ]
+
+  beforeEach(async () => {
+    const steamid = await signInAs(db, 'demo')
+    const now = nowSec()
+    await upsertGamesMeta(
+      db,
+      SHELF.map((g) => ({
+        appid: g.appid,
+        name: g.name,
+        tags: { Puzzle: 100 },
+        genres: [],
+        categories: [2],
+        headerImage: `https://cdn.example/${g.appid}.jpg`,
+      })),
+      now,
+    )
+    await saveLibrarySnapshot(
+      db,
+      steamid,
+      SHELF.map((g) => ({ appid: g.appid, name: g.name, playtimeForever: g.minutes, playtime2Weeks: 0 })),
+      now - 3600,
+    )
+  })
+
+  async function statusOf(q: string, opts: { lang?: string; state?: string } = {}) {
+    const tree = await LibraryPage({
+      params: Promise.resolve(opts.lang ? { lang: opts.lang } : {}),
+      searchParams: Promise.resolve({ q, ...(opts.state ? { state: opts.state } : {}) }),
+    } as PageProps<'/[lang]/library'>)
+    const lines = propsOf(tree, StatusLine)
+    expect(lines).toHaveLength(1)
+    const props = lines[0] as Parameters<typeof StatusLine>[0]
+    return { text: props.text, html: renderToStaticMarkup(StatusLine(props)) }
+  }
+
+  test('на /en русский запрос — своим lang="ru" во всех трёх ветках', async () => {
+    expect((await statusOf('дота', { lang: 'en' })).html).toBe(
+      '<p role="status" class="text-dim text-sm">Nothing found for “<span lang="ru">дота</span>”.</p>',
+    )
+    // «Ведьмак 3» сыгран — на полке нераспакованного его нет, но в библиотеке есть
+    expect((await statusOf('ведьмак', { lang: 'en', state: 'untouched' })).html).toBe(
+      '<p role="status" class="text-dim text-sm">No “<span lang="ru">ведьмак</span>” on this shelf — try the others: the numbers on the filters show where.</p>',
+    )
+    expect((await statusOf('гамма', { lang: 'en' })).html).toBe(
+      '<p role="status" class="sr-only">Found 1 game for “<span lang="ru">гамма</span>”.</p>',
+    )
+  })
+
+  test('латинский запрос на /en и русская страница — прежняя строка одним текстовым узлом', async () => {
+    expect((await statusOf('puzzle', { lang: 'en' })).text).toBe('Found 10 games for “puzzle”.')
+    expect((await statusOf('дота')).text).toBe('Ничего не нашлось по «дота».')
+    expect((await statusOf('ведьмак', { state: 'untouched' })).text).toBe(
+      'На этой полке «ведьмак» нет — поищи на соседних: счётчики на чипсах показывают, где.',
+    )
+    expect((await statusOf('гамма')).text).toBe('По «гамма» нашлась 1 игра.')
   })
 })
