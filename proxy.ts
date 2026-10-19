@@ -1,5 +1,6 @@
-import { NextResponse, type NextRequest } from 'next/server'
+import { NextResponse, type NextRequest, type ProxyConfig } from 'next/server'
 import { guestBounce } from '@/lib/destination'
+import { homeLocaleFor } from '@/lib/homelocale'
 import { appBaseUrl, isSafeMethod, sameOrigin } from '@/lib/origin'
 import { SESSION_COOKIE } from '@/lib/session'
 
@@ -8,7 +9,7 @@ import { SESSION_COOKIE } from '@/lib/session'
  * называется proxy.ts, см. node_modules/next/dist/docs/01-app/03-api-reference/
  * 03-file-conventions/proxy.md).
  *
- * Правил два.
+ * Правил три.
  *
  * Первое: всё, что меняет состояние в /api, принимается только с нашей же
  * страницы. Сверка Origin у Next встроена лишь в Server Actions, а route
@@ -28,12 +29,47 @@ import { SESSION_COOKIE } from '@/lib/session'
  * страницу с мета-обновлением и статусом 200. Почему это нельзя сделать в
  * самой странице — в докблоке GUEST_BOUNCE.
  *
- * Язык главной — не здесь: «/» уводят на /en правила redirects из
- * next.config, без функции (lib/homelocale.ts). Прокси на «/» будил бы
- * функцию на каждом входе и каждом префетче логотипа.
+ * Третье: язык главной при первом входе. Гостя без выбора языка «/»
+ * уводит на /en, если он не из СНГ и его браузер не ставит русский выше
+ * английского; краулер остаётся на русской главной. Решает homeLocaleFor
+ * (lib/homelocale.ts), там же весь порядок. Куку lang=en проверяет не
+ * прокси, а правило redirects из next.config — оно и с сессией, и без
+ * функции.
+ *
+ * Почему в прокси, а не правилом next.config, как было: страна. Её Vercel
+ * определяет по IP и кладёт в заголовок x-vercel-ip-country, и этот
+ * заголовок документирован для функций и middleware (прокси — бывший
+ * middleware). Что CDN подставит его и в условия has правила, до функции,
+ * документация не обещает, а правило, которое молча не сработает, увело бы
+ * на /en весь СНГ с английским браузером. И порядок — краулер, страна,
+ * браузер — читается функцией с тестом, а не тремя регулярками в has и
+ * missing.
+ *
+ * Почему matcher с has/missing (config ниже), а не просто «/». Главная —
+ * статика с CDN (bundle-budget.json, static), и «/» просят все, кто входит
+ * на сайт, и префетч ссылки-логотипа в шапке на каждой странице. Прокси на
+ * голом «/» будил бы функцию на каждом таком запросе ради ответа
+ * «оставайся». Условия has и missing CDN Vercel проверяет сам, до функции,
+ * и прокси просыпается только на первом входе: документ (Sec-Fetch-Dest:
+ * document — без него ходят краулеры и скрипты), без куки lang (выбор уже
+ * сделан: lang=en увело правило конфига, lang=ru — остаться), без сессии
+ * (вошедшие до английской версии входили на русском — докблок
+ * lib/homelocale.ts), не запрос роутера (RSC, префетч) и не переход со своей
+ * страницы (Sec-Fetch-Site: same-origin). Остальные просмотры «/» идут мимо
+ * функции, как и шли.
  */
 export function proxy(req: NextRequest) {
   if (isSafeMethod(req.method)) {
+    if (req.nextUrl.pathname === '/') {
+      const to = homeLocaleFor({
+        acceptLanguage: req.headers.get('accept-language'),
+        country: req.headers.get('x-vercel-ip-country'),
+        userAgent: req.headers.get('user-agent'),
+      })
+      // 307 и строка запроса с собой: /?next=%2Fplay → /en?next=%2Fplay.
+      // От адреса запроса, а не от appBaseUrl — как у гостя ниже
+      if (to === 'en') return NextResponse.redirect(new URL('/en' + req.nextUrl.search, req.url), 307)
+    }
     // Пустое значение — это кука, которую выход только что погасил
     const bounce = guestBounce(req.nextUrl.pathname, Boolean(req.cookies.get(SESSION_COOKIE)?.value))
     // От адреса запроса, а не от appBaseUrl: на превью гость должен остаться
@@ -56,7 +92,32 @@ export function proxy(req: NextRequest) {
  * Хабы — точными адресами: так matcher и понимает строку без :path*, и
  * личные /compat/<steamid> и /portrait/<steamid> прокси не будят вовсе.
  * Список обязан совпадать с GUEST_BOUNCE — это стережёт lib/origin.test.ts.
+ *
+ * «/» — только первым входом (почему — в докблоке proxy выше). Значения
+ * matcher Next читает статическим разбором на сборке, и константа из модуля
+ * там проигнорировалась бы молча — поэтому 'lang' и 'imbored_session'
+ * записаны строками. Что они равны LANG_COOKIE и SESSION_COOKIE, стережёт
+ * lib/homelocale.test.ts.
  */
 export const config = {
-  matcher: ['/api/:path*', '/library', '/compat', '/portrait', '/en/library', '/en/compat', '/en/portrait'],
-}
+  matcher: [
+    '/api/:path*',
+    '/library',
+    '/compat',
+    '/portrait',
+    '/en/library',
+    '/en/compat',
+    '/en/portrait',
+    {
+      source: '/',
+      has: [{ type: 'header', key: 'sec-fetch-dest', value: 'document' }],
+      missing: [
+        { type: 'cookie', key: 'lang' },
+        { type: 'cookie', key: 'imbored_session' },
+        { type: 'header', key: 'rsc' },
+        { type: 'header', key: 'next-router-prefetch' },
+        { type: 'header', key: 'sec-fetch-site', value: 'same-origin' },
+      ],
+    },
+  ],
+} satisfies ProxyConfig

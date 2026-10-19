@@ -262,46 +262,59 @@ describe('alternates — canonical и hreflang', () => {
   })
 })
 
-describe('preferredLocale — что показать на «/»', () => {
+describe('preferredLocale — какой из двух языков браузер читает охотнее', () => {
   test('кука важнее браузера в обе стороны', () => {
     expect(preferredLocale({ cookie: 'ru', acceptLanguage: 'en-US,en;q=0.9' })).toBe('ru')
     expect(preferredLocale({ cookie: 'en', acceptLanguage: 'ru-RU,ru;q=0.9' })).toBe('en')
     expect(preferredLocale({ cookie: 'en' })).toBe('en')
+    expect(preferredLocale({ cookie: 'ru' })).toBe('ru')
   })
 
   test('мусорная кука — как её нет', () => {
     expect(preferredLocale({ cookie: 'de', acceptLanguage: 'en-US,en;q=0.9' })).toBe('en')
-    expect(preferredLocale({ cookie: '', acceptLanguage: 'ru' })).toBe(null)
+    expect(preferredLocale({ cookie: '', acceptLanguage: 'ru' })).toBe('ru')
+    expect(preferredLocale({ cookie: 'de' })).toBe(null)
   })
 
-  test('без заголовка — null: краулер получает русскую главную', () => {
+  test('без заголовка — null: так ходят краулеры и скрипты', () => {
     expect(preferredLocale({})).toBe(null)
     expect(preferredLocale({ acceptLanguage: null, cookie: null })).toBe(null)
     expect(preferredLocale({ acceptLanguage: '' })).toBe(null)
   })
 
-  test('английский — только выше русского', () => {
+  test('английский выше русского — en, русский выше английского — ru', () => {
     expect(preferredLocale({ acceptLanguage: 'en-US,en;q=0.9' })).toBe('en')
     expect(preferredLocale({ acceptLanguage: 'en-US,en;q=0.9,ru;q=0.8' })).toBe('en')
-    expect(preferredLocale({ acceptLanguage: 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7' })).toBe(null)
-    expect(preferredLocale({ acceptLanguage: 'ru' })).toBe(null)
+    expect(preferredLocale({ acceptLanguage: 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7' })).toBe('ru')
+    expect(preferredLocale({ acceptLanguage: 'ru-RU,ru;q=0.9,en;q=0.8' })).toBe('ru')
     expect(preferredLocale({ acceptLanguage: 'ru;q=0.5,en;q=0.9' })).toBe('en')
+    expect(preferredLocale({ acceptLanguage: 'en;q=0.5,ru;q=0.9' })).toBe('ru')
+    // украинский браузер: русский выше английского — ru, только английский — en
+    expect(preferredLocale({ acceptLanguage: 'uk-UA,uk;q=0.9,ru;q=0.8,en;q=0.7' })).toBe('ru')
+    expect(preferredLocale({ acceptLanguage: 'uk-UA,uk;q=0.9,en;q=0.8' })).toBe('en')
   })
 
   test('равный q — решает порядок', () => {
     expect(preferredLocale({ acceptLanguage: 'en,ru' })).toBe('en')
-    expect(preferredLocale({ acceptLanguage: 'ru,en' })).toBe(null)
+    expect(preferredLocale({ acceptLanguage: 'ru,en' })).toBe('ru')
   })
 
-  test('английский без русского — английский; ни того ни другого — null', () => {
+  test('один из двух без другого — он; ни того ни другого — null', () => {
+    expect(preferredLocale({ acceptLanguage: 'ru' })).toBe('ru')
+    expect(preferredLocale({ acceptLanguage: 'kk-KZ,kk;q=0.9,ru;q=0.8' })).toBe('ru')
     expect(preferredLocale({ acceptLanguage: 'de-DE,de;q=0.9,en;q=0.8' })).toBe('en')
     expect(preferredLocale({ acceptLanguage: 'de-DE,de;q=0.9' })).toBe(null)
+    expect(preferredLocale({ acceptLanguage: 'zh-CN,zh;q=0.9' })).toBe(null)
     expect(preferredLocale({ acceptLanguage: '*' })).toBe(null)
   })
 
   test('q=0 — «не надо», регистр и пробелы не в счёт', () => {
     expect(preferredLocale({ acceptLanguage: 'en;q=0' })).toBe(null)
+    expect(preferredLocale({ acceptLanguage: 'ru;q=0' })).toBe(null)
+    expect(preferredLocale({ acceptLanguage: 'ru;q=0,en;q=0.5' })).toBe('en')
+    expect(preferredLocale({ acceptLanguage: 'en;q=0,ru;q=0.5' })).toBe('ru')
     expect(preferredLocale({ acceptLanguage: ' EN-gb ; q=0.7 , ru ; q=0.6' })).toBe('en')
+    expect(preferredLocale({ acceptLanguage: ' RU-ru ; q=0.7 , en ; q=0.6' })).toBe('ru')
     expect(preferredLocale({ acceptLanguage: 'en;q=abc,ru;q=0.9' })).toBe('en')
   })
 })

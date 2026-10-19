@@ -123,13 +123,17 @@ describe('proxy.ts', () => {
   })
 
   test('прокси стоит на всём /api и на хабах обоих языков, остальные страницы не трогает', () => {
-    expect(config.matcher).toEqual(['/api/:path*', ...GUEST_BOUNCE])
+    // строки — /api и хабы; единственная запись-объект — первый вход на «/»
+    // (её условия стережёт lib/homelocale.test.ts)
+    expect(config.matcher.filter((m) => typeof m === 'string')).toEqual(['/api/:path*', ...GUEST_BOUNCE])
+    expect(config.matcher.filter((m) => typeof m !== 'string').map((m) => m.source)).toEqual(['/'])
     expect(GUEST_BOUNCE).toEqual(['/library', '/compat', '/portrait', '/en/library', '/en/compat', '/en/portrait'])
     for (const url of ['/api/connect', '/api/auth/logout', '/api/room/ABC123/vote', ...GUEST_BOUNCE]) {
       expect(unstable_doesMiddlewareMatch({ config, url }), url).toBe(true)
     }
     // личные страницы по ссылке из чата прокси не будят вовсе, а главную —
-    // ни вход, ни префетч логотипа: язык «/» решают redirects (lib/homelocale.ts)
+    // без заголовков документа (префетч логотипа, краулер, скрипт) тоже:
+    // прокси на «/» — только первый вход браузера (lib/homelocale.ts)
     for (const url of [
       '/',
       '/?next=%2Fplay',

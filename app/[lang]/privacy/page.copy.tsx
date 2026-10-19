@@ -346,9 +346,10 @@ const RU: PolicyCopy = {
           {/* Кука lang (LANG_COOKIE в lib/i18n.ts): пишут переключатель
               «RU / EN» в подвале (components/LocaleSwitch) и вход с
               английской версии (app/api/auth/steam/return,
-              components/landing/ConnectCard), читают правила «/» в
-              next.config (lib/homelocale.ts). clearDeviceCookies её не
-              гасит: она про браузер, а не про человека, — как тема */}
+              components/landing/ConnectCard), читают правило «/» в
+              next.config и matcher прокси (lib/homelocale.ts).
+              clearDeviceCookies её не гасит: она про браузер, а не про
+              человека, — как тема */}
           <p>
             Четвёртая cookie — язык сайта, только «ru» или «en». Она появляется, если переключить
             язык внизу страницы или войти с английской версии, и нужна, чтобы главная открывалась

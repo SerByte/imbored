@@ -19,8 +19,9 @@ import { LANG_COOKIE, LANG_COOKIE_MAX_AGE_SEC, LOCALES, switchLocaleHref, tr, ty
  * корневой layout (<html lang>), и всё, что клиент закэшировал по-русски,
  * начинает заново.
  *
- * Нажатие пишет куку lang: явный выбор человека важнее языка браузера, и
- * правила «/» в next.config ведут по ней, а не по Accept-Language
+ * Нажатие пишет куку lang: явный выбор человека важнее страны и языка
+ * браузера, и «/» ведёт по ней, а не по Accept-Language: lang=en уводит
+ * правило next.config, а с любой кукой lang прокси на «/» не будится
  * (lib/homelocale.ts). Год, Lax, на весь сайт.
  *
  * Строка запроса едет с адресом — с выдачи /play?time=… человек попадает на
@@ -34,7 +35,7 @@ const NAME: Record<Locale, string> = { ru: 'Русский', en: 'English' }
 const SHORT: Record<Locale, string> = { ru: 'RU', en: 'EN' }
 
 /**
- * Запомнить выбор: кука, которую читают правила «/» в next.config. doc — ради теста.
+ * Запомнить выбор: кука, по которой «/» выбирает язык (lib/homelocale.ts). doc — ради теста.
  * Зовёт и лендинг после входа с английской версии (components/landing/ConnectCard).
  */
 export function rememberLocale(target: Locale, doc: { cookie: string } = document): void {

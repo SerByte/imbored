@@ -172,9 +172,10 @@ export async function GET(req: NextRequest) {
     // Куда человек шёл до разворота на лендинг; список закрытый —
     // произвольный адрес сюда не попадёт (см. lib/destination.ts).
     const res = redirect(`${base}${lp(locale, loginTarget(params))}`)
-    // Вошёл с английской версии — и «/» дальше ведёт на неё: с сессией язык
-    // браузера главную не меняет (lib/homelocale.ts), решает кука. Та же
-    // кука, что пишет переключатель в подвале (components/LocaleSwitch)
+    // Вошёл с английской версии — и «/» дальше ведёт на неё: с сессией ни
+    // страна, ни язык браузера главную не меняют (lib/homelocale.ts), решает
+    // кука. Та же кука, что пишет переключатель в подвале
+    // (components/LocaleSwitch)
     if (locale !== 'ru') {
       res.cookies.set(LANG_COOKIE, locale, { path: '/', maxAge: LANG_COOKIE_MAX_AGE_SEC, sameSite: 'lax' })
     }

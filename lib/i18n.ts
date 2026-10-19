@@ -16,7 +16,7 @@ export const LOCALES = ['ru', 'en'] as const
 export type Locale = (typeof LOCALES)[number]
 export const DEFAULT_LOCALE: Locale = 'ru'
 
-/** Явный выбор человека в переключателе (components/LocaleSwitch.tsx). Читают его правила «/» в next.config (lib/homelocale.ts). */
+/** Явный выбор человека в переключателе (components/LocaleSwitch.tsx). По нему «/» выбирает язык: правило next.config и matcher прокси (lib/homelocale.ts). */
 export const LANG_COOKIE = 'lang'
 
 /** Жизнь куки LANG_COOKIE: год — выбор языка не настройка на один заход */
@@ -265,21 +265,21 @@ function acceptedLanguages(header: string): Array<{ lang: string; q: number }> {
 }
 
 /**
- * Какой язык показать на «/». null — оставить как есть.
+ * Какой из двух языков сайта браузер читает охотнее. null — ни одного из
+ * них браузер не назвал (или заголовка нет).
  *
- * Эталон решения, а не его исполнитель: «/» уводят правила redirects из
- * next.config, без функции, и Accept-Language там проверяет регулярка
- * ENGLISH_FIRST (lib/homelocale.ts). Что она решает так же, как эта
- * функция, сверяет lib/homelocale.test.ts.
+ * Одна из ступеней выбора языка «/» — homeLocaleFor в lib/homelocale.ts:
+ * там же краулеры, страна и что делать с null.
  *
  * cookie — значение куки LANG_COOKIE: явный выбор человека в переключателе,
- * он важнее браузера в обе стороны. Без куки — Accept-Language: английский,
- * только если браузер ставит его ВЫШЕ русского (по q, при равных — кто
- * раньше), иначе null. Русского в заголовке нет вовсе, а английский есть —
- * тоже английский: «de, en;q=0.8» по-русски не читает.
+ * он важнее браузера в обе стороны. Без куки — Accept-Language:
+ *   • 'ru' — русский стоит выше английского (по q, при равных — кто раньше)
+ *     или русский есть, а английского нет;
+ *   • 'en' — наоборот: английский выше русского или английский есть, а
+ *     русского нет («de, en;q=0.8» по-русски не читает);
+ *   • null — нет ни того ни другого («de-DE,de;q=0.9», «*»).
  *
- * Без заголовка — null: так ходят краулеры, и главная для них остаётся
- * русской, как была.
+ * Без заголовка — null: так ходят краулеры и скрипты.
  */
 export function preferredLocale({
   acceptLanguage,
@@ -301,8 +301,8 @@ export function preferredLocale({
     return found
   }
   const en = best('en')
-  if (!en) return null
   const ru = best('ru')
+  if (!en) return ru ? 'ru' : null
   if (!ru) return 'en'
-  return en.q > ru.q || (en.q === ru.q && en.at < ru.at) ? 'en' : null
+  return en.q > ru.q || (en.q === ru.q && en.at < ru.at) ? 'en' : 'ru'
 }
