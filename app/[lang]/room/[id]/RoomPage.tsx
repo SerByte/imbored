@@ -66,6 +66,8 @@ import { focusAdrift } from '@/lib/focushandoff'
 import { roomShareUrl } from '@/lib/roomshare'
 import { forgetGuest } from '@/lib/sessionhint'
 import { storeLink } from '@/lib/storelink'
+import { langOn, withForeignRuns } from '@/lib/textlang'
+import { cyrillicRuns } from '@/lib/cyrillicruns'
 import { track } from '@/lib/track'
 
 /*
@@ -1715,18 +1717,23 @@ export default function RoomPage() {
    * месту, и узел переживает подмену. Поставь что-нибудь над ней в одном из
    * них — и область смонтируется заново вместе с текстом (сторож —
    * lib/focushandoff.test.ts).
+   *
+   * Русское название на /en — своим lang (withForeignRuns), как заголовок
+   * карты в колоде: «Match: “Вальхейм”» английский голос читал по буквам.
+   * На русской — та же строка как есть.
    */
+  const matchSaid = matchLine(
+    {
+      sawOpen,
+      status: state.room.status,
+      isMember: state.isMember,
+      game: state.matchedGame,
+    },
+    locale,
+  )
   const matchStatus = (
     <StatusLine
-      text={matchLine(
-        {
-          sawOpen,
-          status: state.room.status,
-          isMember: state.isMember,
-          game: state.matchedGame,
-        },
-        locale,
-      )}
+      text={matchSaid && withForeignRuns(locale, matchSaid, [state.matchedGame?.name])}
       className="sr-only"
     />
   )
@@ -1762,12 +1769,21 @@ export default function RoomPage() {
               без «on» игру не называет. Фраза та же, что у отказа 409 выше.
               Название в кавычках — inline-block: строка рвётся перед ним, а
               не внутри («“Counter-Strike» / «2”» на 360), а название шире
-              строки переносится уже внутри себя
+              строки переносится уже внутри себя. Русское название — своим
+              lang (langOn), кавычки остаются английскими
             */}
             {locale === 'en' ? (
               <>
                 This party has already agreed on{' '}
-                <span className="inline-block">“{state.matchedGame.name}”</span>
+                <span className="inline-block">
+                  “
+                  {langOn(locale, state.matchedGame.name) ? (
+                    <span lang="ru">{state.matchedGame.name}</span>
+                  ) : (
+                    state.matchedGame.name
+                  )}
+                  ”
+                </span>
               </>
             ) : (
               <>Эта пати уже договорилась: «{state.matchedGame.name}»</>
@@ -1866,13 +1882,25 @@ export default function RoomPage() {
      * ответ, needSteam) — прежний заголовок.
      */
     const door = state.invite
+    /*
+     * Ники и название в строках двери — данные: на /en русский кусок —
+     * своим lang (withForeignRuns). Ников дословно в строках нет — сервер
+     * их режет и склеивает, — поэтому куски ищутся в самой строке
+     * (cyrillicRuns); название игры приходит рядом, им и метим. На русской —
+     * те же строки как есть, одним текстовым узлом.
+     */
+    const doorText = (text: string) => withForeignRuns(locale, text, cyrillicRuns(text))
+    // Строка игры стоит во флексе рядом с картинкой: куски — одним span,
+    // иначе каждый стал бы своим флекс-элементом с зазором посреди фразы
+    const seedLine = door?.seed ? withForeignRuns(locale, door.seed.line, [door.seed.name]) : null
     return (
       <div className="relative flex-1 flex items-center justify-center px-5 py-24 overflow-hidden">
         <Ambient />
         <div className="relative max-w-md w-full panel-lift p-8 text-center flex flex-col gap-4 anim-rise">
           <h1 className="font-display text-display-sm">
-            {door?.title ??
-              tr(locale, { ru: 'Тебя зовут выбрать игру на вечер', en: "You're invited to pick tonight's game" })}
+            {door?.title != null
+              ? doorText(door.title)
+              : tr(locale, { ru: 'Тебя зовут выбрать игру на вечер', en: "You're invited to pick tonight's game" })}
           </h1>
           {moodLine}
           {/* Карта, с которой начнётся колода, — картинкой, как фон превью.
@@ -1888,10 +1916,10 @@ export default function RoomPage() {
                 fallback={null}
                 className="w-24 shrink-0 rounded-md"
               />
-              {door.seed.line}
+              {typeof seedLine === 'string' ? seedLine : <span>{seedLine}</span>}
             </div>
           )}
-          {door?.here && <p className="text-sm">{door.here}</p>}
+          {door?.here && <p className="text-sm">{doorText(door.here)}</p>}
           {/*
             С сессией библиотека уже подключена, и «подключи» над кнопкой
             «Войти в комнату» читалось так, будто вход не сработал. Сюда с
@@ -1998,16 +2026,21 @@ export default function RoomPage() {
   // Кнопка — в строку за фразой, а не флекс-элементом: флекс с переносом
   // ставил её третьим рядом под переносом фразы. Над колодой на телефоне
   // строка — ровно один ряд: фраза в своём span обрезается многоточием, а
-  // кнопка целиком (kick-undo в globals.css) — каждый ряд там отнят у карты
+  // кнопка целиком (kick-undo в globals.css) — каждый ряд там отнят у карты.
+  // Русский ник на /en — своим lang (withForeignRuns) внутри того же span
   const kickUndo = kickShown ? (
     <p className="relative text-xs text-faint">
       <span>
-        {kickShown.phase === 'done'
-          ? tr(locale, { ru: `${kickShown.name} сможет войти сразу.`, en: `${kickShown.name} can join right away.` })
-          : tr(locale, {
-              ru: `Убрали из пати: ${kickShown.name}. Войти снова получится через полчаса.`,
-              en: `Removed from party: ${kickShown.name}. They can rejoin in half an hour.`,
-            })}
+        {withForeignRuns(
+          locale,
+          kickShown.phase === 'done'
+            ? tr(locale, { ru: `${kickShown.name} сможет войти сразу.`, en: `${kickShown.name} can join right away.` })
+            : tr(locale, {
+                ru: `Убрали из пати: ${kickShown.name}. Войти снова получится через полчаса.`,
+                en: `Removed from party: ${kickShown.name}. They can rejoin in half an hour.`,
+              }),
+          [kickShown.name],
+        )}
       </span>{' '}
       <button
         ref={undoRef}
@@ -2246,9 +2279,10 @@ export default function RoomPage() {
             >
               {/* Одной строкой в одном span: .pill — inline-flex с gap, и
                   голые куски текста вокруг числа становились отдельными
-                  флекс-элементами, получая gap поверх пробела: «·  0  голосов» */}
+                  флекс-элементами, получая gap поверх пробела: «·  0  голосов».
+                  Русский ник на /en — своим lang (langOn) */}
               <span>
-                {m.name}
+                {langOn(locale, m.name) ? <span lang="ru">{m.name}</span> : m.name}
                 {m.me ? tr(locale, { ru: ' (ты)', en: ' (you)' }) : ''} · <span className="tabular-nums">{m.votes}</span>{' '}
                 {/* было прибито строкой: «1 голосов», «2 голосов» */}
                 {pl(locale, m.votes, { ru: ['голос', 'голоса', 'голосов'], en: ['vote', 'votes'] })}

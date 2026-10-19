@@ -10,6 +10,7 @@ import { tr } from '@/lib/i18n'
 import { plural } from '@/lib/plural'
 import { type RoomMemberView, rosterHint, waitingMode } from '@/lib/room'
 import type { LeaderOffer, NearMiss } from '@/lib/roomlikes'
+import { withForeignRuns } from '@/lib/textlang'
 import { AloneInvite, RoomEscapeHatch } from './AloneInvite'
 import { LeaderPick } from './LeaderPick'
 import { MatchNotifyToggle } from './MatchNotify'
@@ -156,6 +157,10 @@ export function RoomWaiting({
    * идёт раз в 2.5 секунды, и регион с «Дима 12 из 20» зачитывался бы вслух
    * круглосуточно. Строка меняется, лишь когда меняется одно из двух чисел, —
    * React не тронет DOM, а скринридер промолчит.
+   *
+   * Русское название лидера на /en — своим lang (withForeignRuns), как в
+   * колоде: «Top pick: “Вальхейм”» английский голос читал по буквам. Куски
+   * те же на каждом опросе, и DOM React так же не трогает.
    */
   const liveSummary =
     locale === 'en'
@@ -178,7 +183,7 @@ export function RoomWaiting({
       <div aria-hidden className="grain absolute inset-0" />
 
       <p role="status" aria-live="polite" className="sr-only">
-        {liveSummary}
+        {withForeignRuns(locale, liveSummary, [offer?.name])}
       </p>
 
       {mode === 'alone' && (

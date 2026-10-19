@@ -3,6 +3,7 @@ import { useLocale } from '@/components/LocaleProvider'
 import { StatusLine } from '@/components/StatusLine'
 import { tr } from '@/lib/i18n'
 import type { LeaderOffer } from '@/lib/roomlikes'
+import { withForeignRuns } from '@/lib/textlang'
 
 /**
  * «Берём «X»? 3 из 4 за» — выход из тупика «все отсвайпали и ни разу не
@@ -43,8 +44,13 @@ export function LeaderPick({
         className="w-full sm:w-[184px] shrink-0 aspect-[460/215] object-cover rounded-(--radius-card) border border-edge"
       />
       <div className="flex flex-col gap-2 text-center sm:text-left">
+        {/* Русское название на /en — своим lang (withForeignRuns), как в колоде */}
         <h3 className="font-semibold">
-          {locale === 'en' ? `Go with “${leader.name}”?` : <>Берём «{leader.name}»?</>}
+          {locale === 'en' ? (
+            withForeignRuns(locale, `Go with “${leader.name}”?`, [leader.name])
+          ) : (
+            <>Берём «{leader.name}»?</>
+          )}
         </h3>
         {locale === 'en' ? (
           <p className="text-sm text-dim">

@@ -8,6 +8,7 @@ import { bounceTo, steamLoginFor } from '@/lib/destination'
 import { focusAdrift } from '@/lib/focushandoff'
 import { lp, tr } from '@/lib/i18n'
 import { presetHint, presetLabel, ROOM_PRESETS, roomArrival, roomSeedOf, type RoomPreset } from '@/lib/presets'
+import { withForeignRuns } from '@/lib/textlang'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 import { Icon } from '@/components/Icon'
 import { eyebrow } from '@/components/Labels'
@@ -283,8 +284,13 @@ export default function NewRoomPage() {
               <p className="max-w-md min-h-[3.25em] text-sm leading-relaxed">
                 {seedName && (
                   <>
+                    {/* Русское название на /en — своим lang (withForeignRuns), как в колоде */}
                     <span className="block">
-                      {locale === 'en' ? `First card: “${seedName}”.` : <>Первой картой — «{seedName}».</>}
+                      {locale === 'en' ? (
+                        withForeignRuns(locale, `First card: “${seedName}”.`, [seedName])
+                      ) : (
+                        <>Первой картой — «{seedName}».</>
+                      )}
                     </span>
                     <span className="block">
                       {tr(locale, { ru: 'Не зайдёт — дальше обычная колода.', en: 'Not into it? The usual deck is next.' })}

@@ -463,10 +463,14 @@ describe('над колодой на телефоне — не больше, ч�
     expect(block).toMatch(/\.kick-undo > p \{[^}]*display: flex;/)
     expect(block).toMatch(/\.kick-undo > p > span \{[^}]*min-width: 0;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/)
     expect(block).toMatch(/\.kick-undo > p > button \{[^}]*flex-shrink: 0;/)
-    // а разметка даёт правилам их детей: фраза — в своём span, кнопка за ним
+    // а разметка даёт правилам их детей: фраза — в своём span, кнопка за ним.
+    // Ник на /en помечает withForeignRuns внутри того же span — его куски
+    // строчные, правило «> p > span» их не задевает
     const at2 = room.indexOf('const kickUndo = kickShown ? (')
     const line = room.slice(at2, room.indexOf(') : null', at2))
-    expect(line).toMatch(/<p className="[^"]*">\s*<span>\s*\{kickShown\.phase === 'done'[\s\S]*?<\/span>\{' '\}\s*<button\b/)
+    expect(line).toMatch(
+      /<p className="[^"]*">\s*<span>\s*\{withForeignRuns\(\s*locale,\s*kickShown\.phase === 'done'[\s\S]*?<\/span>\{' '\}\s*<button\b/,
+    )
   })
 })
 
