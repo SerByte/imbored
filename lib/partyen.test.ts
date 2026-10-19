@@ -121,9 +121,17 @@ describe('«почти совпали» и свои «играем» по-анг
     expect(html).toContain('Almost a match')
     expect(html).toMatch(/Mia and Leo: yes on<\/span><span[^>]*>1<\/span><span[^>]*>game\.<\/span>/)
     expect(html).toMatch(/>3<\/span><span[^>]*>games\.<\/span>/)
-    expect(html).toContain('Waiting for: Sam.')
+    // Без двоеточия: «Ждём: …» прячет падеж ника, у английского предлога его нет
+    expect(html).toContain('Waiting for Sam.')
     expect(html).toContain('Waiting for you.')
     expect(human(html)).not.toMatch(CYRILLIC)
+  })
+
+  test('три имени и больше — английским списком «A, B and C», а не « and » между каждой парой', () => {
+    const many = [{ forNames: ['Mia', 'Leo', 'Sam'], pendingNames: ['Ann', 'Max', 'Zoe'], meFor: false, mePending: false, games: 2 }]
+    const html = renderToStaticMarkup(createElement(NearMissList, { near: many, locale: 'en' }))
+    expect(html).toContain('Mia, Leo and Sam: yes on')
+    expect(html).toContain('Waiting for Ann, Max and Zoe.')
   })
 
   test("рельс своих «играем» — «You're in on N games»", () => {

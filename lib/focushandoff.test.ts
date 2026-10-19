@@ -169,7 +169,7 @@ describe('/explore: колода уходит — фокус остаётся н
 })
 
 describe('пати: матч и экран ожидания', () => {
-  const room = read('app/[lang]/room/[id]/page.tsx')
+  const room = read('app/[lang]/room/[id]/RoomPage.tsx')
 
   /**
    * Строка матча — одним узлом через подмену. React сверяет детей по месту:
@@ -266,7 +266,7 @@ describe('пати: нажатая кнопка уходит — фокус ос
     expect(roster).toMatch(/\}, \[members, missed\]\)/)
     const rosters = tags(read('components/room/RoomWaiting.tsx'), 'MemberRoster')
     expect(rosters.some((t) => /\sisHost=\{isHost\}/.test(t) && /\smissed=\{missedMember\}/.test(t))).toBe(true)
-    expect(read('app/[lang]/room/[id]/page.tsx')).toMatch(/missedMember=\{leaveMiss\?\.memberId \?\? null\}/)
+    expect(read('app/[lang]/room/[id]/RoomPage.tsx')).toMatch(/missedMember=\{leaveMiss\?\.memberId \?\? null\}/)
   })
 
   /*
@@ -276,7 +276,7 @@ describe('пати: нажатая кнопка уходит — фокус ос
    * слышал, что вход удался.
    */
   test('вход по приглашению отдаёт фокус заголовку лобби — после своего нажатия и только потерянный', () => {
-    const room = read('app/[lang]/room/[id]/page.tsx')
+    const room = read('app/[lang]/room/[id]/RoomPage.tsx')
     const h1 = tags(room, 'h1').filter((t) => /ref=\{lobbyHead\}/.test(t))
     expect(h1.length, 'заголовок «Пати …» — не цель фокуса').toBe(1)
     expect(h1[0]).toMatch(/ref=\{lobbyHead\} tabIndex=\{-1\}/)

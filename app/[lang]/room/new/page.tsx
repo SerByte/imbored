@@ -262,7 +262,7 @@ export default function NewRoomPage() {
               {hint &&
                 tr(locale, {
                   ru: ` Ровно такого вечера, как в подборе, здесь нет — похожий, «${hint.label}», отмечен ниже, но выбирать тебе.`,
-                  en: ` There's no evening exactly like the one in Pick — the closest, “${presetLabel(hint, locale)}”, is marked below, but it's your call.`,
+                  en: ` There's no evening exactly like the one you picked — the closest, “${presetLabel(hint, locale)}”, is marked below, but it's your call.`,
                 })}
             </p>
             {/*

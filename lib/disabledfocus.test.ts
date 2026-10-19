@@ -290,11 +290,11 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
   },
   {
     // «Войти в комнату» и «Демо-друг»
-    file: 'app/[lang]/room/[id]/page.tsx',
+    file: 'app/[lang]/room/[id]/RoomPage.tsx',
     expr: 'busy',
     guards: [
-      ['app/[lang]/room/[id]/page.tsx', /async function join\(\) \{\s*if \(busy\) return/],
-      ['app/[lang]/room/[id]/page.tsx', /async function joinAsDemoFriend\(\) \{\s*if \(busy\) return/],
+      ['app/[lang]/room/[id]/RoomPage.tsx', /async function join\(\) \{\s*if \(busy\) return/],
+      ['app/[lang]/room/[id]/RoomPage.tsx', /async function joinAsDemoFriend\(\) \{\s*if \(busy\) return/],
     ],
   },
   {
@@ -302,7 +302,7 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     expr: 'taking',
     guards: [
       [
-        'app/[lang]/room/[id]/page.tsx',
+        'app/[lang]/room/[id]/RoomPage.tsx',
         /async function takeLeader\(\) \{\s*const leader = likes\.leader\s*if \(!leader \|\| takingLeader\) return/,
       ],
     ],
@@ -310,32 +310,32 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
   {
     file: 'components/room/RoomWaiting.tsx',
     expr: 'pulling',
-    guards: [['app/[lang]/room/[id]/page.tsx', /async function pullMore\(\) \{\s*if \(pulling\) return/]],
+    guards: [['app/[lang]/room/[id]/RoomPage.tsx', /async function pullMore\(\) \{\s*if \(pulling\) return/]],
   },
   {
     // «Выйти из пати»; ✕ хоста — тем же обработчиком, см. MemberRoster ниже
     file: 'components/room/RoomWaiting.tsx',
     expr: 'leaving',
-    guards: [['app/[lang]/room/[id]/page.tsx', /async function removeMember\(memberId\?: string\) \{\s*if \(leaving\) return/]],
+    guards: [['app/[lang]/room/[id]/RoomPage.tsx', /async function removeMember\(memberId\?: string\) \{\s*if \(leaving\) return/]],
   },
   {
     file: 'components/room/MemberRoster.tsx',
     expr: 'removing',
     guards: [
       ['components/room/MemberRoster.tsx', /const remove = \(id: string\) => \{\s*if \(removing \|\| !onRemove\) return/],
-      ['app/[lang]/room/[id]/page.tsx', /async function removeMember\(memberId\?: string\) \{\s*if \(leaving\) return/],
+      ['app/[lang]/room/[id]/RoomPage.tsx', /async function removeMember\(memberId\?: string\) \{\s*if \(leaving\) return/],
     ],
   },
   {
     // переключатель доски в шапке и плитка «Пустить чужих» — один обработчик
-    file: 'app/[lang]/room/[id]/page.tsx',
+    file: 'app/[lang]/room/[id]/RoomPage.tsx',
     expr: 'publicBusy',
-    guards: [['app/[lang]/room/[id]/page.tsx', /async function togglePublic\(\) \{\s*if \(publicBusy\) return/]],
+    guards: [['app/[lang]/room/[id]/RoomPage.tsx', /async function togglePublic\(\) \{\s*if \(publicBusy\) return/]],
   },
   {
     file: 'components/room/AloneInvite.tsx',
     expr: 'publicBusy',
-    guards: [['app/[lang]/room/[id]/page.tsx', /async function togglePublic\(\) \{\s*if \(publicBusy\) return/]],
+    guards: [['app/[lang]/room/[id]/RoomPage.tsx', /async function togglePublic\(\) \{\s*if \(publicBusy\) return/]],
   },
   {
     // главная кнопка вошедшего, демо без Steam и обе кнопки формы
@@ -412,9 +412,9 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
   },
   {
     // «Пустить обратно» после ✕: в пути — ждём ответа, снят — снимать нечего
-    file: 'app/[lang]/room/[id]/page.tsx',
+    file: 'app/[lang]/room/[id]/RoomPage.tsx',
     expr: 'undoLocked',
-    guards: [['app/[lang]/room/[id]/page.tsx', /async function unkick\(\) \{\s*if \(!kicked \|\| undoLocked\) return/]],
+    guards: [['app/[lang]/room/[id]/RoomPage.tsx', /async function unkick\(\) \{\s*if \(!kicked \|\| undoLocked\) return/]],
   },
 ]
 

@@ -68,7 +68,7 @@ export function AloneInvite({
         <p className="text-dim text-sm leading-relaxed max-w-sm">
           {tr(locale, {
             ru: 'Матч — это договорённость, а договариваться пока не с кем. Твои «играем» уже записаны и никуда не денутся: как только кто-то зайдёт — сравнитесь сразу.',
-            en: "A match is an agreement, and there's no one to agree with yet. Your “I'm in” votes are saved: the moment someone joins, they're compared right away.",
+            en: "A match is an agreement, and there's no one to agree with yet. Your “I'm in” votes are saved: the moment someone joins, your votes get compared.",
           })}
         </p>
 

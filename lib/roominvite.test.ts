@@ -331,7 +331,8 @@ describe('превью приглашения по-английски', () => {
   test('настроение приходит русским названием и встаёт английским', () => {
     const c = inviteCopy('ABC234', { ...openEn, preset: 'Пара быстрых каток' }, 'en')
     expect(c.title).toBe('Sergey invites you to Party ABC234 · A few quick rounds')
-    expect(c.headline).toBe('Sergey: a few quick rounds')
+    // С глаголом, как русское «Серёга зовёт: …»
+    expect(c.headline).toBe('Sergey wants: a few quick rounds')
     expect(c.eyebrow).toBe('PARTY · INVITE')
     expect(c.foot).toBe(inviteCopy('ABC234', openEn, 'en').foot)
 
@@ -358,8 +359,14 @@ describe('превью приглашения по-английски', () => {
   test('длинный ник режется в карточке и рядом с настроением, в заголовке — целиком', () => {
     const host = 'Very-very long player nickname'
     const c = inviteCopy('ABC234', { ...openEn, host, preset: 'Спокойно, под разговор' }, 'en')
-    expect(c.headline).toBe('Very-very long pla: chill, while we talk')
+    expect(c.headline).toBe('Very-very long pla wants: chill, while we talk')
     expect(c.title).toBe(`${host} invites you to Party ABC234 · Chill, while we talk`)
+  })
+
+  test('пустой ник рядом с настроением — безлично, а не « invites you: …»', () => {
+    expect(inviteCopy('ABC234', { ...openEn, host: '', preset: 'Уютно и надолго' }, 'en').headline).toBe(
+      "You're invited: cozy and long",
+    )
   })
 
   test('предложенная игра — зовут в неё, и честно сказано, что это предложение', () => {
@@ -451,7 +458,7 @@ describe('превью приглашения по-английски', () => {
     expect(everything(friend)).not.toMatch(CYRILLIC)
 
     const quick = inviteCopy('ABC234', { ...demo, preset: 'Пара быстрых каток' }, 'en')
-    expect(quick.headline).toBe('Demo player: a few quick rounds')
+    expect(quick.headline).toBe('Demo player wants: a few quick rounds')
     expect(everything(quick)).not.toMatch(CYRILLIC)
   })
 

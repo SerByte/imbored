@@ -303,7 +303,7 @@ describe('телеметрия шаринга', () => {
    * переменную текстом не проверить.
    */
   const SHARERS: Record<string, ShareKind> = {
-    'app/[lang]/room/[id]/page.tsx': 'room',
+    'app/[lang]/room/[id]/RoomPage.tsx': 'room',
     'app/[lang]/compat/CopyCompatLink.tsx': 'compat',
     'app/[lang]/compat/page.tsx': 'compat',
     'app/[lang]/portrait/[steamid]/page.tsx': 'portrait',

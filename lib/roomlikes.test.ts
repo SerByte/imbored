@@ -212,10 +212,10 @@ describe('почти совпали: род и число', () => {
  */
 describe('пати: слова о том, кто смотрит, — без рода', () => {
   const ROOM_FILES = [
-    path.join('app', '[lang]', 'room', '[id]', 'page.tsx'),
+    path.join('app', '[lang]', 'room', '[id]', 'RoomPage.tsx'),
     // приглашение: текст превью и карточки, и где он рисуется
     path.join('lib', 'roominvite.ts'),
-    path.join('app', '[lang]', 'room', '[id]', 'layout.tsx'),
+    path.join('app', '[lang]', 'room', '[id]', 'page.tsx'),
     path.join('app', '[lang]', 'room', '[id]', 'opengraph-image.tsx'),
     path.join('app', '[lang]', 'room', 'new', 'page.tsx'),
     ...fs

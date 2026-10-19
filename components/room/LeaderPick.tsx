@@ -79,7 +79,7 @@ export function LeaderPick({
             miss === 'stale'
               ? tr(locale, {
                   ru: 'Голоса сдвинулись — предложение пересчитано.',
-                  en: 'The votes shifted — the offer was recounted.',
+                  en: 'The votes shifted — the top pick was updated.',
                 })
               : miss === 'failed'
                 ? tr(locale, {
