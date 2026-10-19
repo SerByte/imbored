@@ -14,6 +14,17 @@ export type LikedGame = {
 }
 
 /**
+ * Имена по-английски — списком «A, B and C», как «Already here» у экрана
+ * приглашения (inviteDoor в lib/roominvite): « and » между каждой парой
+ * («Mia and Leo and Sam») — не английский список. Двоеточие после «Waiting
+ * for» не нужно тоже: русское «Ждём: …» прячет падеж ника, а у английского
+ * предлога падежа нет.
+ */
+function namesEn(names: readonly string[]): string {
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : (names[0] ?? '')
+}
+
+/**
  * «Вы почти совпали» — словами, без единой обложки.
  *
  * Ни названия, ни арта здесь нет по устройству данных: NearMiss не содержит
@@ -63,7 +74,7 @@ export function NearMissList({ near, locale = 'ru' }: { near: NearMiss[]; locale
             {locale === 'en' ? (
               <>
                 <span className={i === 0 ? 'text-ink' : 'text-dim'}>
-                  {n.forNames.join(' and ')}: yes on
+                  {namesEn(n.forNames)}: yes on
                 </span>
                 <span className="tabular-nums text-ember-text">{n.games}</span>
                 <span className={i === 0 ? 'text-ink' : 'text-dim'}>
@@ -86,7 +97,7 @@ export function NearMissList({ near, locale = 'ru' }: { near: NearMiss[]; locale
                 ? tr(locale, { ru: 'Ждём тебя.', en: 'Waiting for you.' })
                 : tr(locale, {
                     ru: `Ждём: ${n.pendingNames.join(', ')}.`,
-                    en: `Waiting for: ${n.pendingNames.join(', ')}.`,
+                    en: `Waiting for ${namesEn(n.pendingNames)}.`,
                   })}
             </span>
           </li>

@@ -258,7 +258,8 @@ export function inviteCopy(code: string, invite: RoomInvite | null, locale: Loca
       : preset
         ? tr(locale, {
             ru: `${callsCard}: ${preset.toLowerCase()}`,
-            en: `${hostCard ?? "You're invited"}: ${preset.toLowerCase()}`,
+            // С глаголом, как «Серёга зовёт: …», — moodCall; пустой ник — безлично
+            en: moodCall(hostCard, preset),
           })
         : pickTonight(hostCard, locale),
     foot: `${members} ${inRoomShort} · ${tr(locale, { ru: 'подключи библиотеку и свайпай', en: 'connect your library and swipe' })}`,
@@ -289,6 +290,25 @@ function callsOf(host: string | null): string {
  */
 function invitesTo(host: string | null, what: string): string {
   return host ? `${host} invites you to ${what}` : `You're invited to ${what}`
+}
+
+/**
+ * «Серёга зовёт: пара быстрых каток» по-английски — «Sergey wants: a few
+ * quick rounds», с глаголом, а не «Sergey: a few quick rounds» без него.
+ * Глагол — «wants», как у pickTonight («… wants to pick tonight's game»), а
+ * не «invites you» глоссария: строка стоит кеглем 44 в ширину 900, и
+ * « invites you: » шире « зовёт: » на 113 px — «Demo player invites you: a
+ * few quick rounds» (946 px) вставала в две строки там, где «Демо-игрок
+ * зовёт: пара быстрых каток» (870) стоит в одну, и так у трёх настроений из
+ * четырёх (замер — advance width assets/manrope-800.woff, тем, чем рисует
+ * next/og, и снимок карточки на next dev). « wants: » — 166 px против 160:
+ * с демо-хостом все четыре строки в одну (самая широкая — 875 px у «all
+ * evening together», русская там — 838), а самая длинная английская строка
+ * с ником в восемнадцать знаков на 90 px уже самой длинной русской. Ник
+ * пустой или его нет — безличное «You're invited: …», как у callsOf.
+ */
+function moodCall(host: string | null, preset: string): string {
+  return host ? `${host} wants: ${preset.toLowerCase()}` : `You're invited: ${preset.toLowerCase()}`
 }
 
 /**

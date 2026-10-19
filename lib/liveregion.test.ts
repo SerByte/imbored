@@ -210,26 +210,26 @@ const read = (file: string) => strip(fs.readFileSync(path.join(ROOT, file), 'utf
  */
 const REPEAT: Array<{ file: string; start: string; reset: string[]; fail?: string[] }> = [
   // голос колоды: отказ возвращает карту в голову, и следующий свайп — повтор
-  { file: 'app/[lang]/room/[id]/page.tsx', start: 'async function vote(', reset: ['setVoteFailed(false)'] },
-  { file: 'app/[lang]/room/[id]/page.tsx', start: 'async function join()', reset: ['setJoinError(null)'] },
-  { file: 'app/[lang]/room/[id]/page.tsx', start: 'async function joinAsDemoFriend()', reset: ['setJoinError(null)'] },
-  { file: 'app/[lang]/room/[id]/page.tsx', start: 'async function takeLeader()', reset: ['setLeaderMiss(null)'] },
+  { file: 'app/[lang]/room/[id]/RoomPage.tsx', start: 'async function vote(', reset: ['setVoteFailed(false)'] },
+  { file: 'app/[lang]/room/[id]/RoomPage.tsx', start: 'async function join()', reset: ['setJoinError(null)'] },
+  { file: 'app/[lang]/room/[id]/RoomPage.tsx', start: 'async function joinAsDemoFriend()', reset: ['setJoinError(null)'] },
+  { file: 'app/[lang]/room/[id]/RoomPage.tsx', start: 'async function takeLeader()', reset: ['setLeaderMiss(null)'] },
   // выход и ✕ хоста, переключатель доски, добор раунда: на моргнувшей связи
   // второй тап — тот же отказ тем же текстом. Строку «войди через Steam»
   // (publicDenied) делят все три кнопки хоста, и гасить её обязана каждая:
   // слияние 35d0535 потеряло сброс у доски, и второй needsteam там молчал
   {
-    file: 'app/[lang]/room/[id]/page.tsx',
+    file: 'app/[lang]/room/[id]/RoomPage.tsx',
     start: 'async function removeMember(',
     reset: ['setLeaveMiss(null)', 'setPublicDenied(false)'],
   },
   {
-    file: 'app/[lang]/room/[id]/page.tsx',
+    file: 'app/[lang]/room/[id]/RoomPage.tsx',
     start: 'async function togglePublic()',
     reset: ['setPublicMiss(null)', 'setPublicDenied(false)'],
   },
-  { file: 'app/[lang]/room/[id]/page.tsx', start: 'async function unkick()', reset: ['setPublicDenied(false)'] },
-  { file: 'app/[lang]/room/[id]/page.tsx', start: 'async function pullMore()', reset: ['setPullFailed(false)'] },
+  { file: 'app/[lang]/room/[id]/RoomPage.tsx', start: 'async function unkick()', reset: ['setPublicDenied(false)'] },
+  { file: 'app/[lang]/room/[id]/RoomPage.tsx', start: 'async function pullMore()', reset: ['setPullFailed(false)'] },
   // повторное нажатие после отказа в разрешении — тот же отказ тем же текстом;
   // браузер помнит отказ, и без await между ними повтор склеился бы со сбросом
   {

@@ -367,10 +367,14 @@ export function RoomWaiting({
             </span>
           </button>
         ) : (
+          /* «рядом» — запас игр сверх ваших библиотек (extraPool в lib/group),
+             по-английски «beyond», а не «nearby» о расстоянии. Не шире
+             русской: на 768 строка стоит в ряд с «Leave party» — 372 px
+             против 398 */
           <span className="text-xs text-faint">
             {tr(locale, {
               ru: 'Игры кончились — мы честно перебрали всё, что нашли у вас и рядом.',
-              en: 'Out of games — we checked everything in your libraries and nearby.',
+              en: 'Out of games — we checked everything in your libraries and beyond.',
             })}
           </span>
         )}

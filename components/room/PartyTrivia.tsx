@@ -223,7 +223,7 @@ export function PartyTrivia({
                     : round > 0
                       ? tr(locale, {
                           ru: 'Вопросы кончились — все раунды сыграны, а повторяться мы не станем.',
-                          en: "That's all the questions — every round is played, and we won't repeat ourselves.",
+                          en: "That's all the questions — you've played every round, and we won't repeat ourselves.",
                         })
                       : tr(locale, {
                           ru: 'Вопросов не набралось — каталог у нас пока небогатый.',
