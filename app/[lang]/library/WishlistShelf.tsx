@@ -2,7 +2,7 @@ import { GameLink } from '@/components/GameLink'
 import { GameCardBody } from '@/components/GameCard'
 import { Icon } from '@/components/Icon'
 import { Eyebrow } from '@/components/Labels'
-import { DiscountCorner, PriceTag } from '@/components/PriceTag'
+import { DiscountCorner, PriceTag } from '@/components/PriceTagView'
 import { trimArt } from '@/lib/art'
 import { PRICE_MAX_AGE_SEC, refreshDealsWithin } from '@/lib/deals'
 import { getGamesMetaLite, type WishlistRow } from '@/lib/db'
@@ -113,6 +113,7 @@ export async function WishlistShelf(props: ShelfProps) {
                   isFree={false}
                   showPercent={false}
                   className="shrink-0"
+                  locale={locale}
                 />
               }
             />

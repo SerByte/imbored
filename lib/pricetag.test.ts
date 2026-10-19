@@ -1,9 +1,15 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { createElement } from 'react'
+import { createElement, type ComponentProps, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
-import { PriceTag, PriceWhere } from '@/components/PriceTag'
+import { LocaleProvider } from '@/components/LocaleProvider'
+import { DiscountCorner, DiscountEnds, PriceTag, PriceWhere, type PriceTagProps } from '@/components/PriceTag'
+import * as View from '@/components/PriceTagView'
+import { RefundNote } from '@/components/RefundNote'
+import { RefundNote as RefundNoteView } from '@/components/RefundNoteView'
+import type { Discount } from '@/lib/discount'
+import { LOCALES } from '@/lib/i18n'
 
 /**
  * Сторож бесплатных игр на ценниках.
@@ -179,5 +185,71 @@ describe('«не продаётся» не гасится бесплатност
     const free = src.indexOf("ru: ' · бесплатно'")
     expect(unsold).toBeGreaterThan(-1)
     expect(free).toBeGreaterThan(unsold)
+  })
+})
+
+/**
+ * Ценник на сервере и на клиенте — одна разметка.
+ *
+ * Серверные страницы (карточка игры, /compat, полка желаемого) рисуют
+ * components/PriceTagView с языком страницы пропом — так ценник снова
+ * рендерится на сервере и не едет в их клиентский бандл. Клиентские экраны
+ * зовут обёртку components/PriceTag с языком из контекста корневого layout.
+ * Разойдись они хоть в пробеле — тот же ценник выглядел бы на /game и на
+ * /play по-разному, а русская страница перестала бы быть прежней до байта.
+ * Та же пара — у строки возврата под ценой (RefundNote / RefundNoteView).
+ */
+describe('ценник: серверная View с языком пропом = клиентская обёртка в контексте', () => {
+  /** Клиентская обёртка — как её ставит корневой layout: язык в контексте */
+  const inContext = (locale: (typeof LOCALES)[number], el: ReactElement) =>
+    renderToStaticMarkup(createElement(LocaleProvider, { locale } as ComponentProps<typeof LocaleProvider>, el))
+  /** Серверная View — без провайдера: язык ей приходит только пропом */
+  const bare = (el: ReactElement) => renderToStaticMarkup(el)
+
+  const SALE: Discount = { percent: 40, finalCents: 119_900, initialCents: 199_900, endsAt: 1_790_000_000, endsLabel: 'до 17 августа' }
+  const TAGS: PriceTagProps[] = [
+    { priceFinal: 199_900, cc: 'ru' },
+    { priceFinal: 5999, cc: 'us', isFree: false, size: 'hero' },
+    { priceFinal: 119_900, cc: 'ru', discount: SALE, size: 'hero', className: 'shrink-0' },
+    { priceFinal: 119_900, cc: 'kz', discount: SALE, showPercent: false },
+    { priceFinal: 1499, cc: 'ru', isFree: true },
+    { priceFinal: null, cc: 'ru', isFree: true, unsold: true },
+    { priceFinal: null, cc: 'us', unsold: true, className: 'x' },
+    { priceFinal: 5999, cc: null },
+    { priceFinal: null, cc: 'ru' },
+  ]
+
+  test.each(LOCALES)('%s: PriceTag — каждый ответ о цене', (locale) => {
+    for (const p of TAGS) {
+      const server = bare(createElement(View.PriceTag, { ...p, locale }))
+      expect(server, JSON.stringify(p)).toBe(inContext(locale, createElement(PriceTag, p)))
+    }
+    // сторож не слепой: View правда говорит на языке пропа
+    expect(bare(createElement(View.PriceTag, { ...TAGS[4], locale }))).toContain(locale === 'en' ? 'Free' : 'бесплатно')
+  })
+
+  test.each(LOCALES)('%s: подпись региона, уголок и срок скидки', (locale) => {
+    for (const p of [{ cc: 'ru' }, { cc: 'us', className: 'ml-1' }, { cc: null }, { cc: undefined }]) {
+      expect(bare(createElement(View.PriceWhere, { ...p, locale }))).toBe(inContext(locale, createElement(PriceWhere, p)))
+    }
+    expect(bare(createElement(View.PriceWhere, { cc: 'ru', locale }))).toContain(
+      locale === 'en' ? 'price on Russian Steam' : 'цена в российском Steam',
+    )
+    // уголок и срок языка не знают: обёртка отдаёт те же функции
+    expect(DiscountCorner).toBe(View.DiscountCorner)
+    expect(DiscountEnds).toBe(View.DiscountEnds)
+  })
+
+  test.each(LOCALES)('%s: строка возврата', (locale) => {
+    for (const p of [{}, { tone: 'neutral' as const }, { tone: 'pick' as const, className: 'mt-2' }]) {
+      expect(bare(createElement(RefundNoteView, { ...p, locale }))).toBe(inContext(locale, createElement(RefundNote, p)))
+    }
+    expect(bare(createElement(RefundNoteView, { tone: 'neutral', locale }))).toContain(
+      locale === 'en' ? 'Refund policy' : 'Правила возврата',
+    )
+  })
+
+  test('без провайдера клиентская обёртка — русская, как серверная View на ru', () => {
+    expect(renderToStaticMarkup(createElement(PriceTag, TAGS[2]))).toBe(bare(createElement(View.PriceTag, { ...TAGS[2], locale: 'ru' })))
   })
 })

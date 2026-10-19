@@ -4,7 +4,7 @@ import { Suspense, type ReactNode } from 'react'
 import { GameArt } from '@/components/GameArt'
 import { GameCardBody } from '@/components/GameCard'
 import { Icon } from '@/components/Icon'
-import { PlaytimeHiddenNote, PrivacyHelp } from '@/components/PrivacyHelp'
+import { PlaytimeHiddenNote, PrivacyHelp } from '@/components/PrivacyHelpView'
 import { SignOut } from '@/components/SignOut'
 import { WarmCatalog } from '@/components/WarmCatalog'
 import { BannedShelf, type BannedGame } from '@/components/BannedShelf'
@@ -605,7 +605,7 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
 
       {/* Список открыт, а часы — нет: ошибки private тут не бывает, и панель
           ниже этот человек не увидит никогда. Шаг — тот же, что в ней. */}
-      {timeHidden && <PlaytimeHiddenNote className="mb-10 max-w-2xl" />}
+      {timeHidden && <PlaytimeHiddenNote className="mb-10 max-w-2xl" locale={locale} />}
 
       {/*
         ПУСТАЯ БИБЛИОТЕКА — НЕ ПУСТАЯ ПОЛКА.
@@ -646,7 +646,10 @@ export default async function LibraryPage(props: PageProps<'/[lang]/library'>) {
               ссылке — «Подключить заново» ниже, её дверь. Путь — на языке
               страницы: steamLoginFor везёт язык через Steam (lang=en), и
               возврат приходит на ту же английскую библиотеку. */}
-          <PrivacyHelp retryHref={session && isWriter(session) ? steamLoginFor(lp(locale, '/library')) : undefined} />
+          <PrivacyHelp
+            retryHref={session && isWriter(session) ? steamLoginFor(lp(locale, '/library')) : undefined}
+            locale={locale}
+          />
           <Link href={reconnectHref()} className="btn-ember mt-5 px-6 py-3">
             {tr(locale, { ru: 'Подключить заново', en: 'Reconnect' })}
           </Link>

@@ -239,7 +239,7 @@ describe('disabled не выключает кнопку на время запр
  * Кнопка опознаётся по файлу и выражению, а не по номеру строки (тот же урок,
  * что в tap.test.ts). Проверка — выражение, которое находит сам обработчик и
  * проверку в его голове, до первого запроса. Обработчик бывает в другом
- * файле: у LeaderPick и RoomWaiting он на странице комнаты, у PrivacyHelp —
+ * файле: у LeaderPick и RoomWaiting он на странице комнаты, у PrivacyHelpView —
  * в карточке подключения (onRetry приходит только оттуда, см.
  * lib/privacyhelp.test.ts).
  */
@@ -348,7 +348,9 @@ const GUARDED: Array<{ file: string; expr: string; guards: Array<[string, RegExp
     ],
   },
   {
-    file: 'components/PrivacyHelp.tsx',
+    // кнопка — в универсальной PrivacyHelpView, клиентская PrivacyHelp только
+    // ставит ей язык; onRetry приходит из карточки подключения
+    file: 'components/PrivacyHelpView.tsx',
     expr: 'retrying',
     guards: [['components/landing/ConnectCard.tsx', /function recheckProfile\(\) \{\s*if \(!input \|\| busy !== null\) return/]],
   },
