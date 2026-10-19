@@ -26,7 +26,8 @@ import { Eyebrow } from '@/components/Labels'
  *
  * Язык — из контекста (useLocale): экран стоит на /play, /daily и /explore, а
  * message каждая страница приносит уже на своём языке. Подпись в кольце
- * (160 px) по-английски короче русской — «read» против «разобрано».
+ * (160 px) по-английски короче русской — «done» против «разобрано»: одно
+ * «read» под числом читалось глаголом и не говорило, что разбирают.
  */
 /**
  * Игра, которая вышла из стены: её постер встаёт в центр перед выдачей.
@@ -102,7 +103,13 @@ export function WarmupScreen({
         </div>
       )}
 
-      <div className="warmup-ui relative flex flex-col items-center gap-7">
+      {/* На /en — во всю ширину. Строка статуса ниже стоит абсолютно и своей
+          ширины колонке не даёт: колонка была шириной в самую длинную строку
+          фактов. Русская «из них ты не открывал ни разу» шире «Осталось
+          разобрать 1204 игры», а английская «never launched» короче «412 games
+          left to go through» — и статус переносился на любом экране. Русской
+          разметке класс не добавлен: она по договору прежняя до байта. */}
+      <div className={`warmup-ui relative flex flex-col items-center gap-7${locale === 'en' ? ' w-full' : ''}`}>
         {/* Первое, что видно на этом экране, — то последнее, что человек здесь
             сказал. Раньше на его месте не было ничего: последний ответ квиза
             вызывал переход в том же тике, и вопрос сменялся спиннером. */}
@@ -122,7 +129,7 @@ export function WarmupScreen({
               // Без имени кольцо звучало голым «48%»: сорок восемь процентов
               // чего, из разметки не следует. Число здесь — по запросу, а не
               // вслух: в живую область уходит только этап (см. ниже)
-              ariaLabel={tr(locale, { ru: `Разобрано ${Math.round(pct)}%`, en: `${Math.round(pct)}% read` })}
+              ariaLabel={tr(locale, { ru: `Разобрано ${Math.round(pct)}%`, en: `${Math.round(pct)}% done` })}
               label={
                 <div className="flex flex-col items-center gap-0.5">
                   <span
@@ -131,7 +138,7 @@ export function WarmupScreen({
                   >
                     {Math.round(pct)}%
                   </span>
-                  <span className="text-[11px] text-faint">{tr(locale, { ru: 'разобрано', en: 'read' })}</span>
+                  <span className="text-[11px] text-faint">{tr(locale, { ru: 'разобрано', en: 'done' })}</span>
                 </div>
               }
             />
@@ -213,7 +220,7 @@ export function WarmupScreen({
                   delay={260}
                   className="font-bold tabular-nums text-ember-text"
                 />{' '}
-                {tr(locale, { ru: 'из них ты не открывал ни разу', en: "of them you've never launched" })}
+                {tr(locale, { ru: 'из них ты не открывал ни разу', en: 'never launched' })}
               </p>
             )}
           </m.div>
