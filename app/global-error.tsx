@@ -2,7 +2,7 @@
 
 import { useEffect, useSyncExternalStore } from 'react'
 import { clientErrorCode, isChunkLoadError, reportClientError } from '@/lib/clienterr'
-import { htmlLang, lp, splitLocale, tr, type Locale } from '@/lib/i18n'
+import type { Locale } from '@/lib/i18n'
 import {
   BG,
   DIM,
@@ -14,6 +14,7 @@ import {
   LIGHT_INK,
   PLATE,
 } from '@/lib/palette'
+import { pathLocale } from '@/lib/pathlocale'
 
 /**
  * Последний экран, на котором продукт ещё говорит своим языком.
@@ -55,11 +56,19 @@ import {
  * ВМЕСТО корневого layout, и ни LocaleProvider, ни next/root-params здесь
  * нет. Сервер (рендер упавшего layout) отдаёт русский, браузер после
  * гидратации берёт язык из location.pathname — так разметка совпадает, а
- * /en/… переходит на английский сразу после неё. lib/i18n — чистый модуль
- * без стилей и без React, как lib/clienterr: упасть второй раз ему не на чем.
+ * /en/… переходит на английский сразу после неё.
+ *
+ * Из lib/i18n — только тип. global-error — своя группа чанков первой
+ * загрузки, отдельная от корневого layout, и каждый его импорт едет на все
+ * маршруты второй копией: с splitLocale, htmlLang, tr и lp здесь весь
+ * lib/i18n с lib/plural (1.8 КБ) приезжал дважды. Язык адреса — pathLocale
+ * (lib/pathlocale, без зависимостей, совпадает со splitLocale), lang — сам
+ * язык (htmlLang и есть тождество), главная — '/en' или '/' (то же, что
+ * lp(locale, '/')), строки — парой через t() ниже, как tr(). Сторожит
+ * lib/sharedchunk.test.ts.
  */
 const noSubscribe = () => () => {}
-const browserLocale = (): Locale => splitLocale(window.location.pathname ?? '/').locale
+const browserLocale = (): Locale => pathLocale(window.location.pathname ?? '/')
 const serverLocale = (): Locale => 'ru'
 
 export default function GlobalError({
@@ -72,6 +81,8 @@ export default function GlobalError({
   const code = error.digest ?? clientErrorCode(error)
   const stale = isChunkLoadError(error)
   const locale = useSyncExternalStore(noSubscribe, browserLocale, serverLocale)
+  // tr() без lib/i18n: строка на языке адреса, обе ветки рядом
+  const t = (ru: string, en: string) => (locale === 'en' ? en : ru)
 
   useEffect(() => {
     if (!error.digest) {
@@ -80,7 +91,7 @@ export default function GlobalError({
   }, [error, code])
 
   return (
-    <html lang={htmlLang(locale)}>
+    <html lang={locale}>
       <body
         style={{
           margin: 0,
@@ -95,7 +106,7 @@ export default function GlobalError({
           WebkitFontSmoothing: 'antialiased',
         }}
       >
-        <title>{tr(locale, { ru: 'Что-то сломалось · imbored', en: 'Something broke · imbored' })}</title>
+        <title>{t('Что-то сломалось · imbored', 'Something broke · imbored')}</title>
         <style>{`
           :root { color-scheme: dark }
           @media (prefers-color-scheme: light) {
@@ -141,14 +152,14 @@ export default function GlobalError({
           </svg>
 
           <h1 style={{ margin: 0, fontSize: '26px', lineHeight: 1.2, letterSpacing: '-0.01em' }}>
-            {tr(locale, { ru: 'Что-то сломалось целиком', en: 'Everything broke at once' })}
+            {t('Что-то сломалось целиком', 'Everything broke at once')}
           </h1>
 
           <p className="ge-dim" style={{ margin: 0, fontSize: '15px', lineHeight: 1.6, color: DIM }}>
-            {tr(locale, {
-              ru: 'Упало не на странице, а во всём приложении сразу. Скорее всего, это на нашей стороне и уже чинится — попробуй ещё раз.',
-              en: 'Not just this page — the whole app went down. It’s most likely on our end and already being fixed. Try again.',
-            })}
+            {t(
+              'Упало не на странице, а во всём приложении сразу. Скорее всего, это на нашей стороне и уже чинится — попробуй ещё раз.',
+              'Not just this page — the whole app went down. It’s most likely on our end and already being fixed. Try again.',
+            )}
           </p>
 
           <button
@@ -169,8 +180,8 @@ export default function GlobalError({
             }}
           >
             {stale
-              ? tr(locale, { ru: 'Обновить страницу', en: 'Reload the page' })
-              : tr(locale, { ru: 'Попробовать снова', en: 'Try again' })}
+              ? t('Обновить страницу', 'Reload the page')
+              : t('Попробовать снова', 'Try again')}
           </button>
 
           {/*
@@ -182,11 +193,11 @@ export default function GlobalError({
             для правила больше не нужно.
           */}
           <a
-            href={lp(locale, '/')}
+            href={locale === 'en' ? '/en' : '/'}
             className="ge-link ge-dim"
             style={{ color: DIM, fontSize: '14px', textDecoration: 'none' }}
           >
-            {tr(locale, { ru: 'На главную', en: 'Home' })}
+            {t('На главную', 'Home')}
           </a>
 
           {/* Код нужен не человеку, а нам: по нему ошибка находится в логах.
@@ -195,7 +206,7 @@ export default function GlobalError({
             className="ge-dim"
             style={{ color: DIM, fontFamily: 'ui-monospace, monospace', fontSize: '11px' }}
           >
-            {tr(locale, { ru: 'код', en: 'code' })}: {code}
+            {t('код', 'code')}: {code}
           </span>
         </main>
       </body>

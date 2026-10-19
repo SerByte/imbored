@@ -11,7 +11,9 @@ import {
   presetHref,
   presetLabel,
   quizHref,
+  isRoomPresetKey,
   nearestRoomPreset,
+  ROOM_PRESET_KEYS,
   ROOM_PRESETS,
   roomArrival,
   roomBridgeHref,
@@ -244,6 +246,22 @@ describe('ROOM_PRESETS', () => {
     expect(roomPresetOf(undefined)).toBeNull()
     // Комнаты «коротко и спокойно» в списке нет — и подписывать её нечем
     expect(roomPresetOf({ time: 'short', vibe: 'chill', social: 'friends' })).toBeNull()
+  })
+
+  /*
+   * Ключи живут второй копией в lib/playhref (ROOM_PRESET_KEYS): ими roomQuery
+   * в lib/destination проверяет ?preset= и ?hint=, не везя таблицу пресетов в
+   * каждый маршрут. Новый пресет без ключа там отбрасывался бы при входе.
+   */
+  test('ключи без таблицы — те же и в том же порядке', () => {
+    expect(ROOM_PRESETS.map((p) => p.key)).toEqual(ROOM_PRESET_KEYS)
+  })
+
+  test('isRoomPresetKey отвечает так же, как roomPresetByKey', () => {
+    for (const raw of [...ROOM_PRESET_KEYS, null, undefined, '', 'EVENING', 'friday', '__proto__', 'toString', ' quick']) {
+      expect(isRoomPresetKey(raw), String(raw)).toBe(roomPresetByKey(raw) !== null)
+      if (isRoomPresetKey(raw)) expect(roomPresetByKey(raw)?.key).toBe(raw)
+    }
   })
 })
 
