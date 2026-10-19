@@ -369,7 +369,12 @@ function TopCard({
             </span>
           )}
         </div>
-        {card.reason && <p className="text-sm text-ink/80 leading-relaxed line-clamp-2 md:line-clamp-3">{card.reason}</p>}
+        {/* в причине — те же названия («130 h in “Смута”», ориентир via), и lang у них тот же */}
+        {card.reason && (
+          <p className="text-sm text-ink/80 leading-relaxed line-clamp-2 md:line-clamp-3">
+            {withForeignRuns(locale, card.reason, [card.name, card.via?.name])}
+          </p>
+        )}
         {/* для вечера вместе онлайн — самый важный факт: есть ли с кем играть;
             второй — сколько уйдёт на заход: «успеем до ночи?». Обёртка —
             только когда есть что в неё положить: пустая заняла бы в колонке
