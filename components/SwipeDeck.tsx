@@ -28,6 +28,7 @@ import type { GameTrait } from '@/lib/gametraits'
 import { tr, type Locale } from '@/lib/i18n'
 import { formatPrice, notSoldShort } from '@/lib/steamregion'
 import { tagLabel } from '@/lib/tagsru'
+import { langOn, withForeignRuns } from '@/lib/textlang'
 
 export type DeckCard = {
   appid: number
@@ -301,7 +302,13 @@ function TopCard({
 
       <div className="relative mt-auto p-5 flex flex-col gap-2.5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <h2 className="font-display text-display-sm">{card.name}</h2>
+          {/* Название — данные: на /en русское («Смута») помечено lang="ru",
+              как под обложкой полки (GameCardName), иначе английский голос
+              читает его по буквам (WCAG 3.1.2). На русской странице атрибута
+              нет, как не было (langOn) */}
+          <h2 lang={langOn(locale, card.name)} className="font-display text-display-sm">
+            {card.name}
+          </h2>
           {/*
             ФАКТ ПРО «ВСЕХ» — НЕ ФАКТ, ПОКА ЧЕЛОВЕК ОДИН.
             Колода открыта и в одиночку: голоса копятся заранее, чтобы к
@@ -326,12 +333,17 @@ function TopCard({
               {/* text-info вместо sky-300: на светлой теме tailwind-цвет давал
                   1.52:1, то есть подпись была практически невидима */}
               <span className="rounded-full bg-info/10 text-info px-3 py-1 text-xs">
+                {/* ники — тоже данные: русский на /en — своим lang (withForeignRuns) */}
                 {alone
                   ? tr(locale, { ru: 'Нет в твоей библиотеке', en: 'Not in your library' })
-                  : tr(locale, {
-                      ru: `Нет у: ${card.missingFor.join(', ')}`,
-                      en: `Not owned by: ${card.missingFor.join(', ')}`,
-                    })}
+                  : withForeignRuns(
+                      locale,
+                      tr(locale, {
+                        ru: `Нет у: ${card.missingFor.join(', ')}`,
+                        en: `Not owned by: ${card.missingFor.join(', ')}`,
+                      }),
+                      card.missingFor,
+                    )}
                 {/* Порядок — как в PriceTag. «Нет в российском Steam» первым,
                     даже раньше «бесплатно»: бесплатную игру, которую магазин
                     региона не показывает, из него не взять. «Бесплатно» —
@@ -567,7 +579,8 @@ export function SwipeDeck({
           живая область, вставленная вместе с текстом, звучит не везде.
         */}
         <p role="status" aria-live="polite" className="sr-only">
-          {deckCardLine(pos, top.name, locale)}
+          {/* название в строке — с тем же lang, что у заголовка карты */}
+          {withForeignRuns(locale, deckCardLine(pos, top.name, locale), [top.name])}
         </p>
 
         {/* Числитель зажат знаменателем — почему, см. deckPosition в lib/deckvote */}

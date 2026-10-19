@@ -187,6 +187,10 @@ export function buildTrivia(args: {
     // Без заметного разрыва или без часа у лидера это угадайка, а не вопрос
     if (sorted[0].min < HOURS_MIN || !(sorted[0].min >= sorted[1].min * HOURS_RATIO)) return null
     const opts = sorted.slice(0, 2).map((x) => ({ label: x.name }))
+    // Одно имя у обоих (две демо-личности — оба «Демо-игрок», тёзки из Steam):
+    // варианты «Демо-игрок / Демо-игрок» — не вопрос, и у кнопок PartyTrivia
+    // были бы одинаковые подписи
+    if (opts[0].label === opts[1].label) return null
     const s = shuffled(opts, 0, rnd)
     return {
       id: `hours:${sorted[0].game}`,
@@ -222,8 +226,16 @@ export function buildTrivia(args: {
       .filter((x) => x.top.length === 3)
     const chosen = pick(withTop, rnd)
     if (!chosen) return null
-    const opts = party.map((p) => ({ label: p.name }))
-    const correct = party.findIndex((p) => p.steamid === chosen.p.steamid)
+    /*
+     * Варианты — имена без повторов. Тёзки в комнате бывают (две демо-личности —
+     * оба «Демо-игрок»), и один вариант на двоих честен, только пока загадан
+     * не один из них: у топа тёзки ответ значит сразу двоих, угадывать нечего.
+     * Имена разные — те же варианты в том же порядке, что party.
+     */
+    const names = [...new Set(party.map((p) => p.name))]
+    if (party.filter((p) => p.name === chosen.p.name).length > 1) return null
+    const opts = names.map((label) => ({ label }))
+    const correct = names.indexOf(chosen.p.name)
     const s = shuffled(opts, correct, rnd)
     return {
       // Ключ — по самим играм, а не по человеку. Здесь стоял steamid, и
