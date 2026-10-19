@@ -41,7 +41,7 @@ const PAGE = path.join(__dirname, '..', 'app', '[lang]', 'privacy', 'page.tsx')
 /** Отпечаток прозы каждого языка и дата, для которой он действителен. Дата дублируется, чтобы тест видел смену. */
 const LOCKS: Record<Locale, { digest: string; updated: string }> = {
   ru: { digest: '9bad6c32f480dfcb', updated: '18 октября 2026' },
-  en: { digest: 'b8382dda528e5462', updated: 'October 18, 2026' },
+  en: { digest: '26dfbda92747707b', updated: 'October 19, 2026' },
 }
 
 /** Видимый текст куска JSX: абзацы — строками, разметка и сущности HTML — прочь */

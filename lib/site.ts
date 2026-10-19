@@ -1,4 +1,4 @@
-import type { Metadata, ResolvingMetadata } from 'next'
+import type { Metadata, ResolvedMetadata, ResolvingMetadata } from 'next'
 import { alternates, lp, ogLocale, toLocale, tr, type Locale } from './i18n'
 
 /**
@@ -112,11 +112,27 @@ async function localeOf(props: unknown): Promise<Locale> {
 export function ownAddress(path: string, own: Metadata = {}) {
   return async (props: unknown, parent: ResolvingMetadata): Promise<Metadata> => {
     const locale = await localeOf(props)
-    const images = (await parent).openGraph?.images
+    const images = cardSignedOn(locale, (await parent).openGraph?.images)
     return {
       ...own,
       alternates: { ...own.alternates, ...localeAlternates(locale, path) },
       openGraph: { ...ogSite(locale), type: 'website', url: lp(locale, path), ...(images?.length ? { images } : {}) },
     }
   }
+}
+
+type CardImages = NonNullable<NonNullable<ResolvedMetadata['openGraph']>['images']>
+
+/**
+ * Унаследованная корневая карточка с подписью на языке страницы
+ * (docs/i18n.md, п. 10). alt файловой карточки app/[lang]/opengraph-image.tsx
+ * — константа модуля, русская: без переподписи каждое английское превью
+ * страницы на ownAddress уезжало с ней. Адрес (с хэшем файловой метадаты) и
+ * размеры — те же; twitter:image Next дозаполняет из openGraph сам. На ru —
+ * как есть, до байта.
+ */
+function cardSignedOn(locale: Locale, images: CardImages | undefined): CardImages | undefined {
+  if (locale !== 'en' || !images) return images
+  const alt = siteTitle(locale)
+  return images.map((img) => (typeof img === 'string' ? { url: img, alt } : { ...img, alt }))
 }

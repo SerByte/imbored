@@ -33,7 +33,8 @@ import { logSwallowed } from '@/lib/errlog'
 import { currentSession, getDb, isDemoId, isWriter, nowSec } from '@/lib/server'
 import { STORE_LABEL } from '@/lib/stores'
 import { CopyCompatLink } from '../CopyCompatLink'
-import { langOn, withNicks } from '../nick'
+import { langOn } from '@/lib/textlang'
+import { withNicks } from '../nick'
 import { CompatNotice } from './CompatNotice'
 import { CoverWall } from './CoverStrip'
 import { Eyebrow, SectionTitle } from '@/components/Labels'
@@ -514,7 +515,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
                       locale,
                       tr(locale, {
                         ru: `После входа через Steam ${invite.name} увидит у себя, что вы сравнились.`,
-                        en: `Once you sign in with Steam, ${invite.name} will see that you compared.`,
+                        en: `Once you sign in with Steam, ${invite.name} will see that you compared libraries.`,
                       }),
                       [invite.name],
                     )}
@@ -531,7 +532,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
                 {tr(locale, { ru: 'Войти через Steam', en: 'Sign in with Steam' })}
               </a>
               <Link href={`/?compat=${other}`} className="btn-glass flex w-full">
-                {tr(locale, { ru: 'Вставить ссылку на профиль / демо', en: 'Paste a profile link / demo' })}
+                {tr(locale, { ru: 'Вставить ссылку на профиль / демо', en: 'Paste a profile link or try the demo' })}
               </Link>
             </>
           ) : (
@@ -726,7 +727,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
           kicker={tr(locale, { ru: 'Заходите прямо сейчас', en: 'Jump in now' })}
           hint={tr(locale, {
             ru: 'Есть у обоих, живое и рассчитано на компанию.',
-            en: "You both own these, they're still alive and made for a group.",
+            en: 'You both own these — still alive and made for a group.',
           })}
           picks={d.playNow}
           index={2}
@@ -775,7 +776,7 @@ export default async function CompatPage({ params }: { params: Promise<{ steamid
                 locale,
                 tr(locale, {
                   ru: `${d.otherName} увидит у себя, что вы сравнились, и ваш процент.`,
-                  en: `${d.otherName} will see that you compared, and your percentage.`,
+                  en: `${d.otherName} will see your comparison and your match percentage.`,
                 }),
                 [d.otherName],
               )}

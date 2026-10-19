@@ -1,3 +1,4 @@
+import type { ResolvingMetadata } from 'next'
 import { isValidElement, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
@@ -463,19 +464,45 @@ describe('/library на /en', () => {
     expect(html).toContain('href="/api/auth/steam?next=%2Flibrary&amp;lang=en"')
   })
 
-  test('вкладка — на языке страницы, русская — прежняя', async () => {
+  /**
+   * Своей карточки у /library нет: превью — корневая, а её alt — русская
+   * константа файла. Английская страница переподписывает её своим openGraph
+   * (docs/i18n.md, п. 10), русская своего openGraph не объявляет, как раньше.
+   */
+  test('вкладка и подпись превью — на языке страницы, русская — прежняя', async () => {
+    const rootCard = {
+      url: 'http://localhost/en/opengraph-image?7a1c',
+      width: 1200,
+      height: 630,
+      type: 'image/png',
+      alt: 'imbored — во что поиграть',
+    }
+    const inherited = { images: [rootCard] }
+    const parent = Promise.resolve({ openGraph: inherited }) as unknown as ResolvingMetadata
     const meta = (lang?: string) =>
-      generateMetadata({
-        params: Promise.resolve(lang ? { lang } : {}),
-        searchParams: Promise.resolve({}),
-      } as PageProps<'/[lang]/library'>)
-    expect(await meta('en')).toEqual({
+      generateMetadata(
+        {
+          params: Promise.resolve(lang ? { lang } : {}),
+          searchParams: Promise.resolve({}),
+        } as PageProps<'/[lang]/library'>,
+        parent,
+      )
+    const en = await meta('en')
+    expect(en).toMatchObject({
       title: 'Library',
       description: "Your whole Steam library on one wall: what's abandoned, what's never been launched and what it all cost.",
     })
+    expect(en.openGraph).toMatchObject({
+      siteName: 'imbored',
+      locale: 'en_US',
+      url: '/en/library',
+      images: [{ ...rootCard, alt: 'imbored — what to play' }],
+    })
+    expect(JSON.stringify(en)).not.toMatch(/[А-Яа-яЁё]/)
     expect(await meta()).toEqual({
       title: 'Библиотека',
       description: 'Вся твоя Steam-библиотека одной стеной: что заброшено, что ни разу не запускалось и сколько это стоило.',
     })
+    expect(await meta('ru')).toEqual(await meta())
   })
 })
