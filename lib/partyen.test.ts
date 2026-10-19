@@ -363,6 +363,46 @@ describe('колода пати по-английски', () => {
     )
   })
 
+  /*
+   * Название игры и ники — данные. На /en русское название («Смута») без
+   * lang="ru" английский голос читает по буквам (WCAG 3.1.2): полка под
+   * колодой в /explore помечает его (GameCardName), а заголовок карты — нет.
+   * Та же пометка — в строке «Card N of M: …» для скринридера, в причине карты
+   * /explore (название и ориентир via) и у русского ника в «Not owned by».
+   */
+  test('русское название и ник на /en — своим lang, латиница — без атрибута', () => {
+    const html = deck({ ...card, name: 'Смута', missingFor: ['Вася', 'Leo'] }, 'en')
+    expect(html).toContain('<h2 lang="ru" class="font-display text-display-sm">Смута</h2>')
+    expect(html).toContain('Card 1 of 20: <span lang="ru">Смута</span>')
+    expect(html).toContain('Not owned by: <span lang="ru">Вася</span>, Leo · ₽499')
+    const why = deck(
+      {
+        ...card,
+        name: 'Смута',
+        via: { appid: 1, name: 'Ведьмак' },
+        reason: 'You already have 130 h in “Смута”. Like “Ведьмак”, but calmer.',
+      },
+      'en',
+    )
+    expect(why).toContain(
+      'You already have 130 h in “<span lang="ru">Смута</span>”. Like “<span lang="ru">Ведьмак</span>”, but calmer.',
+    )
+    const latin = deck({ ...card, reason: 'You already have 130 h in “Valheim”.' }, 'en')
+    expect(latin).toContain('>You already have 130 h in “Valheim”.</p>')
+    expect(latin).toContain('<h2 class="font-display text-display-sm">Valheim</h2>')
+    expect(latin).toContain('Card 1 of 20: Valheim</p>')
+    expect(latin).not.toContain('lang=')
+  })
+
+  test('на русской странице пометки нет — разметка прежняя', () => {
+    const html = deck({ ...card, name: 'Смута', missingFor: ['Вася'], reason: 'Уже 130 ч в «Смута».' })
+    expect(html).toContain('<h2 class="font-display text-display-sm">Смута</h2>')
+    expect(html).toContain('>Уже 130 ч в «Смута».</p>')
+    expect(html).toContain('Карта 1 из 20: Смута</p>')
+    expect(html).toContain('Нет у: Вася · 499')
+    expect(html).not.toContain('lang=')
+  })
+
   test('русская колода — прежняя: «Играем!», «Нет у», склейка сессии', () => {
     // сессию сервер присылает на языке запроса — русскую русской странице
     const html = deck({ ...card, session: { label: 'Матч', value: '~15 мин' } })

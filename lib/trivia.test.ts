@@ -261,6 +261,66 @@ describe('buildTrivia', () => {
     }
   })
 
+  /*
+   * Тёзки в комнате. Две демо-личности — оба «Демо-игрок» (на /en — оба «Demo
+   * player»), и такие же бывают ники из Steam. «У кого больше часов» и «чей
+   * это топ-3» брали варианты из имён как есть: «Демо-игрок / Демо-игрок» —
+   * вопрос без ответа, а два одинаковых key у кнопок PartyTrivia оставляли в
+   * DOM кнопку прошлого вопроса первой в сетке каждого следующего.
+   */
+  const DEMO = 'Демо-игрок'
+  const twins = (...names: string[]): TriviaParty[] =>
+    names.map((name, i) => ({
+      steamid: `p${i}`,
+      name,
+      library: lib(
+        [1, 'Dota 2', [300, 20, 900][i] ?? 5],
+        [10 + i, `Своя ${i}a`, 50],
+        [20 + i, `Своя ${i}b`, 40],
+        [30 + i, `Своя ${i}c`, 30],
+      ),
+    }))
+  const rounds = (party: TriviaParty[]) =>
+    Array.from({ length: 20 }, (_, round) => buildTrivia({ seed: `r:twin:${round}`, catalog: CATALOG, party })).flat()
+
+  test('тёзки: ни одного вопроса с двумя одинаковыми вариантами, раунд полон', () => {
+    // та же пати с разными именами — вопросы про своих есть, иначе сторож слеп
+    expect(rounds(twins('Аня', 'Боря')).some((q) => q.kind === 'hours' || q.kind === 'toptrio')).toBe(true)
+    for (let round = 0; round < 20; round++) {
+      const qs = buildTrivia({ seed: `r:twin:${round}`, catalog: CATALOG, party: twins(DEMO, DEMO) })
+      // вопросов про своих нет — тёзок не различить, — а раунд добирает каталог
+      expect(qs.filter((q) => q.kind === 'hours' || q.kind === 'toptrio')).toEqual([])
+      expect(qs).toHaveLength(TRIVIA_COUNT)
+      for (const q of qs) {
+        const labels = q.options.map((o) => o.label)
+        expect(new Set(labels).size, `${q.prompt}: ${labels.join(' / ')}`).toBe(labels.length)
+      }
+    }
+  })
+
+  test('тёзки и третий: загадан третий — имя тёзок одним вариантом, загадан тёзка — вопроса нет', () => {
+    const qs = rounds(twins(DEMO, DEMO, 'Аня'))
+    const top = qs.filter((q) => q.kind === 'toptrio')
+    // иначе проверка ниже прошла бы вхолостую
+    expect(top.length).toBeGreaterThan(0)
+    for (const q of top) {
+      expect(q.options.map((o) => o.label).sort(), q.prompt).toEqual([DEMO, 'Аня'].sort())
+      expect(q.options[q.answer].label, q.prompt).toBe('Аня')
+    }
+    for (const q of qs.filter((x) => x.kind === 'hours')) {
+      const labels = q.options.map((o) => o.label)
+      expect(new Set(labels).size, `${q.prompt}: ${labels.join(' / ')}`).toBe(labels.length)
+    }
+  })
+
+  test('PartyTrivia: ключ кнопки — вопрос и место варианта, а не подпись', () => {
+    // Одинаковых вариантов buildTrivia не даёт (тесты выше), но ключ по
+    // подписи ломал сетку молча: React оставлял лишнюю кнопку прошлого вопроса
+    const src = readFileSync('components/room/PartyTrivia.tsx', 'utf8')
+    expect(src).toContain('key={`${q.id}:${i}`}')
+    expect(src).not.toMatch(/key=\{o\.label\}/)
+  })
+
   test('SteamID64 участников в ответ не попадает ни в одном поле', () => {
     // /api/room/[id]/trivia отдаёт вопросы как есть каждому в комнате, а в
     // открытую комнату подсаживаются незнакомые с доски «Пати». id вопроса
