@@ -36,7 +36,7 @@ export const VIBE_PRESETS: VibePreset[] = [
   {
     key: 'sleep',
     label: '30 минут до сна',
-    en: { label: '30 minutes before bed' },
+    en: { label: '30 min before bed' },
     emoji: '🌙',
     mood: { time: 'short', vibe: 'chill', social: 'solo' },
   },

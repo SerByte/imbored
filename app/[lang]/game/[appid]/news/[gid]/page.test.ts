@@ -264,8 +264,12 @@ function tagText(tree: unknown, tag: string): string | undefined {
 describe('заголовок патча: общий «{Game} update» — целиком', () => {
   test('patchHeading режет название только у настоящего заголовка', () => {
     const ru = { title: 'Обновление 7.41d' }
-    expect(patchHeading(ru, 'Dota 2', 'en')).toBe('Dota 2 update')
-    expect(patchHeading(ru, null, 'en')).toBe('Update')
+    const bare = { title: 'Обновление: летняя чистка' }
+    expect(patchHeading(bare, 'Dota 2', 'en')).toBe('Dota 2 update')
+    expect(patchHeading(bare, null, 'en')).toBe('Update')
+    // с номером версии из заголовка издателя — уже не пустое слово, и режется
+    expect(patchHeading(ru, 'Dota 2', 'en')).toBe('Update 7.41d')
+    expect(patchHeading(ru, null, 'en')).toBe('Update 7.41d')
     // Свой английский заголовок с названием впереди режется, как на русской странице
     expect(patchHeading({ ...ru, titleEn: 'Dota 2 - Update 7.41d' }, 'Dota 2', 'en')).toBe('Update 7.41d')
     expect(patchHeading({ title: 'Portal 2 - Update' }, 'Portal 2', 'en')).toBe('Update')

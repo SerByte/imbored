@@ -218,8 +218,8 @@ describe('строка правила', () => {
   })
 
   test('по-английски — то же разрешение уйти, тем же сроком', () => {
-    expect(stopRuleLine('short', 'en')).toBe("Not hooked in 15 minutes? Come back and we'll find another.")
-    expect(stopRuleLine('medium', 'en')).toBe("Not hooked in 20 minutes? Come back and we'll find another.")
+    expect(stopRuleLine('short', 'en')).toBe('Not hooked in 15 minutes? Come back for another.')
+    expect(stopRuleLine('medium', 'en')).toBe('Not hooked in 20 minutes? Come back for another.')
     expect(stopRuleLine('long', 'en')).toContain('in 30 minutes?')
     expect(stopRuleLine('forever' as never, 'en')).toContain('in 20 minutes?')
     for (const time of ['short', 'medium', 'long'] as const) expect(stopRuleLine(time, 'en')).not.toMatch(/[А-Яа-яЁё]/)

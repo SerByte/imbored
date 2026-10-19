@@ -489,7 +489,7 @@ describe('английские хаб и страница жанра', () => {
     const text = textOf(page)
     expect(text).toContain('20-minute games')
     expect(text).toContain('The list is still coming together')
-    expect(text).toContain('30 minutes before bed — from your library')
+    expect(text).toContain('30 min before bed — from your library')
     expect(text).not.toMatch(CYR)
     const hrefs = islandsOf(page, 'Link').map((l) => String(l.href))
     expect(hrefs.some((h) => h.startsWith('/play?time=short'))).toBe(true)

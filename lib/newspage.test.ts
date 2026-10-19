@@ -9,7 +9,9 @@ import {
   newsPageTitle,
   newsPath,
   newsTitleOn,
+  patchHeading,
   patchShareUrl,
+  patchToken,
   SITEMAP_NEWS_MAX,
   SITEMAP_NEWS_WINDOW_SEC,
 } from './newspage'
@@ -259,7 +261,11 @@ describe('страница патча по-английски', () => {
     expect(
       newsDescription({ title: 'Обновление 1.5: новая карта', titleEn: 'Update 1.5: a new map', blocks: BODY }, 'Some Game', 'en'),
     ).toBe('Some Game: Update 1.5: a new map — what changed.')
+    // общий заголовок — с номером версии из заголовка издателя
     expect(newsDescription({ title: 'Обновление 1.5: новая карта', blocks: [] }, 'Some Game', 'en')).toBe(
+      'Some Game: Update 1.5 — what changed.',
+    )
+    expect(newsDescription({ title: 'Обновление: новая карта', blocks: [] }, 'Some Game', 'en')).toBe(
       'Some Game: Update — what changed.',
     )
     // по-русски — заголовок издателя, titleEn не читается
@@ -271,9 +277,11 @@ describe('страница патча по-английски', () => {
   test('заголовок поста на языке страницы (newsTitleOn)', () => {
     const ru = { title: 'Обновление 1.5: новая карта' }
     expect(newsTitleOn({ ...ru, titleEn: 'Update 1.5: a new map' }, 'Hades', 'en')).toBe('Update 1.5: a new map')
-    expect(newsTitleOn({ ...ru, titleEn: '  ' }, 'Hades', 'en')).toBe('Hades update')
-    expect(newsTitleOn({ ...ru, titleEn: null }, 'Hades', 'en')).toBe('Hades update')
-    expect(newsTitleOn(ru, null, 'en')).toBe('Update')
+    // общий заголовок сохраняет номер версии из заголовка издателя
+    expect(newsTitleOn({ ...ru, titleEn: '  ' }, 'Hades', 'en')).toBe('Hades update 1.5')
+    expect(newsTitleOn({ ...ru, titleEn: null }, 'Hades', 'en')).toBe('Hades update 1.5')
+    expect(newsTitleOn(ru, null, 'en')).toBe('Update 1.5')
+    expect(newsTitleOn({ title: 'Обновление: новая карта' }, 'Hades', 'en')).toBe('Hades update')
     // английский заголовок и заголовок без букв — как есть
     expect(newsTitleOn({ title: 'Patch 2.31 is out' }, 'Hades', 'en')).toBe('Patch 2.31 is out')
     expect(newsTitleOn({ title: '1.0.3' }, 'Hades', 'en')).toBe('1.0.3')
@@ -281,10 +289,57 @@ describe('страница патча по-английски', () => {
     expect(newsTitleOn({ title: 'Das Update für die Karte und das Menü' }, 'Hades', 'en')).toBe('Hades update')
     expect(newsTitleOn({ title: '版本更新公告' }, 'Hades', 'en')).toBe('Hades update')
     // повторный вызов ничего не меняет
-    expect(newsTitleOn({ title: newsTitleOn(ru, 'Hades', 'en') }, 'Hades', 'en')).toBe('Hades update')
+    expect(newsTitleOn({ title: newsTitleOn(ru, 'Hades', 'en') }, 'Hades', 'en')).toBe('Hades update 1.5')
+    const bare = { title: 'Обновление: новая карта' }
+    expect(newsTitleOn({ title: newsTitleOn(bare, 'Hades', 'en') }, 'Hades', 'en')).toBe('Hades update')
+    const season = { title: 'Сезон 5: Вечная охота' }
+    expect(newsTitleOn(season, 'Destiny 2', 'en')).toBe('Destiny 2 season 5 update')
+    expect(newsTitleOn({ title: newsTitleOn(season, 'Destiny 2', 'en') }, 'Destiny 2', 'en')).toBe('Destiny 2 season 5 update')
     // по-русски — заголовок издателя как есть, перевод не читается
     expect(newsTitleOn({ ...ru, titleEn: 'Update 1.5' }, 'Hades')).toBe('Обновление 1.5: новая карта')
     expect(newsTitleOn({ ...ru, titleEn: 'Update 1.5' }, 'Hades', 'ru')).toBe('Обновление 1.5: новая карта')
+  })
+
+  /**
+   * Номер — то, что различает патчи игры с русским заголовком на /en:
+   * без него «Обновление 7.41c», «7.41d» и «7.41e» читались тремя «Dota 2
+   * update» подряд. Дата через точки номером не считается — по-английски
+   * «12.08» читается и декабрём, а дату <title> ставит сам.
+   */
+  test('номер версии или сезона из заголовка (patchToken)', () => {
+    const v = (title: string, game?: string) => patchToken(title, game)?.value ?? null
+    expect(v('Обновление 7.41d')).toBe('7.41d')
+    expect(v('Обновление 7.41e и летняя чистка')).toBe('7.41e')
+    expect(v('Вышла версия 0.93L')).toBe('0.93L')
+    expect(v('Обновление 3.0.436. Авто-распаковка построек')).toBe('3.0.436')
+    expect(v('[v0.9.6]  Оперативные исправления. Детали')).toBe('v0.9.6')
+    expect(v('Новое обновление (ver1.1.4 Добавлена поддержка новых языков)')).toBe('ver1.1.4')
+    expect(v('Black Myth: Wukong — описание обновления 1.0.21.23831', 'Black Myth: Wukong')).toBe('1.0.21.23831')
+    expect(v('Хотфикс от 11 августа — 1.1.1.2')).toBe('1.1.1.2')
+    expect(v('Обновление Sun Haven 3.1: Улучшения удобства игры', 'Sun Haven')).toBe('3.1')
+    // число из названия игры, годовщина, дата — не номер
+    expect(v('Обновление Counter-Strike 2', 'Counter-Strike 2')).toBeNull()
+    expect(v('Обновление в честь 20-летия Half-Life 2')).toBeNull()
+    expect(v('Небольшое обновление от 12.08.2026')).toBeNull()
+    expect(v('«Хогвартс. Наследие» - Патч для ПК - 03.12.25')).toBeNull()
+    expect(v('Football Manager 2024: патч 24.2', 'Football Manager 2024')).toBe('24.2')
+    // сезон — когда версии нет
+    expect(patchToken('Сезон 5: Вечная охота')).toEqual({ kind: 'season', value: '5' })
+    expect(patchToken('Начало 12-го сезона')).toEqual({ kind: 'season', value: '12' })
+    expect(patchToken('Обновление 2.1 и начало сезона 3')).toEqual({ kind: 'version', value: '2.1' })
+    expect(patchToken('Межсезонье 2026')).toBeNull()
+  })
+
+  test('заголовок патча: общий «{Game} update» — целиком, с номером — без названия (patchHeading)', () => {
+    expect(patchHeading({ title: 'Обновление Counter-Strike 2' }, 'Counter-Strike 2', 'en')).toBe('Counter-Strike 2 update')
+    expect(patchHeading({ title: 'Обновление 7.41d' }, 'Dota 2', 'en')).toBe('Update 7.41d')
+    expect(patchHeading({ title: 'Обновление: летняя чистка' }, null, 'en')).toBe('Update')
+    expect(patchHeading({ title: 'Обновление 7.41d', titleEn: 'Dota 2 - Update 7.41d' }, 'Dota 2', 'en')).toBe('Update 7.41d')
+    expect(patchHeading({ title: 'Portal 2 - Update' }, 'Portal 2', 'en')).toBe('Update')
+    // русская страница — ровно newsHeading, как было
+    for (const title of ['Обновление Counter-Strike 2', 'Portal 2 - Update', 'Counter-Strike 2 update', '']) {
+      expect(patchHeading({ title }, 'Counter-Strike 2'), title).toBe(newsHeading(title, 'Counter-Strike 2'))
+    }
   })
 
   test('«Поделиться» с /en ведёт на английскую страницу', () => {

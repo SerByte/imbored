@@ -8464,15 +8464,19 @@ export async function sitemapPatchArchives(
   db: Db,
   minTold: number,
   limit: number,
+  locale: Locale = 'ru',
 ): Promise<Array<{ appid: number; changedAt: number }>> {
+  // /en-архив считает только английские пересказы (patchOn в архиве): у него
+  // свои строки со ссылкой, свой порог и свой момент последнего пересказа
+  const [tldr, at] = locale === 'en' ? ['tldr_en', 'tldr_en_at'] : ['tldr', 'tldr_at']
   const res = await db.execute({
     sql: `SELECT f.appid AS appid,
-                 MAX(MAX(f.tldr_at), COALESCE((SELECT MAX(n.published_at) FROM news_items AS n
+                 MAX(MAX(f.${at}), COALESCE((SELECT MAX(n.published_at) FROM news_items AS n
                                                WHERE n.appid = f.appid AND n.kind = 'patch'
                                                  AND n.scale IS NOT 'none'), 0)) AS changed_at
           FROM news_items AS f
           WHERE f.kind = 'patch' AND f.scale = 'major' AND f.rank > 0
-            AND f.tldr IS NOT NULL
+            AND f.${tldr} IS NOT NULL
           GROUP BY +f.appid
           HAVING COUNT(*) >= ?
           ORDER BY +f.appid

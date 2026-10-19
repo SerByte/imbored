@@ -267,7 +267,10 @@ export function buildTrivia(args: {
       prompt: tr(locale, { ru: 'Куда сейчас набилось больше народу?', en: "Where's the bigger crowd right now?" }),
       options: s.items,
       answer: s.answer,
-      reveal: `${hi.name} — ${fmtNumber(locale, hi.ccu!)}, ${lo.name} — ${fmtNumber(locale, lo.ccu!)}`,
+      // По-английски пары — через « · »: онлайн там с запятыми разрядов, и
+      // запятая между парами слипалась с ними («512,345, Counter-Strike 2 —
+      // 1,234,567»). У русского разряды — пробелом, разгадка как была
+      reveal: `${hi.name} — ${fmtNumber(locale, hi.ccu!)}${tr(locale, { ru: ', ', en: ' · ' })}${lo.name} — ${fmtNumber(locale, lo.ccu!)}`,
     }
   }
 

@@ -1952,6 +1952,23 @@ describe('английская причина', () => {
     }
   })
 
+  /**
+   * Часы — с английскими разрядами, как «2,435 h played» в строке героя над
+   * причиной: «2435 h» рядом читалось другим числом. Русская причина — без
+   * разрядов, как была.
+   */
+  test('тысячи часов — с разрядами: 2,435 h', () => {
+    const big = { ...en, hoursOf: () => 2435, anchorOf: () => ({ ...anchor, hours: 1200 }) }
+    const reason = (source: ScoredCandidate['source'], opts: object = big) =>
+      heuristicPicks(one(source), puzzle, 1, NOW, { Puzzle: 1 }, opts)[0]!.reason
+    expect(reason('comeback')).toMatch(/^You already have 2,435 h in “Shapez”\./)
+    expect(reason('familiar')).toBe(
+      "You already know the controls in “Shapez” — you've got 2,435 h in it. Nothing new to learn: just jump in.",
+    )
+    expect(reason('new')).toBe("“Shapez” isn't in your library, but it's closest to “Factorio”, where you've spent 1,200 h.")
+    expect(reason('comeback', { hoursOf: () => 2435 })).toContain('2435 ч')
+  })
+
   test('два тега — множественное число: tags are, tags match', () => {
     const profile = { Sandbox: 5, Survival: 3 }
     const cases: Array<[ScoredCandidate['source'], string]> = [

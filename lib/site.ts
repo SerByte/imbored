@@ -85,6 +85,50 @@ async function localeOf(props: unknown): Promise<Locale> {
   return toLocale(params ? (await params)?.lang : undefined)
 }
 
+/** Картинки openGraph в том виде, в каком их отдаёт разобранная метадата родителя */
+type ParentImages = NonNullable<NonNullable<Awaited<ResolvingMetadata>['openGraph']>['images']>
+
+/**
+ * Корневая карточка (app/[lang]/opengraph-image.tsx), перенесённая в метадату
+ * страницы, — с подписью на её языке.
+ *
+ * alt файловой карточки Next читает константой модуля, без params, и она
+ * русская: это и есть русская подпись (docs/i18n.md, п. 10). На en адрес,
+ * размеры и тип остаются от файла (с его хэшем в адресе), а подпись —
+ * siteTitle('en'): иначе каждая английская страница отдавала в og:image:alt
+ * и twitter:image:alt «imbored — во что поиграть». twitter:image Next
+ * достраивает из openGraph, раз своего у страницы нет, — с этой же подписью.
+ * На ru — те же объекты как есть: русская голова не меняется ни на байт.
+ *
+ * Строку (так картинку можно задать вручную; разобранная метадата отдаёт
+ * адреса строками) оборачиваем в объект: подписи без объекта не бывает.
+ */
+function rootCardOn(locale: Locale, images: ParentImages | undefined): ParentImages | undefined {
+  if (locale !== 'en' || !images?.length) return images
+  const alt = siteTitle(locale)
+  return images.map((img) => (typeof img === 'string' ? { url: img, alt } : { ...img, alt }))
+}
+
+/**
+ * Английская подпись корневой карточки для страницы без своего адреса — той,
+ * что ownAddress не зовёт (закрытые от индекса /play, /explore, /rooms,
+ * /room/new, личные /library и /compat): её openGraph — корневой, и подпись
+ * в нём — русская подпись файла. Отдаёт кусок метадаты, который страница
+ * вливает в свою: на en — openGraph корня (siteName, locale, type) с той же
+ * карточкой и английским alt (rootCardOn); на ru — пусто, и голова остаётся
+ * прежней до байта. Своего og:url здесь нет намеренно, как и у корня:
+ * адрес — дело ownAddress, а этим страницам он в выдаче не нужен.
+ *
+ * parent бывает не передан (тест зовёт generateMetadata одним props) —
+ * тогда и карточки нет.
+ */
+export async function rootCard(props: unknown, parent?: ResolvingMetadata): Promise<Metadata> {
+  const locale = await localeOf(props)
+  if (locale !== 'en' || !parent) return {}
+  const images = rootCardOn(locale, (await parent)?.openGraph?.images)
+  return images?.length ? { openGraph: { ...ogSite(locale), type: 'website', images } } : {}
+}
+
 /**
  * generateMetadata для страницы без своей карточки: свой canonical и свой
  * og:url, а картинка — корневая.
@@ -107,12 +151,13 @@ async function localeOf(props: unknown): Promise<Locale> {
  *
  * Язык — из params маршрута (сегмент [lang]): canonical и og:url — адрес на
  * языке страницы, hreflang — обе версии (localeAlternates). path — всегда
- * русский адрес без префикса, как раньше.
+ * русский адрес без префикса, как раньше. Карточка на en — с английской
+ * подписью (rootCardOn), на ru — как есть.
  */
 export function ownAddress(path: string, own: Metadata = {}) {
   return async (props: unknown, parent: ResolvingMetadata): Promise<Metadata> => {
     const locale = await localeOf(props)
-    const images = (await parent).openGraph?.images
+    const images = rootCardOn(locale, (await parent).openGraph?.images)
     return {
       ...own,
       alternates: { ...own.alternates, ...localeAlternates(locale, path) },

@@ -1,4 +1,5 @@
 import { freshlyDigestedPatches, getCatalogMeta, setCatalogMeta, type Db } from './db'
+import { LOCALES, lp, type Locale } from './i18n'
 import { newsPath, SITEMAP_NEWS_WINDOW_SEC } from './newspage'
 
 /**
@@ -20,6 +21,14 @@ import { newsPath, SITEMAP_NEWS_WINDOW_SEC } from './newspage'
  * APP_BASE_URL, а база у него своя, и пинг с превью называл бы поисковику
  * адреса, которых на imbored.cc нет. Ключ — INDEXNOW_KEY, его файл отдаёт
  * app/indexnow-key.txt/route.ts.
+ *
+ * Языков два, и у каждого — свой проход. /en-страница патча индексируется
+ * с английским пересказом (tldr_en), а он пишется своим догоном и в другой
+ * день, чем русский: объявлять её вместе с русской значило бы звать краулер
+ * на noindex. Поэтому английский проход берёт свою выборку
+ * (freshlyDigestedPatches(…, 'en')) и ведёт свою отметку; русский — ровно
+ * прежний, с прежней отметкой. Пинг — один на оба: протокол принимает до
+ * 10 000 адресов, а здесь их не больше двух BATCH.
  */
 
 export const INDEXNOW_ENDPOINT = 'https://api.indexnow.org/indexnow'
@@ -27,8 +36,16 @@ export const INDEXNOW_ENDPOINT = 'https://api.indexnow.org/indexnow'
 /** Где лежит файл ключа — в корне сайта: ключ из корня покрывает весь хост */
 export const INDEXNOW_KEY_PATH = '/indexnow-key.txt'
 
-/** Отметка в catalog_meta: до какого пересказа уже объявлено */
+/** Отметка в catalog_meta: до какого пересказа уже объявлено (русские страницы) */
 export const INDEXNOW_MARK = 'indexnow_last'
+
+/** То же для английских страниц: до какого английского пересказа (tldr_en_at) */
+export const INDEXNOW_MARK_EN = 'indexnow_last_en'
+
+/** Отметка прохода на языке: русская — прежнее имя, чтобы не объявить заново уже объявленное */
+function markOf(locale: Locale): string {
+  return locale === 'en' ? INDEXNOW_MARK_EN : INDEXNOW_MARK
+}
 
 /**
  * Адресов за раз. Запуск пересказов успевает до полутора сотен (25 на звено,
@@ -107,11 +124,16 @@ function readMark(raw: string | null): Mark | null {
 }
 
 /**
- * Свежепересказанные патчи: перегенерировать страницы и объявить их.
+ * Свежепересказанные патчи: перегенерировать страницы и объявить их — на
+ * каждом языке своим проходом (выборка и отметка свои), одним пингом.
  *
  * Отметка двигается только при успехе (или когда пинговать не нужно вовсе):
  * отказ IndexNow — это те же адреса в следующий раз, а повторная
- * перегенерация ничего не стоит. null — объявлять нечего.
+ * перегенерация ничего не стоит. null — объявлять нечего ни на одном языке;
+ * count — адресов на всех языках.
+ *
+ * revalidate получает адрес без языка, как revalidateSitePath (lib/revalidate):
+ * тот сбрасывает копии страницы на обоих языках сам.
  */
 export async function announceFreshPatches(
   db: Db,
@@ -124,30 +146,46 @@ export async function announceFreshPatches(
   },
 ): Promise<{ count: number; pinged: boolean; ok: boolean; status: number | null } | null> {
   const { now, baseUrl, revalidate, env = process.env, fetchFn } = opts
-  const mark = readMark(await getCatalogMeta(db, INDEXNOW_MARK))
-  const after = mark?.digestedAt ?? now - FIRST_LOOKBACK_SEC
-  const fresh = await freshlyDigestedPatches(db, now - SITEMAP_NEWS_WINDOW_SEC, after, BATCH)
-  if (!fresh.length) return null
+  const passes = (
+    await Promise.all(
+      LOCALES.map(async (locale) => {
+        const mark = readMark(await getCatalogMeta(db, markOf(locale)))
+        const after = mark?.digestedAt ?? now - FIRST_LOOKBACK_SEC
+        const fresh = await freshlyDigestedPatches(db, now - SITEMAP_NEWS_WINDOW_SEC, after, BATCH, locale)
+        return { locale, after, fresh }
+      }),
+    )
+  ).filter((p) => p.fresh.length > 0)
+  if (!passes.length) return null
 
-  const paths = fresh.map((n) => newsPath(n.appid, n.gid))
+  const paths = new Set<string>()
+  const urls: string[] = []
+  for (const { locale, fresh } of passes) {
+    for (const n of fresh) {
+      const path = newsPath(n.appid, n.gid)
+      paths.add(path)
+      urls.push(`${baseUrl}${lp(locale, path)}`)
+    }
+  }
   for (const p of paths) revalidate(p)
 
   const key = indexNowEnabled(env) ? indexNowKey(env) : null
-  const result = key
-    ? await pingIndexNow({ baseUrl, key, urls: paths.map((p) => `${baseUrl}${p}`), fetchFn })
-    : { ok: true, status: null }
+  const result = key ? await pingIndexNow({ baseUrl, key, urls, fetchFn }) : { ok: true, status: null }
 
   /*
-   * Докуда объявлено. Выборка — от раньше пересказанных, значит последняя
-   * строка — самая поздняя. Если выборка обрезана по BATCH, за ней могли
-   * остаться строки с тем же tldr_at — отметка встаёт на секунду раньше, и
-   * они придут в следующий раз (повтор адреса ничего не стоит).
+   * Докуда объявлено — у каждого языка своё. Выборка — от раньше
+   * пересказанных, значит последняя строка — самая поздняя. Если выборка
+   * обрезана по BATCH, за ней могли остаться строки с тем же временем
+   * пересказа — отметка встаёт на секунду раньше, и они придут в следующий
+   * раз (повтор адреса ничего не стоит).
    */
-  const last = fresh[fresh.length - 1].digestedAt
-  const through = fresh.length === BATCH ? last - 1 : last
   const advance = result.ok || (result.status !== null && FINAL_STATUSES.has(result.status))
-  const digestedAt = advance ? Math.max(after, through) : after
-  const next: Mark = { at: now, digestedAt, count: fresh.length, status: result.status }
-  await setCatalogMeta(db, INDEXNOW_MARK, JSON.stringify(next))
-  return { count: fresh.length, pinged: key !== null, ok: result.ok, status: result.status }
+  for (const { locale, after, fresh } of passes) {
+    const last = fresh[fresh.length - 1].digestedAt
+    const through = fresh.length === BATCH ? last - 1 : last
+    const digestedAt = advance ? Math.max(after, through) : after
+    const next: Mark = { at: now, digestedAt, count: fresh.length, status: result.status }
+    await setCatalogMeta(db, markOf(locale), JSON.stringify(next))
+  }
+  return { count: urls.length, pinged: key !== null, ok: result.ok, status: result.status }
 }

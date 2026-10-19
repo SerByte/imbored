@@ -2659,7 +2659,7 @@ describe('настроение по осям семантики', () => {
         'all evening',
       ])
       const stop = { ...meta(1, {}), semantics: sem({ minutes: 40, canStopAnytime: true }) }
-      expect(moodWordsOf(stop, chillShort, 'en')).toEqual(['stop anytime'])
+      expect(moodWordsOf(stop, chillShort, 'en')).toEqual(['easy to put down'])
       // заход на час — своей фразой, а не «hour session»
       const hour = { ...meta(1, {}), semantics: sem({ minutes: 50 }) }
       expect(moodWordsOf(hour, { time: 'medium', vibe: 'chill', social: 'solo' }, 'en')).toEqual(['an hour at a time'])

@@ -1,6 +1,7 @@
-import type { Metadata } from 'next'
+import type { Metadata, ResolvingMetadata } from 'next'
 import { MotionLazy } from '@/components/motion/MotionLazy'
 import { toLocale, tr } from '@/lib/i18n'
+import { rootCard } from '@/lib/site'
 
 /**
  * См. app/rooms/layout.tsx: страница клиентская, а metadata экспортируется
@@ -15,9 +16,11 @@ import { toLocale, tr } from '@/lib/i18n'
  * Язык — из params маршрута, а не из next/root-params: так же, как у
  * ownAddress (lib/site), и layout годится вызвать без сборки.
  */
-export async function generateMetadata({ params }: LayoutProps<'/[lang]/play'>): Promise<Metadata> {
-  const locale = toLocale((await params).lang)
+export async function generateMetadata(props: LayoutProps<'/[lang]/play'>, parent?: ResolvingMetadata): Promise<Metadata> {
+  const locale = toLocale((await props.params).lang)
   return {
+    // карточка корня на /en — с английской подписью (lib/site)
+    ...(await rootCard(props, parent)),
     // Не «Подборка»: на экране одна игра, и вкладка обязана говорить то же
     title: tr(locale, { ru: 'Одна игра', en: 'One game' }),
     description: tr(locale, {

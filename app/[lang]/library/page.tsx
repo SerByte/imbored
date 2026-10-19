@@ -73,7 +73,8 @@ import { LikedShelf, type LikedGame } from '@/components/LikedShelf'
 import { NeedSteam } from '@/components/NeedSteam'
 import { pickSnapshotDelta } from '@/lib/libdelta'
 import { playedShort, playtimeHidden } from '@/lib/playtime'
-import type { Metadata } from 'next'
+import type { Metadata, ResolvingMetadata } from 'next'
+import { rootCard } from '@/lib/site'
 import { WishlistShelf } from './WishlistShelf'
 
 /*
@@ -82,9 +83,9 @@ import { WishlistShelf } from './WishlistShelf'
  * Индексировать страницу нечего (robots), поэтому без alternates — только
  * вкладка и превью ссылки на языке страницы.
  */
-export async function generateMetadata(props: PageProps<'/[lang]/library'>): Promise<Metadata> {
+export async function generateMetadata(props: PageProps<'/[lang]/library'>, parent?: ResolvingMetadata): Promise<Metadata> {
   const locale = toLocale((await props.params).lang)
-  return tr(locale, {
+  const copy = tr(locale, {
     ru: {
       title: 'Библиотека',
       description: 'Вся твоя Steam-библиотека одной стеной: что заброшено, что ни разу не запускалось и сколько это стоило.',
@@ -94,6 +95,8 @@ export async function generateMetadata(props: PageProps<'/[lang]/library'>): Pro
       description: "Your whole Steam library on one wall: what's abandoned, what's never been launched and what it all cost.",
     },
   })
+  // карточка корня на /en — с английской подписью (lib/site)
+  return { ...copy, ...(await rootCard(props, parent)) }
 }
 
 export const dynamic = 'force-dynamic'

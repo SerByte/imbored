@@ -588,8 +588,14 @@ describe('язык статьи патча — язык пересказа', () 
       'Update 1.5: a new map',
     )
     expect(crumb({ ...ru, titleEn: 'Update 1.5: a new map' }, 'en')).toBe('Update 1.5: a new map')
-    expect(patchArticleLd({ item: ru, game, baseUrl: BASE, locale: 'en' }).headline).toBe('Update')
-    expect(crumb(ru, 'en')).toBe('Update')
+    // общий «{Game} update» — целиком, как в h1 (patchHeading): голое «Update» ничего не называет
+    expect(patchArticleLd({ item: ru, game, baseUrl: BASE, locale: 'en' }).headline).toBe('Counter-Strike 2 update')
+    expect(crumb(ru, 'en')).toBe('Counter-Strike 2 update')
+    // с номером версии из заголовка издателя — режется, как любой заголовок с названием впереди
+    const versioned = { ...ru, title: 'Обновление 1.5: новая карта' }
+    expect(patchArticleLd({ item: versioned, game, baseUrl: BASE, locale: 'en' }).headline).toBe('Update 1.5')
+    expect(crumb(versioned, 'en')).toBe('Update 1.5')
+    expect(patchArticleLd({ item: ru, game: null, baseUrl: BASE, locale: 'en' }).headline).toBe('Update')
     expect(JSON.stringify(patchArticleLd({ item: ru, game, baseUrl: BASE, locale: 'en' }))).not.toMatch(/[А-Яа-яЁё]/)
     // английский заголовок издателя — как и был
     expect(patchArticleLd({ item: base, game, baseUrl: BASE, locale: 'en' }).headline).toBe('Update')
@@ -598,6 +604,20 @@ describe('язык статьи патча — язык пересказа', () 
       'Обновление Counter-Strike 2: новая карта',
     )
     expect(crumb({ ...ru, titleEn: 'Update' })).toBe('Обновление Counter-Strike 2: новая карта')
+  })
+
+  /**
+   * Автор и издатель — imbored той версии, что и страница: на /en — /en, как
+   * у WebSite главной; русский корень на английской странице — другая
+   * страница для робота.
+   */
+  test('автор и издатель — главная той же версии', () => {
+    const en = patchArticleLd({ item: base, game, baseUrl: BASE, locale: 'en' })
+    expect(en.author).toEqual({ '@type': 'Organization', name: 'imbored', url: 'https://imbored.cc/en' })
+    expect(en.publisher).toEqual(en.author)
+    const ru = patchArticleLd({ item: base, game, baseUrl: BASE })
+    expect(ru.author).toEqual({ '@type': 'Organization', name: 'imbored', url: 'https://imbored.cc/' })
+    expect(ru.publisher).toEqual(ru.author)
   })
 
   test('английский пересказ на /en — статья английская', () => {

@@ -1,6 +1,7 @@
-import type { Metadata } from 'next'
+import type { Metadata, ResolvingMetadata } from 'next'
 import { MotionLazy } from '@/components/motion/MotionLazy'
 import { toLocale, tr } from '@/lib/i18n'
+import { rootCard } from '@/lib/site'
 
 /**
  * Страница клиентская, а metadata экспортируется только из серверных модулей —
@@ -11,9 +12,11 @@ import { toLocale, tr } from '@/lib/i18n'
  * языке страницы. hreflang здесь нет намеренно: /rooms закрыта noindex
  * (NOINDEX_PAGES в lib/robots), и связывать в выдаче нечего.
  */
-export async function generateMetadata({ params }: LayoutProps<'/[lang]/rooms'>): Promise<Metadata> {
-  const locale = toLocale((await params).lang)
+export async function generateMetadata(props: LayoutProps<'/[lang]/rooms'>, parent?: ResolvingMetadata): Promise<Metadata> {
+  const locale = toLocale((await props.params).lang)
   return {
+    // карточка корня на /en — с английской подписью (lib/site)
+    ...(await rootCard(props, parent)),
     title: tr(locale, { ru: 'Пати', en: 'Party' }),
     description: tr(locale, {
       ru: 'Комната на вечер: подключаете библиотеки, свайпаете колоду из общих игр — совпадут голоса всех, будет матч.',

@@ -1,7 +1,7 @@
 import { discountOf, trustedPrice } from './discount'
 import { descriptionFor } from './gamedesc'
 import { DEFAULT_LOCALE, htmlLang, lp, tr, type Locale } from './i18n'
-import { newsHeading, newsPath, newsTitleOn } from './newspage'
+import { newsPath, patchHeading } from './newspage'
 import { patchArchivePath } from './patcharchive'
 import { OG_SITE, siteDescription } from './site'
 import { STORE_LABEL } from './stores'
@@ -484,7 +484,7 @@ export type NewsArticleLd = {
  * Патч как статья: заголовок, дата, пересказ, кадр, игра и оригинал.
  *
  * Каждое поле — то, что страница показывает: заголовок — тот же, что в h1
- * (newsHeading), описание — «Коротко», только если пересказ есть, кадр —
+ * (patchHeading), описание — «Коротко», только если пересказ есть, кадр —
  * только если он стоит на странице, isBasedOn — «Оригинал в Steam». Автор и
  * издатель — imbored: страница — наш пересказ поста, а не сам пост, и у
  * текста издателя ниже подписи нет.
@@ -492,8 +492,10 @@ export type NewsArticleLd = {
  * item.tldr — пересказ на языке страницы: на /en это английский пересказ
  * (tldr_en), и без него описания в разметке нет — как нет и «In short» на
  * странице. Заголовок на /en — newsTitleOn (titleEn, английский заголовок или
- * «{Game} update»), как в h1: русского заголовка издателя там нет. Пока чтение патча его не отдаёт, /en передаёт русский пересказ —
- * и разметка повторяет страницу: description русский, inLanguage 'ru'.
+ * «{Game} update») через patchHeading, как в h1: русского заголовка издателя
+ * там нет, а общий «{Game} update» не режется до голого «Update». Пока
+ * чтение патча его не отдаёт, /en передаёт русский пересказ — и разметка
+ * повторяет страницу: description русский, inLanguage 'ru'.
  */
 export function patchArticleLd({
   item,
@@ -507,11 +509,13 @@ export function patchArticleLd({
   locale?: Locale
 }): NewsArticleLd {
   const url = at(baseUrl, locale, newsPath(item.appid, item.gid))
-  const site = { '@type': 'Organization' as const, name: OG_SITE.siteName, url: `${baseUrl}/` }
+  // Организация — главная той же версии сайта, как WebSite главной (websiteJsonLd):
+  // на /en — /en, а не русский корень; на ru — `${baseUrl}/`, как было
+  const site = { '@type': 'Organization' as const, name: OG_SITE.siteName, url: at(baseUrl, locale, '/') }
   return {
     '@context': 'https://schema.org',
     '@type': 'NewsArticle',
-    headline: newsHeading(newsTitleOn(item, game?.name, locale), game?.name),
+    headline: patchHeading(item, game?.name, locale),
     url,
     mainEntityOfPage: url,
     datePublished: new Date(item.publishedAt * 1000).toISOString(),
@@ -558,7 +562,7 @@ export function patchBreadcrumbLd({
           { name: archiveCrumb(locale), item: at(baseUrl, locale, patchArchivePath(item.appid)) },
         ]
       : []),
-    { name: newsHeading(newsTitleOn(item, game?.name, locale), game?.name), item: at(baseUrl, locale, newsPath(item.appid, item.gid)) },
+    { name: patchHeading(item, game?.name, locale), item: at(baseUrl, locale, newsPath(item.appid, item.gid)) },
   ]
   return {
     '@context': 'https://schema.org',
