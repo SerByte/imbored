@@ -9,14 +9,15 @@ import { LinkPending } from '@/components/LinkPending'
 import { NewsDate, ScaleBadge } from '@/components/NewsMeta'
 import { trimArt } from '@/lib/art'
 import { dateLabel } from '@/lib/freshness'
-import { lp, pl, toLocale, tr, type Locale } from '@/lib/i18n'
+import { LOCALES, lp, pl, toLocale, tr, type Locale } from '@/lib/i18n'
 import { archiveBreadcrumbLd, archiveCrumb, ldScript } from '@/lib/jsonld'
 import { navPrefetch } from '@/lib/nav'
 import { newsHeading } from '@/lib/newspage'
 import { archiveIndexable, patchArchivePath, type ArchiveItem } from '@/lib/patcharchive'
 import { appBaseUrl } from '@/lib/server'
-import { localeAlternates, ogSite } from '@/lib/site'
+import { ogSite } from '@/lib/site'
 import { textLangOn } from '@/lib/textlang'
+import { indexedHreflang } from './alternates'
 import { loadArchive } from './load'
 import { archiveDescriptionOn, archiveHeading, archiveMonthsOn, archiveTitleOn } from './page.copy'
 
@@ -81,11 +82,23 @@ export async function generateMetadata({ params }: Params, parent: ResolvingMeta
     locale === 'en' && inherited?.length
       ? inherited.map((img) => (typeof img === 'object' && !(img instanceof URL) ? { ...img, alt: EN_CARD_ALT } : img))
       : inherited
+  /*
+   * Какие версии архива в поиске — у каждого языка по своим пересказам
+   * (archiveIndexable), и hreflang ведёт только на них (indexedHreflang).
+   * Архив другого языка — своим чтением: строки приходят уже на языке
+   * страницы, пересказа другого языка в них нет. Чтение своего языка — тот же
+   * вызов, что выше (cache); чужого — ещё одно раз в сутки ISR.
+   */
+  const versions = await Promise.all(LOCALES.map((l) => loadArchive(appid, l)))
+  const has = LOCALES.filter((_, i) => {
+    const v = versions[i]
+    return v != null && archiveIndexable(v.items, v.game.listed)
+  })
   return {
     title,
     description,
-    alternates: localeAlternates(locale, canonical),
-    ...(archiveIndexable(items, game.listed) ? {} : { robots: { index: false, follow: true } }),
+    alternates: { canonical: lp(locale, canonical), ...indexedHreflang(canonical, has) },
+    ...(has.includes(locale) ? {} : { robots: { index: false, follow: true } }),
     openGraph: {
       ...ogSite(locale),
       type: 'website',
@@ -141,7 +154,7 @@ export default async function PatchArchivePage({ params }: Params) {
       <article className="relative mx-auto flex w-full max-w-3xl flex-col gap-10 px-safe pt-28 pb-16">
         <header className="flex flex-col gap-4 anim-rise">
           <nav
-            aria-label={tr(locale, { ru: 'Путь к обновлениям', en: 'Path to updates' })}
+            aria-label={tr(locale, { ru: 'Путь к обновлениям', en: 'Breadcrumb' })}
             className="flex flex-wrap items-center gap-1.5"
           >
             <Link href={gameHref} transitionTypes={['nav-back']} className="tap tap-tight link-more">

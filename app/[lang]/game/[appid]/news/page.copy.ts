@@ -35,6 +35,9 @@ export function archiveTitleOn(gameName: string, locale: Locale = 'ru'): string 
  * meta description: сколько патчей и за какой срок, затем последний пересказ —
  * то же правило, что у archiveDescription. На /en item.tldr — уже английский
  * пересказ (loadArchive), год — у конца срока и у начала, только если он другой.
+ * Имя игры — первым и через двоеточие («Counter-Strike 2: 30 patches — …»):
+ * русская отделяет его кавычками, а «30 Left 4 Dead 2 patches» без границы
+ * сливал число счёта с числом в названии.
  */
 export function archiveDescriptionOn(gameName: string, items: readonly ArchiveItem[], locale: Locale = 'ru'): string {
   if (locale !== 'en') return archiveDescription(gameName, items)
@@ -50,7 +53,7 @@ export function archiveDescriptionOn(gameName: string, items: readonly ArchiveIt
         ? ` — ${dateLabel(newest.publishedAt, { year: true, locale })}`
         : ''
   const noun = pl(locale, n, { ru: ['патч', 'патча', 'патчей'], en: ['patch', 'patches'] })
-  const head = `${n} ${gameName} ${noun}${span}.`
+  const head = `${gameName}: ${n} ${noun}${span}.`
   const told = items.find((i) => i.tldr?.trim())
   const text = told
     ? `${head} Latest summary, ${dateLabel(told.publishedAt, { locale })}: ${told.tldr!.replace(/\s+/g, ' ').trim()}`

@@ -370,7 +370,7 @@ export function FeedLink({ since, verified }: { since: number | null; verified: 
             {busy === 'off'
               ? tr(locale, { ru: 'Отключаю…', en: 'Turning off…' })
               : confirm === 'off'
-                ? tr(locale, { ru: 'Да, отключить', en: 'Yes, turn off' })
+                ? tr(locale, { ru: 'Да, отключить', en: 'Yes, turn it off' })
                 : tr(locale, { ru: 'Отключить', en: 'Turn off' })}
           </button>
         ) : null}

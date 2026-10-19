@@ -21,9 +21,10 @@ import { archiveCrumb, patchArticleLd, patchBreadcrumbLd, ldScript } from '@/lib
 import { navPrefetch } from '@/lib/nav'
 import { patchArchivePath } from '@/lib/patcharchive'
 import { appBaseUrl, getDb } from '@/lib/server'
-import { lp, toLocale, tr } from '@/lib/i18n'
-import { localeAlternates, ogSite } from '@/lib/site'
+import { LOCALES, lp, toLocale, tr } from '@/lib/i18n'
+import { ogSite } from '@/lib/site'
 import { textLangOn } from '@/lib/textlang'
+import { indexedHreflang } from '../alternates'
 import { loadPatch, patchHeading } from './load'
 
 /**
@@ -92,13 +93,22 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
    * но это та же карточка, только с английским alt (EN_CARD выше).
    */
 
+  /*
+   * Какие версии поста в поиске — у каждого языка по своему пересказу
+   * (newsIndexable), и hreflang ведёт только на них (indexedHreflang).
+   * Пересказы обоих языков — у русского чтения: оно отдаёт пост как лежит, с
+   * tldr и tldrEn. На русской странице это тот же вызов, что выше (cache), на
+   * /en — ещё одно чтение строки раз в сутки ISR.
+   */
+  const stored = (await loadPatch(appid, gid, 'ru'))?.item
+  const listed = game?.listed ?? false
+  const has = LOCALES.filter((l) => newsIndexable(l === 'en' ? stored?.tldrEn : stored?.tldr, listed))
+
   return {
     title,
     description,
-    alternates: localeAlternates(locale, canonical),
-    ...(newsIndexable(item.tldr, game?.listed ?? false)
-      ? {}
-      : { robots: { index: false, follow: true } }),
+    alternates: { canonical: lp(locale, canonical), ...indexedHreflang(canonical, has) },
+    ...(has.includes(locale) ? {} : { robots: { index: false, follow: true } }),
     openGraph: {
       ...ogSite(locale),
       type: 'article',
@@ -190,7 +200,7 @@ export default async function PatchPage({ params }: Params) {
               подняться к остальным патчам теперь можно одним шагом. Архив —
               без префетча: он на ISR и рендерится по первому заходу */}
           {game && (
-            <nav aria-label={tr(locale, { ru: 'Путь к патчу', en: 'Path to this patch' })} className="flex flex-wrap items-center gap-1.5">
+            <nav aria-label={tr(locale, { ru: 'Путь к патчу', en: 'Breadcrumb' })} className="flex flex-wrap items-center gap-1.5">
               <Link href={gameHref} transitionTypes={['nav-back']} className="tap tap-tight link-more">
                 {game.name}
               </Link>
