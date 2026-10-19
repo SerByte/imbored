@@ -330,6 +330,44 @@ describe('/compat/[steamid] на /en: ни одной русской строк�
       robots: { index: false },
     })
   })
+
+  /*
+   * Битый адрес (не 17 цифр): страница — 404, а файловая карточка сегмента в
+   * голову встаёт всё равно, и пустой объект оставлял на /en её русский alt
+   * («Сравнить игровые вкусы — imbored»). Портрет с битым адресом устроен так
+   * же (portrait/[steamid]/metadata.test.ts).
+   */
+  test('битый адрес: на /en — та же карточка с английской подписью, русская — пустой объект, как была', async () => {
+    const { size, contentType } = await import('./opengraph-image')
+    for (const [steamid, path] of [
+      ['abc', 'abc'],
+      ['123', '123'],
+      // в params сегмент раскодирован — в адрес карточки он уходит закодированным
+      ['a b', 'a%20b'],
+    ] as const) {
+      const en = await generateMetadata(params({ steamid, lang: 'en' }))
+      // Только превью: заголовок вкладки — корневой, как у русской
+      expect(Object.keys(en), steamid).toEqual(['openGraph'])
+      expect(en.openGraph, steamid).toEqual({
+        siteName: 'imbored',
+        locale: 'en_US',
+        type: 'website',
+        images: [
+          {
+            url: `/en/compat/${path}/opengraph-image`,
+            width: size.width,
+            height: size.height,
+            type: contentType,
+            alt: 'Compare tastes — imbored',
+          },
+        ],
+      })
+      // og:url нет, как у корня: у битого адреса его нет и на русской
+      expect(en.openGraph, steamid).not.toHaveProperty('url')
+      expect(JSON.stringify(en), steamid).not.toMatch(CYRILLIC)
+      expect(await generateMetadata(params({ steamid })), steamid).toEqual({})
+    }
+  })
 })
 
 /**
