@@ -364,8 +364,60 @@ const NO_UPDATES = new RegExp(
   'i',
 )
 
+/*
+ * То же утверждение по-английски — для слота en (pros_en/cons_en): /en
+ * показывает те же минусы своими словами, и «Developers don't update the
+ * game» над восемью свежими патчами спорит со страницей так же, как русский.
+ * Язык выбирает сам текст: русские правила латиницу не узнают, английские —
+ * кириллицу, поэтому одна функция служит обоим слотам.
+ *
+ * Те же замки, что у русских правил, но со своей грамматикой. В английском
+ * определение стоит ДО слова: «Map updates have stopped», «Controller support
+ * was dropped», «Mod development has stopped» — про карты, геймпад и моды,
+ * и «updates»/«support»/«development» узнаются только в начале предложения
+ * или после служебного слова (CLAUSE_EN). Игра после глагола — только сама,
+ * а не определением к другому слову: «don't update the game's maps» и «the
+ * game modes» — не про игру (GAME_END_EN). «Dead game» в список не входит:
+ * это про пустой онлайн, а свежий патч ему не противоречит.
+ */
+/** Начало предложения или служебное слово перед «updates», «support», «development» */
+const CLAUSE_EN = String.raw`(?:^\s*|[,.;:!?…—–(]\s*|\b(?:and|but|so|the|its|their|all|any|further|active|official)\s+)`
+/** «isn't», «hasn't», «no longer», «stopped» — отрицание при «update» */
+const NEG_EN = String.raw`\b(?:(?:is|are|was|were|has|have|had|does|do|did|wo)(?:n['’]t|\s+not)|will\s+not|not|never|no\s+longer|stopped|quit)`
+const NOT_UPDATED_EN = String.raw`${NEG_EN}\s+(?:(?:been|being|getting|get|gets|got|really|ever|even|received|receiving|seen|had|any|an|bothered\s+to|bother\s+to)\s+){0,2}updat(?:e|es|ed|ing)\b`
+/** Кто не обновляет — перед глаголом (зеркало GAME_BEFORE) */
+const WHO_EN = String.raw`\b(?:(?:the|its|their)\s+)?(?:game|project|developers?|devs?|publishers?|authors?|studio)\b`
+/** Что может стоять между подлежащим и отрицанием, не будучи другим подлежащим */
+const ADV_EN = String.raw`(?:(?:has|have|had|is|are|was|were|basically|clearly|apparently|seemingly|just|simply|completely|totally|long\s+since|seems?\s+to)\s+){0,2}`
+/** Игра дополнением — сама, а не определение к следующему слову */
+const GAME_END_EN = String.raw`(?:game|project)(?=\s*(?:[,.;:!?…—–)]|$)|\s+(?:and|but|or|anymore|any\s+more|at\s+all|in|for|since|after|ever|much|often|regularly|now|lately|properly|either)\b)`
+/** За поддержкой или разработкой — сама игра, «it» в конце или конец фразы (зеркало OF_GAME) */
+const OF_GAME_EN = String.raw`(?:\s+(?:(?:of|for|on)\s+)?(?:(?:the|this)\s+)?${GAME_END_EN}|\s+it(?=\s*(?:[,.;:!?…—–)]|$))|(?=\s*(?:[,.;:!?…—–)]|$)|\s+(?:and|but)\s))`
+/** «…by the developers» — кем не обновляется или брошена (зеркало GAME_AFTER) */
+const BY_WHO_EN = String.raw`\s+by\s+(?:(?:the|its)\s+)?(?:devs?|developers?|publishers?|authors?|studio)\b`
+const NO_UPDATES_EN = new RegExp(
+  [
+    String.raw`\b(?:no|without(?:\s+any)?|zero|lack\s+of)\s+(?:(?:new|fresh|recent|any)\s+)?updates?\b`,
+    String.raw`${CLAUSE_EN}updates?\s+(?:(?:have|has)\s+)?(?:stopped|ceased|dried\s+up|(?:no\s+longer|never|don['’]t|do\s+not|aren['’]t|are\s+not|won['’]t|will\s+not)\s+(?:come|coming|released|being\s+released|come\s+out|coming\s+out))\b`,
+    String.raw`\babandoned\s+(?:(?:the|this|their|its)\s+)?${GAME_END_EN}`,
+    String.raw`\babandoned\s+(?:(?:the|its|their)\s+)?(?:development|support)${OF_GAME_EN}`,
+    String.raw`\b(?:game|project)\s+(?:(?:is|was|has\s+been|have\s+been|feels|seems|looks|got|basically|essentially|completely|totally|pretty\s+much|kind\s+of|now|clearly|effectively)\s+){0,3}abandoned\b`,
+    String.raw`\babandoned${BY_WHO_EN}`,
+    String.raw`\b(?:stopped|ended|dropped|discontinued|halted|ceased|quit)\s+(?:(?:the|its|their)\s+)?(?:support(?:ing)?|develop(?:ment|ing))${OF_GAME_EN}`,
+    String.raw`${CLAUSE_EN}support\s+(?:(?:for|of)\s+(?:(?:the|this)\s+)?(?:game|project)\s+)?(?:(?:has|have|was|is)\s+)?(?:been\s+)?(?:ended|stopped|dropped|discontinued|ceased|halted|over)\b`,
+    String.raw`${CLAUSE_EN}development\s+(?:(?:has|have|was|is|seems\s+to\s+have|appears\s+to\s+have)\s+)?(?:been\s+)?(?:stopped|ended|halted|frozen|discontinued|ceased|abandoned|stalled)\b`,
+    String.raw`${WHO_EN}\s+${ADV_EN}${NOT_UPDATED_EN}`,
+    String.raw`^\s*(?:[a-z]+\s+)?(?:(?:the|this)\s+)?(?:game|project)\b[^.;:!?,]*,\s*(?:(?:but|and)\s+)?(?:(?:it|it['’]s)\s+)?${ADV_EN}${NOT_UPDATED_EN}`,
+    String.raw`${NOT_UPDATED_EN}\s+(?:(?:the|this|their|its)\s+)?${GAME_END_EN}`,
+    String.raw`${NOT_UPDATED_EN}${BY_WHO_EN}`,
+    String.raw`\b(?:nobody|no\s+one)\s+(?:(?:is|has|ever|really)\s+)?updat(?:e|es|ed|ing)\s+(?:(?:the|this)\s+)?${GAME_END_EN}`,
+  ].join('|'),
+  'i',
+)
+
+/** Минус утверждает, что игру не обновляют или бросили, — на любом из двух языков слота */
 export function claimsNoUpdates(text: string): boolean {
-  return NO_UPDATES.test(text)
+  return NO_UPDATES.test(text) || NO_UPDATES_EN.test(text)
 }
 
 /* ---------------- пункты как предложения ---------------- */

@@ -92,14 +92,24 @@ export function PlayersNow({
    * Прошедшее время рядом с числом честно для людей, которых посчитали, а для
    * пустоты нужно сказать, что пусто было в сети: «онлайн при замере: 0». Ноль
    * при этом остаётся цифрой — проверяемость отсева держится на ней.
+   *
+   * По-английски довод тот же: «0 were playing» — та же пустота про людей,
+   * поэтому и там подпись про сеть — «online at last check: 0» (глоссарий).
    */
   if (ccu === 0) {
     return (
       <span
         className={`inline-flex items-center gap-1.5 text-xs text-dim ${className}`}
-        title={свежий ? undefined : 'Онлайн по последнему известному замеру'}
+        title={
+          свежий
+            ? undefined
+            : tr(locale, { ru: 'Онлайн по последнему известному замеру', en: 'Last known player count' })
+        }
       >
-        {свежий ? 'сейчас онлайн:' : 'онлайн при замере:'} <span className="tabular-nums">0</span>
+        {свежий
+          ? tr(locale, { ru: 'сейчас онлайн:', en: 'online now:' })
+          : tr(locale, { ru: 'онлайн при замере:', en: 'online at last check:' })}{' '}
+        <span className="tabular-nums">0</span>
       </span>
     )
   }

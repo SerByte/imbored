@@ -419,6 +419,16 @@ describe('кэш карточки игры', () => {
     expect(text).toContain('онлайн при замере: 0')
     expect(text).not.toMatch(/0\s*играли/)
   })
+
+  test('ноль онлайна на /en — «online at last check: 0», а не русская строка', async () => {
+    // Ветка нуля пришла из main по-русски, а страница ставит её всегда
+    // (typeof ccu === 'number'): на /en печаталось «онлайн при замере: 0»
+    await upsertGameMeta(db, game(APPID, { ccu: 0, ccuAt: T0 - 3 * DAY }), T0)
+    lang.locale = 'en'
+    const text = textOf(visible(await GamePage({ params: Promise.resolve({ appid: String(APPID), lang: 'en' }) })))
+    expect(text).toContain('online at last check: 0')
+    expect(text).not.toMatch(/онлайн|0\s*were playing/)
+  })
 })
 
 /** JSON-LD страницы, как он уходит в HTML: первый <script type="application/ld+json"> */

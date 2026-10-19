@@ -1,3 +1,4 @@
+import type { Locale } from './i18n'
 import { playedShort } from './playtime'
 
 /**
@@ -61,9 +62,14 @@ export function parseOwnedNear(raw: unknown): OwnedNearGame[] {
  * Сколько в ней наиграно — подписью после имени. Ноль — «не запускал»: это
  * и есть довод «сначала её». Скрытое время — без подписи вовсе: «не
  * запускал» про игру, где у человека пятьсот часов, было бы неправдой.
+ *
+ * По-английски — «25 min played» и «never launched» (глоссарий: «часов
+ * наиграно» → «hours played», «ни разу не запускал» → «never launched»);
+ * время — тем же playedShort своего языка.
  */
-export function nearPlayedLabel(minutes: number | null): string | null {
+export function nearPlayedLabel(minutes: number | null, locale: Locale = 'ru'): string | null {
   if (minutes === null) return null
+  if (locale === 'en') return minutes > 0 ? `${playedShort(minutes, locale)} played` : 'never launched'
   return minutes > 0 ? `наиграно ${playedShort(minutes)}` : 'не запускал'
 }
 

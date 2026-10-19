@@ -37,6 +37,14 @@ describe('«Похожее уже есть у тебя» — разбор и п�
     expect(nearPlayedLabel(180)).toBe('наиграно 3 ч')
   })
 
+  test('на /en — подпись по-английски, тем же правилом', () => {
+    expect(nearPlayedLabel(0, 'en')).toBe('never launched')
+    expect(nearPlayedLabel(null, 'en')).toBeNull()
+    expect(nearPlayedLabel(25, 'en')).toBe('25 min played')
+    expect(nearPlayedLabel(180, 'en')).toBe('3 h played')
+    expect(nearPlayedLabel(74_040, 'en')).toBe('1,234 h played')
+  })
+
   test('хранилище будит подписчиков и помнит, для какой игры список', () => {
     let calls = 0
     const off = ownedNearStore.subscribe(() => calls++)
@@ -55,6 +63,20 @@ describe('«Похожее уже есть у тебя» — разбор и п�
  * заход вошедшего на карточку стоил бы двух вызовов функции вместо одного.
  */
 describe('«Похожее уже есть у тебя» — тем же запросом, что «Запустить»', () => {
+  /*
+   * Строку ISR не рисует (на сервере хранилище пустое), и тест страницы «на
+   * /en нет кириллицы» её не видит. Островок пришёл из main по-русски уже
+   * после перевода страницы — поэтому сторож здесь: русский в нём только
+   * парой tr, а подпись наигранного — с языком.
+   */
+  test('OwnedNear говорит на языке страницы: русский — только парой tr', () => {
+    const src = code(read('components', 'OwnedNear.tsx'))
+    expect(src).toContain('const locale = useLocale()')
+    expect(src).toContain('nearPlayedLabel(g.minutes, locale)')
+    const bare = src.replace(/\btr\(locale, \{ ru: '[^']*', en: '[^']*' \}\)/g, 'tr()')
+    expect(bare.match(/.{0,30}[А-Яа-яЁё].{0,30}/g)).toBeNull()
+  })
+
   test('OwnedNear ничего не спрашивает сам — только читает хранилище', () => {
     const src = code(read('components', 'OwnedNear.tsx'))
     expect(src).not.toMatch(/\bfetch\(/)

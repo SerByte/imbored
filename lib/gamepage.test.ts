@@ -309,6 +309,40 @@ describe('loadGamePage', () => {
     await upsertNewsItems(db, [{ ...patch, gid: '2', publishedAt: nowSec - 5 * 86_400 }], nowSec)
     expect((await loadGamePage(730))?.prosCons?.cons).toEqual(['Много читеров'])
   })
+
+  /*
+   * /en читает слот en, и сверка со свежим патчем обязана работать и там:
+   * иначе тот же минус пропадал с /game/730 и оставался на /en/game/730 — в
+   * блоке, в meta description («Criticized for: …») и на карточке.
+   */
+  test('и на /en: английский минус «не обновляют» над свежим патчем не стоит', async () => {
+    const db = await withDb()
+    await addGame(db, 730)
+    const en = { pros: ['Precise gunplay'], cons: ["Developers don't update the game and abandoned its development", 'Lots of cheaters'] }
+    await setGameJson(db, 730, 'pros_cons_json', {
+      pros: ['Точная стрельба'],
+      cons: ['Разработчики не обновляют игру и забросили её развитие', 'Много читеров'],
+      source: 'claude' as const,
+      en,
+    })
+    const nowSec = Math.floor(Date.now() / 1000)
+    const patch = {
+      appid: 730,
+      title: 'Update',
+      url: 'https://store.steampowered.com/news/app/730/view/1',
+      kind: 'patch' as const,
+      scale: 'hotfix' as const,
+      blocks: [{ kind: 'p' as const, runs: [{ text: 'fixes' }] }],
+      bodyHash: 'h',
+      rank: 0,
+    }
+    await upsertNewsItems(db, [{ ...patch, gid: '1', publishedAt: nowSec - 200 * 86_400 }], nowSec)
+    expect((await loadGamePage(730, 'en'))?.prosCons?.cons).toEqual(en.cons)
+
+    await upsertNewsItems(db, [{ ...patch, gid: '2', publishedAt: nowSec - 5 * 86_400 }], nowSec)
+    expect((await loadGamePage(730, 'en'))?.prosCons?.cons).toEqual(['Lots of cheaters'])
+    expect((await loadGamePage(730))?.prosCons?.cons).toEqual(['Много читеров'])
+  })
 })
 
 describe('topTagOf', () => {
