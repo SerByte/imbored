@@ -3,7 +3,7 @@
 import Link from '@/components/Link'
 import { useLocale } from '@/components/LocaleProvider'
 import { useLocaleRouter } from '@/components/useLocaleRouter'
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { BlurBand } from '@/components/BlurBand'
 import { DailyCountdown } from '@/components/DailyCountdown'
 import { DemoBar, useDemoSession } from '@/components/DemoBar'
@@ -44,6 +44,7 @@ import {
 import { forgetPlanned } from '@/lib/planforget'
 import { sourceBadge, suggestsInstall } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
+import { withForeignRuns } from '@/lib/textlang'
 import type { CandidateSource } from '@/lib/types'
 import { remainingLine, runWarmup, type WarmupProgress } from '@/lib/warmup'
 import { sendLike, undoLike } from '@/lib/unlike'
@@ -239,8 +240,12 @@ export default function DailyPage() {
    * подобрало другую или «Зашло» не снялось (lib/unlike). null — нечего сказать
    */
   const [rerollMiss, setRerollMiss] = useState<string | null>(null)
-  /** Что сказать скринридеру о смене героя — живая строка стоит с первого кадра */
-  const [said, setSaid] = useState('')
+  /**
+   * Что сказать скринридеру о смене героя — живая строка стоит с первого кадра.
+   * Разметка, а не строка: на /en русское название в ней — своим lang
+   * (withForeignRuns), на ru — та же строка одним текстовым узлом
+   */
+  const [said, setSaid] = useState<ReactNode>('')
   /*
    * Герой сменился по нажатию («Не сегодня», «Сегодня хочу из своего») — и
    * нажатая кнопка ушла вместе со старым героем: секция пересоздаётся по
@@ -550,7 +555,13 @@ export default function DailyPage() {
       const own = wasOwn && data.ownAlternate
       if (own) setOwnDay(true)
       const name = (own ? data.ownAlternate! : data.pick).name
-      setSaid(tr(locale, { ru: `Другая игра на сегодня: ${name}`, en: `Another game for today: ${name}` }))
+      setSaid(
+        withForeignRuns(
+          locale,
+          tr(locale, { ru: `Другая игра на сегодня: ${name}`, en: `Another game for today: ${name}` }),
+          [name],
+        ),
+      )
     } catch {
       setRerollMiss(rerollFailed(locale))
     } finally {
@@ -717,9 +728,14 @@ export default function DailyPage() {
             />
             {/* Пустая причина — только на /en у записи дня до английской
                 версии (/api/daily): абзац тогда не рисуется. Русская причина
-                пустой не бывает, и её абзац — как был */}
+                пустой не бывает, и её абзац — как был.
+                Названия в причине — данные: на /en русское название своим
+                lang (withForeignRuns), как у героя /play. Называет причина
+                героя и якорь «ближе всего к…» */}
             {(hero.reason || locale === 'ru') && (
-              <p className="text-base md:text-lg text-ink/90 leading-relaxed">{hero.reason}</p>
+              <p className="text-base md:text-lg text-ink/90 leading-relaxed">
+                {withForeignRuns(locale, hero.reason, [hero.name, hero.via?.name])}
+              </p>
             )}
             {/* «О чём игра» — у игры дня из магазина (lib/cards aboutLine) */}
             {hero.about && (
@@ -883,7 +899,13 @@ export default function DailyPage() {
                     wantHeroFocus.current = true
                     setOwnDay(!ownDay)
                     setRerollMiss(null)
-                    setSaid(tr(locale, { ru: `Игра дня: ${next.name}`, en: `Game of the day: ${next.name}` }))
+                    setSaid(
+                      withForeignRuns(
+                        locale,
+                        tr(locale, { ru: `Игра дня: ${next.name}`, en: `Game of the day: ${next.name}` }),
+                        [next.name],
+                      ),
+                    )
                   }}
                   className="tap link-more cursor-pointer"
                 >
