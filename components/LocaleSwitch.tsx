@@ -81,15 +81,52 @@ function Links({ search }: { search: string }) {
   )
 }
 
-function WithQuery() {
-  const search = useSearchParams()
-  return <Links search={search?.toString() ?? ''} />
+/**
+ * Шапочный вариант: одна кнопка — на ДРУГОЙ язык («EN» на русской странице,
+ * «RU» на английской). В подвале переключатель есть всегда, но подвал —
+ * последнее, до чего доходит взгляд, а английский гость, попавший по ссылке
+ * на русскую страницу, ищет язык наверху.
+ *
+ * Видна на телефоне и с xl (1280). На телефоне место есть: пункты меню уехали
+ * в нижнюю панель, в шапке остались логотип, поиск и тема (замер: от логотипа
+ * до кнопок 53–54 px на 360). На md (768–1023) шапка замерена до пикселя, и
+ * запаса нет даже на значок поиска (components/HeaderNav.tsx). На lg кнопка
+ * встала, но русская строка подошла к логотипу на 11 px при 1024 — меньше
+ * полосы прокрутки десктопного окна (15), то есть меню наехало бы на логотип.
+ * С xl зазор 139 px. На 768–1279 язык — в подвале.
+ *
+ * Видимое «EN» и полное «English» для скринридера — то же правило, что у
+ * пары в подвале: имя ссылки содержит написанное на ней (WCAG 2.5.3).
+ */
+function Other({ search }: { search: string }) {
+  const locale = useLocale()
+  const pathname = usePathname() ?? '/'
+  const target: Locale = locale === 'ru' ? 'en' : 'ru'
+  return (
+    <a
+      href={switchLocaleHref(pathname, target, search)}
+      hrefLang={target}
+      lang={target}
+      title={NAME[target]}
+      onClick={() => rememberLocale(target)}
+      className="tap btn-glass h-10 min-w-10 !rounded-full !px-3 !py-0 inline-flex items-center justify-center text-[13px] font-semibold text-dim hover:text-ink transition-colors md:max-xl:hidden"
+    >
+      {SHORT[target]}
+      <span className="sr-only"> {NAME[target]}</span>
+    </a>
+  )
 }
 
-export function LocaleSwitch() {
+function WithQuery({ compact }: { compact: boolean }) {
+  const search = useSearchParams()
+  const q = search?.toString() ?? ''
+  return compact ? <Other search={q} /> : <Links search={q} />
+}
+
+export function LocaleSwitch({ compact = false }: { compact?: boolean } = {}) {
   return (
-    <Suspense fallback={<Links search="" />}>
-      <WithQuery />
+    <Suspense fallback={compact ? <Other search="" /> : <Links search="" />}>
+      <WithQuery compact={compact} />
     </Suspense>
   )
 }

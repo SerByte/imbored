@@ -6,6 +6,7 @@ import { Backstage } from '@/components/BackstageLazy'
 import { ChromeZone } from '@/components/ChromeZone'
 import { Footer } from '@/components/Footer'
 import { HeaderNav } from '@/components/HeaderNav'
+import { LocaleSwitch } from '@/components/LocaleSwitch'
 import { LocaleProvider } from '@/components/LocaleProvider'
 import { LogoMark } from '@/components/Logo'
 import { MobileNav } from '@/components/MobileNav'
@@ -408,6 +409,9 @@ export default async function RootLayout({ children, params }: LayoutProps<'/[la
                   (components/SearchLauncher); на md её нет — не влезает
                   (замер в components/HeaderNav.tsx) */}
               <SearchLauncher />
+              {/* Язык — кнопкой на другую версию; на 768–1279 её нет, там
+                  язык в подвале (замер — components/LocaleSwitch, Other) */}
+              <LocaleSwitch compact />
               <ThemeToggle />
             </div>
           </div>
