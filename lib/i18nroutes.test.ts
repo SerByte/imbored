@@ -1,12 +1,15 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { NextConfig } from 'next'
+import { modifyRouteRegex } from 'next/dist/lib/redirect-status'
+import { getPathMatch } from 'next/dist/shared/lib/router/utils/path-match'
+import { prepareDestination } from 'next/dist/shared/lib/router/utils/prepare-destination'
 import { getRedirectUrl, getRewrittenUrl, unstable_getResponseFromNextConfig } from 'next/experimental/testing/server'
 import { describe, expect, test } from 'vitest'
 import nextConfig from '../next.config'
 import { HUB_FACETS, HUB_GENRES, HUB_TAGS } from './gamehub'
 import { LOCALIZED_SECTIONS } from './i18n'
-import { garbageRewrites, localeRewrites } from './i18nroutes'
+import { garbageRewrites, localeRedirects, localeRewrites } from './i18nroutes'
 
 const ROOT = path.join(__dirname, '..')
 const LANG_DIR = path.join(ROOT, 'app', '[lang]')
@@ -25,6 +28,56 @@ async function route(url: string, headers: Record<string, string> = {}, config: 
   const rewrite = getRewrittenUrl(res)
   const short = (u: string | null) => (u ? u.replace(BASE, '') : null)
   return { status: res.status, redirect: short(redirect), rewrite: short(rewrite) }
+}
+
+type Rule = { source: string; destination: string }
+
+/**
+ * Куда правила lib/i18nroutes уведут адрес так, как их сопоставляет сам
+ * сервер Next: getPathMatch без учёта регистра и prepareDestination с
+ * appendParamsToQuery у rewrites — как buildCustomRoute и resolve-routes в
+ * next/dist/server/lib/router-utils. Файлов и маршрутов не знает: после
+ * beforeFiles считается, что файла нет, и решает первое совпавшее afterFiles.
+ *
+ * route() для адреса в чужом регистре не годится:
+ * unstable_getResponseFromNextConfig проверяет регулярку правила с учётом
+ * регистра, а параметры достаёт без него — и на /EN бросает «extracting
+ * params from path failed». А сервер (и CDN) регистр не различает.
+ */
+function serverRoute(url: string): { redirect: string | null; rewrite: string | null } {
+  const u = new URL(BASE + url)
+  const query = Object.fromEntries(u.searchParams)
+  const apply = (rule: Rule, pathname: string, redirect: boolean): string | null => {
+    const params = getPathMatch(rule.source, {
+      strict: true,
+      removeUnnamedParams: true,
+      regexModifier: (re) => modifyRouteRegex(re, redirect ? ['/_next'] : undefined),
+    })(pathname)
+    if (!params) return null
+    const { parsedDestination } = prepareDestination({
+      appendParamsToQuery: !redirect,
+      destination: rule.destination,
+      params,
+      query,
+    })
+    const search = new URLSearchParams(parsedDestination.query as Record<string, string>).toString()
+    return parsedDestination.pathname + (search ? `?${search}` : '')
+  }
+  for (const rule of localeRedirects()) {
+    const to = apply(rule, u.pathname, true)
+    if (to) return { redirect: to, rewrite: null }
+  }
+  // beforeFiles сервер проходит все по очереди, каждое — по уже переписанному адресу
+  let target: string | null = null
+  for (const rule of localeRewrites()) {
+    target = apply(rule, new URL(BASE + (target ?? url)).pathname, false) ?? target
+  }
+  const afterFiles = new URL(BASE + (target ?? url)).pathname
+  for (const rule of garbageRewrites()) {
+    const to = apply(rule, afterFiles, false)
+    if (to) return { redirect: null, rewrite: to }
+  }
+  return { redirect: null, rewrite: target }
 }
 
 /** Пример значения динамического сегмента: форма адреса, а не настоящая игра */
@@ -305,27 +358,72 @@ describe('адрес вне разделов', () => {
       '/.well-known/security.txt',
       '/_foo/bar',
       '/_x/portrait/76561198000000000/card.png',
+      '/_next',
+      '/_next/xyz',
+      '/_next/staticx/a.js',
+      '/_nextx/y',
+      '/_vercel',
+      '/_vercel/x',
+      // на CDN Vercel его отдаёт сама аналитика; сюда он доходит на сервере
+      // без неё — next start, где файла нет
+      '/_vercel/insights/script.js',
     ]) {
       expect((await route(url)).rewrite, url).toBe('/_not-found')
     }
   })
 
-  test('свои первые сегменты и служебное не трогает', async () => {
+  test('свои первые сегменты и пути Next не уводит в 404', async () => {
     for (const url of [
-      '/en',
-      '/en/xyz-nope',
-      '/en/play',
       '/api/nope',
       '/api/session/touch',
       '/api/auth/steam/return',
       '/api/portrait/76561198000000000/card.png',
       '/_next/static/chunks/a.js',
+      '/_next/static/chunks/nope.js',
       '/_next/image',
-      '/_vercel/insights/script.js',
+      '/_next/data/build/en/play.json',
       '/ru/game/730/opengraph-image',
     ]) {
       expect((await route(url)).rewrite, url).toBe(null)
     }
+    // /en — правилом регистра в него же, адрес и строка запроса как были
+    for (const url of ['/en', '/en/xyz-nope', '/en/play', '/en/play?time=short&vibe=chill', '/en?join=KW4WXJ']) {
+      expect((await route(url)).rewrite, url).toBe(url)
+      expect(serverRoute(url), url).toEqual({ redirect: null, rewrite: url })
+    }
+  })
+
+  /**
+   * Сервер и CDN сравнивают адрес с правилами без учёта регистра, и
+   * исключение «en» в ловушке пропускало /EN к корневому layout с языком
+   * «EN»: пустая оболочка 404 с русской головой и своя запись ISR на каждый
+   * вариант регистра, а на диске Windows — поверх записи /en (почему так и
+   * почему не редирект — garbageRewrites в lib/i18nroutes.ts).
+   */
+  test('«en» в любом регистре — это /en: тот же адрес и та же запись ISR', () => {
+    for (const [url, to] of [
+      ['/EN', '/en'],
+      ['/En', '/en'],
+      ['/eN', '/en'],
+      ['/EN?join=KW4WXJ', '/en?join=KW4WXJ'],
+      ['/En/quiz', '/en/quiz'],
+      ['/EN/play?time=short', '/en/play?time=short'],
+      ['/EN/privacy', '/en/privacy'],
+      ['/eN/game/730', '/en/game/730'],
+      ['/EN/game/387290/news/5000000000000000000', '/en/game/387290/news/5000000000000000000'],
+      ['/En/room/KW4WXJ', '/en/room/KW4WXJ'],
+      ['/EN/zzz-nonexistent-c3', '/en/zzz-nonexistent-c3'],
+    ]) {
+      expect(serverRoute(url), url).toEqual({ redirect: null, rewrite: to })
+    }
+  })
+
+  test('соседи «en» в чужом регистре — в статическую 404, /RU — редиректом без префикса', () => {
+    for (const url of ['/ENX', '/EN-us/play', '/Enx/y', '/_NEXT/x', '/_Vercel/x', '/XX/quiz']) {
+      expect(serverRoute(url).rewrite, url).toMatch(/^\/_not-found(\?|$)/)
+    }
+    expect(serverRoute('/RU/play')).toEqual({ redirect: '/play', rewrite: null })
+    expect(serverRoute('/Ru')).toEqual({ redirect: '/', rewrite: null })
   })
 
   test('разделы по-прежнему уезжают в свои страницы, а не в 404', async () => {

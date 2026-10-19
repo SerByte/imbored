@@ -129,10 +129,47 @@ export function localeRewrites(): Rewrite[] {
  *
  * Не трогает: свои языки (/ru/… сюда доходит после beforeFiles — это и
  * разделы, и карточки /ru/…/opengraph-image), /api (там своя JSON-404,
- * app/api/[...missing]) и служебные /_next, /_vercel.
+ * app/api/[...missing]) и собственные пути Next: /_next/static, /_next/image,
+ * /_next/data. Их отдаёт сам Next, а промах /_next/static — CDN Vercel
+ * коротким текстовым 404 (маршрут после handle: miss у @vercel/next), и
+ * правило здесь отняло бы у него этот ответ. Остальное под /_next и /_vercel
+ * (/_next/xyz сканера, /_vercel/insights/script.js на сервере без
+ * аналитики) — мусор, как /xyz: исключённое из правила, оно находило
+ * /[lang]/[...missing] с языком «_next» — функцией на каждый адрес и пустой
+ * оболочкой, а в браузере — стоковой английской 404 Next.
+ *
+ * Регистр. Next сравнивает адрес с правилами rewrites и redirects без учёта
+ * регистра (path-to-regexp с sensitive: false — buildCustomRoute в
+ * next/dist/server/lib/router-utils/filesystem.js), и отличить /EN от /en
+ * правилом нельзя ничем. Исключение «en» в ловушке поэтому пропускало и
+ * /EN, /En/quiz, /eN/game/730 — к корневому layout с языком «EN». Тот
+ * отвечал notFound(): пустая оболочка с русской головой (toLocale('EN') —
+ * 'ru'), и ISR заводил на неё свою запись по пути /EN. На диске без учёта
+ * регистра (Windows) эта запись ложилась поверх записи /en, и /en отдавал
+ * 404 всем серверам с общим .next.
+ *
+ * Первые два правила переписывают любой регистр «en» в /en. Для /en это тот
+ * же адрес; /EN/play — английская страница с canonical /en/play и той же
+ * записью ISR, что /en/play (ISR кладёт страницу по адресу ПОСЛЕ rewrites).
+ * Редиректом это не сделать: правило совпало бы и с самим /en и гоняло бы
+ * его по кругу. /RU/… регистром не страдает: localeRedirects без учёта
+ * регистра уводят его на адрес без префикса. Группа (en) — безымянная, чтобы
+ * Next не дописал её в строку запроса (appendParamsToQuery). Два правила, а
+ * не одно с :path*: пустой :path* CDN подставляет в назначение как «/en/», а
+ * голый /EN обязан стать ровно /en.
+ *
+ * experimental.caseSensitiveRoutes этого не решает: beforeFiles сервер Next
+ * собирает без флага, а @vercel/next не переносит его в маршруты CDN.
  */
 export function garbageRewrites(): Rewrite[] {
-  return [{ source: '/:path((?!(?:ru|en|api|_next|_vercel)(?:/|$)).+)', destination: '/_not-found' }]
+  return [
+    { source: '/(en)', destination: '/en' },
+    { source: '/(en)/:path+', destination: '/en/:path+' },
+    {
+      source: '/:path((?!(?:ru|en|api)(?:/|$)|_next/(?:static|image|data)(?:/|$)).+)',
+      destination: '/_not-found',
+    },
+  ]
 }
 
 /**
