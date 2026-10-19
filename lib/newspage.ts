@@ -164,7 +164,17 @@ export function patchHeading(
   gameName: string | null | undefined,
   locale: Locale = 'ru',
 ): string {
-  const title = newsTitleOn(item, gameName, locale)
+  return headingOn(newsTitleOn(item, gameName, locale), gameName, locale)
+}
+
+/**
+ * newsHeading, кроме общего «{Game} update» на /en — он целый (см.
+ * patchHeading). title — уже ответ newsTitleOn. Одно правило на h1 и
+ * <title>: иначе <title>, og:title и RSS резали бы его до «Update» и ставили
+ * игру обратно через двоеточие — «Counter-Strike 2: Update», когда h1 и
+ * карточка говорят «Counter-Strike 2 update».
+ */
+function headingOn(title: string, gameName: string | null | undefined, locale: Locale): string {
   if (locale === 'en' && title === newsTitleOn({ title: '' }, gameName, locale)) return title
   return newsHeading(title, gameName)
 }
@@ -205,7 +215,9 @@ export function patchHeading(
  * Дата там — в скобках и коротким месяцем, как у остальных дат английской
  * версии: «Update (Aug 3, 2026)». Не «from Aug 3»: у заголовка из обычных
  * слов («Improved control options from Aug 3») предлог прилип бы к
- * последнему слову.
+ * последнему слову. Общий «{Game} update» (пост без английского заголовка)
+ * не режется, как в h1 (headingOn): название в нём уже есть, и впереди оно
+ * не повторяется — «Counter-Strike 2 update (Aug 12, 2026) — what changed».
  */
 export function newsPageTitle(
   title: string,
@@ -213,7 +225,7 @@ export function newsPageTitle(
   publishedAt?: number,
   locale: Locale = 'ru',
 ): string {
-  const heading = newsHeading(title, gameName)
+  const heading = headingOn(title, gameName, locale)
   const rest = withoutGameName(heading, gameName)
   const spelled = withoutGameName(heading, gameName, { caseSensitive: true }) !== heading
   const named = gameName && !spelled ? `${gameName}: ${heading}` : heading

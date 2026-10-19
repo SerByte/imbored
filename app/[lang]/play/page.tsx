@@ -31,7 +31,7 @@ import { HeroTrailer } from '@/components/HeroTrailer'
 import { HeroPoster } from '@/components/TypeCover'
 import { Icon } from '@/components/Icon'
 import { useLocale } from '@/components/LocaleProvider'
-import { freshLine, playLine as announce, type PlayEvent } from '@/lib/announce'
+import { freshLine, liveLineOn, playLine as announce, type PlayEvent } from '@/lib/announce'
 import { edgeBadge, edgeLine } from '@/lib/badges'
 import { entryLine } from '@/lib/entry'
 import { closesPlan, planBeside, planLine, writesPlan, type EveningPlan } from '@/lib/eveningplan'
@@ -3531,9 +3531,10 @@ export default function PlayPage() {
     <>
       {/* Названия в строке — данные: на /en русское название своим lang. Какие
           именно, строка говорит сама — по-английски игра всегда в “лапках”
-          (lib/announce), а латинские куски withForeignRuns не помечает */}
+          (liveLineOn в lib/announce), а латинские куски withForeignRuns не
+          помечает */}
       <p role="status" className="sr-only">
-        {withForeignRuns(locale, said, Array.from(said.matchAll(/“([^”]+)”/g), (q) => q[1]))}
+        {liveLineOn(locale, said)}
       </p>
       <Suspense fallback={<WarmupScreen progress={null} message={PREPARE_MESSAGE[locale]} />}>
         <Player say={say} />

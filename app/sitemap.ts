@@ -67,39 +67,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const localized = (path: string, rest: Omit<Entry, 'url' | 'alternates'>): Entry[] =>
     LOCALES.map((locale) => ({ url: url(lp(locale, path)), alternates: languages(path), ...rest }))
 
-  const stat: MetadataRoute.Sitemap = [
-    ...localized('/', { changeFrequency: 'weekly', priority: 1 }),
-    /*
-     * /daily здесь НЕТ, и это исправление.
-     *
-     * Он стоял с приоритетом 0.9 — выше всех пяти тысяч страниц игр, — а
-     * краулеру отдаёт заглушку: замер на деплое, запрос без куки, 249 символов
-     * видимого текста, из них содержательного «Изучаю твою библиотеку…».
-     * Выбор игры дня считается по ЛИЧНОЙ библиотеке, то есть страница
-     * состояния сессии.
-     *
-     * Правило для этого класса записано в lib/robots.ts: /daily краулеру
-     * открыт ровно затем, чтобы увидеть noindex (NOINDEX_PAGES), — в карту
-     * ему тем более незачем. То же у /rooms.
-     */
-    ...localized('/whatsnew', { changeFrequency: 'daily', priority: 0.8 }),
-    /*
-     * /quiz — наоборот: гость видит первый вопрос целиком, и это главная
-     * точка входа в продукт, на которую ведёт каждая карточка игры. Он
-     * открыт краулеру и идёт в выдачу со своим canonical (lib/robots,
-     * app/quiz/layout.tsx). Ниже хаба жанров: квиз один и не меняется.
-     */
-    ...localized('/quiz', { changeFrequency: 'monthly', priority: 0.6 }),
-    // Хаб жанров: единственная страница, которая ссылается на карточки пачкой
-    // (см. app/games/page.tsx). Полки меняются медленно — верх по отзывам
-    // стоит неделями, — отсюда weekly, а не daily.
-    ...localized('/games', { changeFrequency: 'weekly', priority: 0.8 }),
-    // Страницы жанров — ниже, вместе с подборками: в карте только те, что
-    // страница сама пускает в поиск
-    ...localized('/support', { changeFrequency: 'yearly', priority: 0.3 }),
-    ...localized('/privacy', { changeFrequency: 'yearly', priority: 0.2 }),
-  ]
-
   /*
    * Ошибка базы глотается ТОЛЬКО НА СБОРКЕ, как у хаба игр (loadHub в
    * app/games/page.tsx) и RSS (app/whatsnew/feed.xml).
@@ -206,17 +173,21 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
    *
    * Одна проверка на оба языка: список игр подборки от языка не зависит
    * (loadGenre — та же выборка и тот же отсев), и тонкой страница бывает на
-   * обоих сразу. Поэтому подборка — на каждом языке, как жанр.
+   * обоих сразу. Поэтому подборка — на каждом языке.
    *
-   * Жанры — тем же правилом. Их подбирали руками под полную полку, но полка
-   * — тоже выборка каталога, и страница жанра короче полки хаба стоит с тем
-   * же noindex (thinList в app/[lang]/games/[tag]): в локальном каталоге так
-   * стояли «Соулслайки» с четырьмя играми и «Уютные» с одной, и карта звала
-   * краулер на обе — и на их /en-двойники. Сборка без базы собирает и
-   * страницы жанров пустыми, то есть закрытыми от индекса, — и в карте их
-   * тогда нет, как подборок, до первой перегенерации.
+   * Жанры — тем же правилом, но только английские двойники. Их подбирали
+   * руками под полную полку, а полка — тоже выборка каталога, и страница
+   * жанра короче полки хаба стоит с тем же noindex (thinList в
+   * app/[lang]/games/[tag]): в локальном каталоге так стояли «Соулслайки» с
+   * четырьмя играми и «Уютные» с одной. Русские адреса жанров в карте — все,
+   * как до английской версии (известны без базы и переживают сборку без
+   * неё): русская карта переводом не меняется, кроме добавленного. /en-
+   * двойник — новый адрес, и звать на него краулер, пока страница закрыта от
+   * индекса, незачем: в карте он только у полной полки, и hreflang русской
+   * версии ведёт на него только тогда же — как у патчей. На сборке без базы
+   * английских жанров в карте нет до первой перегенерации, как подборок.
    */
-  let genres: string[] = []
+  const genreListed = new Set<string>()
   let facets: HubFacet[] = []
   try {
     const listed = (page: Awaited<ReturnType<typeof loadGenre>>) => page != null && !thinList(page.games)
@@ -224,17 +195,64 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       Promise.all(HUB_TAGS.map((tag) => (hubPath(tag) ? loadGenre(HUB_GENRES[tag].slug) : null))),
       Promise.all(HUB_FACETS.map((f) => loadGenre(f.slug))),
     ])
-    genres = HUB_TAGS.filter((_, i) => listed(genrePages[i]))
+    HUB_TAGS.forEach((tag, i) => {
+      if (listed(genrePages[i])) genreListed.add(tag)
+    })
     facets = HUB_FACETS.filter((_, i) => listed(facetPages[i]))
   } catch (err) {
     if (process.env.NEXT_PHASE !== PHASE_PRODUCTION_BUILD) throw err
     console.error('sitemap: жанры и подборки недоступны на сборке, отдаём без них —', String(err))
   }
 
+  const stat: MetadataRoute.Sitemap = [
+    ...localized('/', { changeFrequency: 'weekly', priority: 1 }),
+    /*
+     * /daily здесь НЕТ, и это исправление.
+     *
+     * Он стоял с приоритетом 0.9 — выше всех пяти тысяч страниц игр, — а
+     * краулеру отдаёт заглушку: замер на деплое, запрос без куки, 249 символов
+     * видимого текста, из них содержательного «Изучаю твою библиотеку…».
+     * Выбор игры дня считается по ЛИЧНОЙ библиотеке, то есть страница
+     * состояния сессии.
+     *
+     * Правило для этого класса записано в lib/robots.ts: /daily краулеру
+     * открыт ровно затем, чтобы увидеть noindex (NOINDEX_PAGES), — в карту
+     * ему тем более незачем. То же у /rooms.
+     */
+    ...localized('/whatsnew', { changeFrequency: 'daily', priority: 0.8 }),
+    /*
+     * /quiz — наоборот: гость видит первый вопрос целиком, и это главная
+     * точка входа в продукт, на которую ведёт каждая карточка игры. Он
+     * открыт краулеру и идёт в выдачу со своим canonical (lib/robots,
+     * app/quiz/layout.tsx). Ниже хаба жанров: квиз один и не меняется.
+     */
+    ...localized('/quiz', { changeFrequency: 'monthly', priority: 0.6 }),
+    // Хаб жанров: единственная страница, которая ссылается на карточки пачкой
+    // (см. app/games/page.tsx). Полки меняются медленно — верх по отзывам
+    // стоит неделями, — отсюда weekly, а не daily.
+    ...localized('/games', { changeFrequency: 'weekly', priority: 0.8 }),
+    // Страницы жанров — адреса известны без базы (HUB_GENRES), поэтому
+    // переживают и сборку без каталога. Ниже хаба: хаб ссылается на них.
+    // Английский двойник — только у полной полки (genreListed, выше)
+    ...HUB_TAGS.flatMap((tag) => {
+      const path = hubPath(tag)
+      if (!path) return []
+      const has: readonly Locale[] = genreListed.has(tag) ? LOCALES : ['ru']
+      return has.map(
+        (locale): Entry => ({
+          url: url(lp(locale, path)),
+          alternates: languages(path, has),
+          changeFrequency: 'weekly',
+          priority: 0.7,
+        }),
+      )
+    }),
+    ...localized('/support', { changeFrequency: 'yearly', priority: 0.3 }),
+    ...localized('/privacy', { changeFrequency: 'yearly', priority: 0.2 }),
+  ]
+
   return [
     ...stat,
-    // Страницы жанров — ниже хаба: хаб ссылается на них
-    ...genres.flatMap((tag) => localized(hubPath(tag)!, { changeFrequency: 'weekly', priority: 0.7 })),
     // Тот же сегмент и тот же ранг, что у жанров, — и так же на каждом языке
     ...facets.flatMap((f) => localized(facetPath(f), { changeFrequency: 'weekly', priority: 0.7 })),
     ...games.flatMap((g) =>

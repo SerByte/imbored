@@ -232,7 +232,7 @@ describe('/en/whatsnew/feed/[token]: английская лента', () => {
     await setNewsDigestEn(db, 620, '6200', { tldrEn: 'In short: fixed everything.' }, NOW)
     const xml = await (await pollEn(key)).text()
     expect(xml).toContain('<description>In short: fixed everything.</description>')
-    expect(xml).toMatch(/<title>Portal 2: Update \([A-Z][a-z]{2} \d{1,2}, \d{4}\) — what changed<\/title>/)
+    expect(xml).toMatch(/<title>Portal 2 update \([A-Z][a-z]{2} \d{1,2}, \d{4}\) — what changed<\/title>/)
     expect(xml).not.toMatch(/[А-Яа-яЁё]/)
   })
 

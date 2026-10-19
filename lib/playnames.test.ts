@@ -153,7 +153,10 @@ describe('названия в тексте героя /play помечены', (
   })
 
   test('живая строка выдачи — названия в “лапках” своим lang', () => {
-    expect(src.includes('withForeignRuns(locale, said, Array.from(said.matchAll(/“([^”]+)”/g), (q) => q[1]))')).toBe(true)
+    // liveLineOn (lib/announce) — та же разметка через withForeignRuns, её
+    // span на /en и голую строку на ru сторожит lib/announce.test.ts
+    expect(src.includes('{liveLineOn(locale, said)}')).toBe(true)
+    expect(/\{said\}/.test(src)).toBe(false)
   })
 
   test('«Like “X”, but…» и «Similar to “X”» — через withForeignRuns', () => {

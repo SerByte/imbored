@@ -9,7 +9,7 @@ import {
   type Db,
   type StoredNews,
 } from '@/lib/db'
-import { HUB_MIN_SHELF } from '@/lib/gamehub'
+import { HUB_MIN_SHELF, HUB_TAGS, hubPath } from '@/lib/gamehub'
 import { freshDb } from '@/lib/testing/route'
 import sitemap from './sitemap'
 
@@ -55,7 +55,13 @@ describe('карта сайта и осечка базы', () => {
       expect(paths, p).toContain(p)
       expect(paths, p).toContain(p === '/' ? '/en' : `/en${p}`)
     }
-    expect(paths.filter((p) => p.startsWith('/en')).length * 2).toBe(paths.length)
+    // Кроме жанров с тонкой полкой: их русский адрес в карте, как до
+    // английской версии, а /en-двойник с noindex — нет (тест жанра ниже).
+    // В этой базе одна игра — тонкие все жанры
+    const genres = new Set(HUB_TAGS.map(hubPath))
+    const rest = paths.filter((p) => !genres.has(p))
+    expect(paths.filter((p) => genres.has(p))).toHaveLength(genres.size)
+    expect(rest.filter((p) => p.startsWith('/en')).length * 2).toBe(rest.length)
     const game = entries.filter((e) => /\/game\/730$/.test(new URL(e.url).pathname))
     expect(game).toHaveLength(2)
     for (const e of game) {
@@ -96,9 +102,12 @@ describe('карта сайта и осечка базы', () => {
     errors.mockRestore()
     expect(got).toContain('/')
     expect(got).toContain('/games')
-    // жанры и подборки — нет: их страницы на такой сборке собраны пустыми и
-    // закрыты от индекса (thinList), до первой перегенерации
-    expect(got).not.toContain('/games/open-world')
+    // русские жанры известны без базы — переживают и сборку без неё, как до
+    // английской версии
+    expect(got).toContain('/games/open-world')
+    // английские двойники жанров и подборки — нет: их страницы на такой
+    // сборке собраны пустыми и закрыты от индекса (thinList), до первой
+    // перегенерации
     expect(got).not.toContain('/en/games/open-world')
     expect(got).not.toContain('/games/coop')
     expect(got).not.toContain('/en/games/coop')
@@ -108,10 +117,14 @@ describe('карта сайта и осечка базы', () => {
   /*
    * Жанр подобран руками под полную полку, но полка — выборка каталога, и
    * короче полки хаба страница жанра стоит с noindex (thinList) — как
-   * подборка. В карте — ровно то, что страница пускает в поиск, на обоих
-   * языках сразу.
+   * подборка. Русский адрес жанра в карте всегда, как до английской версии:
+   * русская карта переводом не меняется. Английский двойник — новый адрес, и
+   * он в карте (и в hreflang русской версии) только с полной полкой.
    */
-  test('жанр — в карте, только когда его полка полная', async () => {
+  const genreEntries = async (path: string) =>
+    (await sitemap()).filter((e) => new URL(e.url).pathname.replace(/^\/en(?=\/)/, '') === path)
+
+  test('жанр — по-русски в карте всегда, английский двойник — только с полной полкой', async () => {
     const rogue = async (appid: number) => {
       await upsertGameMeta(
         db,
@@ -121,16 +134,36 @@ describe('карта сайта и осечка базы', () => {
       await replaceGameTags(db, appid, [{ tag: 'Roguelike', weight: 1000 }])
     }
     for (let i = 1; i < HUB_MIN_SHELF; i++) await rogue(2000 + i)
-    let got = await urls()
-    expect(got).not.toContain('/games/roguelike')
-    expect(got).not.toContain('/en/games/roguelike')
+    let entries = await genreEntries('/games/roguelike')
+    expect(entries.map((e) => new URL(e.url).pathname)).toEqual(['/games/roguelike'])
+    expect(entries[0].alternates?.languages).toEqual({
+      ru: 'http://localhost:3000/games/roguelike',
+      'x-default': 'http://localhost:3000/games/roguelike',
+    })
 
     await rogue(2000 + HUB_MIN_SHELF)
-    got = await urls()
-    expect(got.filter((u) => u === '/games/roguelike')).toHaveLength(1)
-    expect(got.filter((u) => u === '/en/games/roguelike')).toHaveLength(1)
-    // одна игра у шутеров (CS2) — полки нет, и в карте их нет
-    expect(got).not.toContain('/games/fps')
+    entries = await genreEntries('/games/roguelike')
+    expect(entries.map((e) => new URL(e.url).pathname)).toEqual(['/games/roguelike', '/en/games/roguelike'])
+    for (const e of entries) {
+      expect(e.alternates?.languages).toEqual({
+        ru: 'http://localhost:3000/games/roguelike',
+        en: 'http://localhost:3000/en/games/roguelike',
+        'x-default': 'http://localhost:3000/games/roguelike',
+      })
+    }
+    // одна игра у шутеров (CS2) — полки нет: русский адрес есть, английского нет
+    const got = await urls()
+    expect(got.filter((u) => u === '/games/fps')).toHaveLength(1)
+    expect(got).not.toContain('/en/games/fps')
+  })
+
+  test('русские жанры — все и на прежнем месте: между хабом и /support', async () => {
+    const got = (await urls()).filter((u) => !u.startsWith('/en'))
+    const genres = HUB_TAGS.map(hubPath).filter((p) => p != null)
+    expect(genres.length).toBeGreaterThan(0)
+    const at = got.indexOf('/games')
+    expect(got.slice(at + 1, at + 1 + genres.length)).toEqual(genres)
+    expect(got[at + 1 + genres.length]).toBe('/support')
   })
 
   /*

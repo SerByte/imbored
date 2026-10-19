@@ -208,7 +208,7 @@ describe('страница патча на /en', () => {
     const ru = { params: Promise.resolve({ appid: String(APPID), gid: GID }) }
     const without = await generateMetadata(en)
     expect(without.robots).toEqual({ index: false, follow: true })
-    expect(String(without.title)).toMatch(/^Counter-Strike 2: Update \([A-Z][a-z]{2} \d{1,2}, \d{4}\) — what changed$/)
+    expect(String(without.title)).toMatch(/^Counter-Strike 2 update \([A-Z][a-z]{2} \d{1,2}, \d{4}\) — what changed$/)
     expect(String(without.description)).not.toMatch(/[А-Яа-яЁё]/)
     // Русская страница того же поста — с русским пересказом, как была
     const ruMeta = await generateMetadata(ru)
