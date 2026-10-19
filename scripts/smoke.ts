@@ -6,6 +6,8 @@
  * видит, что собранный сайт на чистой базе без ключей вообще поднимается и
  * что по нему можно пройти: вход, квиз, выдача, страница игры. Этот прогон —
  * ровно это, в CI после сборки (.github/workflows/ci.yml, шаг «Смоук»).
+ * Первым шагом пути — русский браузер на «/»: он остаётся на русской
+ * главной, а английский с того же адреса уезжает на /en (lib/homelocale.ts).
  *
  * Следом — английский проход: /en и /en/quiz отвечают 200 с <html lang="en">,
  * английский браузер с «/» уезжает на /en, а /ru/quiz снаружи — постоянный
@@ -76,6 +78,13 @@ async function main(): Promise<void> {
     await step('политика открывается', async () => {
       await open(page, '/privacy')
       await page.getByRole('heading', { level: 1, name: 'Что мы о тебе знаем' }).waitFor()
+    })
+
+    await step('русский браузер на «/» остаётся на русской главной', async () => {
+      await open(page, '/')
+      if (new URL(page.url()).pathname !== '/') throw new Error(`«/» привёл на ${page.url()}`)
+      const lang = await page.locator('html').getAttribute('lang')
+      if (lang !== 'ru') throw new Error(`<html lang="${lang}"> на /`)
     })
 
     await step('демо-вход с главной ведёт в квиз', async () => {
