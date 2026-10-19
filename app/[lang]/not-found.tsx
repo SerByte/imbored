@@ -1,3 +1,4 @@
+import type { Metadata } from 'next'
 import { unstable_cache } from 'next/cache'
 import Link from '@/components/Link'
 import { Ambient } from '@/components/Ambient'
@@ -8,9 +9,10 @@ import { SearchLauncher } from '@/components/SearchLauncher'
 import { topCatalogGames } from '@/lib/db'
 import { dayKey } from '@/lib/forgotten'
 import { hashString, mulberry32 } from '@/lib/daily'
-import { tr, type Locale } from '@/lib/i18n'
+import { toLocale, tr, type Locale } from '@/lib/i18n'
 import { getLocale } from '@/lib/i18n-server'
 import { getDb } from '@/lib/server'
+import { generateMetadata as rootMetadata } from './layout'
 
 /**
  * 404 в языке продукта. Раньше notFound() из /game/[appid] проваливался
@@ -102,6 +104,36 @@ async function shelf() {
 }
 
 /**
+ * Голова 404 под /en — с английской подписью корневой карточки: та же
+ * app/[lang]/opengraph-image.tsx, что у корневого layout на en (rootCardOn в
+ * app/[lang]/layout.tsx, docs/i18n.md, п. 10), объявленная ещё раз — уже
+ * уровнем not-found.
+ *
+ * Своей метадаты здесь не было, и подписать 404 корневой layout не мог: на
+ * not-found Next ставит файлы корня ещё раз, последним уровнем
+ * (errorMetadataItem в resolve-metadata), вместе с метадатой этого файла. Без
+ * своих images файловая карточка побеждала, и сырой HTML каждой 404 под /en
+ * (/en/xyz, /en/game/<нет такой>) отдавал в og:image:alt и twitter:image:alt
+ * «imbored — во что поиграть» рядом с og:locale en_US. Сырой HTML — это то,
+ * что читают краулеры и превью мессенджеров: скрипт они не исполняют.
+ *
+ * openGraph уровня заменяет накопленный целиком, поэтому здесь он корневой
+ * весь — тип, имя сайта, язык и карточка, — из generateMetadata корня, а не
+ * копией: разойтись им не в чем. twitter:image Next достраивает из openGraph
+ * сам, с той же подписью.
+ *
+ * Русская 404 (/game/<нет такой>) своего openGraph не объявляет: работает
+ * файл, как работал, и её голова не меняется ни на байт. Язык — из params
+ * (props уровня [lang]), как у метадаты страниц с тестами.
+ */
+export async function generateMetadata({ params }: { params: Promise<{ lang: string }> }): Promise<Metadata> {
+  const locale = toLocale((await params).lang)
+  if (locale !== 'en') return {}
+  const { openGraph } = await rootMetadata({ params: Promise.resolve({ lang: locale }), children: null })
+  return { openGraph }
+}
+
+/**
  * Язык — из сегмента [lang] (next/root-params): 404 под /en/… рисуется
  * внутри английского layout и обязан говорить по-английски.
  */
@@ -113,13 +145,14 @@ export default async function NotFound() {
  * Сам экран 404 — отдельно от границы, потому что рисуют его двое.
  *
  * Граница not-found выше — для notFound() из страниц: /game/<нет такой>,
- * /en/xyz, /quiz/xyz. HTML такого ответа в этой версии Next — пустая
+ * /en/xyz, /en/quiz/xyz. HTML такого ответа в этой версии Next — пустая
  * оболочка (<html id="__next_error__">), а экран дорисовывает клиент:
  * граница not-found — клиентский error boundary, и серверный рендер React
  * его не исполняет (подробно — в app/global-not-found.tsx).
  *
- * Адрес вне всех разделов (/xyz, /wp-login.php) next.config уводит в
- * /_not-found, и там этот же экран рисует app/global-not-found.tsx —
+ * Адрес вне всех разделов (/xyz, /wp-login.php) и опечатку под русским
+ * разделом (/quiz/xyz) next.config уводит в /_not-found, и там этот же
+ * экран рисует app/global-not-found.tsx —
  * сервером, внутри того же корневого layout. Язык там не из сегмента (его
  * у /_not-found нет), а русский явно: адрес без префикса — русский сайт.
  */

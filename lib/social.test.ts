@@ -122,6 +122,10 @@ describe('превью в мессенджерах', () => {
     const offenders: string[] = []
     for (const [file, src] of appFiles()) {
       if (file.endsWith(path.join('app', '[lang]', 'layout.tsx'))) continue
+      // 404 вне разделов: openGraph корня плюс его карточка (у /_not-found нет
+      // [lang], и файл туда не доходит). Своего адреса у 404 нет и быть не
+      // должно: она под noindex, а og:url и canonical на мусорный адрес — ложь
+      if (file.endsWith(path.join('app', 'global-not-found.tsx'))) continue
       for (const m of src.matchAll(/\bopenGraph:\s*\{/g)) {
         if (!/\burl\b/.test(objectAt(src, m.index))) offenders.push(path.relative(ROOT, file))
       }

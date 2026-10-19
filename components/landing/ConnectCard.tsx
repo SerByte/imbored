@@ -22,6 +22,7 @@ import { pl, tr, withLang, type Locale } from '@/lib/i18n'
 import { lastMoodStore, pickHrefNow, pickHrefServer, QUIZ_HREF } from '@/lib/lastmood'
 import { lastMoodCaptionNowFor, lastMoodCaptionServer } from '@/lib/lastmoodcaption'
 import { presetHref, presetLabel, VIBE_PRESETS } from '@/lib/presets'
+import { langOn } from '@/lib/textlang'
 import {
   getServerSessionHint,
   getSessionHint,
@@ -456,9 +457,11 @@ export function ConnectCard() {
                 <div>
                   <p className="text-xl font-extrabold tracking-[-0.02em] text-ink">
                     {tr(locale, { ru: 'С возвращением', en: 'Welcome back' })}
+                    {/* Ник из Steam — данные: русский на /en — lang="ru", как у
+                        ников портрета и совместимости (langOn) */}
                     {view.personaName ? (
                       <>
-                        , <span className="font-semibold">{view.personaName}</span>
+                        , <span lang={langOn(locale, view.personaName)} className="font-semibold">{view.personaName}</span>
                       </>
                     ) : null}
                     .

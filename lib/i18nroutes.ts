@@ -10,21 +10,76 @@
  * до поиска маршрута. Не прокси: правило из next.config CDN Vercel выполняет
  * сам, без функции, и статическая главная остаётся статической.
  *
- * beforeFiles переписывают ровно LOCALIZED_SECTIONS и корень — и ничего
- * больше: они идут ДО файлов (public/, файлы корня app/), и правило шире
- * разделов отняло бы у них адрес. Всё остальное, чему не нашлось ни файла,
- * ни страницы, подбирает уже afterFiles — см. garbageRewrites.
+ * beforeFiles переписывают ровно корень и адреса маршрутов LOCALIZED_SECTIONS
+ * — и ничего больше: они идут ДО файлов (public/, файлы корня app/), и
+ * правило шире разделов отняло бы у них адрес. Всё остальное, чему не
+ * нашлось ни файла, ни страницы, подбирает уже afterFiles — см.
+ * garbageRewrites.
  */
-import { LOCALIZED_SECTIONS } from './i18n'
+import { HUB_FACETS, HUB_GENRES, HUB_TAGS } from './gamehub'
+import type { LOCALIZED_SECTIONS } from './i18n'
 
 type Rewrite = { source: string; destination: string }
 type Redirect = { source: string; destination: string; permanent: boolean }
 
-/** Разделы одной альтернативой для path-to-regexp: compat|daily|… */
-const SECTION_RE = LOCALIZED_SECTIONS.map((s) => s.replace(/[-]/g, '\\-')).join('|')
+/** Один сегмент-параметр маршрута: appid, steamid, id выбора или комнаты, gid поста, токен ленты */
+const SEG = '[^/]+'
+
+/** Файловая карточка маршрута (…/opengraph-image): по ней старые ссылки без /ru ходят за картинкой */
+const CARD = '/opengraph-image'
+
+/** Адреса страниц жанров — ровно generateStaticParams из app/[lang]/games/[tag]/page.tsx */
+const GENRE_SLUGS = [...HUB_TAGS.map((tag) => HUB_GENRES[tag].slug), ...HUB_FACETS.map((f) => f.slug)]
 
 /**
- * '/' → '/ru' и '/<раздел>…' → '/ru/<раздел>…'. Строка запроса едет сама.
+ * Формы адресов каждого раздела — дерево маршрутов app/[lang]/<раздел>
+ * регуляркой, без языка. Что каждая страница, обработчик и карточка под
+ * app/[lang] здесь есть, а лишнего нет, — сторож в lib/i18nroutes.test.ts:
+ * он обходит каталог сам, новый маршрут без строки здесь валит тест.
+ *
+ * Почему формы, а не «раздел и всё под ним». Опечатка под разделом
+ * (/quiz/xyz, /games/<нет такого жанра>, /game/730/xyz) под правилом
+ * «раздел/:path*» уезжала в /ru/…, где её ловила динамическая
+ * app/[lang]/[...missing], — а notFound() из страницы в этой версии Next
+ * отдаёт пустую оболочку <html id="__next_error__"> без lang, стилей,
+ * шапки и текста (докблок app/global-not-found.tsx), да ещё функцией на
+ * каждый адрес. До [lang] такой адрес отдавала статическая 404 сервером
+ * целиком. Адрес, которого нет среди форм, здесь не переписывается и
+ * доходит до garbageRewrites — в ту же статическую /_not-found, что /xyz.
+ *
+ * Параметр — любой сегмент: есть ли такая игра, комната или выбор, решает
+ * страница (её notFound() — та же оболочка, так было и до перевода у
+ * /game/<нет такой>). Исключение — жанры: их список известен заранее, и
+ * страница стоит под dynamicParams = false; чужой жанр здесь не
+ * переписывается, иначе промах сборки упал бы в ту же [...missing].
+ */
+const SECTION_SHAPES: Record<(typeof LOCALIZED_SECTIONS)[number], string> = {
+  compat: `compat(?:/${SEG}(?:${CARD})?)?`,
+  daily: 'daily',
+  explore: 'explore',
+  game: `game/${SEG}(?:${CARD}|/news(?:/${SEG}(?:${CARD})?)?)?`,
+  games: `games(?:/(?:${GENRE_SLUGS.join('|')})(?:${CARD})?)?`,
+  library: 'library',
+  missing: 'missing',
+  'opengraph-image': 'opengraph-image',
+  pick: `pick/${SEG}(?:${CARD})?`,
+  play: 'play',
+  portrait: `portrait(?:/${SEG}(?:/card\\.png|${CARD}|/year(?:/card\\.png|${CARD})?)?)?`,
+  privacy: 'privacy',
+  quiz: 'quiz',
+  // /room/new — тоже под этой формой: new — сегмент, как код комнаты
+  room: `room/${SEG}(?:${CARD})?`,
+  rooms: 'rooms',
+  support: 'support',
+  whatsnew: `whatsnew(?:/feed\\.xml|/feed/${SEG})?`,
+}
+
+/** Все формы одной альтернативой для path-to-regexp: только незахватывающие группы */
+const ROUTE_RE = Object.values(SECTION_SHAPES).join('|')
+
+/**
+ * '/' → '/ru' и адрес маршрута раздела → '/ru/<адрес>'. Строка запроса едет
+ * сама.
  *
  * Одно правило на все разделы, а не по паре на каждый: rewrites проверяются
  * по очереди на каждом запросе, и тридцать правил вместо одного — это
@@ -33,13 +88,15 @@ const SECTION_RE = LOCALIZED_SECTIONS.map((s) => s.replace(/[-]/g, '\\-')).join(
 export function localeRewrites(): Rewrite[] {
   return [
     { source: '/', destination: '/ru' },
-    { source: `/:section(${SECTION_RE})/:path*`, destination: '/ru/:section/:path*' },
+    { source: `/:path(${ROUTE_RE})`, destination: '/ru/:path' },
   ]
 }
 
 /**
  * Адрес вне всех разделов (/xyz, /wp-admin/setup.php, /xx/quiz,
- * /.well-known/…) — в статическую 404 русской ветки, app/[lang]/missing.
+ * /.well-known/…) и опечатка под русским разделом (/quiz/xyz — её
+ * localeRewrites не переписывают) — в статическую 404 русской ветки,
+ * /_not-found.
  *
  * afterFiles, а не beforeFiles. afterFiles идут ПОСЛЕ файлов и статических
  * маршрутов, но ДО динамических (docs: rewrites.md, порядок проверки). Файлы
@@ -59,8 +116,8 @@ export function localeRewrites(): Rewrite[] {
  * /[lang]/[...missing] — динамическая (кэшировать её по пути — значит
  * завести запись ISR на каждый адрес сканера), а сканеры приходят именно
  * сюда: /wp-login.php, /.env, /xmlrpc.php. Свою динамическую ловушку
- * получают только адреса под языком и под разделом (/en/xyz, /quiz/xyz): их
- * решает маршрут, а не правило.
+ * получают только адреса под /en (/en/xyz, /en/quiz/xyz): у английской 404
+ * свой язык, и /_not-found, русский, её не заменит.
  *
  * Цель — /_not-found: встроенный маршрут 404, который Next собирает из
  * app/global-not-found.tsx (там — корневой layout с языком 'ru' и экран 404

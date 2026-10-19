@@ -4,6 +4,7 @@ import type { NextConfig } from 'next'
 import { getRedirectUrl, getRewrittenUrl, unstable_getResponseFromNextConfig } from 'next/experimental/testing/server'
 import { describe, expect, test } from 'vitest'
 import nextConfig from '../next.config'
+import { HUB_FACETS, HUB_GENRES, HUB_TAGS } from './gamehub'
 import { LOCALIZED_SECTIONS } from './i18n'
 import { garbageRewrites, localeRewrites } from './i18nroutes'
 
@@ -24,6 +25,41 @@ async function route(url: string, headers: Record<string, string> = {}, config: 
   const rewrite = getRewrittenUrl(res)
   const short = (u: string | null) => (u ? u.replace(BASE, '') : null)
   return { status: res.status, redirect: short(redirect), rewrite: short(rewrite) }
+}
+
+/** Пример значения динамического сегмента: форма адреса, а не настоящая игра */
+const SAMPLE: Record<string, string> = {
+  '[appid]': '730',
+  '[gid]': '5000000000000000000',
+  '[id]': 'k7m2qp',
+  '[steamid]': '76561198000000000',
+  '[tag]': 'roguelike',
+  '[token]': 'tok3n',
+}
+
+/**
+ * Адреса всех маршрутов под app/[lang] без языка: страницы, route handlers и
+ * файловые карточки, параметры — примерами из SAMPLE. Ловушка [...missing] —
+ * не маршрут, а её отсутствие.
+ */
+function routeUrls(): string[] {
+  const out = new Set<string>()
+  const walk = (dir: string, segs: string[]) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (e.isDirectory()) {
+        if (e.name === '[...missing]') continue
+        const seg = e.name.startsWith('[') ? SAMPLE[e.name] : e.name
+        if (!seg) throw new Error(`нет примера для сегмента ${e.name} — допиши SAMPLE`)
+        walk(path.join(dir, e.name), [...segs, seg])
+      } else if (/^(page|route)\.(tsx|ts)$/.test(e.name)) {
+        out.add('/' + segs.join('/'))
+      } else if (/^(opengraph-image|twitter-image)\.(tsx|ts)$/.test(e.name)) {
+        out.add('/' + [...segs, e.name.replace(/\.[a-z]+$/, '')].join('/'))
+      }
+    }
+  }
+  walk(LANG_DIR, [])
+  return [...out].sort()
 }
 
 /**
@@ -187,10 +223,37 @@ describe('rewrites русской ветки', () => {
     )
   })
 
-  test('переписывается каждый раздел из списка', async () => {
+  /**
+   * Правило переписывает формы маршрутов, а не «раздел и всё под ним»
+   * (почему — SECTION_SHAPES в lib/i18nroutes.ts). Сторож обходит
+   * app/[lang] сам: страница, обработчик или карточка, которых формы не
+   * знают, на русском адресе отдавали бы 404, — новый маршрут без строки в
+   * SECTION_SHAPES валит этот тест, а не русский сайт.
+   */
+  test('переписывается адрес каждого маршрута под app/[lang]', async () => {
+    const urls = routeUrls()
+    expect(urls.length, 'маршруты не найдены — сторож ослеп').toBeGreaterThan(30)
+    // каждый раздел из списка — хотя бы одним адресом
     for (const s of LOCALIZED_SECTIONS) {
-      expect((await route(`/${s}`)).rewrite, s).toBe(`/ru/${s}`)
-      expect((await route(`/${s}/x`)).rewrite, s).toBe(`/ru/${s}/x`)
+      expect(urls.some((u) => u === `/${s}` || u.startsWith(`/${s}/`)), s).toBe(true)
+    }
+    for (const url of urls) {
+      expect((await route(url)).rewrite, url).toBe(url === '/' ? '/ru' : `/ru${url}`)
+    }
+  })
+
+  test('страница жанра — каждым адресом из generateStaticParams', async () => {
+    // Список жанров в правиле — то же выражение, что у страницы: разойдутся —
+    // жанр на русском адресе ушёл бы в 404
+    const page = fs.readFileSync(path.join(LANG_DIR, 'games', '[tag]', 'page.tsx'), 'utf8')
+    expect(page).toContain(
+      'return [...HUB_TAGS.map((tag) => ({ tag: HUB_GENRES[tag].slug })), ...HUB_FACETS.map((f) => ({ tag: f.slug }))]',
+    )
+    const slugs = [...HUB_TAGS.map((tag) => HUB_GENRES[tag].slug), ...HUB_FACETS.map((f) => f.slug)]
+    expect(slugs.length).toBeGreaterThan(30)
+    for (const slug of slugs) {
+      expect((await route(`/games/${slug}`)).rewrite, slug).toBe(`/ru/games/${slug}`)
+      expect((await route(`/games/${slug}/opengraph-image`)).rewrite, slug).toBe(`/ru/games/${slug}/opengraph-image`)
     }
   })
 
@@ -267,9 +330,46 @@ describe('адрес вне разделов', () => {
 
   test('разделы по-прежнему уезжают в свои страницы, а не в 404', async () => {
     expect((await route('/quiz')).rewrite).toBe('/ru/quiz')
-    // Опечатка под разделом — это /ru/quiz/xyz, её ловит /[lang]/[...missing]
-    expect((await route('/quiz/xyz')).rewrite).toBe('/ru/quiz/xyz')
     expect((await route('/missing')).rewrite).toBe('/ru/missing')
+    // Параметр решает страница: игры 999999999 нет, но адрес — её
+    expect((await route('/game/999999999')).rewrite).toBe('/ru/game/999999999')
+  })
+
+  /**
+   * Опечатка под русским разделом — в ту же статическую 404, что /xyz, а не
+   * в /ru/…: там её ловила динамическая /[lang]/[...missing], и HTML был
+   * пустой оболочкой Next без lang, стилей и текста, функцией на каждый
+   * адрес. До [lang] такие адреса отдавала статическая 404 — сервером
+   * целиком. Список — адреса из живой проверки, где это всплыло.
+   */
+  test('опечатка под русским разделом — в статическую 404, а не в /ru/…', async () => {
+    for (const url of [
+      '/games/no-such-genre',
+      '/games/no-such-genre/opengraph-image',
+      '/quiz/xyz',
+      '/daily/x',
+      '/privacy/x',
+      '/support/x',
+      '/whatsnew/x',
+      '/whatsnew/feed',
+      '/games/a/b',
+      '/room/new/x',
+      '/rooms/x',
+      '/explore/x',
+      '/play/x',
+      '/game',
+      '/game/730/xyz',
+      '/game/730/news/1/x',
+      '/library/x',
+      '/compat/a/b',
+      '/pick',
+      '/pick/a/b',
+      '/portrait/1/year/x',
+      '/opengraph-image/x',
+      '/missing/x',
+    ]) {
+      expect((await route(url)).rewrite, url).toBe('/_not-found')
+    }
   })
 })
 
