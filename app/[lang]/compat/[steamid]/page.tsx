@@ -61,7 +61,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { steamid, lang } = await params
   const locale = toLocale(lang)
-  if (!STEAMID.test(steamid)) return {}
+  if (!STEAMID.test(steamid)) return missingMeta(locale, steamid)
 
   // Только голова приглашения: обложек превью не показывает. Снапшот и ник
   // владельца — общие с телом страницы на любом пути (память запроса в
@@ -141,6 +141,26 @@ function cardOn(locale: Locale, url: string) {
       },
     ],
   }
+}
+
+/**
+ * Метаданные битого адреса (/en/compat/abc, /en/compat/123): страница рисует
+ * экран 404 (notFound), а файловая карточка сегмента всё равно встаёт в
+ * голову — и с ней её русский alt, в HTML сервера и после гидрации (замер на
+ * next dev). Поэтому на /en и здесь своя запись: та же карточка, английская
+ * подпись (cardOn), тип и имя сайта — те же, что дал бы корень, ведь свой
+ * openGraph этого уровня заменяет его целиком. Без og:url, как у корня: у
+ * битого адреса его нет и на русской, — так же устроен битый адрес портрета.
+ * Заголовок вкладки — корневой, как на русской. Сегмент — через
+ * encodeURIComponent: в params он уже раскодирован (/en/compat/a%20b даёт
+ * «a b»), а в адрес карточки должен встать закодированным. Русская — пустой
+ * объект, как была: её голова не меняется ни на байт.
+ */
+function missingMeta(locale: Locale, raw: string): Metadata {
+  if (locale !== 'en') return {}
+  // Адрес — только карточке, своего og:url у битого адреса нет
+  const url = `/compat/${encodeURIComponent(raw)}`
+  return { openGraph: { ...ogSite(locale), type: 'website', ...cardOn(locale, url) } }
 }
 
 /** «Sergey зовёт сравнить библиотеки» — одна фраза на вкладку, превью и героя приглашения */
