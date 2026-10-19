@@ -16,7 +16,9 @@
  * своим порядком слов. Различимость на слух (тест) обязана держаться и там.
  */
 
+import type { ReactNode } from 'react'
 import { tr, type Locale } from './i18n'
+import { withForeignRuns } from './textlang'
 
 export type PlayEvent =
   /** Первая выдача после прогрева (в рулетке молчим — барабан скажет сам) */
@@ -108,4 +110,26 @@ export function playLine(e: PlayEvent, locale: Locale = 'ru'): string {
  */
 export function freshLine(prev: string, next: string): string {
   return prev === next ? `${next} ` : next
+}
+
+/**
+ * Строка живой области — для разметки: на /en русское название игры в ней —
+ * своим <span lang="ru">, иначе английский голос скринридера читает кириллицу
+ * по буквам (WCAG 3.1.2; то же правило, что у ников и названий на /en —
+ * withForeignRuns из lib/textlang). Каталог знает игры, у которых главное
+ * название русское, и на /en «Found a game: “…”» звучит с ним.
+ *
+ * Строка остаётся строкой (freshLine сравнивает и метит их), а пометка — на
+ * выводе. Названия в английских шаблонах playLine всегда в “…”, так что куски
+ * берутся из самой строки, без второго канала рядом с ней. На русской
+ * странице — та же строка как есть, одним текстовым узлом: русская разметка
+ * не меняется.
+ */
+export function liveLineOn(locale: Locale, line: string): ReactNode {
+  if (locale !== 'en') return line
+  return withForeignRuns(
+    locale,
+    line,
+    [...line.matchAll(/“([^”]+)”/g)].map((m) => m[1]),
+  )
 }

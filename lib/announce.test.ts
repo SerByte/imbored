@@ -1,5 +1,7 @@
+import { createElement, type ReactNode } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
-import { freshLine, playLine, type PlayEvent } from './announce'
+import { freshLine, liveLineOn, playLine, type PlayEvent } from './announce'
 
 describe('playLine', () => {
   test('каждая смена героя называет игру, которая теперь на экране', () => {
@@ -133,5 +135,41 @@ describe('freshLine', () => {
     expect(second.trim()).toBe(line)
     // третий повтор снова отличается от второго — и так сколько угодно раз
     expect(freshLine(second, line)).toBe(line)
+  })
+})
+
+/**
+ * Русское название на /en — своим lang="ru": иначе английский голос читает
+ * кириллицу по буквам. Латинское и русская страница — та же строка как есть.
+ */
+describe('liveLineOn', () => {
+  const html = (node: ReactNode) => renderToStaticMarkup(createElement('p', { role: 'status' }, node))
+
+  test('на /en русские названия — под lang="ru", остальное — голосом страницы', () => {
+    const line = playLine({ kind: 'ban', name: 'Смута', done: false, next: 'Одни из нас™: Часть II' }, 'en')
+    expect(html(liveLineOn('en', line))).toBe(
+      '<p role="status">Won&#x27;t show “<span lang="ru">Смута</span>” again. Next game: “<span lang="ru">Одни из нас™: Часть II</span>”</p>',
+    )
+    expect(html(liveLineOn('en', playLine({ kind: 'seed', name: 'Смута', seed: 'Hades' }, 'en')))).toBe(
+      '<p role="status">Similar to “Hades”. First game: “<span lang="ru">Смута</span>”</p>',
+    )
+  })
+
+  test('латинское название и строка без названия — та же строка, без пометок', () => {
+    const line = playLine({ kind: 'next', name: 'Hades' }, 'en')
+    expect(liveLineOn('en', line)).toBe(line)
+    expect(liveLineOn('en', playLine({ kind: 'ask' }, 'en'))).toBe(playLine({ kind: 'ask' }, 'en'))
+  })
+
+  test('повтор freshLine переживает пометку: слова те же, узел другой', () => {
+    const line = playLine({ kind: 'next', name: 'Смута' }, 'en')
+    const again = freshLine(line, line)
+    expect(html(liveLineOn('en', again))).not.toBe(html(liveLineOn('en', line)))
+    expect(html(liveLineOn('en', again))).toContain('<span lang="ru">Смута</span>')
+  })
+
+  test('на русской странице — строка как есть, одним текстовым узлом', () => {
+    const line = playLine({ kind: 'next', name: 'Смута' })
+    expect(liveLineOn('ru', line)).toBe(line)
   })
 })

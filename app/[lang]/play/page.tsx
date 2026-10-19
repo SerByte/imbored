@@ -31,7 +31,7 @@ import { HeroTrailer } from '@/components/HeroTrailer'
 import { HeroPoster } from '@/components/TypeCover'
 import { Icon } from '@/components/Icon'
 import { useLocale } from '@/components/LocaleProvider'
-import { freshLine, playLine as announce, type PlayEvent } from '@/lib/announce'
+import { freshLine, liveLineOn, playLine as announce, type PlayEvent } from '@/lib/announce'
 import { edgeBadge, edgeLine } from '@/lib/badges'
 import { entryLine } from '@/lib/entry'
 import { closesPlan, planBeside, planLine, writesPlan, type EveningPlan } from '@/lib/eveningplan'
@@ -3497,7 +3497,7 @@ export default function PlayPage() {
   return (
     <>
       <p role="status" className="sr-only">
-        {said}
+        {liveLineOn(locale, said)}
       </p>
       <Suspense fallback={<WarmupScreen progress={null} message={PREPARE_MESSAGE[locale]} />}>
         <Player say={say} />
