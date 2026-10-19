@@ -22,6 +22,7 @@ import { presetHref, presetLabel, quizHref, roomSeedHref, VIBE_PRESETS } from '@
 import { appBaseUrl } from '@/lib/server'
 import { localeAlternates, ogSite } from '@/lib/site'
 import { tagLabel } from '@/lib/tagsru'
+import { langOn } from '@/lib/textlang'
 import { loadGenre, thinList, type Genre, type GenreGame } from './load'
 
 /**
@@ -206,6 +207,7 @@ export default async function GenrePage({ params }: Params) {
                   <StaticGameCardBody
                     appid={g.appid}
                     name={g.name}
+                    locale={locale}
                     headerImage={g.headerImage}
                     art={g.art}
                     sizes="(min-width: 1024px) 360px, (min-width: 640px) 45vw, 90vw"
@@ -246,7 +248,9 @@ export default async function GenrePage({ params }: Params) {
                   >
                     <Icon name="users" size={14} />
                     {tr(locale, { ru: 'Позвать в эту игру', en: 'Invite to this game' })}
-                    <span className="sr-only">: {g.name}</span>
+                    {/* Название — данные: на /en русское — своим lang, как
+                        подпись карточки выше (langOn); на ru — как было */}
+                    <span className="sr-only">: {langOn(locale, g.name) ? <span lang="ru">{g.name}</span> : g.name}</span>
                   </Link>
                 )}
               </li>

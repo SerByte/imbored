@@ -132,6 +132,23 @@ export function langOn(locale: Locale, text: string): 'ru' | undefined {
 }
 
 /**
+ * То же правило пропсами для разворота: { lang: 'ru' } или пустой объект.
+ *
+ * Для серверных компонентов, а не ради краткости. Пропс lang={undefined} в
+ * HTML атрибута не даёт, но RSC-часть страницы (self.__next_f) сериализует
+ * его строкой «"lang":"$undefined"» — у каждого элемента, где он стоит. На
+ * русской странице это байты, которых до перевода не было: на хабе /games —
+ * у каждой из сотен капсул (замер на next dev: 10–44 вхождения на хаб и
+ * жанр), а хабы живут в ISR, и каждый их килобайт — ещё и ISR Writes. С
+ * разворотом пустого объекта пропса нет вовсе, и русская страница остаётся
+ * прежней до байта. Клиентскому компоненту (GameCardName) это не нужно: его
+ * разметку RSC не сериализует.
+ */
+export function langAttr(locale: Locale, text: string): { lang?: 'ru' } {
+  return langOn(locale, text) ? { lang: 'ru' } : {}
+}
+
+/**
  * Текст с вкраплениями данных: на /en каждое вхождение русского ника или
  * названия игры — своим <span lang="ru">, остальное наследует lang страницы.
  *
@@ -158,4 +175,22 @@ export function withForeignRuns(
   return text
     .split(new RegExp(`(${escaped.join('|')})`, 'g'))
     .map((part, i) => (i % 2 ? createElement('span', { key: i, lang: 'ru' }, part) : part))
+}
+
+/**
+ * Фраза withForeignRuns внутри флекс-родителя — одним флекс-элементом.
+ *
+ * withForeignRuns режет фразу на куски вокруг <span lang="ru">, а ссылки
+ * .link-more — inline-flex с gap: без общей обёртки каждый кусок вставал
+ * своим флекс-элементом. На 1280 px — зазоры у кавычек («Similar to “ Одни
+ * из нас™… ”, for your mood»), на 360 px — три столбика рядом (замер на next
+ * dev, /en/game/2531310 и /en/game/2651280). Тот же приём, что у withNicks
+ * (app/[lang]/compat/nick.tsx). Нечего помечать — та же строка без обёртки:
+ * русская страница и латинские названия прежние.
+ *
+ * Жила в карточке игры; общей стала, когда те же ссылки появились у страницы
+ * патча («All {game} updates»).
+ */
+export function oneItem(runs: ReactNode): ReactNode {
+  return typeof runs === 'string' ? runs : createElement('span', null, runs)
 }

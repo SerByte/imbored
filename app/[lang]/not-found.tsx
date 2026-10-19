@@ -213,6 +213,7 @@ export async function NotFoundView({ locale }: { locale: Locale }) {
                     morph
                     appid={g.appid}
                     name={g.name}
+                    locale={locale}
                     headerImage={g.headerImage}
                     art={g.art}
                     sizes="(min-width: 768px) 25vw, 50vw"

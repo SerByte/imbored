@@ -6,6 +6,7 @@ import { useLocale } from '@/components/LocaleProvider'
 import { Spinner } from '@/components/Spinner'
 import { StatusLine } from '@/components/StatusLine'
 import { tr } from '@/lib/i18n'
+import { langOn } from '@/lib/textlang'
 import type { Trailer } from '@/lib/trailer'
 import { Icon } from '@/components/Icon'
 
@@ -110,8 +111,12 @@ export function TrailerPreview({
   }
 
   // Имя игры — хвостом для скринридера: видимая подпись обязана быть началом
-  // доступного имени (WCAG 2.5.3), а «В движении» без игры непонятно о чём
-  const forReader = <span className="sr-only">, {name}</span>
+  // доступного имени (WCAG 2.5.3), а «В движении» без игры непонятно о чём.
+  // Название — данные: на /en русское (games.name у части верха каталога,
+  // nameSql в lib/db) — своим <span lang="ru">, как подпись карточки
+  // (GameCardName); на ru и у латинского — та же строка, что была
+  const foreignName = langOn(locale, name) === 'ru'
+  const forReader = <span className="sr-only">, {foreignName ? <span lang="ru">{name}</span> : name}</span>
   // Подпись кнопки — одна на оба места (строка и постер), как и раньше
   const motion = tr(locale, { ru: 'В движении', en: 'In motion' })
   const muted = tr(locale, { ru: '· без звука', en: '· muted' })
@@ -155,9 +160,13 @@ export function TrailerPreview({
           playsInline
           preload="none"
           controls={state === 'playing'}
+          // Атрибут пометить lang нельзя: русское название в английской
+          // подписи английский голос читал бы по буквам. На /en такое
+          // название из подписи уходит — игру и так называют h1 карточки и
+          // заголовок героя выдачи, а подпись говорит, что это за ролик
           aria-label={tr(locale, {
             ru: `${name}: несколько секунд геймплея без звука`,
-            en: `${name}: a few seconds of gameplay, no sound`,
+            en: foreignName ? 'A few seconds of gameplay, no sound' : `${name}: a few seconds of gameplay, no sound`,
           })}
           onPlaying={() => setState('playing')}
           onEnded={() => setState('idle')}

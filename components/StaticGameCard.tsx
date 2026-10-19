@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 import { artCandidates, artSrcSet, type GameArtUrls } from '@/lib/art'
+import type { Locale } from '@/lib/i18n'
+import { langAttr } from '@/lib/textlang'
 import { GameMorph } from './Morph'
 
 /**
@@ -47,10 +49,23 @@ import { GameMorph } from './Morph'
  * RSC-части и столько же в HTML на каждую перегенерацию страницы (замер
  * сборки: 358 → 400 КБ games.rsc с обёрткой у всех), то есть ещё и
  * ISR Writes.
+ *
+ * НАЗВАНИЕ — С lang ПО ЯЗЫКУ СТРАНИЦЫ, как у клиентской подписи GameCardName.
+ * Название — данные, и на /en оно бывает русским (games.name у части верха
+ * каталога держит русское имя магазина, nameSql в lib/db): без пометки
+ * английский голос скринридера читает кириллицу по буквам (WCAG 3.1.2), а
+ * i18n-audit считает такую строку забытым переводом. Правило — langOn: 'ru'
+ * только на /en и только когда кириллицы не меньше латиницы; на русской
+ * странице атрибута нет, как не было, — и в RSC-части тоже: пропс ставит
+ * разворот langAttr, а не lang={undefined} (почему — у langAttr). Язык —
+ * пропсом, а не useLocale, как у GameCardName: карточка серверная, и
+ * контекст клиента ей не виден. Пропс обязательный — забыть его у нового
+ * вызывающего не даст тип.
  */
 export function StaticGameCardBody({
   appid,
   name,
+  locale,
   headerImage,
   art,
   sizes,
@@ -62,6 +77,8 @@ export function StaticGameCardBody({
 }: {
   appid: number
   name: string
+  /** язык страницы: по нему название получает lang (см. докблок) */
+  locale: Locale
   headerImage?: string | null
   art?: GameArtUrls | null
   sizes?: string
@@ -105,7 +122,10 @@ export function StaticGameCardBody({
     <>
       {morph ? <GameMorph appid={appid}>{thumb}</GameMorph> : thumb}
       <span className="mt-3 block px-0.5">
-        <span className="block truncate text-[15px] leading-tight font-extrabold tracking-[-0.01em]">
+        <span
+          {...langAttr(locale, name)}
+          className="block truncate text-[15px] leading-tight font-extrabold tracking-[-0.01em]"
+        >
           {name}
         </span>
         {meta ? (
