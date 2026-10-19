@@ -1,3 +1,4 @@
+import type { Metadata, ResolvingMetadata } from 'next'
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import Link from '@/components/Link'
 import { GameLink } from '@/components/GameLink'
@@ -39,10 +40,39 @@ import { tagLabel } from '@/lib/tagsru'
 export const revalidate = 86_400
 
 /**
- * Адрес — свой, на языке страницы. title и description по языку ставит
- * layout.tsx рядом: у ownAddress подпись одна на оба языка (почему — там).
+ * Подпись хаба на языке страницы — у самой страницы, а не у layout сегмента.
+ *
+ * Пара стояла в app/[lang]/games/layout.tsx: own у ownAddress задаётся
+ * объектом при загрузке модуля, когда языка ещё нет. Только метаданные layout
+ * наследует весь сегмент, и 404 жанра (/games/<нет такого>: у [tag]
+ * dynamicParams = false, и на собранном сайте его notFound() рисуется под
+ * тем же layout) вставала с головой хаба — «Игры по жанрам · imbored» и его
+ * описанием вместо корневых, как было до перевода. Поэтому ownAddress собирается на запрос, с парой
+ * своего языка, — как у /privacy. Русская пара — та же, что до перевода, до
+ * буквы; шаблон «%s · imbored» корня Next ставит к строке title сам, и вниз,
+ * к страницам жанров, её никто не наследует.
  */
-export const generateMetadata = ownAddress('/games')
+const META = {
+  ru: {
+    title: 'Игры по жанрам',
+    description:
+      'Открытый мир, соулслайки, рогалики, градостроение и ещё два десятка жанров — по двенадцать игр, для которых жанр главный, с отзывами и патчами на русском.',
+  },
+  en: {
+    title: 'Games by genre',
+    description:
+      'Open world, soulslikes, roguelikes, city builders and two dozen more genres — twelve games each where the genre is the main one, with reviews and patch notes.',
+  },
+} satisfies Record<Locale, { title: string; description: string }>
+
+/** Адрес — свой, на языке страницы (ownAddress); подпись — META своего языка */
+export async function generateMetadata(
+  props: Pick<PageProps<'/[lang]/games'>, 'params'>,
+  parent: ResolvingMetadata,
+): Promise<Metadata> {
+  const locale = toLocale((await props.params).lang)
+  return ownAddress('/games', META[locale])(props, parent)
+}
 
 /**
  * Полки или пустой список — но пустой только на сборке.

@@ -28,7 +28,7 @@ import {
 import { PRICE_TRUST_SEC } from '@/lib/discount'
 import { GAME_PAGE_REVALIDATE_SEC, PRERENDER_TOP } from '@/lib/gamecache'
 import type { Locale } from '@/lib/i18n'
-import { roomSeedHref } from '@/lib/presets'
+import { quizHref, roomSeedHref } from '@/lib/presets'
 import { classOfTag, flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
 import type { GameMeta } from '@/lib/types'
@@ -710,10 +710,10 @@ describe('английская карточка', () => {
   })
 
   /*
-   * 404 под /en/game/<appid>. Страница на ISR, и на проде голову её 404
-   * собирает обычный проход метаданных — оболочка восстановления после
-   * notFound() их не пересчитывает: файловая карточка сегмента плюс то, что
-   * вернул generateMetadata. Пустой объект оставлял на /en русский alt файла.
+   * 404 под /en/game/<appid>. Голову, которую видит браузер, клиент ставит
+   * из обычного прохода метаданных: файловая карточка сегмента плюс то, что
+   * вернул generateMetadata (докблок missingMeta в page.tsx). Пустой объект
+   * оставлял в ней на /en русский alt файла.
    */
   test('нет такой игры: на /en — та же карточка с английским alt, на русской — пустой объект, как был', async () => {
     const { size, contentType } = await import('./opengraph-image')
@@ -965,6 +965,98 @@ describe('английская карточка: пульс, цена, архи�
     expect(links).toHaveLength(1)
     expect(links[0]?.prefetch).toBe(false)
     expect(textOf(links[0]?.children)).toBe('All Counter-Strike 2 updates')
+  })
+
+  /*
+   * Название — данные: у части верха каталога games.name держит русское имя
+   * магазина, пока его не перепишет английская запись (nameSql в lib/db).
+   * Переводить его нельзя (docs/i18n.md, п. 6), но там, где его рисует сама
+   * страница, — в h1 и в обеих ссылках link-more — на /en оно помечено
+   * lang="ru" (WCAG 3.1.2). Русская страница и латинское название — без
+   * атрибута и без лишнего <span>, как были.
+   */
+  describe('русское название из данных', () => {
+    // Русское имя магазина из базы: кириллица перевешивает латиницу (textLangOn)
+    const NAME = 'Marvel Человек-Паук 2'
+    const quiz = quizHref(null, APPID)
+
+    /** Пропсы первого h1 раскрытой страницы */
+    function h1Of(page: unknown): { lang?: unknown; children?: unknown } {
+      let found: { lang?: unknown; children?: unknown } | undefined
+      const walk = (n: unknown): void => {
+        if (found || n === null || typeof n !== 'object') return
+        const rec = n as { tag?: string; props?: { lang?: unknown; children?: unknown } }
+        if (rec.tag === 'h1') found = rec.props ?? {}
+        else Object.values(n).forEach(walk)
+      }
+      walk(page)
+      expect(found, 'h1 на карточке не найден — сторож ослеп').toBeDefined()
+      return found!
+    }
+
+    function linkOf(page: unknown, href: string): Record<string, unknown> {
+      const [link] = islandsOf(page, 'Link').filter((l) => l.href === href)
+      expect(link, href).toBeDefined()
+      return link
+    }
+
+    /** Тексты всех <span lang="ru"> внутри узла */
+    function ruSpans(node: unknown): string[] {
+      const out: string[] = []
+      const walk = (n: unknown): void => {
+        if (n === null || typeof n !== 'object') return
+        const rec = n as { tag?: string; props?: { lang?: unknown; children?: unknown } }
+        if (rec.tag === 'span' && rec.props?.lang === 'ru') out.push(textOf(rec.props.children))
+        Object.values(n).forEach(walk)
+      }
+      walk(node)
+      return out
+    }
+
+    test('на /en — lang="ru" в h1 и на самом названии в обеих ссылках', async () => {
+      await seed({ name: NAME })
+      // девять патчей — больше, чем мест на карточке: есть ссылка на архив
+      await upsertNewsItems(
+        db,
+        Array.from({ length: 7 }, (_, i) => patch(String(i + 3), T0 - (i + 3) * DAY, 9000)),
+        T0,
+      )
+      lang.locale = 'en'
+      const page = flight(await GamePage(en))
+      expect(h1Of(page)).toMatchObject({ lang: 'ru', children: NAME })
+      const archive = linkOf(page, `/game/${APPID}/news`)
+      expect(textOf(archive.children)).toBe(`All ${NAME} updates`)
+      expect(ruSpans(archive.children)).toEqual([NAME])
+      const similar = linkOf(page, quiz)
+      expect(textOf(similar.children)).toBe(`Similar to “${NAME}”, for your mood`)
+      expect(ruSpans(similar.children)).toEqual([NAME])
+    })
+
+    test('на русской — без атрибута и без <span>: разметка прежняя', async () => {
+      await seed({ name: NAME })
+      await upsertNewsItems(
+        db,
+        Array.from({ length: 7 }, (_, i) => patch(String(i + 3), T0 - (i + 3) * DAY, 9000)),
+        T0,
+      )
+      const page = flight(await GamePage(params))
+      expect(h1Of(page).lang).toBeUndefined()
+      expect(ruSpans(page)).toEqual([])
+      expect(linkOf(page, `/game/${APPID}/news`).children).toContainEqual(`Все обновления «${NAME}»`)
+    })
+
+    test('латинское название на /en — без атрибута и без лишнего <span>', async () => {
+      await seed()
+      // Соседи по-английски: их русские имена — уже не название этой страницы
+      await db.execute({ sql: "UPDATE games SET name = 'Game ' || appid WHERE appid BETWEEN 10 AND 17", args: [] })
+      lang.locale = 'en'
+      const page = flight(await GamePage(en))
+      expect(h1Of(page).lang).toBeUndefined()
+      expect(ruSpans(page)).toEqual([])
+      const similar = linkOf(page, quiz).children
+      expect(textOf(similar)).toBe('Similar to “Counter-Strike 2”, for your mood')
+      expect(JSON.stringify(similar)).not.toContain('"tag":"span"')
+    })
   })
 
   test('русского названия на /en нет — ни строкой под заголовком, ни alternateName', async () => {

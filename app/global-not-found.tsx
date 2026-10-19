@@ -9,8 +9,13 @@ import Template from './[lang]/template'
  * Сюда такой адрес уводит правило afterFiles из next.config (garbageRewrites
  * в lib/i18nroutes.ts) — в /_not-found, единственный маршрут, чей 404 Next
  * рисует сервером целиком. Он же отвечает за всё, что не нашло маршрута
- * вовсе (/_next, /_vercel без файла), и за dynamicParams = false мимо
- * списка (/games/<нет такого жанра>).
+ * вовсе (/_next, /_vercel без файла). А вот dynamicParams = false мимо
+ * списка (/games/<нет такого жанра>) сюда не приходит, и отвечает ему
+ * пустая оболочка <html id="__next_error__">: на next dev адрес достаётся
+ * app/[lang]/[...missing] (pagePath в RSC-части), а на собранном сайте, по
+ * замеру ревью, — notFound() самого [tag], под layout его сегмента: 404 жанра
+ * вставала там с головой хаба, пока его подпись жила в
+ * app/[lang]/games/layout.tsx. Теперь она у страницы хаба.
  *
  * ПОЧЕМУ НЕ СТРАНИЦА С notFound(). Так было: правило уводило мусор в
  * пререндеренную app/[lang]/missing, а она звала notFound(). В этой версии

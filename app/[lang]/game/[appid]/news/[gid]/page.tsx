@@ -76,7 +76,25 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { appid, gid, lang } = await params
   const locale = toLocale(lang)
   const page = await loadPatch(appid, gid, locale)
-  if (!page) return {}
+  /*
+   * 404 (не патч или нет такого поста): голову такой 404 браузер берёт из
+   * этого ответа, и пустой объект оставлял на /en русский alt файловой
+   * карточки рядом. Та же карточка с английским alt (EN_CARD), как у 404
+   * самой игры (missingMeta в ../../page.tsx). Русская 404 — пустой объект,
+   * как была.
+   */
+  if (!page) {
+    if (locale !== 'en') return {}
+    const path = `/game/${encodeURIComponent(appid)}/news/${encodeURIComponent(gid)}`
+    return {
+      openGraph: {
+        ...ogSite(locale),
+        type: 'website',
+        url: lp(locale, path),
+        images: [{ url: `${lp(locale, path)}/opengraph-image`, ...EN_CARD }],
+      },
+    }
+  }
   const { item, game } = page
 
   // С датой, если заголовок патчи игры не различает: у CS2 все они —
