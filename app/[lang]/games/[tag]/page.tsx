@@ -357,6 +357,12 @@ function Onward({ genre, locale }: { genre: Genre; locale: Locale }) {
    * своих нет — магазинные того же жанра, и выдача скажет об этом (genreLine
    * в lib/playflow). У подборки (facet) жанра нет — квиз голый. Адрес один на
    * всех — разметка ISR от смотрящего не зависит.
+   *
+   * По-английски заголовок жанра начинает подпись и стоит как есть — тот же
+   * ход, что у строк квиза и выдачи, куда ведёт кнопка («Roguelikes — yours
+   * first», «Roguelikes only»): hubTitle не понижается (docs/i18n.md), а
+   * заглавная посреди фразы («Pick Roguelikes…») читалась бы опечаткой.
+   * Хвост — подпись соседней кнопки подборки, «Pick from your library».
    */
   if (genre.kind === 'genre') {
     return (
@@ -364,7 +370,7 @@ function Onward({ genre, locale }: { genre: Genre; locale: Locale }) {
         <Link href={quizHref(null, null, genre.slug)} className="btn-ember px-6 py-3">
           {tr(locale, {
             ru: `Подобрать ${inPhrase(genre.title)} из своей библиотеки`,
-            en: `Pick ${inPhrase(genre.title)} from your library`,
+            en: `${genre.title} — pick from your library`,
           })}{' '}
           {arrow}
         </Link>
@@ -381,12 +387,12 @@ function Onward({ genre, locale }: { genre: Genre; locale: Locale }) {
 }
 
 /**
- * Заголовок жанра внутри фразы кнопки: «Подобрать рогалики…», «Pick
- * roguelikes…». Строчной — только первая буква и только у обычного слова:
- * аббревиатура остаётся как есть (JRPGs, CRPGs — «jRPGs» читалось бы
- * опечаткой; docs/i18n.md, hubTitle — «не понижать регистр»). Русские
- * заголовки жанров с аббревиатуры не начинаются, и для них это ровно
- * прежнее «первая буква строчной».
+ * Русский заголовок жанра внутри фразы кнопки: «Подобрать рогалики…».
+ * Строчной — только первая буква и только у обычного слова: аббревиатура
+ * осталась бы как есть. Русские заголовки жанров с аббревиатуры не
+ * начинаются, и это ровно прежнее «первая буква строчной». Английский
+ * заголовок сюда не идёт вовсе: hubTitle не понижается никогда (docs/i18n.md),
+ * и английская кнопка ставит его первым (Onward выше).
  */
 function inPhrase(title: string): string {
   if (/^\p{Lu}{2}/u.test(title)) return title
