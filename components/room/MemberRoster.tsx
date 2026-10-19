@@ -8,6 +8,7 @@ import { MotionMax } from '@/components/motion/MotionMax'
 import { focusAdrift } from '@/lib/focushandoff'
 import { tr } from '@/lib/i18n'
 import type { RoomMemberView } from '@/lib/room'
+import { langOn, withForeignRuns } from '@/lib/textlang'
 
 const EASE = [0.22, 1, 0.36, 1] as const
 
@@ -117,6 +118,13 @@ export function MemberRoster({
               // при входе нового человека, а голоса по старой уже записаны
               const shown = deckSize ? Math.min(member.votes, deckSize) : member.votes
               const pct = deckSize ? Math.min(100, (member.votes / deckSize) * 100) : 0
+              // Ник из Steam — данные: русский на /en — своим lang (langOn), иначе
+              // английский голос читает его по буквам. На русской — undefined
+              const nameLang = langOn(locale, member.name)
+              const removeLabel = tr(locale, {
+                ru: `Убрать ${member.name} из пати`,
+                en: `Remove ${member.name} from party`,
+              })
 
               return (
                 <m.li
@@ -147,16 +155,21 @@ export function MemberRoster({
                     видимые части строки уже скрыты по той же причине.
 
                     title остаётся: он для глаза, когда имя обрезано.
+
+                    lang русского ника на /en — на самой строке: в title только
+                    ник, и пометка накрывает и его. «(you)» тогда возвращает
+                    себе английский.
                   */}
                   <span
                     aria-hidden
                     title={member.name}
+                    lang={nameLang}
                     className={`w-[5.5rem] sm:w-40 shrink-0 truncate text-sm ${
                       member.me ? 'text-ink font-semibold' : 'text-dim'
                     }`}
                   >
                     {member.name}
-                    {member.me ? you : ''}
+                    {member.me ? (nameLang ? <span lang="en">{you}</span> : you) : ''}
                   </span>
 
                   <span
@@ -215,22 +228,20 @@ export function MemberRoster({
                       // запрос в пути, а на отказе — и после (строку отказа
                       // пишет RoomWaiting внизу экрана)
                       aria-disabled={removing}
-                      title={tr(locale, {
-                        ru: `Убрать ${member.name} из пати`,
-                        en: `Remove ${member.name} from party`,
-                      })}
-                      aria-label={tr(locale, {
-                        ru: `Убрать ${member.name} из пати`,
-                        en: `Remove ${member.name} from party`,
-                      })}
+                      title={removeLabel}
+                      // Русский ник на /en — имя кнопки текстом, а не aria-label:
+                      // у куска атрибута своего lang не бывает, а у span — есть.
+                      // title — подсказка для глаза, ему lang не поставить
+                      aria-label={nameLang ? undefined : removeLabel}
                       className="tap tap-tight shrink-0 -my-1.5 px-1.5 py-1.5 text-xs text-faint hover:text-danger transition-colors cursor-pointer aria-disabled:opacity-40"
                     >
                       <Icon name="close" size={14} />
+                      {nameLang && <span className="sr-only">{withForeignRuns(locale, removeLabel, [member.name])}</span>}
                     </button>
                   ) : null}
 
                   <span className="sr-only">
-                    {member.name}
+                    {nameLang ? <span lang="ru">{member.name}</span> : member.name}
                     {member.me ? you : ''}: {shown}
                     {deckSize ? tr(locale, { ru: ` из ${deckSize}`, en: ` of ${deckSize}` }) : ''}, {tr(
                       locale,

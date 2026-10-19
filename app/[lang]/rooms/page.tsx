@@ -25,6 +25,7 @@ import {
 } from '@/lib/boardpoll'
 import { minutesAgoLabel } from '@/lib/freshness'
 import { lp, tr, withLang, type Locale } from '@/lib/i18n'
+import { withForeignRuns } from '@/lib/textlang'
 import { writerStore } from '@/lib/writer'
 
 /**
@@ -350,8 +351,9 @@ export default function RoomsBoardPage() {
                             <span aria-hidden>{r.preset.emoji}</span> {r.preset.label} ·{' '}
                           </>
                         )}
+                        {/* Ники — данные: русский на /en — своим lang (withForeignRuns) */}
                         {r.memberNames.length
-                          ? `${r.memberNames.join(', ')} · `
+                          ? withForeignRuns(locale, `${r.memberNames.join(', ')} · `, r.memberNames)
                           : tr(locale, { ru: 'пока никого · ', en: 'no one yet · ' })}
                         {minutesAgoLabel(r.minutesAgo, locale)}
                       </div>

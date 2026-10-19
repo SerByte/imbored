@@ -179,7 +179,11 @@ describe('пати: матч и экран ожидания', () => {
    * скринридер объявляет не везде (components/StatusLine).
    */
   test('строка матча стоит первой в return лобби и церемонии', () => {
-    expect(room).toMatch(/const matchStatus = \(\s*<StatusLine\s+text=\{matchLine\(/)
+    // Текст — строка matchLine; на /en русское название в ней — своим lang
+    expect(room).toMatch(/const matchSaid = matchLine\(/)
+    expect(room).toMatch(
+      /const matchStatus = \(\s*<StatusLine\s+text=\{matchSaid && withForeignRuns\(locale, matchSaid, \[state\.matchedGame\?\.name\]\)\}/,
+    )
     // return, внутри которого стоит церемония, и return лобби
     for (const mark of ['<MatchCeremony', '<div className="room-page']) {
       const at = room.indexOf(mark)

@@ -3,6 +3,7 @@ import type { GameArtUrls } from '@/lib/art'
 import { pl, tr, type Locale } from '@/lib/i18n'
 import { plural } from '@/lib/plural'
 import type { NearMiss } from '@/lib/roomlikes'
+import { langOn, withForeignRuns } from '@/lib/textlang'
 import { ScrollRail } from './ScrollRail'
 import { SectionLabel } from '@/components/Labels'
 
@@ -23,6 +24,12 @@ export type LikedGame = {
 function namesEn(names: readonly string[]): string {
   return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : (names[0] ?? '')
 }
+
+/*
+ * Ники и названия — данные: на /en русский ник или русское название — своим
+ * lang (withForeignRuns и langOn из lib/textlang), иначе английский голос
+ * скринридера читает кириллицу по буквам. На русской — те же строки как есть.
+ */
 
 /**
  * «Вы почти совпали» — словами, без единой обложки.
@@ -74,7 +81,7 @@ export function NearMissList({ near, locale = 'ru' }: { near: NearMiss[]; locale
             {locale === 'en' ? (
               <>
                 <span className={i === 0 ? 'text-ink' : 'text-dim'}>
-                  {namesEn(n.forNames)}: yes on
+                  {withForeignRuns(locale, namesEn(n.forNames), n.forNames)}: yes on
                 </span>
                 <span className="tabular-nums text-ember-text">{n.games}</span>
                 <span className={i === 0 ? 'text-ink' : 'text-dim'}>
@@ -95,10 +102,14 @@ export function NearMissList({ near, locale = 'ru' }: { near: NearMiss[]; locale
             <span className="text-faint">
               {n.mePending
                 ? tr(locale, { ru: 'Ждём тебя.', en: 'Waiting for you.' })
-                : tr(locale, {
-                    ru: `Ждём: ${n.pendingNames.join(', ')}.`,
-                    en: `Waiting for ${namesEn(n.pendingNames)}.`,
-                  })}
+                : withForeignRuns(
+                    locale,
+                    tr(locale, {
+                      ru: `Ждём: ${n.pendingNames.join(', ')}.`,
+                      en: `Waiting for ${namesEn(n.pendingNames)}.`,
+                    }),
+                    n.pendingNames,
+                  )}
             </span>
           </li>
         ))}
@@ -145,7 +156,9 @@ export function MyLikesRail({ games, locale = 'ru' }: { games: LikedGame[]; loca
           />
           {/* GameArt отдаёт alt="", поэтому подпись обязательна — иначе рельс
               для скринридера превращается в список безымянных картинок */}
-          <span className="text-[10px] text-faint truncate leading-tight">{g.name}</span>
+          <span lang={langOn(locale, g.name)} className="text-[10px] text-faint truncate leading-tight">
+            {g.name}
+          </span>
         </li>
       ))}
     </ScrollRail>

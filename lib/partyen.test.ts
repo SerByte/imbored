@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { createElement, type ComponentProps, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -12,9 +13,12 @@ import { MatchOwners, type MatchOwnersGame } from '../components/room/MatchOwner
 import { MatchShare } from '../components/room/MatchShare'
 import { MemberRoster } from '../components/room/MemberRoster'
 import { RoomWaiting } from '../components/room/RoomWaiting'
+import { cyrillicRuns } from './cyrillicruns'
 import { sessionPhrase, sessionTrait } from './gametraits'
 import type { Locale } from './i18n'
 import type { RoomMemberView } from './room'
+import { inviteDoor } from './roominvite'
+import { withForeignRuns } from './textlang'
 import { reach, rel, ROOT } from './testing/importgraph'
 import type { GameMeta } from './types'
 
@@ -45,6 +49,22 @@ function draw(node: ReactElement, locale?: Locale): string {
   return renderToStaticMarkup(
     locale ? createElement(LocaleProvider, { locale } as ComponentProps<typeof LocaleProvider>, node) : node,
   )
+}
+
+/**
+ * Разметка без того, что честно помечено lang="ru" (ник, название): что
+ * осталось с кириллицей, английский голос прочтёт по буквам. «(you)» внутри
+ * помеченной строки ростера возвращает себе lang="en" — его текст остаётся.
+ */
+function bare(html: string): string {
+  let prev: string
+  do {
+    prev = html
+    html = html
+      .replace(/<span lang="en">([^<]*)<\/span>/g, '$1')
+      .replace(/<(\w+)\b[^>]*\slang="ru"[^>]*>[^<]*<\/\1>/g, '')
+  } while (html !== prev)
+  return html
 }
 
 const member = (over: Partial<RoomMemberView>): RoomMemberView => ({
@@ -283,6 +303,20 @@ describe('экран ожидания по-английски', () => {
     expect(ours(html)).not.toMatch(CYRILLIC)
   })
 
+  test('русское название лидера в живой сводке — своим lang; на русской — та же строка', () => {
+    const props = {
+      ...base,
+      members: [member({ id: 'a', me: true, votes: 20, done: true }), member({ id: 'b', name: 'Leo', votes: 20, done: true })],
+      leader: { appid: 892970, name: 'Вальхейм', headerImage: null, art: null, forCount: 2, memberCount: 2 },
+    }
+    const en = draw(createElement(Waiting, props), 'en')
+    expect(en).toContain('Top pick: “<span lang="ru">Вальхейм</span>”, 2 of 2 said yes.</p>')
+    expect(human(bare(en))).not.toMatch(CYRILLIC)
+    const ru = draw(createElement(Waiting, props), 'ru')
+    expect(ru).toContain('Лидер голосов: «Вальхейм», 2 из 2 за.</p>')
+    expect(ru).not.toContain('lang="ru"')
+  })
+
   test('пустая колода — «Nothing to choose from»', () => {
     const html = draw(
       createElement(Waiting, {
@@ -409,5 +443,160 @@ describe('колода пати по-английски', () => {
     expect(html).toContain('Играем!')
     expect(html).toContain('Нет у: Leo')
     expect(html).toContain('матч ~15 мин')
+  })
+})
+
+/*
+ * Ники из Steam и названия игр — данные, их не переводят (docs/i18n.md,
+ * «Чего НЕ переводить»), но голос скринридера выбирается по lang: на /en
+ * русский ник («Вася Пупкин») и русское название (часть каталога хранится
+ * только по-русски) без пометки английский голос читает по буквам (WCAG
+ * 3.1.2). Правило одно на сайт — langOn и withForeignRuns из lib/textlang;
+ * на русской странице атрибута нет, разметка прежняя до байта.
+ */
+describe('пати на /en: русский ник и русское название — своим lang', () => {
+  const VASYA = 'Вася Пупкин'
+
+  test('ростер: строка с title, фраза скринридера и имя ✕ хоста', () => {
+    const members = [
+      member({ id: 'a', name: 'Костя', me: true, votes: 20, done: true }),
+      member({ id: 'b', name: VASYA, votes: 5 }),
+      member({ id: 'c', name: 'Leo', votes: 3 }),
+    ]
+    const html = draw(
+      createElement(MemberRoster, { members, deckSize: 20, isHost: true, onRemove: () => {}, hint: null }),
+      'en',
+    )
+    // видимая строка: lang на самом span — в его title только ник
+    expect(html).toMatch(/<span aria-hidden="true" title="Вася Пупкин" lang="ru" class="[^"]*">Вася Пупкин<\/span>/)
+    // своя строка: «(you)» внутри помеченной строки — снова английский
+    expect(html).toMatch(/title="Костя" lang="ru" class="[^"]*">Костя<span lang="en"> \(you\)<\/span><\/span>/)
+    expect(html).toContain('<span lang="ru">Костя</span> (you): 20 of 20, deck done')
+    expect(html).toContain('<span lang="ru">Вася Пупкин</span>: 5 of 20, still swiping')
+    // имя ✕ — текстом с пометкой: у куска aria-label своего lang не бывает
+    expect(html).not.toContain('aria-label="Remove Вася Пупкин from party"')
+    expect(html).toContain('<span class="sr-only">Remove <span lang="ru">Вася Пупкин</span> from party</span>')
+    expect(html).toContain('title="Remove Вася Пупкин from party"')
+    // латинский ник — как был: aria-label и без атрибута lang
+    expect(html).toContain('aria-label="Remove Leo from party"')
+    expect(html).toContain('Leo: 3 of 20, still swiping')
+    // title ✕ — подсказка для глаза; кроме неё кириллицы вне пометки нет
+    expect(human(bare(html)).replace('Remove Вася Пупкин from party', '')).not.toMatch(CYRILLIC)
+  })
+
+  test('ростер на русской — без пометки, aria-label прежний; латиница на /en — без атрибута', () => {
+    const members = [member({ id: 'a', name: 'Костя', me: true, votes: 20, done: true }), member({ id: 'b', name: VASYA, votes: 5 })]
+    const el = createElement(MemberRoster, { members, deckSize: 20, isHost: true, onRemove: () => {}, hint: null })
+    const ru = draw(el, 'ru')
+    expect(ru).toBe(draw(el))
+    expect(ru).not.toContain('lang=')
+    expect(ru).toContain('aria-label="Убрать Вася Пупкин из пати"')
+    expect(ru).toContain('Костя (ты): 20 из 20, колода пройдена')
+    const latin = [member({ id: 'a', name: 'Mia', me: true }), member({ id: 'b', name: 'Leo' })]
+    const en = draw(createElement(MemberRoster, { members: latin, deckSize: 20, isHost: true, onRemove: () => {} }), 'en')
+    expect(en).not.toContain('lang=')
+  })
+
+  test('«почти совпали»: ники в «yes on» и в «Waiting for»', () => {
+    const near = [{ forNames: [VASYA, 'Leo'], pendingNames: ['Костя', 'Sam'], meFor: false, mePending: false, games: 2 }]
+    const en = renderToStaticMarkup(createElement(NearMissList, { near, locale: 'en' }))
+    expect(en).toContain('<span lang="ru">Вася Пупкин</span> and Leo: yes on')
+    expect(en).toContain('Waiting for <span lang="ru">Костя</span> and Sam.')
+    expect(human(bare(en))).not.toMatch(CYRILLIC)
+    const ru = renderToStaticMarkup(createElement(NearMissList, { near }))
+    expect(ru).toContain('Вася Пупкин и Leo: совпало')
+    expect(ru).toContain('Ждём: Костя, Sam.')
+    expect(ru).not.toContain('lang=')
+  })
+
+  test('рельс своих «играем»: подпись — единственное имя картинки, русская — своим lang', () => {
+    const games = [
+      { appid: 892970, name: 'Вальхейм', headerImage: null, art: null },
+      { appid: 620, name: 'Portal 2', headerImage: null, art: null },
+    ]
+    const en = renderToStaticMarkup(createElement(MyLikesRail, { games, locale: 'en' }))
+    expect(en).toMatch(/<span lang="ru" class="text-\[10px\][^"]*">Вальхейм<\/span>/)
+    expect(en).toMatch(/<span class="text-\[10px\][^"]*">Portal 2<\/span>/)
+    expect(renderToStaticMarkup(createElement(MyLikesRail, { games }))).not.toContain('lang=')
+  })
+
+  test('«Go with “X”?» — русское название своим lang, «Берём «X»?» прежний', () => {
+    const leader = { appid: 892970, name: 'Вальхейм', headerImage: null, art: null, forCount: 2, memberCount: 3 }
+    const el = createElement(LeaderPick, { leader, taking: false, miss: null, onTake: () => {} })
+    expect(draw(el, 'en')).toContain('<h3 class="font-semibold">Go with “<span lang="ru">Вальхейм</span>”?</h3>')
+    const ru = draw(el, 'ru')
+    expect(ru).toContain('<h3 class="font-semibold">Берём «Вальхейм»?</h3>')
+    expect(ru).not.toContain('lang=')
+  })
+
+  /*
+   * Строки экрана приглашения собирает сервер: ник обрезан с многоточием, а
+   * на /en пробелы в метках «Already here» неразрывные (app/api/room/[id]),
+   * так что дословно имён ростера в них нет — комната метит куски кириллицы
+   * из самой строки (cyrillicRuns). Здесь — те самые строки inviteDoor.
+   */
+  test('экран приглашения: ник в заголовке, обрезанный и неразрывный — в «Already here», игра — в строке карты', () => {
+    const door = inviteDoor(
+      {
+        host: VASYA,
+        names: [VASYA, 'Demo player', 'Константин Константинопольский'].map((n) => n.replace(/ /g, ' ')),
+        seed: { appid: 892970, name: 'Вальхейм', headerImage: null, art: null },
+      },
+      'en',
+    )
+    const mark = (text: string) =>
+      renderToStaticMarkup(createElement('p', null, withForeignRuns('en', text, cyrillicRuns(text))))
+    expect(mark(door.title)).toBe('<p><span lang="ru">Вася Пупкин</span> wants to pick tonight&#x27;s game</p>')
+    const here = mark(door.here ?? '')
+    expect(here).toMatch(
+      /^<p>Already here: <span lang="ru">Вася Пупкин<\/span>, Demo player and <span lang="ru">Константин [^<]*…<\/span><\/p>$/,
+    )
+    expect(bare(here)).not.toMatch(CYRILLIC)
+    const seed = door.seed!
+    expect(renderToStaticMarkup(createElement('p', null, withForeignRuns('en', seed.line, [seed.name])))).toContain(
+      'First card: “<span lang="ru">Вальхейм</span>”.',
+    )
+  })
+})
+
+/** Исходник без комментариев: сторож читает код, а не докблок о нём */
+function code(file: string): string {
+  return fs
+    .readFileSync(path.join(ROOT, file), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+}
+
+/*
+ * Страница комнаты, доска и «новая комната» без роутера и опроса не
+ * рисуются — их строки сторожит код, а живую разметку проверяет прогон
+ * scripts/i18n-audit.ts. Сторож — о том, что ник и название идут через
+ * пометку, а не голым текстом.
+ */
+describe('страницы пати метят ники и названия', () => {
+  test('комната: состав над колодой, «Removed from party», дверь и матч', () => {
+    const src = code('app/[lang]/room/[id]/RoomPage.tsx')
+    expect(src).toContain('{langOn(locale, m.name) ? <span lang="ru">{m.name}</span> : m.name}')
+    expect(src).toMatch(/withForeignRuns\(\s*locale,\s*kickShown\.phase === 'done'[\s\S]*?\[kickShown\.name\],\s*\)/)
+    expect(src).toContain('const doorText = (text: string) => withForeignRuns(locale, text, cyrillicRuns(text))')
+    expect(src).toContain('doorText(door.title)')
+    expect(src).toContain('doorText(door.here)')
+    expect(src).toContain('withForeignRuns(locale, door.seed.line, [door.seed.name])')
+    expect(src).toContain('withForeignRuns(locale, matchSaid, [state.matchedGame?.name])')
+    expect(src).toMatch(/langOn\(locale, state\.matchedGame\.name\) \? \(\s*<span lang="ru">\{state\.matchedGame\.name\}<\/span>/)
+    // голых строк двери не осталось
+    expect(src).not.toMatch(/\{door\??\.(?:title|here|seed\.line)\}/)
+  })
+
+  test('доска: имена в карточке открытой пати', () => {
+    expect(code('app/[lang]/rooms/page.tsx')).toContain(
+      "withForeignRuns(locale, `${r.memberNames.join(', ')} · `, r.memberNames)",
+    )
+  })
+
+  test('новая комната: первая карта', () => {
+    expect(code('app/[lang]/room/new/page.tsx')).toContain(
+      'withForeignRuns(locale, `First card: “${seedName}”.`, [seedName])',
+    )
   })
 })
