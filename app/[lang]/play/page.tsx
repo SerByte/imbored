@@ -92,6 +92,7 @@ import type { ContinueGame, Focus, Scope } from '@/lib/recommend'
 import { sourceBadge, sourceBadgeShort, suggestsInstall } from '@/lib/sources'
 import { STORE_LABEL } from '@/lib/stores'
 import { tagLabel } from '@/lib/tagsru'
+import { langOn, withForeignRuns } from '@/lib/textlang'
 import { bounceTo, reconnectHref, steamLoginFor } from '@/lib/destination'
 import { isDemoId } from '@/lib/demoid'
 import { focusAdrift } from '@/lib/focushandoff'
@@ -1963,10 +1964,14 @@ function Player({ say }: { say: (line: string) => void }) {
           </p>
           {offer === 'familiar' && familiar ? (
             <button onClick={() => showPick(familiar)} className="btn-ember is-block py-3">
-              {tr(locale, {
-                ru: `Ладно, покажи «${familiar.name}» — там всё знакомо`,
-                en: `Okay, show me “${familiar.name}” — it's familiar ground`,
-              })}
+              {withForeignRuns(
+                locale,
+                tr(locale, {
+                  ru: `Ладно, покажи «${familiar.name}» — там всё знакомо`,
+                  en: `Okay, show me “${familiar.name}” — it's familiar ground`,
+                }),
+                [familiar.name],
+              )}
             </button>
           ) : offer === 'continue' && cont ? (
             <SteamLaunch
@@ -1984,10 +1989,14 @@ function Player({ say }: { say: (line: string) => void }) {
             offer === 'cozy' &&
             cozy && (
               <button onClick={() => showPick(cozy)} className="btn-ember is-block py-3">
-                {tr(locale, {
-                  ru: `Ладно, покажи «${cozy.name}» — она спокойная`,
-                  en: `Okay, show me “${cozy.name}” — it's a calm one`,
-                })}
+                {withForeignRuns(
+                  locale,
+                  tr(locale, {
+                    ru: `Ладно, покажи «${cozy.name}» — она спокойная`,
+                    en: `Okay, show me “${cozy.name}” — it's a calm one`,
+                  }),
+                  [cozy.name],
+                )}
               </button>
             )
           )}
@@ -2307,8 +2316,11 @@ function Player({ say }: { say: (line: string) => void }) {
                 delay={0.18}
               />
 
+              {/* Названия в причине — данные: на /en русское название своим
+                  lang (withForeignRuns), иначе английский голос читает его по
+                  буквам. Называет причина героя и якорь «ближе всего к…» */}
               <m.p variants={STEP} className="text-base md:text-lg text-ink/90 leading-relaxed">
-                {pick.reason}
+                {withForeignRuns(locale, pick.reason, [pick.name, pick.via?.name])}
               </m.p>
 
               {/* Одна фраза о том, чем она лучше остальных четырёх. Причина
@@ -2365,7 +2377,7 @@ function Player({ say }: { say: (line: string) => void }) {
                       transition={{ duration: 0.22, ease: EASE }}
                       className="mt-1.5 text-dim overflow-hidden"
                     >
-                      {whyParts.join(' · ')}
+                      {withForeignRuns(locale, whyParts.join(' · '), [pick.via?.name])}
                     </m.p>
                   )}
                 </AnimatePresence>
@@ -2745,7 +2757,7 @@ function Player({ say }: { say: (line: string) => void }) {
                           ),
                           en: (
                             <>
-                              Already finished<span className="sr-only"> “{pick.name}”</span>
+                              Already finished<span lang={langOn(locale, pick.name)} className="sr-only"> “{pick.name}”</span>
                             </>
                           ),
                         })
@@ -2880,7 +2892,11 @@ function Player({ say }: { say: (line: string) => void }) {
                 >
                   {seed && (
                     <span className="text-faint">
-                      {tr(locale, { ru: `Похожие на «${seed.name}»`, en: `Similar to “${seed.name}”` })}
+                      {withForeignRuns(
+                        locale,
+                        tr(locale, { ru: `Похожие на «${seed.name}»`, en: `Similar to “${seed.name}”` }),
+                        [seed.name],
+                      )}
                     </span>
                   )}
                   {/* Жанр со страницы /games — подписью, как затравка: подо что
@@ -2915,7 +2931,11 @@ function Player({ say }: { say: (line: string) => void }) {
                       })}
                       className="tap text-dim hover:text-ink transition-colors cursor-pointer aria-disabled:opacity-50"
                     >
-                      {tr(locale, { ru: `Как «${pick.name}», но…`, en: `Like “${pick.name}”, but…` })}
+                      {withForeignRuns(
+                        locale,
+                        tr(locale, { ru: `Как «${pick.name}», но…`, en: `Like “${pick.name}”, but…` }),
+                        [pick.name],
+                      )}
                     </button>
                   )}
                   {seed && (
@@ -3052,7 +3072,10 @@ function Player({ say }: { say: (line: string) => void }) {
                     ),
                     en: (
                       <>
-                        <span className="font-extrabold text-ink">“{cont.name}”</span> finished — won&apos;t
+                        <span lang={langOn(locale, cont.name)} className="font-extrabold text-ink">
+                          “{cont.name}”
+                        </span>{' '}
+                        finished — won&apos;t
                         suggest it again
                       </>
                     ),
@@ -3074,7 +3097,10 @@ function Player({ say }: { say: (line: string) => void }) {
                     aria-disabled={switching}
                     className="tap font-extrabold text-ember-text hover:underline cursor-pointer aria-disabled:opacity-50"
                   >
-                    {tr(locale, { ru: <>Дальше — в духе «{cont.name}»</>, en: <>Next: more like “{cont.name}”</> })}
+                    {tr<ReactNode>(locale, {
+                      ru: <>Дальше — в духе «{cont.name}»</>,
+                      en: withForeignRuns(locale, `Next: more like “${cont.name}”`, [cont.name]),
+                    })}
                   </button>
                 )}
               </>
@@ -3089,7 +3115,10 @@ function Player({ say }: { say: (line: string) => void }) {
                     ),
                     en: (
                       <>
-                        Or keep playing <span className="font-extrabold text-ink">“{cont.name}”</span>
+                        Or keep playing{' '}
+                        <span lang={langOn(locale, cont.name)} className="font-extrabold text-ink">
+                          “{cont.name}”
+                        </span>
                       </>
                     ),
                   })}
@@ -3128,7 +3157,7 @@ function Player({ say }: { say: (line: string) => void }) {
                             ),
                             en: (
                               <>
-                                Already finished<span className="sr-only"> “{cont.name}”</span>
+                                Already finished<span lang={langOn(locale, cont.name)} className="sr-only"> “{cont.name}”</span>
                               </>
                             ),
                           })}
@@ -3178,10 +3207,14 @@ function Player({ say }: { say: (line: string) => void }) {
                       en: `Not it? ${others.length} more ${timeHidden ? '' : 'unopened '}${others.length === 1 ? 'game' : 'games'}${timeHidden ? ' from your library' : ''}`,
                     })
                   : seed
-                    ? tr(locale, {
-                        ru: `Не то? Ещё ${others.length} ${plural(others.length, 'вариант, похожий', 'варианта, похожих', 'вариантов, похожих')} на «${seed.name}»`,
-                        en: `Not it? ${others.length} more ${others.length === 1 ? 'option' : 'options'} like “${seed.name}”`,
-                      })
+                    ? withForeignRuns(
+                        locale,
+                        tr(locale, {
+                          ru: `Не то? Ещё ${others.length} ${plural(others.length, 'вариант, похожий', 'варианта, похожих', 'вариантов, похожих')} на «${seed.name}»`,
+                          en: `Not it? ${others.length} more ${others.length === 1 ? 'option' : 'options'} like “${seed.name}”`,
+                        }),
+                        [seed.name],
+                      )
                     : tr(locale, {
                         ru: `Не то? Ещё ${others.length} ${plural(others.length, 'вариант', 'варианта', 'вариантов')} под это настроение`,
                         en: `Not it? ${others.length} more ${others.length === 1 ? 'option' : 'options'} for this mood`,
@@ -3496,8 +3529,11 @@ export default function PlayPage() {
   const say = useCallback((line: string) => setSaid((prev) => freshLine(prev, line)), [])
   return (
     <>
+      {/* Названия в строке — данные: на /en русское название своим lang. Какие
+          именно, строка говорит сама — по-английски игра всегда в “лапках”
+          (lib/announce), а латинские куски withForeignRuns не помечает */}
       <p role="status" className="sr-only">
-        {said}
+        {withForeignRuns(locale, said, Array.from(said.matchAll(/“([^”]+)”/g), (q) => q[1]))}
       </p>
       <Suspense fallback={<WarmupScreen progress={null} message={PREPARE_MESSAGE[locale]} />}>
         <Player say={say} />

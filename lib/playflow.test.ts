@@ -739,8 +739,9 @@ describe('/play: пути вокруг выдачи', () => {
     )
     expect(code).toContain('Уже прошёл<span className="sr-only"> «{pick.name}»</span>')
     expect(code).toContain('Уже прошёл<span className="sr-only"> «{cont.name}»</span>')
-    expect(code).toContain('Already finished<span className="sr-only"> “{pick.name}”</span>')
-    expect(code).toContain('Already finished<span className="sr-only"> “{cont.name}”</span>')
+    // На /en русское название в имени кнопки — своим lang (lib/playnames.test.ts)
+    expect(code).toContain('Already finished<span lang={langOn(locale, pick.name)} className="sr-only"> “{pick.name}”</span>')
+    expect(code).toContain('Already finished<span lang={langOn(locale, cont.name)} className="sr-only"> “{cont.name}”</span>')
     // голой подписи без игры не осталось ни у одной
     expect(code).not.toContain("'Уже прошёл'")
     expect(code).not.toContain("'Already finished'")

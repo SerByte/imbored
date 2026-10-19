@@ -10,6 +10,7 @@ import { tr } from '@/lib/i18n'
 import { createLocalStore } from '@/lib/localstore'
 import { EASE } from '@/lib/motion'
 import { outcomeQuestion, parseOutcomeAsk, type OutcomeAsk as Ask, type OutcomeVerdict } from '@/lib/outcome'
+import { withForeignRuns } from '@/lib/textlang'
 import { isNeedSteam, writerStore } from '@/lib/writer'
 
 /**
@@ -34,6 +35,9 @@ const askedStore = createLocalStore('imbored.outcome.asked', (raw) =>
  * на экране вопрос важнее этого. Не чаще раза в сутки на устройстве: день
  * отмечается, когда вопрос ПОКАЗАН, а не когда на него ответили, — уйти молча
  * тоже ответ «не сегодня». Сессии только для чтения не спрашиваем вовсе.
+ *
+ * Название игры в вопросе — данные: на /en русское название встаёт своим
+ * lang (withForeignRuns), и английский голос не читает его по буквам.
  */
 export function OutcomeAsk({
   paused = false,
@@ -107,10 +111,14 @@ export function OutcomeAsk({
           человека, и скринридер без неё о вопросе не узнал бы */}
       <p role="status" className="sr-only">
         {shown && ask
-          ? tr(locale, {
-              ru: `${outcomeQuestion(ask)} Вопрос внизу экрана`,
-              en: `${outcomeQuestion(ask, locale)} The question is at the bottom of the screen`,
-            })
+          ? withForeignRuns(
+              locale,
+              tr(locale, {
+                ru: `${outcomeQuestion(ask)} Вопрос внизу экрана`,
+                en: `${outcomeQuestion(ask, locale)} The question is at the bottom of the screen`,
+              }),
+              [ask.name],
+            )
           : ''}
       </p>
       <AnimatePresence>
@@ -128,7 +136,7 @@ export function OutcomeAsk({
               className="panel-lift p-4 w-full max-w-xl flex flex-col gap-3 pointer-events-auto"
             >
               <div className="flex items-baseline justify-between gap-3">
-                <p className="text-sm">{outcomeQuestion(ask, locale)}</p>
+                <p className="text-sm">{withForeignRuns(locale, outcomeQuestion(ask, locale), [ask.name])}</p>
                 <button
                   type="button"
                   onClick={() => answer('dismissed')}

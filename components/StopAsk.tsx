@@ -5,6 +5,7 @@ import { useLocale } from '@/components/LocaleProvider'
 import { Portal } from '@/components/Portal'
 import { tr } from '@/lib/i18n'
 import { EASE } from '@/lib/motion'
+import { langOn, withForeignRuns } from '@/lib/textlang'
 
 /**
  * «Не зацепило «X»?» — вторая половина правила остановки (lib/launchmemo.ts).
@@ -27,6 +28,8 @@ import { EASE } from '@/lib/motion'
  *
  * Строки — на языке страницы (useLocale), подсказка по умолчанию тоже;
  * подписи причин и свою подсказку вызывающий приносит уже на своём языке.
+ * Название игры — данные: на /en русское название встаёт своим lang (langOn,
+ * withForeignRuns), и английский голос не читает его по буквам.
  */
 export function StopAsk<K extends string>({
   game,
@@ -56,10 +59,14 @@ export function StopAsk<K extends string>({
       */}
       <p role="status" className="sr-only">
         {game
-          ? tr(locale, {
-              ru: `Не зацепило «${game.name}»? Вопрос внизу экрана`,
-              en: `“${game.name}” didn't hook you? The question is at the bottom of the screen`,
-            })
+          ? withForeignRuns(
+              locale,
+              tr(locale, {
+                ru: `Не зацепило «${game.name}»? Вопрос внизу экрана`,
+                en: `“${game.name}” didn't hook you? The question is at the bottom of the screen`,
+              }),
+              [game.name],
+            )
           : ''}
       </p>
       <AnimatePresence>
@@ -87,7 +94,10 @@ export function StopAsk<K extends string>({
                     ),
                     en: (
                       <>
-                        <span className="text-ember-text">“{game.name}”</span> didn&apos;t hook you?
+                        <span lang={langOn(locale, game.name)} className="text-ember-text">
+                          “{game.name}”
+                        </span>{' '}
+                        didn&apos;t hook you?
                       </>
                     ),
                   })}
