@@ -64,10 +64,18 @@ describe('сцены главной на /en', () => {
     expect(renderToStaticMarkup(createElement(Compat, { demo: landingDemo(NOW) }))).toContain('общих игр')
   })
 
-  test('сцены без данных — по-английски из провайдера', () => {
-    for (const scene of [Pain, Money]) expect(en(createElement(scene))).not.toMatch(CYR)
+  /*
+   * Pain и Money — серверные компоненты (партитура у них в клиентских
+   * PainStage и MoneyStage), а контекст LocaleProvider сервер не читает:
+   * язык им даёт главная пропом, как Compat и Engine. Поэтому и здесь —
+   * пропом, а не провайдером: так же, как на настоящей странице.
+   */
+  test('сцены без данных — по-английски из пропа языка', () => {
+    for (const scene of [Pain, Money]) {
+      expect(renderToStaticMarkup(createElement(scene, { locale: 'en' }))).not.toMatch(CYR)
+    }
     // лозунг денег — фраза глоссария, та же, что на /support
-    const money = en(createElement(Money))
+    const money = renderToStaticMarkup(createElement(Money, { locale: 'en' }))
     expect(money.replace(/ /g, ' ')).toContain(
       'We don’t sell spots in our picks. A recommendation is trust, <span class="text-ember-text">and trust isn’t for sale</span>.',
     )
