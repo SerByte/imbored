@@ -3,6 +3,7 @@ import Link from '@/components/Link'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { Ambient } from '@/components/Ambient'
 import { GameArt } from '@/components/GameArt'
+import { GameCardName } from '@/components/GameCardName'
 import { PriceTag } from '@/components/PriceTag'
 import { TilePending } from '@/components/TilePending'
 import { Magnet } from '@/components/Magnet'
@@ -152,6 +153,9 @@ describe('/compat/[steamid]: «Позвать в эту игру» называ�
   const ISLANDS = new Map<unknown, string>([
     [Link, 'Link'],
     [GameArt, 'GameArt'],
+    // название под обложкой карточки — клиентское ради языка (lang русского
+    // названия на /en): вызовом вне рендера React хук упал бы
+    [GameCardName, 'GameCardName'],
     [Magnet, 'Magnet'],
     [SplitHeading, 'SplitHeading'],
     [CopyCompatLink, 'CopyCompatLink'],
@@ -217,6 +221,9 @@ describe('/compat/[steamid] на /en: ни одной русской строк�
   const ISLANDS = new Map<unknown, string>([
     [Link, 'Link'],
     [GameArt, 'GameArt'],
+    // название под обложкой карточки — клиентское ради языка (lang русского
+    // названия на /en): вызовом вне рендера React хук упал бы
+    [GameCardName, 'GameCardName'],
     [Magnet, 'Magnet'],
     [SplitHeading, 'SplitHeading'],
     [CopyCompatLink, 'CopyCompatLink'],
@@ -339,6 +346,9 @@ describe('/compat/[steamid] на /en: русский ник помечен lang=
   const ISLANDS = new Map<unknown, string>([
     [Link, 'Link'],
     [GameArt, 'GameArt'],
+    // название под обложкой карточки — клиентское ради языка (lang русского
+    // названия на /en): вызовом вне рендера React хук упал бы
+    [GameCardName, 'GameCardName'],
     [Magnet, 'Magnet'],
     [SplitHeading, 'SplitHeading'],
     [CopyCompatLink, 'CopyCompatLink'],
