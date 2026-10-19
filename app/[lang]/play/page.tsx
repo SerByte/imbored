@@ -1821,7 +1821,9 @@ function Player({ say }: { say: (line: string) => void }) {
         <h1 ref={failHead} tabIndex={-1} className="text-lg outline-none">
           {fail.title}
         </h1>
-        <p className="text-dim text-sm max-w-md leading-relaxed">{fail.text}</p>
+        {/* Имя затравки (seedFail) — своим lang на /en, как в живой строке
+            этого экрана (playLine); у остальных отказов имени в тексте нет */}
+        <p className="text-dim text-sm max-w-md leading-relaxed">{withForeignRuns(locale, fail.text, [failSeed])}</p>
 
         {/* Шаги про настройки Steam — только там, где библиотека и правда не
             доехала. Панель общая с карточкой подключения и с пустой
@@ -1976,8 +1978,17 @@ function Player({ say }: { say: (line: string) => void }) {
           ) : offer === 'continue' && cont ? (
             <SteamLaunch
               appid={cont.appid}
-              label={tr(locale, { ru: `Просто продолжить «${cont.name}»`, en: `Just keep playing “${cont.name}”` })}
-              mobileLabel={tr(locale, { ru: `Открыть «${cont.name}» в Steam`, en: `Open “${cont.name}” in Steam` })}
+              // Название — своим lang на /en, как у соседних «Okay, show me “X”»
+              label={withForeignRuns(
+                locale,
+                tr(locale, { ru: `Просто продолжить «${cont.name}»`, en: `Just keep playing “${cont.name}”` }),
+                [cont.name],
+              )}
+              mobileLabel={withForeignRuns(
+                locale,
+                tr(locale, { ru: `Открыть «${cont.name}» в Steam`, en: `Open “${cont.name}” in Steam` }),
+                [cont.name],
+              )}
               // По ветке нажатия, как у строки «Продолжить»: под пальцем это
               // магазин, а не запуск, и план на вечер он не закрывает (launchIntent)
               onClick={(via) =>
