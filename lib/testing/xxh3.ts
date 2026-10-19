@@ -8,15 +8,16 @@
  * Готового XXH3 в зависимостях нет — Node умеет md5 и sha, а не xxHash, — и
  * тащить пакет ради одного теста дороже, чем полторы сотни строк здесь.
  *
- * Что считает Turbopack: hash_file_content в next-core
- * (next_app/metadata/image.rs) — XXH3-64 от байтов файла как есть, без
- * префикса длины, и `format!("?{:x}")`, то есть шестнадцатеричная строка без
- * ведущих нулей. Сверено на трёх точках: next dev этой ветки
- * (/ru/opengraph-image?91b1f53ea01c02b3, /ru/game/730/opengraph-image?bef074ffb1a98a54)
- * и сборка на проде из main (imbored.cc/opengraph-image?66b57ea37086be79) —
- * все три ровно XXH3 своих файлов. Сама функция — по эталону xxHash 0.8
- * (XXH3_64bits со стандартным секретом), проверка — векторы его же
- * xsum_sanity_check.c в xxh3.test.ts, по одному на каждую ветку длины.
+ * Что считает Turbopack (метадата-картинки в next-core): XXH3-64 от байтов
+ * файла как есть, без префикса длины, — шестнадцатеричной строкой ровно в
+ * 16 знаков, с ведущими нулями. Сверено с ним самим: next dev этой ветки
+ * (/ru/opengraph-image?91b1f53ea01c02b3, /ru/game/730/opengraph-image?bef074ffb1a98a54,
+ * у карточки портрета — ?041480c49a99d4ee, ноль впереди не срезан) и сборка
+ * на проде из main (imbored.cc/opengraph-image?66b57ea37086be79,
+ * …/game/730/opengraph-image?f87ae5af52929e47) — все ровно XXH3 своих
+ * файлов. Сама функция — по эталону xxHash 0.8 (XXH3_64bits со стандартным
+ * секретом); проверка — векторы его же xsum_sanity_check.c в xxh3.test.ts
+ * на каждую ветку длины, кроме 97–128 байт: её сверили с Turbopack.
  *
  * 64-битная арифметика — на BigInt с маской: медленно, но карточка весит
  * десяток килобайт, и тест это не замечает.
@@ -195,8 +196,10 @@ export function xxh3(bytes: Uint8Array): bigint {
 
 /**
  * Хвост адреса файловой карточки так, как его пишет Turbopack: XXH3 байтов
- * файла шестнадцатеричной строкой без ведущих нулей (`{:x}`).
+ * файла, 16 шестнадцатеричных знаков. Ведущий ноль остаётся: у карточки
+ * портрета Turbopack пишет ?041480c49a99d4ee, а голый toString(16) дал бы
+ * пятнадцать знаков и чужой адрес.
  */
 export function turbopackContentHash(bytes: Uint8Array): string {
-  return xxh3(bytes).toString(16)
+  return xxh3(bytes).toString(16).padStart(16, '0')
 }

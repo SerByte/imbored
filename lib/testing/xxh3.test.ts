@@ -58,4 +58,14 @@ describe('XXH3-64', () => {
     expect(src).toHaveLength(len)
     expect(turbopackContentHash(src)).toBe(expected)
   })
+
+  /*
+   * Хвост — всегда 16 знаков: ведущий ноль Turbopack не срезает (карточка
+   * портрета в next dev — ?041480c49a99d4ee). Голый toString(16) дал бы
+   * здесь пятнадцать знаков.
+   */
+  test('хвост адреса — 16 знаков, с ведущим нулём', () => {
+    expect(xxh3(sanityBuffer(47)).toString(16)).toHaveLength(15)
+    expect(turbopackContentHash(sanityBuffer(47))).toBe('050b544c7c6147bd')
+  })
 })
