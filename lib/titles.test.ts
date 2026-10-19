@@ -30,7 +30,7 @@ const EXEMPT: Record<string, string> = {
   'page.tsx': 'лендинг — заголовок сайта здесь и есть правильный',
   'portrait/page.tsx': 'редирект на /portrait/[steamid], своей разметки нет',
   '[...missing]/page.tsx': 'ловушка 404: notFound() до разметки, заголовок даёт not-found.tsx',
-  'missing/page.tsx': 'статическая 404 для адреса вне разделов: notFound() до разметки, заголовок даёт not-found.tsx',
+  'missing/page.tsx': 'бывшая статическая 404 для адреса вне разделов: notFound() до разметки, заголовок даёт not-found.tsx',
 }
 
 function declaresTitle(file: string): boolean {

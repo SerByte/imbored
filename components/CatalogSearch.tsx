@@ -344,10 +344,19 @@ export function CatalogSearch({
                     касания нет. Строка от второй линии растёт, а список и так
                     листается внутри окна (min-h-0 overflow-y-auto выше).
                     Русское название — вторым рядом, когда нашлось по нему
-                    (SearchHit.alias в lib/catalogsearch) */}
+                    (SearchHit.alias в lib/catalogsearch). На /en оно чужой
+                    текст: lang="ru", иначе английский голос скринридера
+                    читает кириллицу по-английски. Алиас — всегда русское
+                    название магазина (SearchIndexWire.alt), так что язык
+                    известен без подсчёта букв; на русской странице атрибута
+                    нет — она и так русская */}
                 <span className="min-w-0 break-words leading-snug">
                   {g.name}
-                  {g.alias && <span className="block text-sm font-normal text-dim">{g.alias}</span>}
+                  {g.alias && (
+                    <span lang={locale === 'en' ? 'ru' : undefined} className="block text-sm font-normal text-dim">
+                      {g.alias}
+                    </span>
+                  )}
                 </span>
                 {/* Стрелка — знак выбранной строки для мыши и клавиатуры. На
                     касании выбора нет, и место под невидимую стрелку (28 px

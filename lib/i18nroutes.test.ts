@@ -223,8 +223,11 @@ describe('адрес вне разделов', () => {
    * «wp-admin», и 404 рисовать было не в чем — стоковая страница Next. Все
    * такие адреса — в ОДНУ статическую 404: сканер перебирает их тысячами, и
    * каждый должен отдаваться с CDN, а не рендером.
+   *
+   * Эта одна 404 — /_not-found (app/global-not-found.tsx), а не страница с
+   * notFound(): HTML такой страницы — пустая оболочка Next (сторож ниже).
    */
-  test('уходит в статическую 404 русской ветки — одну на все адреса', async () => {
+  test('уходит в статическую 404 — одну на все адреса', async () => {
     for (const url of [
       '/xyz-nope',
       '/playground',
@@ -240,7 +243,7 @@ describe('адрес вне разделов', () => {
       '/_foo/bar',
       '/_x/portrait/76561198000000000/card.png',
     ]) {
-      expect((await route(url)).rewrite, url).toBe('/ru/missing')
+      expect((await route(url)).rewrite, url).toBe('/_not-found')
     }
   })
 

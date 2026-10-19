@@ -47,7 +47,7 @@ const COPY = {
     howTitle: 'How to support us',
     howLead: 'We don’t take money yet: there’s no way to pay, and the service runs without it.',
     howWrite:
-      'The best thank-you right now is telling someone who’d find it useful. And if a pick missed or something broke, write to',
+      'The best thank-you right now is passing imbored on to someone who’d find it useful. And if a pick missed or something broke, write to',
     rule: 'Our hard rule: we don’t sell spots in our picks. A\u00a0recommendation is trust, and trust isn’t for\u00a0sale.',
     back: 'Find a game',
   },
