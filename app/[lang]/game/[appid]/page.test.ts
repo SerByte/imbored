@@ -709,6 +709,36 @@ describe('английская карточка', () => {
     expect(meta.twitter).not.toHaveProperty('images')
   })
 
+  /*
+   * 404 под /en/game/<appid>. Страница на ISR, и на проде голову её 404
+   * собирает обычный проход метаданных — оболочка восстановления после
+   * notFound() их не пересчитывает: файловая карточка сегмента плюс то, что
+   * вернул generateMetadata. Пустой объект оставлял на /en русский alt файла.
+   */
+  test('нет такой игры: на /en — та же карточка с английским alt, на русской — пустой объект, как был', async () => {
+    const { size, contentType } = await import('./opengraph-image')
+    for (const appid of ['999999999', 'abc']) {
+      const meta = await generateMetadata({ params: Promise.resolve({ appid, lang: 'en' }) })
+      expect(meta.openGraph, appid).toEqual({
+        type: 'website',
+        siteName: 'imbored',
+        locale: 'en_US',
+        url: `/en/game/${appid}`,
+        images: [
+          {
+            url: `/en/game/${appid}/opengraph-image`,
+            width: size.width,
+            height: size.height,
+            type: contentType,
+            alt: 'Is it worth playing? — imbored',
+          },
+        ],
+      })
+      expect(JSON.stringify(meta)).not.toMatch(CYR)
+      expect(await generateMetadata({ params: Promise.resolve({ appid }) }), appid).toEqual({})
+    }
+  })
+
   test('на странице, в разметке и в пропсах островков — ни буквы по-русски', async () => {
     await seedEn()
     lang.locale = 'en'

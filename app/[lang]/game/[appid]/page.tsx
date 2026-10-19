@@ -147,6 +147,25 @@ function enCard(locale: Locale, canonical: string) {
   return { images: [{ url: lp(locale, `${canonical}/opengraph-image`), ...EN_CARD }] }
 }
 
+/**
+ * Метаданные 404 под /en/game/<appid> — та же карточка с английским alt.
+ *
+ * Страница на ISR, и на проде её 404 собирается пререндером: оболочка
+ * восстановления после notFound() метаданные заново не считает («The recovery
+ * shell only bootstraps the original Flight data», app-render), и голова
+ * остаётся от обычного прохода — файловая карточка сегмента плюс то, что
+ * вернул generateMetadata. Пустой объект оставлял на /en русский alt файла
+ * («Стоит ли играть — imbored»). Русская 404 получает пустой объект, как
+ * была, и её голова не меняется. type и siteName — корневого layout: свой
+ * openGraph этого уровня заменяет его целиком; url — свой адрес, как у
+ * каждого своего openGraph (lib/social.test.ts).
+ */
+function missingMeta(locale: Locale, raw: string): Metadata {
+  if (locale !== 'en') return {}
+  const path = `/game/${encodeURIComponent(raw)}`
+  return { openGraph: { type: 'website', ...ogSite(locale), url: lp(locale, path), ...enCard(locale, path) } }
+}
+
 export async function generateMetadata({
   params,
 }: {
@@ -155,10 +174,10 @@ export async function generateMetadata({
   const { appid: raw, lang } = await params
   const locale = toLocale(lang)
   const appid = Number(raw)
-  if (!Number.isInteger(appid) || appid === 0) return {}
+  if (!Number.isInteger(appid) || appid === 0) return missingMeta(locale, raw)
 
   const data = await loadOnce(appid, locale)
-  if (!data) return {}
+  if (!data) return missingMeta(locale, raw)
   const { meta, reviewsSummary, prosCons } = data
 
   // Описание собираем из того, что на странице и так есть, а не из шаблона:
