@@ -1,10 +1,6 @@
-'use client'
-
-import gsap from 'gsap'
 import { Icon } from '@/components/Icon'
-import { Stage } from '@/components/landing/Stage'
-import { useLocale } from '@/components/LocaleProvider'
-import { tr } from '@/lib/i18n'
+import { MoneyStage } from '@/components/landing/scenes/MoneyStage'
+import { tr, type Locale } from '@/lib/i18n'
 
 /**
  * СЦЕНА 6: О ДЕНЬГАХ И ВОЗВРАТ.
@@ -20,38 +16,14 @@ import { tr } from '@/lib/i18n'
  * кнопки «Подобрать игру» — два разных обещания. И голой ссылкой в Steam якорь
  * тоже не заменить: адрес входа собирается из ?join / ?compat / ?next, и
  * голая ссылка увела бы приглашённого в пати на общий подбор.
+ *
+ * Компонент серверный: разметку и текст рисует сервер, а партитура (gsap)
+ * живёт в клиентском MoneyStage и находит блоки по data-атрибутам. Язык —
+ * пропом от главной: контекст LocaleProvider серверу не прочитать.
  */
-export function Money() {
-  const locale = useLocale()
+export function Money({ locale }: { locale: Locale }) {
   return (
-    <Stage
-      id="money"
-      label={tr(locale, { ru: 'О деньгах и возврат', en: 'About money, and back to the top' })}
-      end="+=100%"
-      /*
-       * Единственная сцена без ухода кадра. Её последний блок — возврат к
-       * форме; погасить призыв ровно в тот момент, когда человек дочитал,
-       * значит отнять у страницы концовку.
-       */
-      exit={false}
-      enter={(intro, root) => {
-        // Кадр сцены: позиция продукта встаёт на подъёме, а не после него.
-        const line = root.querySelector('[data-money-line]')
-        gsap.set(line, { autoAlpha: 0, y: 30 })
-        intro.to(line, { autoAlpha: 1, y: 0, duration: 0.6, ease: 'power2.out' }, 0)
-      }}
-      build={(tl, root) => {
-        const items = root.querySelectorAll('[data-money-item]')
-        const back = root.querySelector('[data-money-back]')
-
-        gsap.set(items, { autoAlpha: 0, y: 16 })
-        gsap.set(back, { autoAlpha: 0, y: 26 })
-
-        tl.to(items, { autoAlpha: 1, y: 0, stagger: 0.1, duration: 0.3, ease: 'power2.out' }, 0.1)
-          .to(back, { autoAlpha: 1, y: 0, duration: 0.35, ease: 'power2.out' }, 0.55)
-          .to({}, { duration: 0.3 })
-      }}
-    >
+    <MoneyStage label={tr(locale, { ru: 'О деньгах и возврат', en: 'About money, and back to the top' })}>
       {/* Сиденье под текстом и тёплый разлив под возвратом: лента здесь на
           полной яркости, и белое по обложке иначе читается через раз. */}
       <div className="money-glow" aria-hidden />
@@ -129,6 +101,6 @@ export function Money() {
           en: 'imbored is an independent project and is not affiliated with Valve Corporation. Steam and the Steam logo are trademarks of Valve Corporation.',
         })}
       </p>
-    </Stage>
+    </MoneyStage>
   )
 }
