@@ -18,13 +18,13 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Версия Node — из engines.node в package.json, как и у Vercel: тот же
       # Node, на котором бежит прод, и одно место, где её менять. Раньше здесь
       # стояла своя 22, а @types/node был от 26-го — tsc пропустил бы API,
       # которого на проде нет.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: package.json
           cache: npm
