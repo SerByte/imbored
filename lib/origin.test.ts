@@ -119,6 +119,8 @@ describe('proxy.ts', () => {
 
   test('GET не трогается: кроны и чтения идут мимо проверки', () => {
     expect(passed(call('GET', `${BASE}/api/cron/news`, { 'x-cron-secret': 's' }))).toBe(true)
+    // ручной сброс кэша (вместо Redeploy) — тоже GET с секретом, из curl
+    expect(passed(call('GET', `${BASE}/api/cron/revalidate?path=/game/730`, { 'x-cron-secret': 's' }))).toBe(true)
     expect(passed(call('GET', `${BASE}/api/news`, { 'sec-fetch-site': 'cross-site' }))).toBe(true)
   })
 

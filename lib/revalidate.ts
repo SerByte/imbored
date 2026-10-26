@@ -1,5 +1,6 @@
 import { revalidatePath } from 'next/cache'
 import { routePaths } from './i18n'
+import { isSitePath } from './i18nroutes'
 
 /**
  * revalidatePath для адреса сайта — обе языковые копии разом.
@@ -17,4 +18,22 @@ import { routePaths } from './i18n'
  */
 export function revalidateSitePath(path: string): void {
   for (const p of routePaths(path)) revalidatePath(p)
+}
+
+/**
+ * Файлы корня app/ с ISR — вне [lang], у них один адрес на оба языка. Формы
+ * разделов (isSitePath) их не знают, поэтому они названы здесь; что каждый
+ * и правда ISR (export const revalidate), сверяет тест ручного сброса
+ * (app/api/cron/revalidate).
+ */
+export const ROOT_ISR_FILES: readonly string[] = ['/sitemap.xml', '/search-index.json']
+
+/**
+ * Есть ли у адреса что сбрасывать: страница сайта на любом из языков
+ * (isSitePath в lib/i18nroutes.ts) или файл корня с ISR. Для ручного сброса
+ * по названным адресам: revalidatePath на опечатке молчит так же, как на
+ * верном адресе, и сброс «прошёл» бы, ничего не сбросив.
+ */
+export function isRevalidatablePath(path: string): boolean {
+  return isSitePath(path) || ROOT_ISR_FILES.includes(path)
 }

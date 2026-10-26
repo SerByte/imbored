@@ -127,6 +127,26 @@ export function localeRewrites(): Rewrite[] {
   ]
 }
 
+/** Адрес страницы двух языков: корень и формы разделов — без языка, под /en или /ru */
+const SITE_PATH = new RegExp(`^(?:/(?:en|ru)?|(?:/(?:en|ru))?/(?:${ROUTE_RE}))$`)
+
+/**
+ * Адрес страницы сайта — такой, как его видит человек: '/', '/en',
+ * '/game/730', '/en/games/coop', '/game/730/opengraph-image'. И под /ru:
+ * снаружи такого адреса нет (редирект), но og:image русской страницы —
+ * /ru/…/opengraph-image, и скопировать его могут оттуда. Без строки
+ * запроса, якоря и протокола, с точным регистром: ISR кладёт страницу по
+ * пути, и сбрасывать надо его, а не похожий.
+ *
+ * Те же формы, что у rewrites русской ветки (SECTION_SHAPES): адрес, который
+ * они не переписали бы, — не страница, и сбрасывать у него нечего. Им
+ * ручной сброс кэша (app/api/cron/revalidate) отличает адрес от опечатки:
+ * revalidatePath на чужом адресе молчит так же, как на верном.
+ */
+export function isSitePath(path: string): boolean {
+  return /^\/(?!\/)[^?#\\\s]*$/.test(path) && SITE_PATH.test(path)
+}
+
 /**
  * Адрес вне всех разделов (/xyz, /wp-admin/setup.php, /xx/quiz,
  * /.well-known/…) и опечатка под русским разделом (/quiz/xyz, /game/abc — их

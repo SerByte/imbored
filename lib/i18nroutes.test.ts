@@ -9,7 +9,7 @@ import { describe, expect, test } from 'vitest'
 import nextConfig from '../next.config'
 import { HUB_FACETS, HUB_GENRES, HUB_TAGS } from './gamehub'
 import { LOCALIZED_SECTIONS } from './i18n'
-import { garbageRewrites, localeRedirects, localeRewrites } from './i18nroutes'
+import { garbageRewrites, isSitePath, localeRedirects, localeRewrites } from './i18nroutes'
 
 const ROOT = path.join(__dirname, '..')
 const LANG_DIR = path.join(ROOT, 'app', '[lang]')
@@ -620,5 +620,50 @@ describe('редирект с /ru', () => {
     }
     // а /ru/… с opengraph-image в середине имени — обычная страница
     expect((await route('/ru/game/opengraph-imagery')).redirect).toBe('/game/opengraph-imagery')
+  })
+})
+
+/**
+ * isSitePath — чем ручной сброс кэша (app/api/cron/revalidate) отличает
+ * адрес страницы от опечатки: revalidatePath молчит на обоих.
+ */
+describe('адрес страницы сайта (isSitePath)', () => {
+  test('каждый маршрут под app/[lang] — без языка, под /en и под /ru', () => {
+    const urls = routeUrls()
+    expect(urls.length, 'маршруты не найдены — сторож ослеп').toBeGreaterThan(30)
+    for (const url of urls) {
+      for (const at of ['', '/en', '/ru']) {
+        const p = url === '/' ? at || '/' : `${at}${url}`
+        expect(isSitePath(p), p).toBe(true)
+      }
+    }
+  })
+
+  test('не адрес страницы: протокол, строка запроса, регистр, мусор, /api и файлы', () => {
+    for (const p of [
+      '',
+      'game/730',
+      'https://imbored.cc/game/730',
+      '//evil.example/game/730',
+      '/game/730?x=1',
+      '/game/730#top',
+      '/game/730/',
+      '/game\\730',
+      '/game/ 730',
+      '/Game/730',
+      '/EN/game/730',
+      '/game/abc',
+      '/game/730/news/xyz',
+      '/games/no-such-genre',
+      '/xyz',
+      '/en/xyz',
+      '/enx',
+      '/api/cron/news',
+      '/sitemap.xml',
+      '/robots.txt',
+      '/_not-found',
+    ]) {
+      expect(isSitePath(p), p).toBe(false)
+    }
   })
 })
