@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 import { LocaleProvider } from '@/components/LocaleProvider'
 import { PlayersNow } from '@/components/PlayersNow'
-import { PlayersNow as PlayersNowView } from '@/components/PlayersNowView'
+import { PlayersAtCheck, playersBand, PlayersNow as PlayersNowView } from '@/components/PlayersNowView'
 import { LOCALES } from '@/lib/i18n'
 
 /**
@@ -63,8 +63,8 @@ describe('PlayersNow', () => {
 
   /*
    * Ветка нуля пришла из main уже после перевода строки и по-русски: на
-   * /en/game/<appid> (страница рисует строку с часами-бесконечностью, то
-   * есть всегда давним замером) печаталось «онлайн при замере: 0».
+   * /en/game/<appid> (страница тогда рисовала эту строку всегда давним
+   * замером) печаталось «онлайн при замере: 0».
    */
   test('на /en — ни буквы по-русски ни в нуле, ни в людях, ни в подсказке', () => {
     const stale = renderEn(0, NOW - 3 * 86_400)
@@ -93,11 +93,9 @@ describe('PlayersNow', () => {
 })
 
 /*
- * Серверная страница игры рисует строку из components/PlayersNowView с
- * языком страницы пропом — так она снова рендерится на сервере и не едет в
- * клиентский бандл карточки. Клиентские экраны (герой /play и /daily, колода)
- * зовут обёртку components/PlayersNow с языком из контекста. Разметка у них
- * одна — включая часы-бесконечность карточки игры (всегда давний замер).
+ * components/PlayersNowView — модуль с языком пропом, components/PlayersNow —
+ * клиентская обёртка с языком из контекста для экранов вне кэша (герой /play
+ * и /daily, колода). Разметка у них одна.
  */
 describe('PlayersNow: серверная View с языком пропом = клиентская обёртка в контексте', () => {
   test.each(LOCALES)('%s: ноль, люди, свежий и давний замер, без замера', (locale) => {
@@ -110,7 +108,7 @@ describe('PlayersNow: серверная View с языком пропом = к�
       [1, NOW - 3 * 86_400, NOW],
       [1234, NOW - 60, NOW],
       [1234, null, NOW],
-      [850_123, NOW - 3600, Number.POSITIVE_INFINITY],
+      [850_123, NOW - 3600, NOW],
     ]
     for (const [ccu, ccuAt, nowSec] of cases) {
       const server = renderToStaticMarkup(createElement(PlayersNowView, { ccu, ccuAt, nowSec, className: 'x', locale }))
@@ -123,8 +121,71 @@ describe('PlayersNow: серверная View с языком пропом = к�
       )
       expect(server, `${ccu} ${ccuAt} ${nowSec}`).toBe(client)
     }
-    expect(text(renderToStaticMarkup(createElement(PlayersNowView, { ccu: 1234, ccuAt: NOW - 60, nowSec: Number.POSITIVE_INFINITY, locale })))).toBe(
-      locale === 'en' ? '1,234 were playing' : '1 234 играли',
-    )
+  })
+})
+
+describe('playersBand: ступень ряда 1–2–5 строго ниже числа', () => {
+  test('12 345 — «больше 10 000», 730 — «больше 500»', () => {
+    expect(playersBand(12_345)).toBe(10_000)
+    expect(playersBand(730)).toBe(500)
+    expect(playersBand(850_123)).toBe(500_000)
+    expect(playersBand(1_300_000)).toBe(1_000_000)
+  })
+
+  test('ровно на ступени — ступень ниже: «больше» обязано быть правдой', () => {
+    expect([2, 5, 10, 20, 50, 100, 10_000].map(playersBand)).toEqual([1, 2, 5, 10, 20, 50, 5_000])
+    expect([3, 6, 11, 21, 51, 101].map(playersBand)).toEqual([2, 5, 10, 20, 50, 100])
+  })
+
+  test('ноль и единица — без ступени: ниже них нечего назвать', () => {
+    expect(playersBand(0)).toBeNull()
+    expect(playersBand(1)).toBeNull()
+    expect(playersBand(Number.NaN)).toBeNull()
+  })
+})
+
+/*
+ * Онлайн на карточке игры — PlayersAtCheck: страница живёт в недельном кэше,
+ * а ccu переписывают без порога сверка каталога и догрев /api/prepare.
+ * Точное число делало бы новой страницей почти каждую перегенерацию
+ * совместной игры, ступень стоит неделями. Часов нет: «сейчас» из кэша
+ * правдой не бывает.
+ */
+describe('PlayersAtCheck', () => {
+  const at = (ccu: number | null, locale: (typeof LOCALES)[number] = 'ru') =>
+    renderToStaticMarkup(createElement(PlayersAtCheck, { ccu, locale }))
+
+  test('ступенью и про замер, на обоих языках', () => {
+    expect(text(at(12_345))).toBe('онлайн при замере: больше 10 000')
+    expect(text(at(730))).toBe('онлайн при замере: больше 500')
+    expect(text(at(12_345, 'en'))).toBe('online at last check: more than 10,000')
+    expect(text(at(730, 'en'))).toBe('online at last check: more than 500')
+    expect(at(12_345, 'en')).toContain('title="Last known player count"')
+    expect(at(12_345, 'en')).not.toMatch(/[А-Яа-яЁё]/)
+  })
+
+  test('два недельных замера в одной ступени — одна и та же разметка', () => {
+    expect(at(14_902)).toBe(at(12_345))
+    expect(at(14_902, 'en')).toBe(at(12_345, 'en'))
+    expect(at(20_001)).not.toBe(at(12_345))
+  })
+
+  test('ноль — та же строка, что у PlayersNow по давнему замеру; единица — как есть', () => {
+    for (const locale of LOCALES) {
+      expect(at(0, locale)).toBe(
+        renderToStaticMarkup(createElement(PlayersNowView, { ccu: 0, ccuAt: NOW - 3 * 86_400, nowSec: NOW, locale })),
+      )
+    }
+    expect(text(at(1))).toBe('онлайн при замере: 1')
+    expect(text(at(1, 'en'))).toBe('online at last check: 1')
+  })
+
+  test('ни слова «сейчас» и ни пульсирующей точки; замера нет — строки нет', () => {
+    for (const locale of LOCALES) {
+      for (const ccu of [0, 1, 7, 12_345]) {
+        expect(at(ccu, locale)).not.toMatch(/сейчас|playing now|online now|anim-pulse-dot/)
+      }
+    }
+    expect(at(null)).toBe('')
   })
 })
