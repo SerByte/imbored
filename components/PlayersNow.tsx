@@ -9,10 +9,11 @@ import { PlayersNow as PlayersNowView } from '@/components/PlayersNowView'
  * components/PlayersNowView.
  *
  * Правила строки (свежесть замера, ноль, согласование «was/were») живут
- * там, в универсальном модуле с языком пропом: серверная страница игры
- * рисует её оттуда со своим toLocale(params.lang). Здесь — только язык:
- * герой /play и /daily и колода пати берут его из контекста корневого layout
- * (useLocale), и вызовы у них прежние. Разметка та же до байта — сторожит
+ * там, в универсальном модуле с языком пропом; серверная страница игры
+ * рисует оттуда свою строку — PlayersAtCheck, ступенью и без часов, ради
+ * недельного кэша. Здесь — только язык: герой /play и /daily и колода пати
+ * берут его из контекста корневого layout (useLocale), и вызовы у них
+ * прежние, с точным числом. Разметка та же до байта — сторожит
  * lib/playersnow.test.ts.
  */
 export function PlayersNow(props: Omit<ComponentProps<typeof PlayersNowView>, 'locale'>) {

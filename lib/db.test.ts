@@ -164,6 +164,7 @@ import {
   feedLinkOwner,
   getFeedLink,
   getLatestSnapshotMinutes,
+  writeNewsItems,
   type GameRow,
 } from './db'
 import { feedTokenHash, newFeedToken } from './feedlink'
@@ -2562,12 +2563,34 @@ describe('страница патча', () => {
       ],
       NOW,
     )
-    const heads = await getGamePatchHeads(db, 730, 5)
+    const heads = await getGamePatchHeads(db, 730, NOW, 5)
     expect(heads).toEqual([
       { gid: 'b', title: 'Свежий', publishedAt: NOW - 100, scale: null },
       { gid: 'a', title: 'Старый', publishedAt: NOW - 300, scale: 'major' },
     ])
-    expect(await getGamePatchHeads(db, 730, 1)).toHaveLength(1)
+    expect(await getGamePatchHeads(db, 730, NOW, 1)).toHaveLength(1)
+  })
+
+  /*
+   * «Предыдущие патчи» на странице патча — строго раньше неё: так список
+   * сохранённой страницы не меняется от нового патча игры, и она не
+   * перерисовывается в ISR. Сама страница и пост той же секунды — мимо
+   * (равенство пришлось бы разбивать по gid, а это сортировка мимо индекса).
+   */
+  test('заголовки патчей игры — только вышедшие раньше границы', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(
+      db,
+      [
+        newsItem({ gid: 'old', publishedAt: NOW - 300 }),
+        newsItem({ gid: 'page', publishedAt: NOW - 200 }),
+        newsItem({ gid: 'twin', publishedAt: NOW - 200 }),
+        newsItem({ gid: 'new', publishedAt: NOW - 100 }),
+      ],
+      NOW,
+    )
+    expect((await getGamePatchHeads(db, 730, NOW - 200)).map((h) => h.gid)).toEqual(['old'])
+    expect((await getGamePatchHeads(db, 730, NOW - 300)).map((h) => h.gid)).toEqual([])
   })
 
   /*
@@ -3086,6 +3109,32 @@ describe('upsertNewsItems', () => {
     await upsertNewsItems(db, [newsItem({ publishedAt: NOW - DAY, rank: 9000, title: 'Обновление 2' })], NOW + 8 * DAY)
     expect(await changedAt()).toBe(NOW + 8 * DAY)
   })
+
+  /*
+   * Крон новостей сбрасывал карточку, архив и общую ленту по числу
+   * записанных строк — а в нём и строки, где сдвинулся один вес. Что видно
+   * на страницах, говорит shown: новая строка или новое тело, заголовок, вид.
+   */
+  test('writeNewsItems: переписанный один вес записан, но не «видим»; новая строка и новый заголовок — видимы', async () => {
+    const db = await freshDb()
+    const first = await writeNewsItems(db, [newsItem(), newsItem({ gid: '2', kind: 'news', scale: null, bodyHash: 'h2' })], NOW)
+    expect(first.rows).toBe(2)
+    expect(first.shown).toEqual([
+      { gid: '1', kind: 'patch', scale: 'major', isNew: true },
+      { gid: '2', kind: 'news', scale: null, isNew: true },
+    ])
+
+    // сверка отзывов сдвинула вес — строки переписаны, страницы те же
+    const reranked = await writeNewsItems(db, [newsItem({ rank: 9000 })], NOW + 100)
+    expect(reranked).toEqual({ rows: 1, shown: [] })
+
+    // тот же пост без перемен — не записан вовсе
+    expect(await writeNewsItems(db, [newsItem({ rank: 9000 })], NOW + 200)).toEqual({ rows: 0, shown: [] })
+
+    // издатель поправил заголовок — строка та же, но видимо другая
+    const retitled = await writeNewsItems(db, [newsItem({ rank: 9000, title: 'Обновление 2' })], NOW + 300)
+    expect(retitled).toEqual({ rows: 1, shown: [{ gid: '1', kind: 'patch', scale: 'major', isNew: false }] })
+  })
 })
 
 describe('ленты', () => {
@@ -3198,9 +3247,25 @@ describe('ленты', () => {
       ),
       NOW,
     )
-    await pruneNewsForApp(db, 730, 3)
+    // снятые строки — патчи: их видно на карточке и в архиве игры
+    expect(await pruneNewsForApp(db, 730, 3)).toBe(5)
     const left = await getGameNews(db, 730, 50)
     expect(left.map((n) => n.gid)).toEqual(['7', '6', '5'])
+  })
+
+  test('ретенция говорит, сколько снятых было патчами: снятые новости не видно нигде', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(
+      db,
+      [
+        newsItem({ gid: '1', publishedAt: NOW + 1, kind: 'news', scale: null, bodyHash: 'h1' }),
+        newsItem({ gid: '2', publishedAt: NOW + 2, bodyHash: 'h2' }),
+        newsItem({ gid: '3', publishedAt: NOW + 3, kind: 'news', scale: null, bodyHash: 'h3' }),
+      ],
+      NOW,
+    )
+    expect(await pruneNewsForApp(db, 730, 2)).toBe(0)
+    expect(await pruneNewsForApp(db, 730, 1)).toBe(1)
   })
 })
 
@@ -3689,7 +3754,8 @@ describe('вердикт модели «не патч» (scale = none)', () => {
     const db = await freshDb()
     await rejected(db)
     expect(await getGameNews(db, 730)).toEqual([])
-    expect(await getGamePatchHeads(db, 730)).toEqual([])
+    // граница — после поста: из списка его убирает вердикт, а не она
+    expect(await getGamePatchHeads(db, 730, NOW + 1)).toEqual([])
     expect(await getMajorFeed(db)).toEqual([])
     expect(await sitemapNews(db, NOW - 86_400, 10)).toEqual([])
     expect(await freshlyDigestedPatches(db, NOW - 86_400, 0, 10)).toEqual([])

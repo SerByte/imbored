@@ -1,17 +1,20 @@
 import type { Metadata } from 'next'
 import Link from '@/components/Link'
-import { notFound } from 'next/navigation'
+import { notFound, permanentRedirect } from 'next/navigation'
 import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
 import { StaticGameCardBody } from '@/components/StaticGameCard'
 import { clip } from '@/lib/clip'
+import { prerenderAtBuild } from '@/lib/gamecache'
 import {
   facetCopy,
   facetPath,
   HUB_FACETS,
   HUB_GENRES,
   HUB_TAGS,
+  hubFacetOf,
   hubPath,
+  hubTagOf,
   type HubFacet,
 } from '@/lib/gamehub'
 import { genreBreadcrumbLd, genreItemListLd, ldScript } from '@/lib/jsonld'
@@ -35,10 +38,38 @@ import { loadGenre, thinList, type Genre, type GenreGame } from './load'
  * каждой то, по чему выбирают: доля положительных отзывов, длина захода и за
  * что её любят.
  *
- * Сутки на ISR, как у хаба: выборка та же и читает все игры тега выше порога.
+ * Неделя на ISR, как у хаба и у карточек игр (lib/gamecache). Запись такой
+ * страницы — 0,45–0,7 МБ: HTML, RSC и сегменты, 55–90 блоков ISR Writes по
+ * 8 КБ (замер локальной сборки). И вывод расходится с прошлым почти каждый
+ * день: отбор и порядок — по сырому reviews_total, который недельная сверка
+ * (lib/catalogsignals) переписывает каждый день у седьмой части каталога, а
+ * плитка печатает точные числа отзывов. На сутках это была запись в день у
+ * каждого из 68 адресов (два языка) — до ~130 тысяч блоков в месяц из
+ * двухсот тысяч лимита Hobby; на неделе — около двадцати тысяч. Чаще верх
+ * жанра заметно и не сдвигается: темп тот же, что у самой сверки.
+ *
  * Адреса известны заранее — тридцать жанров и подборки по факту (HUB_FACETS:
- * «с другом», «на одном экране», «бесплатные», «на 20 минут»), — собираются
- * на сборке, а чужой адрес — 404 без вызова функции (dynamicParams = false).
+ * «с другом», «на одном экране», «бесплатные», «на 20 минут»), — но
+ * собираются на сборке только на продовой (prerenderAtBuild, lib/gamecache).
+ * Превью делят с продом базу и пререндерили те же 68 страниц — ~4,4 тысячи
+ * блоков ISR на каждую сборку ради деплоев, которые почти никто не
+ * открывает. Вне прода список пустой, и страница досоздаётся первым заходом —
+ * поэтому dynamicParams = true, а не false: с false пустой список значил бы
+ * 404 на каждый жанр превью.
+ *
+ * Чужой адрес — по-прежнему 404, только решает его теперь страница, а не
+ * сборка: loadGenre не знает такого slug (hubTagOf и hubFacetOf — без базы)
+ * и отдаёт null, страница зовёт notFound(), generateMetadata — пустую
+ * голову. По-русски чужой жанр сюда почти не доходит: rewrites переписывают
+ * в /ru/… только известные slug, остальное забирает статическая /_not-found
+ * (SECTION_SHAPES и garbageRewrites в lib/i18nroutes.ts). Почти — потому что
+ * правила rewrites регистр не различают, и /games/ROGUELIKE доходит сюда как
+ * известный: его страница уводит постоянным редиректом на строчный адрес
+ * (caseFold ниже), а не кладёт 404 в кэш. Под /en чужой slug — notFound()
+ * самой страницы — та же 404 и та же цена, что у /en/game/<нет такой>:
+ * рендер функцией и запись ISR на адрес (Next кладёт ответ 404 в кэш вместе
+ * с кодом — status в записи, next/dist/build/templates/app-page-runtime.js).
+ *
  * Подборка — та же страница с другим отбором: вид, порог «тонкой» страницы,
  * разметка и карточка для чатов у них общие, а выход дальше у подборки про
  * компанию свой — /compat и «Позвать в эту игру».
@@ -48,19 +79,32 @@ import { loadGenre, thinList, type Genre, type GenreGame } from './load'
  * ISR, и её вес — это ещё и ISR Writes.
  *
  * Язык — из params маршрута (у страницы тесты, next/root-params там не
- * работает). /en/games/<slug> под dynamicParams = false существует, потому
- * что язык приходит от корневого layout: Next зовёт generateStaticParams
- * ниже на каждый его язык, и все адреса — жанры и подборки — собираются для
- * обоих. Тексты подборки на языке страницы — facetCopy (lib/gamehub).
+ * работает). /en/games/<slug> существует, потому что язык приходит от
+ * корневого layout: на продовой сборке Next зовёт generateStaticParams ниже
+ * на каждый его язык, и все адреса — жанры и подборки — собираются для
+ * обоих; вне прода оба языка досоздаются по требованию. Тексты подборки на
+ * языке страницы — facetCopy (lib/gamehub).
  */
-export const revalidate = 86_400
-export const dynamicParams = false
+export const revalidate = 604_800
+export const dynamicParams = true
 
 export function generateStaticParams(): Array<{ tag: string }> {
+  if (!prerenderAtBuild()) return []
   return [...HUB_TAGS.map((tag) => ({ tag: HUB_GENRES[tag].slug })), ...HUB_FACETS.map((f) => ({ tag: f.slug }))]
 }
 
 type Params = { params: Promise<{ tag: string; lang?: string }> }
+
+/**
+ * Известный slug не в своём регистре (/games/ROGUELIKE) — строчный адрес, на
+ * который его надо увести; иначе null. Без базы, тем же hubTagOf/hubFacetOf,
+ * что у loadGenre.
+ */
+function caseFold(slug: string): string | null {
+  const lower = slug.toLowerCase()
+  if (lower === slug) return null
+  return hubTagOf(lower) || hubFacetOf(lower) ? lower : null
+}
 
 /** «40 игр» / «40 games» — счёт игр жанра или подборки в описании и на странице */
 const gamesWord = (locale: Locale, n: number) => pl(locale, n, { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] })
@@ -133,6 +177,8 @@ export default async function GenrePage({ params }: Params) {
   const { tag: slug, lang } = await params
   // Адреса в разметке — на языке страницы, как её canonical
   const locale = toLocale(lang)
+  const folded = caseFold(slug)
+  if (folded) permanentRedirect(lp(locale, `/games/${folded}`))
   const genre = await loadGenre(slug, locale)
   if (!genre) notFound()
   const { title, games } = genre

@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { PHASE_PRODUCTION_BUILD } from 'next/constants'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
@@ -11,7 +13,7 @@ import {
 } from '@/lib/db'
 import { HUB_MIN_SHELF, HUB_TAGS, hubPath } from '@/lib/gamehub'
 import { freshDb } from '@/lib/testing/route'
-import sitemap from './sitemap'
+import sitemap, { revalidate } from './sitemap'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
@@ -48,7 +50,13 @@ describe('карта сайта и осечка базы', () => {
     expect(got).toContain('/game/730')
   })
 
-  test('каждый адрес — на обоих языках, и у каждого — все версии и x-default на английскую', async () => {
+  /*
+   * hreflang — у страниц в <head> (localeAlternates и ownAddress в
+   * lib/site.ts, indexedHreflang у патча и архива), а не в карте: три
+   * xhtml:link на запись были 63% её 5,6 МБ. changefreq и priority Google
+   * не читает. В записи — адрес и lastmod, больше ничего.
+   */
+  test('каждый адрес — на обоих языках, и в записи только адрес и lastmod', async () => {
     const entries = await sitemap()
     const paths = entries.map((e) => new URL(e.url).pathname)
     for (const p of ['/', '/quiz', '/games', '/whatsnew', '/privacy', '/support', '/game/730']) {
@@ -62,21 +70,23 @@ describe('карта сайта и осечка базы', () => {
     const rest = paths.filter((p) => !genres.has(p))
     expect(paths.filter((p) => genres.has(p))).toHaveLength(genres.size)
     expect(rest.filter((p) => p.startsWith('/en')).length * 2).toBe(rest.length)
-    const game = entries.filter((e) => /\/game\/730$/.test(new URL(e.url).pathname))
-    expect(game).toHaveLength(2)
-    for (const e of game) {
-      expect(e.alternates?.languages).toEqual({
-        ru: 'http://localhost:3000/game/730',
-        en: 'http://localhost:3000/en/game/730',
-        'x-default': 'http://localhost:3000/en/game/730',
-      })
+    for (const e of entries) {
+      expect(Object.keys(e).filter((k) => k !== 'url' && k !== 'lastModified'), e.url).toEqual([])
     }
-    const home = entries.find((e) => new URL(e.url).pathname === '/en')
-    expect(home?.alternates?.languages).toEqual({
-      ru: 'http://localhost:3000/',
-      en: 'http://localhost:3000/en',
-      'x-default': 'http://localhost:3000/en',
-    })
+    const game = entries.filter((e) => /\/game\/730$/.test(new URL(e.url).pathname))
+    expect(game.map((e) => e.url)).toEqual(['http://localhost:3000/game/730', 'http://localhost:3000/en/game/730'])
+    for (const e of game) expect(e.lastModified).toEqual(new Date(T0 * 1000))
+  })
+
+  /*
+   * Неделя, а не сутки: файл один на сайт, и каждая перегенерация с новым
+   * выводом — запись ISR целиком (докблок revalidate в sitemap.ts). Next
+   * читает revalidate только литералом — поэтому сверяется и сам литерал.
+   */
+  test('карта живёт на ISR неделю — литералом', () => {
+    expect(revalidate).toBe(7 * 86_400)
+    const src = fs.readFileSync(path.join(__dirname, 'sitemap.ts'), 'utf8')
+    expect(Number(src.match(/export const revalidate = ([\d_]+)\n/)?.[1]?.replace(/_/g, ''))).toBe(revalidate)
   })
 
   test('квиз — в карте (он в выдаче), заглушки /daily и /rooms — нет (noindex)', async () => {
@@ -87,8 +97,8 @@ describe('карта сайта и осечка базы', () => {
   })
 
   /*
-   * Карта живёт на ISR сутки. Пойманная ошибка закэшировала бы карту из
-   * тридцати статических адресов вместо шести тысяч — на сутки, и её
+   * Карта живёт на ISR неделю. Пойманная ошибка закэшировала бы карту из
+   * тридцати статических адресов вместо шести тысяч — на неделю, и её
    * забрали бы Googlebot, Bing и Яндекс. Брошенная оставляет в кэше прошлую
    * полную карту (docs: incremental-static-regeneration, «Handling uncaught
    * exceptions»), и Next повторит перегенерацию следующим запросом.
@@ -123,7 +133,7 @@ describe('карта сайта и осечка базы', () => {
    * короче полки хаба страница жанра стоит с noindex (thinList) — как
    * подборка. Русский адрес жанра в карте всегда, как до английской версии:
    * русская карта переводом не меняется. Английский двойник — новый адрес, и
-   * он в карте (и в hreflang русской версии) только с полной полкой.
+   * он в карте только с полной полкой.
    */
   const genreEntries = async (path: string) =>
     (await sitemap()).filter((e) => new URL(e.url).pathname.replace(/^\/en(?=\/)/, '') === path)
@@ -140,21 +150,10 @@ describe('карта сайта и осечка базы', () => {
     for (let i = 1; i < HUB_MIN_SHELF; i++) await rogue(2000 + i)
     let entries = await genreEntries('/games/roguelike')
     expect(entries.map((e) => new URL(e.url).pathname)).toEqual(['/games/roguelike'])
-    expect(entries[0].alternates?.languages).toEqual({
-      ru: 'http://localhost:3000/games/roguelike',
-      'x-default': 'http://localhost:3000/games/roguelike',
-    })
 
     await rogue(2000 + HUB_MIN_SHELF)
     entries = await genreEntries('/games/roguelike')
     expect(entries.map((e) => new URL(e.url).pathname)).toEqual(['/games/roguelike', '/en/games/roguelike'])
-    for (const e of entries) {
-      expect(e.alternates?.languages).toEqual({
-        ru: 'http://localhost:3000/games/roguelike',
-        en: 'http://localhost:3000/en/games/roguelike',
-        'x-default': 'http://localhost:3000/en/games/roguelike',
-      })
-    }
     // одна игра у шутеров (CS2) — полки нет: русский адрес есть, английского нет
     const got = await urls()
     expect(got.filter((u) => u === '/games/fps')).toHaveLength(1)
@@ -206,17 +205,9 @@ describe('карта сайта и осечка базы', () => {
     expect(got).not.toContain('/games/short')
     expect(got).not.toContain('/en/games/short')
 
-    // Подборка — как жанр: на обоих языках, и у каждой версии — обе и x-default
-    // на английскую
+    // Подборка — как жанр с полной полкой: на обоих языках
     const entries = (await sitemap()).filter((e) => /\/games\/coop$/.test(new URL(e.url).pathname))
     expect(entries.map((e) => new URL(e.url).pathname).sort()).toEqual(['/en/games/coop', '/games/coop'])
-    for (const e of entries) {
-      expect(e.alternates?.languages).toEqual({
-        ru: 'http://localhost:3000/games/coop',
-        en: 'http://localhost:3000/en/games/coop',
-        'x-default': 'http://localhost:3000/en/games/coop',
-      })
-    }
   })
 
   /*
@@ -246,36 +237,23 @@ describe('карта сайта и осечка базы', () => {
     const entry = (await sitemap()).find((e) => new URL(e.url).pathname === '/game/730/news')
     expect(entry?.lastModified).toEqual(new Date((T0 + 60) * 1000))
     // Своё у архива — русские пересказы: английский двойник без своих стоял бы
-    // с noindex, и в карте его нет — ни адресом, ни hreflang
+    // с noindex, и в карте его нет
     expect(await urls()).not.toContain('/en/game/730/news')
-    expect(entry?.alternates?.languages).toEqual({
-      ru: 'http://localhost:3000/game/730/news',
-      'x-default': 'http://localhost:3000/game/730/news',
-    })
 
-    // Три английских пересказа — /en-архив сам в поиске: в карте пара, и
-    // hreflang обеих версий ведёт на обе, x-default — на английскую; lastmod
+    // Три английских пересказа — /en-архив сам в поиске: в карте пара, lastmod
     // — свой у каждого языка
     for (const [i, gid] of ['1', '2', '3'].entries()) {
       await setNewsDigestEn(db, 730, gid, { tldrEn: 'In short.' }, T0 + 100 + i)
     }
     const both = (await sitemap()).filter((e) => /\/game\/730\/news$/.test(new URL(e.url).pathname))
     expect(both.map((e) => new URL(e.url).pathname)).toEqual(['/game/730/news', '/en/game/730/news'])
-    for (const e of both) {
-      expect(e.alternates?.languages).toEqual({
-        ru: 'http://localhost:3000/game/730/news',
-        en: 'http://localhost:3000/en/game/730/news',
-        'x-default': 'http://localhost:3000/en/game/730/news',
-      })
-    }
     expect(both[0].lastModified).toEqual(new Date((T0 + 60) * 1000))
     expect(both[1].lastModified).toEqual(new Date((T0 + 102) * 1000))
   })
 
   /*
-   * Английские пересказы есть, русских не набралось — /en-архив в карте один,
-   * и x-default ведёт на него: русская версия с noindex — не та, что стоит
-   * показывать по умолчанию.
+   * Английские пересказы есть, русских не набралось — /en-архив в карте один:
+   * русская версия стоит с noindex, и звать на неё краулер незачем.
    */
   test('архив только с английскими пересказами — в карте одна /en-версия', async () => {
     const news = (gid: string): StoredNews => ({
@@ -294,10 +272,6 @@ describe('карта сайта и осечка базы', () => {
     for (const gid of ['1', '2', '3']) await setNewsDigestEn(db, 730, gid, { tldrEn: 'In short.' }, T0)
     const archive = (await sitemap()).filter((e) => /\/game\/730\/news$/.test(new URL(e.url).pathname))
     expect(archive.map((e) => new URL(e.url).pathname)).toEqual(['/en/game/730/news'])
-    expect(archive[0].alternates?.languages).toEqual({
-      en: 'http://localhost:3000/en/game/730/news',
-      'x-default': 'http://localhost:3000/en/game/730/news',
-    })
   })
 
   test('на сборке getDb() бросает сам (нет TURSO_DATABASE_URL) — и это не роняет build', async () => {
@@ -318,7 +292,8 @@ describe('карта сайта и осечка базы', () => {
 /**
  * Патчи — каждый на тех языках, где у страницы своё: пересказ своего языка.
  * /en-двойник патча без английского пересказа стоит с noindex (docs/i18n.md),
- * и в карте ему не место — ни адресом, ни hreflang с русской версии.
+ * и в карте ему не место. hreflang между версиями — в голове страницы
+ * (indexedHreflang), не здесь.
  */
 describe('карта сайта и языки патчей', () => {
   const now = () => Math.floor(Date.now() / 1000)
@@ -335,27 +310,19 @@ describe('карта сайта и языки патчей', () => {
     rank: 9000,
   })
 
-  test('с одним русским пересказом — только русский адрес и hreflang без en; с обоими — пара', async () => {
+  test('с одним русским пересказом — только русский адрес; с обоими — пара', async () => {
     await upsertNewsItems(db, [patch('1'), patch('2')], now())
     await setNewsDigest(db, 730, '1', { tldr: 'Починили сеть.', scale: 'major' }, now())
     await setNewsDigest(db, 730, '2', { tldr: 'Новая карта.', scale: 'major' }, now())
     await setNewsDigestEn(db, 730, '2', { tldrEn: 'A new map.' }, now())
     const entries = await sitemap()
-    const news = entries
-      .filter((e) => /\/news\//.test(e.url))
-      .map((e) => ({ path: new URL(e.url).pathname, langs: e.alternates?.languages }))
+    const news = entries.filter((e) => /\/news\//.test(e.url))
 
-    expect(news.map((n) => n.path).sort()).toEqual(['/en/game/730/news/2', '/game/730/news/1', '/game/730/news/2'])
-    expect(news.find((n) => n.path === '/game/730/news/1')?.langs).toEqual({
-      ru: 'http://localhost:3000/game/730/news/1',
-      'x-default': 'http://localhost:3000/game/730/news/1',
-    })
-    for (const path of ['/game/730/news/2', '/en/game/730/news/2']) {
-      expect(news.find((n) => n.path === path)?.langs).toEqual({
-        ru: 'http://localhost:3000/game/730/news/2',
-        en: 'http://localhost:3000/en/game/730/news/2',
-        'x-default': 'http://localhost:3000/en/game/730/news/2',
-      })
-    }
+    expect(news.map((n) => new URL(n.url).pathname).sort()).toEqual([
+      '/en/game/730/news/2',
+      '/game/730/news/1',
+      '/game/730/news/2',
+    ])
+    for (const n of news) expect(n.lastModified, n.url).toBeInstanceOf(Date)
   })
 })

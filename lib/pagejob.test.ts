@@ -1324,7 +1324,7 @@ describe('семантика из уже полученных отзывов', (
     })
 
     // Хвалившие наиграли вдвое больше, остальное в ответе то же: страница
-    // недельного кэша должна перегенерироваться ради одной строки «Наиграли»
+    // месячного кэша должна перегенерироваться ради одной строки «Наиграли»
     await db.execute('UPDATE games SET page_at = NULL')
     const res = await runPageSlice(db, stubs({ nowSec: NOW + 60, fetchReviewsRawFn: async () => played(1200) }))
     expect((await getGamesMetaLite(db, [10])).get(10)?.semantics?.played?.posMedianMin).toBe(1200)
@@ -1361,7 +1361,7 @@ describe('семантика из уже полученных отзывов', (
 /**
  * Какие карточки срез поменял — их роут сбрасывает в ISR (lib/gamecache).
  *
- * Страница живёт неделю, и сброс — это перегенерация при следующем заходе.
+ * Страница живёт месяц, и сброс — это перегенерация при следующем заходе.
  * Срез пишет всем безусловно (кадры пачкой, семантику, сводку), поэтому
  * «трогал» здесь ничего не значит: считается строка до и после.
  */
@@ -1462,7 +1462,7 @@ describe('карта сайта', () => {
     expect(rows[0].updatedAt).toBe(NOW)
   })
 
-  test('lastmod — самая поздняя из трёх отметок: заливка, обогащение, патчноут', async () => {
+  test('lastmod — обогащение или патчноут, а без них — заливка', async () => {
     // updated_at после массовой заливки у всех один и тот же, сигнал несут
     // обогащение и свежий патчноут — см. докблок sitemapGames
     const db = await freshDb()
@@ -1481,6 +1481,36 @@ describe('карта сайта', () => {
       { appid: 10, updatedAt: NOW },
       { appid: 20, updatedAt: NOW + 500 },
       { appid: 30, updatedAt: NOW + 900 },
+    ])
+  })
+
+  /*
+   * Массовая запись меты (catalog:promote, catalog:repair-names, прогрев
+   * библиотек) ставит updated_at = now каждой задетой строке. Стой он в том
+   * же MAX, что обогащение и патч, одна такая запись сдвинула бы lastmod у
+   * всей карты разом — и Bing перечитал бы её целиком.
+   */
+  test('переписанная мета lastmod обогащённой карточки не двигает', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 900)
+    await addGame(db, 20, 500)
+    await markPageEnriched(db, 10, NOW + 500)
+    await db.execute({
+      sql: `INSERT INTO news_items (appid, gid, title, url, published_at, kind, created_at, updated_at)
+            VALUES (20, 'g1', 't', 'u', ?, 'patch', ?, ?)`,
+      args: [NOW + 900, NOW, NOW],
+    })
+    // месяц спустя заливка переписала мету обеим — и третьей, необогащённой
+    await upsertGameMeta(db, meta(10, { reviewsTotal: 900 }), NOW + 30 * 86_400)
+    await upsertGameMeta(db, meta(20, { reviewsTotal: 500 }), NOW + 30 * 86_400)
+    await addGame(db, 30, 100)
+    await upsertGameMeta(db, meta(30, { reviewsTotal: 100 }), NOW + 30 * 86_400)
+
+    expect(await sitemapGames(db, 10)).toEqual([
+      { appid: 10, updatedAt: NOW + 500 },
+      { appid: 20, updatedAt: NOW + 900 },
+      // без обогащения и патчей — запасная отметка, сама запись меты
+      { appid: 30, updatedAt: NOW + 30 * 86_400 },
     ])
   })
 
@@ -1882,7 +1912,7 @@ describe('догон обогащённых карточек: русский и 
     expect(metas.get(10)?.ruLang).toBe(0)
     expect(metas.get(30)?.ruLang).toBe(2)
     expect(res.русский).toBe(2)
-    // карточка живёт неделю в ISR: без сброса строка ждала бы её конца
+    // карточка живёт месяц в ISR: без сброса строка ждала бы её конца
     expect([...res.cards].sort((a, b) => a - b)).toEqual([10, 20])
   })
 
@@ -2367,7 +2397,7 @@ describe('догон обогащённых карточек: русский и 
   /**
    * Язык записан — игра из его очереди ушла, и следующее звено её не возьмёт.
    * Упади догон целиком из-за сбоя на «Наиграли», роут не получил бы и этих
-   * карточек, и строка «Русский» ждала бы конца недельного кэша.
+   * карточек, и строка «Русский» ждала бы конца месячного кэша.
    */
   test('сбой базы на «Наиграли» — карточки языка всё равно в ответе, догон не бросает', async () => {
     const db = await freshDb()

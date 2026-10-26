@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { NextConfig } from 'next'
+import { RSC_SEGMENTS_DIR_SUFFIX, RSC_SUFFIX } from 'next/dist/lib/constants'
 import { modifyRouteRegex } from 'next/dist/lib/redirect-status'
 import { getPathMatch } from 'next/dist/shared/lib/router/utils/path-match'
 import { prepareDestination } from 'next/dist/shared/lib/router/utils/prepare-destination'
@@ -9,7 +10,7 @@ import { describe, expect, test } from 'vitest'
 import nextConfig from '../next.config'
 import { HUB_FACETS, HUB_GENRES, HUB_TAGS } from './gamehub'
 import { LOCALIZED_SECTIONS } from './i18n'
-import { garbageRewrites, localeRedirects, localeRewrites } from './i18nroutes'
+import { garbageRewrites, isSitePath, localeRedirects, localeRewrites } from './i18nroutes'
 
 const ROOT = path.join(__dirname, '..')
 const LANG_DIR = path.join(ROOT, 'app', '[lang]')
@@ -296,8 +297,9 @@ describe('rewrites русской ветки', () => {
   })
 
   test('страница жанра — каждым адресом из generateStaticParams', async () => {
-    // Список жанров в правиле — то же выражение, что у страницы: разойдутся —
-    // жанр на русском адресе ушёл бы в 404
+    // Список жанров в правиле — то же выражение, что у страницы (его она
+    // отдаёт на продовой сборке): разойдутся — жанр на русском адресе ушёл бы
+    // в 404
     const page = fs.readFileSync(path.join(LANG_DIR, 'games', '[tag]', 'page.tsx'), 'utf8')
     expect(page).toContain(
       'return [...HUB_TAGS.map((tag) => ({ tag: HUB_GENRES[tag].slug })), ...HUB_FACETS.map((f) => ({ tag: f.slug }))]',
@@ -382,7 +384,7 @@ describe('адрес вне разделов', () => {
       '/_next/static/chunks/nope.js',
       '/_next/image',
       '/_next/data/build/en/play.json',
-      '/ru/game/730/opengraph-image',
+      '/ru/games/roguelike/opengraph-image',
     ]) {
       expect((await route(url)).rewrite, url).toBe(null)
     }
@@ -434,6 +436,50 @@ describe('адрес вне разделов', () => {
   })
 
   /**
+   * /game/abc страница отдала бы notFound() из ISR, а ISR кэширует и 404 —
+   * своей записью на каждый адрес, который перебирает сканер (~13 блоков
+   * ISR Writes). Мимо формы (APPID и GID в lib/i18nroutes.ts) такой адрес
+   * уходит в общую статическую /_not-found. Нули впереди, плюс, дробь и
+   * экспонента — тоже: Number() их принимал, и каждый был отдельной записью
+   * ISR той же карточки.
+   */
+  test('номер игры или поста не той формы — в статическую 404, а не в ISR-маршрут', async () => {
+    for (const url of [
+      '/game/abc',
+      '/game/undefined',
+      '/game/NaN',
+      '/game/null',
+      '/game/0',
+      '/game/-0',
+      '/game/0730',
+      '/game/+730',
+      '/game/730.0',
+      '/game/7.3e2',
+      '/game/0x2DA',
+      '/game/--5',
+      '/game/abc/news',
+      '/game/abc/news/5000000000000000000',
+      '/game/730/news/xyz',
+      '/game/730/news/12a',
+      '/game/730/news/-1',
+    ]) {
+      expect((await route(url)).rewrite, url).toBe('/_not-found')
+    }
+  })
+
+  test('настоящие номера уезжают в /ru/…: отрицательный appid — другие магазины', async () => {
+    for (const url of [
+      '/game/730',
+      '/game/4704690',
+      '/game/-5',
+      '/game/730/news',
+      '/game/730/news/5000000000000000000',
+    ]) {
+      expect((await route(url)).rewrite, url).toBe(`/ru${url}`)
+    }
+  })
+
+  /**
    * Опечатка под русским разделом — в ту же статическую 404, что /xyz, а не
    * в /ru/…: там её ловила динамическая /[lang]/[...missing], и HTML был
    * пустой оболочкой Next без lang, стилей и текста, функцией на каждый
@@ -471,6 +517,86 @@ describe('адрес вне разделов', () => {
   })
 })
 
+/**
+ * Двойник правила выше под /en. Переписывать /en/game/abc некуда, и маршрут
+ * /[lang]/game/[appid] нашёл бы его сам — notFound() из ISR, запись 404 на
+ * адрес. Правило ловит неверный номер и уводит его в пререндеренную
+ * английскую 404, одну на все такие адреса.
+ */
+describe('номер не той формы под /en', () => {
+  test('в /en/missing — в любом регистре и со всем, что под номером', async () => {
+    for (const url of [
+      '/en/game/abc',
+      '/en/game/undefined',
+      '/en/game/0',
+      '/en/game/0730',
+      '/en/game/730.0',
+      '/en/game/7.3e2',
+      '/en/game/abc/news',
+      '/en/game/abc/news/5000000000000000000',
+      '/en/game/730/news/xyz',
+      '/en/game/730/news/12a',
+      // расширение за верным номером — сканер копий и бэкапов, а не суффикс RSC
+      '/en/game/730.php',
+      '/en/game/730/news/123.html',
+    ]) {
+      expect((await route(url)).rewrite, url).toBe('/en/missing')
+      expect(serverRoute(url), url).toEqual({ redirect: null, rewrite: '/en/missing' })
+    }
+    // регистр сервер не различает: правило ловит и /EN, до правил регистра
+    for (const url of ['/EN/game/abc', '/En/game/730/news/xyz', '/en/GAME/abc']) {
+      expect(serverRoute(url), url).toEqual({ redirect: null, rewrite: '/en/missing' })
+    }
+  })
+
+  test('настоящий номер не задевает: страница, архив, патч', async () => {
+    for (const url of [
+      '/en/game/730',
+      '/en/game/-5',
+      '/en/game/730/news',
+      '/en/game/730/news/5000000000000000000',
+    ]) {
+      expect((await route(url)).rewrite, url).toBe(url)
+      expect(serverRoute(url), url).toEqual({ redirect: null, rewrite: url })
+    }
+  })
+
+  /**
+   * Запрос роутера CDN Vercel может довести до afterFiles уже с суффиксом
+   * RSC. Правило, которое увело бы такой адрес в 404, сломало бы переход и
+   * префетч живой карточки, — поэтому верный номер — тот, за которым конец,
+   * «/» или точка с буквой (NUM_END в lib/i18nroutes.ts).
+   */
+  test('суффиксы RSC в правиле — те, что пишет эта версия Next', () => {
+    // NUM_END в lib/i18nroutes.ts перечисляет их по имени: сменись имя — и
+    // переходы по живым карточкам ушли бы в /en/missing
+    expect(RSC_SUFFIX).toBe('.rsc')
+    expect(RSC_SEGMENTS_DIR_SUFFIX).toBe('.segments')
+  })
+
+  test('суффикс RSC за настоящим номером — не мусор', () => {
+    for (const url of [
+      '/en/game/730.rsc',
+      '/en/game/730.segments/_tree.segment.rsc',
+      '/en/game/730/news.rsc',
+      '/en/game/730/news.segments/_tree.segment.rsc',
+      '/en/game/730/news/5000000000000000000.rsc',
+      '/en/game/730/news/5000000000000000000.segments/_tree.segment.rsc',
+    ]) {
+      expect(serverRoute(url).rewrite, url).not.toBe('/en/missing')
+    }
+  })
+
+  test('ни один маршрут под app/[lang] на английском адресе не уходит в /en/missing', () => {
+    const urls = routeUrls()
+    expect(urls.length, 'маршруты не найдены — сторож ослеп').toBeGreaterThan(30)
+    for (const url of urls) {
+      const en = url === '/' ? '/en' : `/en${url}`
+      expect(serverRoute(en).rewrite, en).toBe(en)
+    }
+  })
+})
+
 describe('редирект с /ru', () => {
   test('/ru и всё под ним — постоянно на адрес без префикса', async () => {
     expect(await route('/ru')).toMatchObject({ status: 308, redirect: '/' })
@@ -484,11 +610,37 @@ describe('редирект с /ru', () => {
    * круг редиректа часть краулеров не проходит, и карточка в чате пустая.
    */
   test('файловые карточки под /ru отдаются как есть, без круга', async () => {
-    for (const url of ['/ru/opengraph-image', '/ru/game/730/opengraph-image', '/ru/portrait/1/year/opengraph-image']) {
+    for (const url of ['/ru/opengraph-image', '/ru/games/roguelike/opengraph-image', '/ru/portrait/1/year/opengraph-image']) {
       const r = await route(url)
       expect(r.redirect, url).toBe(null)
       expect(r.rewrite, url).toBe(null)
     }
+  })
+
+  /*
+   * Своих карточек у игры и патча больше нет (превью — шапка Steam, shareArt
+   * в lib/art), а их старые адреса живут в кэше мессенджеров и у ботов
+   * превью. Без правила такой адрес доходил бы до динамической ловушки
+   * [...missing] — функции на каждый заход — и отвечал бы HTML-ом 404.
+   */
+  test('бывшие карточки игры и патча — постоянным редиректом на корневую карточку языка', async () => {
+    // хвост-хеш старого og:image уезжает с адресом; корневой карточке он не мешает
+    const hashed = await route('/ru/game/730/opengraph-image?bef074ffb1a98a54')
+    expect(hashed.status).toBe(308)
+    expect(hashed.redirect).toMatch(/^\/ru\/opengraph-image\?bef074ffb1a98a54/)
+    for (const [url, to] of [
+      ['/en/game/730/opengraph-image', '/en/opengraph-image'],
+      ['/ru/game/730/news/5000000000000000000/opengraph-image', '/ru/opengraph-image'],
+      ['/en/game/730/news/5000000000000000000/opengraph-image', '/en/opengraph-image'],
+      ['/game/730/opengraph-image', '/ru/opengraph-image'],
+      ['/game/730/news/1/opengraph-image', '/ru/opengraph-image'],
+    ]) {
+      expect(await route(url), url).toMatchObject({ status: 308, redirect: to })
+    }
+    // сами страницы игры и патча правило не задевает
+    expect((await route('/game/730')).redirect).toBe(null)
+    expect((await route('/game/730/news/1')).redirect).toBe(null)
+    expect((await route('/en/game/730/news/1')).redirect).toBe(null)
   })
 
   test('соседи /ru не задеты', async () => {
@@ -497,5 +649,50 @@ describe('редирект с /ru', () => {
     }
     // а /ru/… с opengraph-image в середине имени — обычная страница
     expect((await route('/ru/game/opengraph-imagery')).redirect).toBe('/game/opengraph-imagery')
+  })
+})
+
+/**
+ * isSitePath — чем ручной сброс кэша (app/api/cron/revalidate) отличает
+ * адрес страницы от опечатки: revalidatePath молчит на обоих.
+ */
+describe('адрес страницы сайта (isSitePath)', () => {
+  test('каждый маршрут под app/[lang] — без языка, под /en и под /ru', () => {
+    const urls = routeUrls()
+    expect(urls.length, 'маршруты не найдены — сторож ослеп').toBeGreaterThan(30)
+    for (const url of urls) {
+      for (const at of ['', '/en', '/ru']) {
+        const p = url === '/' ? at || '/' : `${at}${url}`
+        expect(isSitePath(p), p).toBe(true)
+      }
+    }
+  })
+
+  test('не адрес страницы: протокол, строка запроса, регистр, мусор, /api и файлы', () => {
+    for (const p of [
+      '',
+      'game/730',
+      'https://imbored.cc/game/730',
+      '//evil.example/game/730',
+      '/game/730?x=1',
+      '/game/730#top',
+      '/game/730/',
+      '/game\\730',
+      '/game/ 730',
+      '/Game/730',
+      '/EN/game/730',
+      '/game/abc',
+      '/game/730/news/xyz',
+      '/games/no-such-genre',
+      '/xyz',
+      '/en/xyz',
+      '/enx',
+      '/api/cron/news',
+      '/sitemap.xml',
+      '/robots.txt',
+      '/_not-found',
+    ]) {
+      expect(isSitePath(p), p).toBe(false)
+    }
   })
 })

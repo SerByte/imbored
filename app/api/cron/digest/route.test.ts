@@ -5,6 +5,7 @@ import { acquireLease, DIGEST_LEASE, getCatalogMeta, type Db } from '@/lib/db'
 import { takeLlmBudget } from '@/lib/llmcap'
 import { runDigestSlice } from '@/lib/newsjob'
 import { freshDb } from '@/lib/testing/route'
+import { NEWS_MAJOR_TAG } from '@/lib/whatsnewcache'
 import { GET } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
@@ -17,10 +18,12 @@ vi.mock('next/server', async (importOriginal) => ({
     pending.push(typeof work === 'function' ? Promise.resolve().then(work) : work)
   },
 }))
-const { revalidated } = vi.hoisted(() => ({ revalidated: [] as string[] }))
+const { revalidated, tagged } = vi.hoisted(() => ({ revalidated: [] as string[], tagged: [] as string[][] }))
 vi.mock('next/cache', async (importOriginal) => ({
   ...(await importOriginal<typeof import('next/cache')>()),
-  revalidateTag: () => {},
+  revalidateTag: (...args: string[]) => {
+    tagged.push(args)
+  },
   revalidatePath: (path: string) => {
     revalidated.push(path)
   },
@@ -57,6 +60,7 @@ beforeEach(async () => {
   })
   vi.spyOn(console, 'log').mockImplementation(() => {})
   revalidated.length = 0
+  tagged.length = 0
   db = await freshDb()
 })
 
@@ -85,24 +89,55 @@ describe('/api/cron/digest', () => {
 
   test('карточки игр с новым пересказом уходят в перегенерацию', async () => {
     // Пересказ стоит на карточке строкой под патчем, а карточка живёт в ISR
-    // неделю (lib/gamecache)
+    // месяц (lib/gamecache)
     vi.mocked(runDigestSlice).mockResolvedValueOnce({
       digested: 2,
+      major: 1,
       cards: [730, 570],
+      posts: [
+        { appid: 730, gid: '11' },
+        { appid: 570, gid: '22' },
+      ],
       hasMore: false,
       stopped: 'done',
     })
     expect((await ask()).status).toBe(202)
     await settled()
-    // и архивы обновлений тех же игр: пересказ там — главное в строке.
-    // «сброшено» ниже — по-прежнему число игр, а не адресов. Каждый адрес —
-    // в обеих языковых копиях маршрута (revalidateSitePath)
+    // и архивы обновлений тех же игр: пересказ там — главное в строке, — и
+    // страницы самих постов: «Коротко» на них от пересказа, а живут они
+    // столько же. «сброшено» ниже — по-прежнему число игр, а не адресов.
+    // Каждый адрес — в обеих языковых копиях маршрута (revalidateSitePath)
     expect(revalidated.sort()).toEqual(
-      ['/game/570', '/game/570/news', '/game/730', '/game/730/news'].flatMap(routePaths).sort(),
+      ['/game/570', '/game/570/news', '/game/570/news/22', '/game/730', '/game/730/news', '/game/730/news/11']
+        .flatMap(routePaths)
+        .sort(),
     )
     const mark = await lastMark()
     expect(mark).not.toHaveProperty('cards')
-    expect(mark).toMatchObject({ digested: 2, сброшено: 2, итого: { digested: 2, сброшено: 2 } })
+    expect(mark).not.toHaveProperty('posts')
+    expect(mark).toMatchObject({ digested: 2, сброшено: 2, итого: { digested: 2, major: 1, сброшено: 2 } })
+    // один из пересказов виден в общей ленте — её тег сброшен, раз на запуск
+    expect(tagged).toEqual([[NEWS_MAJOR_TAG, 'max']])
+  })
+
+  /*
+   * Пересказ хотфикса или патча игры ниже порога популярности общую ленту не
+   * меняет (digestTouchesFeed в lib/newsjob): карточки — да, тег ленты — нет.
+   * Он стоит холодного чтения её записи кэша и обеих RSS-лент.
+   */
+  test('пересказы, которых общая лента не показывает, её тег не сбрасывают', async () => {
+    vi.mocked(runDigestSlice).mockResolvedValueOnce({
+      digested: 3,
+      major: 0,
+      cards: [4000],
+      posts: [],
+      hasMore: false,
+      stopped: 'done',
+    })
+    expect((await ask()).status).toBe(202)
+    await settled()
+    expect(revalidated.sort()).toEqual(['/game/4000', '/game/4000/news'].flatMap(routePaths).sort())
+    expect(tagged).toEqual([])
   })
 
   test('бюджет модели на сутки выбран — запуск кончается, не начав звена', async () => {

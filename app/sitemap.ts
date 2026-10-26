@@ -39,8 +39,23 @@ import { loadGenre, thinList } from './[lang]/games/[tag]/load'
 const PROTOCOL_MAX = 50_000
 const MAX_GAMES = Math.floor((PROTOCOL_MAX - SITEMAP_NEWS_MAX * LOCALES.length * 2 - 100) / LOCALES.length)
 
-/** Сутки: чаще каталог всё равно не меняется, а запрос стоит прочитанных строк. */
-export const revalidate = 86_400
+/**
+ * Неделя. Стояли сутки — «чаще каталог всё равно не меняется», — но файл
+ * один на весь сайт, и каждая перегенерация с новым выводом — это запись
+ * ISR целиком. Замер локальной сборки до этой правки: 5,6 МБ, 12 900
+ * адресов, 687 блоков ISR Writes по 8 КБ. Вывод при этом менялся каждый
+ * день — lastmod карточек, свежие пересказы, окно патчей в девяносто дней, —
+ * то есть ~20 тысяч блоков в месяц из двухсот тысяч лимита Hobby, а каждый
+ * промах кэша CDN у краулера тянул с origin все 5,6 МБ. Теперь файл ~1,4 МБ
+ * (hreflang и changefreq ушли — почему, у localized ниже), а перегенерация —
+ * раз в неделю: меньше тысячи блоков в месяц.
+ *
+ * Чем за это платим: новый патч попадает в карту до недели позже. Позвать
+ * на него поисковики есть чем и без карты: IndexNow при пересказе (Bing и
+ * Яндекс, lib/indexnow) и ссылки с карточки и архива игры — их кроны
+ * новостей сбрасывают сразу (resetSliceCards с archives).
+ */
+export const revalidate = 604_800
 
 type Entry = MetadataRoute.Sitemap[number]
 
@@ -49,24 +64,31 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const url = (path: string) => new URL(path, base).toString()
 
   /*
-   * Каждый адрес — на каждом языке, и у каждого — ссылки на все версии и
-   * x-default на английскую (xhtml:link в файле). Без них Google видел бы в
-   * /en/game/730 дубль /game/730 и выбирал бы один из двух сам, а
-   * англоязычному из выдачи показывал бы русскую. Та же пара, что в
-   * alternates страниц (localeAlternates в lib/site.ts): path — русский
-   * адрес без префикса.
+   * Каждый адрес — на каждом языке, и в записи — только адрес и lastmod
+   * (там, где он есть). path — русский адрес без префикса.
+   *
+   * hreflang (xhtml:link) здесь больше нет. Он стоял у каждой записи — обе
+   * версии и x-default, — и это было 63% файла: три ссылки — 265 байт из 425
+   * у записи игры. Те же пары страница объявляет в своём <head>: карточка
+   * игры, жанр и подборка — localeAlternates, хаб, главная и статические —
+   * ownAddress (оба — lib/site.ts), патч и архив обновлений — только версии
+   * в поиске (indexedHreflang, app/[lang]/game/[appid]/news/alternates.ts).
+   * Источника достаточно одного — HTML, заголовок или карта, на выбор (так
+   * описывает hreflang Google), и /en/game/730 без ссылок в карте дублем
+   * /game/730 не становится. changefreq и priority ушли тоже: Google их не
+   * читает, а это ещё 57 байт на запись.
+   *
+   * Какие версии адреса стоят в карте, по-прежнему решает правило страницы:
+   * /en-двойник, который сам закрыт от индекса (тонкий жанр, патч и архив
+   * без английских пересказов), сюда не идёт — иначе Search Console записал
+   * бы «Submitted URL marked noindex».
    */
-  const languages = (path: string, has: readonly Locale[] = LOCALES) => ({
-    languages: {
-      ...(has.includes('ru') ? { ru: url(path) } : {}),
-      ...(has.includes('en') ? { en: url(lp('en', path)) } : {}),
-      // x-default — английская, пока она в карте (незнакомому языку «/» и так
-      // показывает английский, lib/homelocale.ts); без неё — русская
-      'x-default': url(has.includes('en') ? lp('en', path) : path),
-    },
+  const entry = (locale: Locale, path: string, rest: Omit<Entry, 'url'> = {}): Entry => ({
+    url: url(lp(locale, path)),
+    ...rest,
   })
-  const localized = (path: string, rest: Omit<Entry, 'url' | 'alternates'>): Entry[] =>
-    LOCALES.map((locale) => ({ url: url(lp(locale, path)), alternates: languages(path), ...rest }))
+  const localized = (path: string, rest: Omit<Entry, 'url'> = {}): Entry[] =>
+    LOCALES.map((locale) => entry(locale, path, rest))
 
   /*
    * Ошибка базы глотается ТОЛЬКО НА СБОРКЕ, как у хаба игр (loadHub в
@@ -77,11 +99,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
    * уронил бы весь build, а не одну карту. Поэтому try накрывает и getDb().
    *
    * При перегенерации — наоборот, ошибка уходит наружу намеренно. Карта живёт
-   * на ISR сутки, и упавшая перегенерация оставляет в кэше ПРОШЛУЮ карту, а
+   * на ISR неделю, и упавшая перегенерация оставляет в кэше ПРОШЛУЮ карту, а
    * Next повторит её следующим запросом (docs: incremental-static-
    * regeneration, «Handling uncaught exceptions»). Пойманная же записывала в
-   * кэш то, что успело собраться: одна осечка Turso в момент суточной
-   * перегенерации — и Googlebot, Bing и Яндекс сутки забирали карту из
+   * кэш то, что успело собраться: одна осечка Turso в момент перегенерации —
+   * и Googlebot, Bing и Яндекс до следующей, неделю, забирали бы карту из
    * тридцати статических адресов вместо шести тысяч. Довод «пятисотка на
    * /sitemap.xml подорвёт доверие» к ISR не относится: пятисотки нет,
    * отдаётся прошлая версия. Сторож — app/sitemap.test.ts.
@@ -102,10 +124,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
    *
    * Пересказ у каждого языка свой, и выборок по одной на язык. /en-двойник
    * патча своё имеет только с английским пересказом (tldr_en), без него он
-   * стоит с noindex (docs/i18n.md) — в карту идут только такие, и hreflang
-   * русской версии на него не ведёт: ссылка на неиндексируемую версию для
-   * поиска пустой сигнал. Время изменения — своё у каждого языка: пересказы
-   * пишутся в разные дни.
+   * стоит с noindex (docs/i18n.md) — в карту идут только такие (и hreflang
+   * в голове страницы ведёт только на них же — indexedHreflang). Время
+   * изменения — своё у каждого языка: пересказы пишутся в разные дни.
    */
   const news = new Map<string, { appid: number; gid: string; changedAt: Partial<Record<Locale, number>> }>()
   try {
@@ -136,8 +157,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
    * у каждого языка свои: /en-архив считает английские (tldr_en, patchOn в
    * его загрузчике), и если их меньше PATCH_ARCHIVE_MIN, /en-двойник стоит с
    * noindex — в карте он был бы «Submitted URL marked noindex». Поэтому в
-   * карте архив — на тех языках, где он проходит порог, и hreflang ведёт
-   * только на них. Время изменения — своё у каждого языка.
+   * карте архив — на тех языках, где он проходит порог. Время изменения —
+   * своё у каждого языка.
    */
   const archives = new Map<number, Partial<Record<Locale, number>>>()
   try {
@@ -184,9 +205,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
    * как до английской версии (известны без базы и переживают сборку без
    * неё): русская карта переводом не меняется, кроме добавленного. /en-
    * двойник — новый адрес, и звать на него краулер, пока страница закрыта от
-   * индекса, незачем: в карте он только у полной полки, и hreflang русской
-   * версии ведёт на него только тогда же — как у патчей. На сборке без базы
-   * английских жанров в карте нет до первой перегенерации, как подборок.
+   * индекса, незачем: в карте он только у полной полки — как у патчей. На
+   * сборке без базы английских жанров в карте нет до первой перегенерации,
+   * как подборок.
    *
    * Тонкий русский жанр тем самым стоит в карте при noindex на странице —
    * «Submitted URL marked noindex» в Search Console, — и это решение, а не
@@ -215,7 +236,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   }
 
   const stat: MetadataRoute.Sitemap = [
-    ...localized('/', { changeFrequency: 'weekly', priority: 1 }),
+    ...localized('/'),
     /*
      * /daily здесь НЕТ, и это исправление.
      *
@@ -229,78 +250,50 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
      * открыт ровно затем, чтобы увидеть noindex (NOINDEX_PAGES), — в карту
      * ему тем более незачем. То же у /rooms.
      */
-    ...localized('/whatsnew', { changeFrequency: 'daily', priority: 0.8 }),
+    ...localized('/whatsnew'),
     /*
      * /quiz — наоборот: гость видит первый вопрос целиком, и это главная
      * точка входа в продукт, на которую ведёт каждая карточка игры. Он
      * открыт краулеру и идёт в выдачу со своим canonical (lib/robots,
-     * app/quiz/layout.tsx). Ниже хаба жанров: квиз один и не меняется.
+     * app/quiz/layout.tsx).
      */
-    ...localized('/quiz', { changeFrequency: 'monthly', priority: 0.6 }),
+    ...localized('/quiz'),
     // Хаб жанров: единственная страница, которая ссылается на карточки пачкой
-    // (см. app/games/page.tsx). Полки меняются медленно — верх по отзывам
-    // стоит неделями, — отсюда weekly, а не daily.
-    ...localized('/games', { changeFrequency: 'weekly', priority: 0.8 }),
+    // (см. app/games/page.tsx)
+    ...localized('/games'),
     // Страницы жанров — адреса известны без базы (HUB_GENRES), поэтому
-    // переживают и сборку без каталога. Ниже хаба: хаб ссылается на них.
-    // Английский двойник — только у полной полки (genreListed, выше)
+    // переживают и сборку без каталога. Английский двойник — только у полной
+    // полки (genreListed, выше)
     ...HUB_TAGS.flatMap((tag) => {
       const path = hubPath(tag)
       if (!path) return []
       const has: readonly Locale[] = genreListed.has(tag) ? LOCALES : ['ru']
-      return has.map(
-        (locale): Entry => ({
-          url: url(lp(locale, path)),
-          alternates: languages(path, has),
-          changeFrequency: 'weekly',
-          priority: 0.7,
-        }),
-      )
+      return has.map((locale) => entry(locale, path))
     }),
-    ...localized('/support', { changeFrequency: 'yearly', priority: 0.3 }),
-    ...localized('/privacy', { changeFrequency: 'yearly', priority: 0.2 }),
+    ...localized('/support'),
+    ...localized('/privacy'),
   ]
 
   return [
     ...stat,
-    // Тот же сегмент и тот же ранг, что у жанров, — и так же на каждом языке
-    ...facets.flatMap((f) => localized(facetPath(f), { changeFrequency: 'weekly', priority: 0.7 })),
-    ...games.flatMap((g) =>
-      localized(`/game/${g.appid}`, {
-        lastModified: new Date(g.updatedAt * 1000),
-        changeFrequency: 'weekly',
-        priority: 0.7,
-      }),
-    ),
+    // Тот же сегмент, что у жанров, — и так же на каждом языке
+    ...facets.flatMap((f) => localized(facetPath(f))),
+    ...games.flatMap((g) => localized(`/game/${g.appid}`, { lastModified: new Date(g.updatedAt * 1000) })),
     // Между карточкой и патчем: ответ на «обновления X» — один адрес на игру,
     // а не десятки одинаковых заголовков Steam. lastmod — свежий патч или
     // пересказ своего языка (sitemapPatchArchives), а не перезаписанный вес.
     // Язык — только тот, где архив проходит порог, — почему, у выборки выше
     ...[...archives].flatMap(([appid, changedAt]) => {
       const path = patchArchivePath(appid)
-      const has = LOCALES.filter((locale) => changedAt[locale] !== undefined)
-      return has.map(
-        (locale): Entry => ({
-          url: url(lp(locale, path)),
-          alternates: languages(path, has),
-          lastModified: new Date(changedAt[locale]! * 1000),
-          changeFrequency: 'weekly',
-          priority: 0.6,
-        }),
+      return LOCALES.filter((locale) => changedAt[locale] !== undefined).map((locale) =>
+        entry(locale, path, { lastModified: new Date(changedAt[locale]! * 1000) }),
       )
     }),
-    // Ниже карточек: патч — повод зайти, а не главное содержание сайта
+    // Патчи — последними: повод зайти, а не главное содержание сайта
     ...[...news.values()].flatMap((n) => {
       const path = newsPath(n.appid, n.gid)
-      const has = LOCALES.filter((locale) => n.changedAt[locale] !== undefined)
-      return has.map(
-        (locale): Entry => ({
-          url: url(lp(locale, path)),
-          alternates: languages(path, has),
-          lastModified: new Date(n.changedAt[locale]! * 1000),
-          changeFrequency: 'monthly',
-          priority: 0.5,
-        }),
+      return LOCALES.filter((locale) => n.changedAt[locale] !== undefined).map((locale) =>
+        entry(locale, path, { lastModified: new Date(n.changedAt[locale]! * 1000) }),
       )
     }),
   ]

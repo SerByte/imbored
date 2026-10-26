@@ -42,8 +42,17 @@ export type RssChannel = {
   self?: string
   description: string
   items: readonly RssItem[]
-  /** Секунды: время сборки ленты */
-  builtAt: number
+  /**
+   * Секунды: <lastBuildDate>. Нет — дата самой свежей записи канала, а без
+   * записей нет и тега (в RSS 2.0 он необязателен).
+   *
+   * Не время сборки, хотя имя к нему и тянет. Общая лента (/whatsnew/feed.xml)
+   * — запись ISR, и её перегенерация ничего не пишет, только если вывод тот
+   * же байт в байт; личная отвечает 304 по ETag от тела. «Сейчас» в документе
+   * делало каждую сборку новой: запись ISR на каждую перегенерацию и полное
+   * тело ридеру на каждый опрос.
+   */
+  builtAt?: number
   /**
    * Язык ленты — <language> канала: htmlLang(locale) той версии сайта, чью
    * ленту отдаём. Без него — 'ru', как было: ридер по нему выбирает словарь
@@ -91,6 +100,8 @@ export function rssFeed(ch: RssChannel): string {
     ch.self === undefined
       ? ''
       : `    <atom:link href="${escapeXml(ch.self)}" rel="self" type="application/rss+xml" />\n`
+  const builtAt = ch.builtAt ?? (ch.items.length ? Math.max(...ch.items.map((i) => i.publishedAt)) : undefined)
+  const built = builtAt === undefined ? '' : `    <lastBuildDate>${rfc822(builtAt)}</lastBuildDate>\n`
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
@@ -98,8 +109,7 @@ export function rssFeed(ch: RssChannel): string {
     <link>${escapeXml(ch.link)}</link>
 ${self}    <description>${escapeXml(ch.description)}</description>
     <language>${escapeXml(ch.language ?? 'ru')}</language>
-    <lastBuildDate>${rfc822(ch.builtAt)}</lastBuildDate>
-${items}
+${built}${items}
   </channel>
 </rss>
 `

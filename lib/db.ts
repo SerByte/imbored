@@ -639,7 +639,7 @@ CREATE INDEX IF NOT EXISTS idx_games_developer ON games (developer, reviews_tota
 
 -- Конец доверия скидке (DEAL_UNTIL): по нему крон карточек находит тех, чья
 -- скидка погасла с прошлого прохода (dealsEndedBetween), — их карточки в
--- недельном кэше ещё обещают её в микроразметке. Только строки со скидкой, а
+-- месячном кэше ещё обещают её в микроразметке. Только строки со скидкой, а
 -- их на витрине доля каталога; выборка — диапазон индекса, без прохода по games.
 CREATE INDEX IF NOT EXISTS idx_games_deal_until ON games (${DEAL_UNTIL})
   WHERE discount_percent > 0;
@@ -5312,16 +5312,28 @@ export async function claimPageEnrichBatch(
  * патчноуты на ней уже есть. Ждать полного обогащения значило бы держать карту
  * сайта пустой месяцами.
  *
- * lastmod считается по ТРЁМ отметкам, а не по одному updated_at, и это не
- * педантизм. Замер по проду 20 августа: из 5919 живых игр 5691 имеет ОДИН И ТОТ
- * ЖЕ updated_at — след массовой заливки каталога; разных значений на весь
- * каталог девятнадцать. То есть поле не несло сигнала вовсе, а следующая
- * заливка подняла бы пять с половиной тысяч адресов в одну секунду, после чего
- * Google перестаёт учитывать его совсем.
+ * lastmod считается не по updated_at, и это не педантизм. Замер по проду 20
+ * августа: из 5919 живых игр 5691 имеет ОДИН И ТОТ ЖЕ updated_at — след
+ * массовой заливки каталога; разных значений на весь каталог девятнадцать.
+ * То есть поле не несло сигнала вовсе, а следующая заливка подняла бы пять с
+ * половиной тысяч адресов в одну секунду, после чего Google перестаёт
+ * учитывать его совсем.
  *
  * Настоящее изменение содержания приносят два других события, и оба
  * размазаны по времени: обогащение карточки (page_at — появляются скриншоты,
  * вердикт отзывов и pros/cons) и новый патчноут (published_at). Их и берём.
+ *
+ * updated_at — только запасным, у игры, где нет ни того, ни другого: ни
+ * обогащения, ни патчей. Стоял третьим в том же MAX, и одна массовая запись
+ * меты — catalog:promote перед заливкой, catalog:repair-names прямо в прод,
+ * прогрев библиотек в /api/prepare (все ставят updated_at = now,
+ * gameMetaStatement) — сдвигала lastmod у каждой задетой карточки, и
+ * обогащённой тоже. В карте это до ~12 тысяч адресов (обе версии каждой
+ * игры) разом с одной и той же датой: Bing, который lastmod верит,
+ * перечитал бы их все — промахами кэша CDN по длинному хвосту, то есть
+ * чтениями ISR и трафиком с origin. Цена правила: правка одного названия или
+ * цены у обогащённой карточки lastmod больше не двигает — её краулер увидит
+ * при следующем обходе, без подсказки.
  *
  * Патчноут — именно kind = 'patch', то есть ровно то, что карточка рисует
  * (getGameNews). news_items хранит и распродажи, ивенты, анонсы (kind =
@@ -5331,14 +5343,15 @@ export async function claimPageEnrichBatch(
  * фильтра: kind в idx_news_app не входит, но MAX по индексу (appid,
  * published_at DESC) SQLite обрывает на первой подходящей строке (проверено
  * по байткоду: Goto после AggStep), то есть читает посты от свежего до
- * первого патча — у игры без патчей не больше NEWS_KEEP (30), раз в сутки.
+ * первого патча — у игры без патчей не больше NEWS_KEEP (30), раз в неделю.
  *
- * ПРЕДЕЛ, честно: разных значений стало 88 вместо 19, но крупнейшая группа
- * по-прежнему 5586 адресов. Иначе и быть не может — у этих карточек с прошлой
- * заливки правда ничего не менялось, ни обогащения, ни патчей. Настоящая
- * причина одинаковости лежит не здесь, а в scripts/publish-catalog: он ставит
- * updated_at = now всем строкам подряд, включая те, у которых ни одно видимое
- * поле не изменилось. Чинить надо там, и это отдельная работа.
+ * ПРЕДЕЛ, честно: у игры без обогащения и без патчей lastmod — по-прежнему
+ * updated_at, и массовая запись меты двигает его у всех таких сразу.
+ * Крупнейшая группа с одной датой из замера 20 августа, 5586 адресов, — это
+ * они и были. Причина одинаковости не здесь: мету пишет gameMetaStatement,
+ * и updated_at = now он ставит каждой записанной строке, даже если ни одно
+ * видимое поле не изменилось; заливка в облако (scripts/publish-catalog)
+ * эту отметку только копирует. Чинить надо там, и это отдельная работа.
  */
 export async function sitemapGames(
   db: Db,
@@ -5346,12 +5359,14 @@ export async function sitemapGames(
 ): Promise<Array<{ appid: number; updatedAt: number }>> {
   const res = await db.execute({
     sql: `SELECT g.appid AS appid,
-                 MAX(
-                   g.updated_at,
-                   COALESCE(g.page_at, 0),
-                   COALESCE((SELECT MAX(n.published_at) FROM news_items n
-                             WHERE n.appid = g.appid AND n.kind = 'patch'
-                               AND n.scale IS NOT 'none'), 0)
+                 COALESCE(
+                   NULLIF(MAX(
+                     COALESCE(g.page_at, 0),
+                     COALESCE((SELECT MAX(n.published_at) FROM news_items n
+                               WHERE n.appid = g.appid AND n.kind = 'patch'
+                                 AND n.scale IS NOT 'none'), 0)
+                   ), 0),
+                   g.updated_at
                  ) AS updated_at
           FROM games g
           -- живая игра с алиасом таблицы: подзапрос по news_items требует
@@ -6267,7 +6282,7 @@ export async function updateGamePrices(
  * верит витрина (DEAL_UNTIL — discountOf в SQL), попал в окно.
  *
  * Для крона карточек (revalidateEndedDeals в lib/gamecache): карточка живёт в
- * ISR неделю, и собранная до этого момента обещает скидку в JSON-LD, пока её
+ * ISR месяц, и собранная до этого момента обещает скидку в JSON-LD, пока её
  * не перегенерируют.
  *
  * Без LIMIT, и это не забыто. Распродажа Steam кончается одной секундой у
@@ -6345,9 +6360,11 @@ export async function catalogSignalsQueue(db: Db, limit: number): Promise<Signal
  * иначе они вечно стояли бы в голове очереди и съедали бы каждую пачку.
  * Значения отзывов пишутся только тем, у кого они приехали.
  *
- * Отзывы для людей (все языки и русские) пишутся отдельным UPDATE со своим
- * условием — только когда показанное число сдвинулось заметно, см.
- * SHOWN_DRIFT. Англоязычные пороги — каждую сверку, как прежде.
+ * Каждая пара отзывов — англоязычная шкала порогов и порядка, все языки и
+ * русские — пишется отдельным UPDATE со своим условием: только когда число
+ * сдвинулось заметно или поменялась доля, см. SHOWN_DRIFT. Отметка reviews_at
+ * — своим UPDATE и всегда: «сверено сейчас» верно и тогда, когда числа
+ * остались прежними, — они отстают от Steam меньше чем на 2%.
  */
 export async function updateCatalogSignals(
   db: Db,
@@ -6368,18 +6385,27 @@ export async function updateCatalogSignals(
   nowSec: number,
 ): Promise<void> {
   const stmts = [
-    ...signals.checked.map((appid) => {
-      const r = signals.reviews.get(appid)
-      return r
-        ? {
-            sql: 'UPDATE games SET reviews_total = ?, reviews_percent = ?, reviews_at = ? WHERE appid = ?',
-            args: [r.total, r.percent, nowSec, appid],
-          }
-        : { sql: 'UPDATE games SET reviews_at = ? WHERE appid = ?', args: [nowSec, appid] }
-    }),
+    ...signals.checked.map((appid) => ({
+      sql: 'UPDATE games SET reviews_at = ? WHERE appid = ?',
+      args: [nowSec, appid],
+    })),
     ...signals.checked.flatMap((appid) => {
       const r = signals.reviews.get(appid)
       const out: Array<{ sql: string; args: Array<number | null> }> = []
+      if (r) {
+        // Англоязычная пара — двумя UPDATE: доля при любом сдвиге (её читают
+        // пороги), число — с порогом (по нему порядок), см. SHOWN_DRIFT
+        out.push(
+          {
+            sql: 'UPDATE games SET reviews_percent = ? WHERE appid = ? AND reviews_percent IS NOT ?',
+            args: [r.percent, appid, r.percent],
+          },
+          {
+            sql: `UPDATE games SET reviews_total = ? WHERE appid = ? AND ${totalMoved('reviews_total')}`,
+            args: [r.total, appid, r.total],
+          },
+        )
+      }
       if (r?.all) {
         const { total, percent, score } = r.all
         out.push({
@@ -6407,10 +6433,13 @@ export async function updateCatalogSignals(
 }
 
 /**
- * Показанное людям число отзывов переписывается, только когда сдвинулось на
- * 1/SHOWN_DRIFT (2%) или поменялась доля.
+ * Число отзывов переписывается, только когда сдвинулось на 1/SHOWN_DRIFT (2%),
+ * — у всех трёх пар сверки: показанных людям (все языки и русские) и
+ * англоязычной шкалы порогов и порядка. У показанных пар число переписывается
+ * и вместе с новой долей (страница поменялась всё равно), у англоязычной доля
+ * пишется своим UPDATE, а число — только по порогу.
  *
- * Это про ISR. Карточка игры живёт неделю и пишется заново, только если её
+ * Это про ISR. Карточка игры живёт месяц и пишется заново, только если её
  * вывод разошёлся с прошлым (lib/gamecache), а кольцо печатает число отзывов
  * до единицы. Сверка идёт раз в неделю, и у игры, которая прибавляет хоть
  * десяток отзывов, каждая перегенерация была бы новой страницей — запись ISR
@@ -6419,6 +6448,40 @@ export async function updateCatalogSignals(
  * недель, а число на странице отстаёт не больше чем на 2%: решению «стоит ли
  * играть» эти два процента ничего не меняют. Доля — сразу при любом сдвиге:
  * «97%» вместо «98%» — уже другой факт.
+ *
+ * Англоязычная пара людям не показывается, но по ней упорядочено почти всё,
+ * что лежит в кэше: карта сайта (sitemapGames), индекс «Найти игру»
+ * (searchIndexGames), полки /games и хабов (topGamesByTags, topGamesByFacet),
+ * лента главной и полка 404 (topCatalogGames), «Похожие» по тегу и «Ещё у
+ * студии» на карточке. Переписанная каждой сверкой, она двигала порядок у
+ * седьмой части пула каждые сутки. С порогом число стоит, пока игра не
+ * сдвинется на 2%, а ничьи частичный индекс отдаёт по rowid, то есть тоже
+ * одинаково. Доля в порядок не входит, поэтому её переход 89 → 90% у средней
+ * игры числа с собой не тянет. Второй ключ в ORDER BY этого не дал бы:
+ * двигались сами числа, а не ничьи. Запросы порядка поэтому не тронуты, и их
+ * планы (чтение idx_games_pool по порядку, без сортировки) держат сторожа
+ * lib/queryplan.test.ts, как прежде.
+ *
+ * Чего порог не даёт — побайтной стабильности целых списков каталога. Порог
+ * поштучный: у шести тысяч игр пула сотня-другая всё равно пересекает 2% за
+ * сутки, а в плотной середине каталога любая такая перезапись меняет игру
+ * местами с соседом. sitemap.xml и индекс поиска поэтому выходят новыми
+ * почти на каждой перегенерации — их держит срок (неделя у карты сайта), а
+ * не порог. Стоят от порога верхние срезы: лента главной, полка 404, верх
+ * хабов и порядок «Ещё у студии» и «Похожих» на карточке.
+ *
+ * Отставания на 2% хватает всем, кто англоязычную пару читает:
+ *   • пороги живости (judgeLiveness: MIN_REVIEWS_TAIL, PANNED_MIN_SAMPLE,
+ *     PANNED_RATIO) — доля пишется при любом сдвиге, а 2% у числа возле
+ *     порога — единицы отзывов: у двухсот это четыре, а меньше пятидесяти
+ *     переписывается любой сдвиг;
+ *   • бейдж «Недооценённая» (isUnderrated в lib/badges): порог в 2000 — у
+ *     края отставание до сорока отзывов, доля точная;
+ *   • порядок и отбор пула — подбор (lib/pool), очереди пульса и догрева
+ *     онлайна в /api/prepare, вес игры в ленте патчей (getGameRanks), доверие
+ *     к новинке (confidenceMultiplier): это популярность, и 2% её не меняют;
+ *   • catalog:publish (ПО_ОТМЕТКЕ в scripts/publishsql) сверяет снимок с
+ *     reviews_at, а отметка ставится всегда: замер был, числа в пороге от него.
  */
 const SHOWN_DRIFT = 50
 
@@ -6429,6 +6492,11 @@ const SHOWN_DRIFT = 50
 function shownMoved(totalCol: string, percentCol: string): string {
   return `(${totalCol} IS NULL OR ${percentCol} IS NOT ?
     OR ABS(${totalCol} - ?) * ${SHOWN_DRIFT} >= ${totalCol})`
+}
+
+/** То же условие для одного числа, без доли. Параметр — новое число. */
+function totalMoved(totalCol: string): string {
+  return `(${totalCol} IS NULL OR ABS(${totalCol} - ?) * ${SHOWN_DRIFT} >= ${totalCol})`
 }
 
 /**
@@ -8355,13 +8423,55 @@ const EN_KEPT = `news_items.body_hash IS excluded.body_hash
  * сайта (sitemapNews) прыгал бы раз в неделю у страниц, не изменившихся ни
  * на байт, — шум, после которого Google перестаёт верить lastmod всего
  * сайта (см. sitemapGames).
+ *
+ * Возвращает число записанных строк — вместе с переписанными ради одного
+ * веса. Что из них видно на страницах, говорит writeNewsItems.
  */
 export async function upsertNewsItems(
   db: Db,
   items: StoredNews[],
   nowSec: number,
 ): Promise<number> {
-  if (!items.length) return 0
+  return (await writeNewsItems(db, items, nowSec)).rows
+}
+
+/**
+ * Строка, которую апсерт вставил или переписал так, что это видно на
+ * страницах: новое тело, заголовок или вид поста. Вид и масштаб — уже
+ * записанные; какими они были до записи, апсерт не знает.
+ */
+export type NewsShownWrite = { gid: string; kind: NewsKind; scale: NewsScale | null; isNew: boolean }
+
+export type NewsWrite = {
+  /** Сколько строк записано — с переписанными ради одного веса (rank) */
+  rows: number
+  /** Записанное, что видно на страницах: без строк, где сдвинулся один вес */
+  shown: NewsShownWrite[]
+}
+
+/**
+ * upsertNewsItems с ответом, ЧТО именно записано.
+ *
+ * Зачем различать. Строку переписывает и один сдвинувшийся вес (rank —
+ * MAX(отзывы, онлайн), см. getGameRanks): после каждой недельной сверки
+ * отзывов — у всех свежих постов игры, а онлайн двигают ещё и прогревы. Крон
+ * новостей видел в этом числе «лента поменялась» и на каждом таком опросе
+ * сбрасывал карточку и архив игры в обеих языковых копиях, а в конце запуска
+ * — тег общей ленты (NEWS_MAJOR_TAG): её запись кэша и обе RSS-ленты
+ * перегенерировались почти каждый час, хотя ни одна страница не поменялась.
+ *
+ * Как различаем — без второго чтения: RETURNING отдаёт строку уже после
+ * записи, и updated_at в ней — ровно ответ. Видимую перемену апсерт датирует
+ * этим опросом (nowSec), переписанный один вес оставляет прежнюю дату (CASE
+ * выше), новая строка датирована nowSec и в created_at. Строк, которые апсерт
+ * не тронул (WHERE ложен), RETURNING не отдаёт вовсе.
+ */
+export async function writeNewsItems(
+  db: Db,
+  items: StoredNews[],
+  nowSec: number,
+): Promise<NewsWrite> {
+  if (!items.length) return { rows: 0, shown: [] }
   const stmts = items.map((n) => ({
     sql: `INSERT INTO news_items (${NEWS_BASE_COLS}, tldr_at, tldr_tries, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, ?, ?)
@@ -8414,7 +8524,8 @@ export async function upsertNewsItems(
           WHERE news_items.body_hash IS NOT excluded.body_hash
              OR news_items.title IS NOT excluded.title
              OR news_items.kind IS NOT excluded.kind
-             OR news_items.rank IS NOT excluded.rank`,
+             OR news_items.rank IS NOT excluded.rank
+          RETURNING gid, kind, scale, created_at, updated_at`,
     args: [
       n.appid,
       n.gid,
@@ -8432,7 +8543,26 @@ export async function upsertNewsItems(
     ],
   }))
   const res = await db.batch(stmts, 'write')
-  return res.reduce((sum, r) => sum + Number(r.rowsAffected ?? 0), 0)
+  // Записанные строки считаем по RETURNING, а не по rowsAffected: у
+  // оператора, который отдаёт строки, локальный клиент libsql (sqlite3)
+  // rowsAffected не заполняет — там всегда 0. Строка RETURNING — ровно одна
+  // вставленная или переписанная строка
+  let rows = 0
+  const shown: NewsShownWrite[] = []
+  for (const r of res) {
+    rows += r.rows.length
+    for (const row of r.rows as unknown as Array<{
+      gid: string
+      kind: NewsKind
+      scale: NewsScale | null
+      created_at: number
+      updated_at: number
+    }>) {
+      if (Number(row.updated_at) !== nowSec) continue
+      shown.push({ gid: String(row.gid), kind: row.kind, scale: row.scale, isNew: Number(row.created_at) === nowSec })
+    }
+  }
+  return { rows, shown }
 }
 
 /**
@@ -8553,20 +8683,30 @@ export type NewsHead = {
 }
 
 /**
- * Заголовки патчей игры — для списка «Другие патчи» на странице патча.
+ * Заголовки патчей игры, вышедших раньше before, — для списка «Предыдущие
+ * патчи» на странице патча (before — её published_at), свежие первыми.
+ *
+ * Только раньше, а не свежие у игры вообще: так список сохранённой страницы
+ * не меняется от каждого нового патча — и страница не перерисовывается в
+ * ISR (почему это важно — OTHERS у страницы патча). Сам пост под строгое «<»
+ * не попадает. Пост, вышедший в ту же секунду, — тоже, и это сознательно:
+ * равенство пришлось бы разбивать по gid, а «gid DESC» в ORDER BY уже не
+ * берётся из индекса — SQLite строит под него временное дерево
+ * (lib/queryplan.test.ts). Патчи одной игры в одну секунду — редкость.
  *
  * Не getGameNews: та везёт blocks_json каждой строки, а здесь нужны только
- * заголовок и дата. Идёт по idx_news_app (appid, published_at DESC), порядок
- * приходит из индекса. Вердикт модели «не патч» отсекается тем же условием,
- * что у getGameNews: ссылка на него вела бы на 404.
+ * заголовок и дата. Идёт по idx_news_app (appid, published_at DESC): before —
+ * граница диапазона по тому же индексу, порядок приходит из него. Вердикт
+ * модели «не патч» отсекается тем же условием, что у getGameNews: ссылка на
+ * него вела бы на 404.
  */
-export async function getGamePatchHeads(db: Db, appid: number, limit = 8): Promise<NewsHead[]> {
+export async function getGamePatchHeads(db: Db, appid: number, before: number, limit = 8): Promise<NewsHead[]> {
   if (appid <= 0) return []
   const res = await db.execute({
     sql: `SELECT gid, title, published_at, scale, title_en FROM news_items
-          WHERE appid = ? AND kind = 'patch' AND scale IS NOT 'none'
+          WHERE appid = ? AND published_at < ? AND kind = 'patch' AND scale IS NOT 'none'
           ORDER BY published_at DESC LIMIT ?`,
-    args: [appid, limit],
+    args: [appid, before, limit],
   })
   return (
     res.rows as unknown as Array<{
@@ -9217,7 +9357,7 @@ const TLDR_SWEEP_PAGE = 500
  * повторит с начала: уже сброшенное второй раз не найдётся.
  *
  * Возвращает игры, у которых пересказ снят: их карточки роут сбрасывает в ISR
- * (строка под патчем на карточке живёт неделю). null — уборка уже была.
+ * (строка под патчем на карточке живёт месяц). null — уборка уже была.
  */
 export async function resetFlawedDigests(db: Db): Promise<number[] | null> {
   if (await getCatalogMeta(db, TLDR_FLAW_SWEEP_KEY)) return null
@@ -9252,15 +9392,23 @@ export async function resetFlawedDigests(db: Db): Promise<number[] | null> {
   return [...appids]
 }
 
-/** Ретенция на игру. Держим больше, чем берём из фида, иначе вечный цикл
- *  «выкинули — перекачали — снова выкинули» на каждом опросе. */
-export async function pruneNewsForApp(db: Db, appid: number, keep = 30): Promise<void> {
-  await db.execute({
+/**
+ * Ретенция на игру. Держим больше, чем берём из фида, иначе вечный цикл
+ * «выкинули — перекачали — снова выкинули» на каждом опросе.
+ *
+ * Возвращает, сколько снятых строк были патчами: их видно на карточке и в
+ * архиве обновлений игры, и тогда крону новостей есть что сбрасывать даже
+ * ради вставленной новости (runNewsSlice). Снятые новости не видно нигде.
+ */
+export async function pruneNewsForApp(db: Db, appid: number, keep = 30): Promise<number> {
+  const res = await db.execute({
     sql: `DELETE FROM news_items WHERE appid = ? AND gid NOT IN (
             SELECT gid FROM news_items WHERE appid = ? ORDER BY published_at DESC LIMIT ?
-          )`,
+          )
+          RETURNING kind`,
     args: [appid, appid, keep],
   })
+  return (res.rows as unknown as Array<{ kind: NewsKind }>).filter((r) => r.kind === 'patch').length
 }
 
 /* ---------- очередь опроса новостей ---------- */

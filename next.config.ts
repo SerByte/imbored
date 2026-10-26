@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 import { cspMode, securityHeaders } from "./lib/csp";
 import { homeLocaleRedirects } from "./lib/homelocale";
-import { garbageRewrites, localeRedirects, localeRewrites } from "./lib/i18nroutes";
+import { garbageRewrites, localeRedirects, localeRewrites, retiredCardRedirects } from "./lib/i18nroutes";
 import { noindexHeaders } from "./lib/robots";
 
 const nextConfig: NextConfig = {
@@ -26,9 +26,10 @@ const nextConfig: NextConfig = {
   // Русский — без префикса снаружи и под /ru внутри (app/[lang]); почему
   // rewrites, а не прокси, и что с /ru снаружи — в lib/i18nroutes.ts.
   // Кука lang=en уводит «/» на /en правилом; первый вход без выбора —
-  // страна и браузер — решает proxy.ts. Почему так — в lib/homelocale.ts
+  // страна и браузер — решает proxy.ts. Почему так — в lib/homelocale.ts.
+  // Бывшие карточки превью игры и патча — на корневую карточку, без функции
   async redirects() {
-    return [...homeLocaleRedirects(), ...localeRedirects()];
+    return [...retiredCardRedirects(), ...homeLocaleRedirects(), ...localeRedirects()];
   },
   // beforeFiles — разделы русской ветки, afterFiles — мусорный адрес в
   // статическую 404; почему одно до файлов, а другое после — там же

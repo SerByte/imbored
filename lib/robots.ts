@@ -2,10 +2,10 @@
  * Правила для краулеров — одно место на robots.txt и заголовки ответа.
  *
  * Модуль без Next и без базы: его читает next.config.ts ещё до сборки (как
- * lib/csp.ts), а app/robots.ts только раскладывает список в ответ.
+ * lib/csp.ts), а app/robots.ts только раскладывает списки в ответ.
  *
- * Списки ниже — русскими адресами, без языка. На английский (/en/…) их
- * разносят ROBOTS_DISALLOW и noindexHeaders: правило, заведённое для
+ * Списки адресов ниже — русскими адресами, без языка. На английский (/en/…)
+ * их разносят ROBOTS_DISALLOW и noindexHeaders: правило, заведённое для
  * /portrait, обязано держать и /en/portrait, иначе английская копия личной
  * страницы с ником Steam ушла бы в выдачу.
  */
@@ -143,6 +143,83 @@ const DISALLOW_RU = ['/portrait$', '/compat$', '/play', '/explore', '/library'] 
  * правила /en/room/:path* (noindexHeaders, NOINDEX_AT).
  */
 export const ROBOTS_DISALLOW: readonly string[] = ['/api/', ...DISALLOW_RU, ...DISALLOW_RU.map((rule) => `/en${rule}`)]
+
+/**
+ * Краулеры, которым robots.txt закрывает весь сайт: Disallow: / отдельной
+ * группой. Они не приводят на сайт ни одного человека — ни выдачей, ни
+ * ответом со ссылкой, — а платим за их обход мы, лимитами Hobby.
+ *
+ * ПОЧЕМУ ЭТО ДЕНЬГИ. В октябре 2026 Vercel остановил сайт за выбранные лимиты
+ * Hobby: ISR Writes 2.2 млн блоков при 200 тысячах, Fast Origin Transfer 29.6
+ * ГБ при 10, Active CPU 5 ч при 4. Хвост сайта — карточки игр, патчи и
+ * архивы на двух языках, десятки тысяч адресов — живёт в ISR, и заход на
+ * холодный или протухший адрес — это рендер функцией (CPU), запись (карточка
+ * игры — около 224 КБ, ~30 блоков по 8 КБ) и выдача с источника (FOT).
+ * Холодным кэш делает каждый деплой. Поисковик ходит по хвосту ради выдачи,
+ * которая приводит людей; бот обучения модели или SEO-сервиса проходит тот
+ * же хвост целиком и людей не приводит. Один его обход двенадцати тысяч
+ * карточек игр (обе языковые копии) по холодному кэшу — около 360 тысяч
+ * блоков записи, больше месячного лимита, и больше гигабайта FOT одним HTML
+ * (~108 КБ на адрес).
+ *
+ * Кто здесь:
+ *   • обучение моделей и наборы данных: GPTBot, CCBot, ClaudeBot,
+ *     anthropic-ai, Bytespider, Amazonbot, meta-externalagent, FacebookBot,
+ *     cohere-ai, Diffbot, ImagesiftBot, Omgilibot, Timpibot, AI2Bot;
+ *   • Applebot-Extended и Google-Extended — не обходчики, а метки отказа:
+ *     по ним Apple и Google решают, учить ли модели на уже скачанном. Байтов
+ *     они не экономят; стоят здесь, чтобы отказ от обучения был полным.
+ *     Applebot и Googlebot — другие метки и ходят по общей группе «*»;
+ *   • PetalBot — поисковик Huawei, у которого здесь нет аудитории. Он
+ *     единственный поисковик в списке, и механика PERSONAL_PREFIXES на нём
+ *     работает: закрытый адрес он может показать голым, без noindex. Цена
+ *     принята — его выдачу наши читатели не видят;
+ *   • SEO-сервисы: AhrefsBot, SemrushBot, MJ12bot, DotBot, DataForSeoBot,
+ *     BLEXBot, Barkrowler, serpstatbot.
+ *
+ * Кого здесь НЕТ, и это не забыто: поисковики (Googlebot, Bingbot, YandexBot,
+ * DuckDuckBot, Applebot), поиск ассистентов и заходы по просьбе человека
+ * (OAI-SearchBot, ChatGPT-User, PerplexityBot, Perplexity-User), превью
+ * ссылок в соцсетях и мессенджерах (Twitterbot, facebookexternalhit,
+ * TelegramBot, Discordbot, vkShare). Они читают общую группу «*» со всеми её
+ * правилами — список сверяет lib/robots.test.ts.
+ *
+ * Группа — по метке продукта (RFC 9309): краулер берёт группу, где названа
+ * его метка, и тогда «*» не читает вовсе. Поэтому всё, что закрыто в «*»,
+ * для этих ботов закрыто и так — их группе хватает одного Disallow: /.
+ *
+ * robots.txt — просьба, а не замок: Bytespider и часть скраперов его не
+ * читают. Их отсекает только фаервол Vercel (правило против AI-ботов в
+ * панели проекта) — запрос, отбитый на краю, не доходит ни до функции, ни
+ * до ISR. Список здесь — то, что можно сделать кодом.
+ */
+export const BLOCKED_CRAWLERS = [
+  'GPTBot',
+  'CCBot',
+  'ClaudeBot',
+  'anthropic-ai',
+  'Bytespider',
+  'Amazonbot',
+  'meta-externalagent',
+  'FacebookBot',
+  'Applebot-Extended',
+  'Google-Extended',
+  'cohere-ai',
+  'Diffbot',
+  'ImagesiftBot',
+  'Omgilibot',
+  'Timpibot',
+  'AI2Bot',
+  'PetalBot',
+  'AhrefsBot',
+  'SemrushBot',
+  'MJ12bot',
+  'DotBot',
+  'DataForSeoBot',
+  'BLEXBot',
+  'Barkrowler',
+  'serpstatbot',
+] as const
 
 /**
  * Заголовки для next.config.ts: noindex на всём под личными и секретными

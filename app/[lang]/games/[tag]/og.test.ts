@@ -16,7 +16,7 @@ vi.mock('next/og', () => ({
   },
 }))
 
-const { default: Image } = await import('./opengraph-image')
+const { default: Image, generateStaticParams, revalidate } = await import('./opengraph-image')
 
 let db: Db
 
@@ -33,15 +33,29 @@ function queriesFail(): void {
 
 const render = (tag: string) => Image({ params: Promise.resolve({ lang: 'ru', tag }) })
 
+/*
+ * Срок кэша карточки — до деплоя, а не сутки: стена постеров жанра стоит
+ * неделями, а каждая перерисовка — ~785 КБ PNG, около ста блоков ISR Writes
+ * (докблок revalidate в opengraph-image.tsx). На сборке её нет: пустой
+ * список только регистрирует сегмент, без него маршрут был бы ƒ и рисовал
+ * картинку на каждый заход.
+ */
+describe('кэш карточки жанра', () => {
+  test('без срока перегенерации и без пререндера на сборке', async () => {
+    expect(revalidate).toBe(false)
+    expect(await generateStaticParams()).toEqual([])
+  })
+})
+
 describe('карточка жанра и осечка базы', () => {
   /*
-   * Карточка живёт на ISR сутки. Пойманная ошибка (стоял try/catch → null)
-   * заменяла стену постеров общей «Игры по жанрам» на весь день; брошенная
-   * оставляет в кэше прошлую карточку. loadGenre сам бросает только вне
-   * сборки, а на сборке эта карточка не рисуется вовсе (пустой
-   * generateStaticParams).
+   * Карточка живёт в кэше без срока, до следующего деплоя. Пойманная ошибка
+   * (стоял try/catch → null) заменяла бы стену постеров общей «Игры по
+   * жанрам» на всё это время; брошенная не кэшируется, и следующий запрос
+   * рисует заново. loadGenre сам бросает только вне сборки, а на сборке эта
+   * карточка не рисуется вовсе (пустой generateStaticParams).
    */
-  test('ошибка базы уходит наружу — ISR оставит прошлую карточку', async () => {
+  test('ошибка базы уходит наружу — сбой не ляжет в кэш вместо карточки', async () => {
     queriesFail()
     await expect(render('roguelike')).rejects.toThrow(/timed out/)
   })
@@ -134,7 +148,7 @@ describe('карточка подборки', () => {
     expect(all).not.toContain('Тридцать жанров')
   })
 
-  test('ошибка базы и у подборки уходит наружу — ISR оставит прошлую карточку', async () => {
+  test('ошибка базы и у подборки уходит наружу — сбой не ляжет в кэш', async () => {
     queriesFail()
     await expect(render('coop')).rejects.toThrow(/timed out/)
   })
