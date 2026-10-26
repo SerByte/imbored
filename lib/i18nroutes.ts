@@ -131,9 +131,11 @@ export function localeRewrites(): Rewrite[] {
  * HTML был пустой оболочкой Next без lang, стилей и текста (почему — в
  * докблоке app/global-not-found.tsx).
  *
- * Кэш. Такой ответ — пререндер /_not-found, то есть страница ISR: полка 404
- * живёт в кэше сутки (cachedTop в app/[lang]/not-found.tsx), и Next под next
- * start отдаёт её с «s-maxage=86400, stale-while-revalidate=…», а не с
+ * Кэш. Такой ответ — пререндер /_not-found, статический до следующего
+ * деплоя: полку 404 он читает из базы один раз, на сборке (shelf() в
+ * app/[lang]/not-found.tsx), и Next под next start отдаёт его с s-maxage
+ * статической страницы — «s-maxage=31536000» по getCacheControlHeader
+ * (next/dist/server/lib/cache-control.js), а не с
  * «private, no-cache, no-store», как 404 ненайденного маршрута до [lang]
  * (Vercel — с «public, max-age=0, must-revalidate», см. выше). Так и
  * задумано: ради этого ответа цель и статическая — CDN отдаёт его без

@@ -7,8 +7,9 @@ import { PREVIEW_OWN_DB_ENV } from './db'
  * Сторож прод-инфраструктуры, которая записана в репозитории, а не в дашборде.
  *
  * Эти правки не видны ни одному тесту поведения: функция в Вашингтоне
- * отвечает так же, как в Дублине, только на сотни миллисекунд дольше, а 404
- * без кэша выглядит так же, как с кэшем, и просто платит запросом к базе.
+ * отвечает так же, как в Дублине, только на сотни миллисекунд дольше, а
+ * карточка игры под суточным кэшем в границе not-found выглядит так же, как
+ * без него, и просто перегенерируется в семь раз чаще.
  * Такое расходится молча, и найти это можно только замером на проде.
  */
 
@@ -29,19 +30,37 @@ describe('регион функций', () => {
   })
 })
 
-describe('404', () => {
-  test('полка читает базу только через кэш на сутки', () => {
-    const src = read('app', '[lang]', 'not-found.tsx')
-    const cacheAt = src.indexOf('unstable_cache(')
-    expect(cacheAt, 'unstable_cache в app/not-found.tsx не найден').toBeGreaterThan(-1)
-    const cacheEnd = src.indexOf('revalidate:', cacheAt)
-    expect(cacheEnd, 'у кэша полки нет revalidate').toBeGreaterThan(cacheAt)
+/** Код без комментариев: докблоки цитируют то, что здесь ищется */
+const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 
-    // Второй вызов мимо кэша вернул бы запрос к Turso на каждый рендер 404
-    const reads = [...src.matchAll(/topCatalogGames\(/g)].map((m) => m.index ?? -1)
-    expect(reads).toHaveLength(1)
-    expect(reads[0]).toBeGreaterThan(cacheAt)
-    expect(reads[0]).toBeLessThan(cacheEnd)
+describe('срок страниц', () => {
+  /*
+   * Граница not-found, layout и template корня рисуются вместе с КАЖДОЙ
+   * страницей под app/[lang], и кэш данных с числом в revalidate в любом из
+   * них опускает срок всех страниц до своего (unstable-cache.js в Next
+   * берёт меньший). Ни один тест поведения этого не видит: страница
+   * рисуется так же, просто перегенерируется чаще. Так полка 404 с кэшем на
+   * сутки держала карточку игры с revalidate на неделю на суточном сроке, а
+   * статические /privacy и /support — ISR на сутки. Поведенческий сторож
+   * границы — lib/notfound.test.ts; здесь — текст этих трёх файлов.
+   */
+  test('в границе not-found, layout и template [lang] нет кэша данных', () => {
+    for (const file of ['not-found.tsx', 'layout.tsx', 'template.tsx']) {
+      const src = code(read('app', '[lang]', file))
+      expect(src, `${file}: unstable_cache`).not.toMatch(/\bunstable_cache\b/)
+      expect(src, `${file}: "use cache"`).not.toMatch(/['"]use cache/)
+      expect(src, `${file}: fetch с revalidate`).not.toMatch(/\brevalidate\s*:/)
+    }
+  })
+
+  /*
+   * Час стоял зря: на главной меняется только лента верха каталога, а он
+   * неделями на месте. Каждая перегенерация — ~370 КБ HTML и RSC через
+   * origin, на обоих языках (докблок revalidate в app/[lang]/page.tsx).
+   * Литералом: Next читает revalidate только так.
+   */
+  test('главная перегенерируется раз в сутки', () => {
+    expect(read('app', '[lang]', 'page.tsx')).toMatch(/^export const revalidate = 86_400$/m)
   })
 })
 

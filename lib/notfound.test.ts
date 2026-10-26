@@ -1,10 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { createElement, type ComponentProps, type ReactElement } from 'react'
+import { createElement, type ComponentProps, type ReactElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import nextConfig from '../next.config'
 import { cardUrl } from './cardhash'
+import type { SimilarGame } from './db'
 import { garbageRewrites } from './i18nroutes'
 
 /**
@@ -18,12 +19,32 @@ import { garbageRewrites } from './i18nroutes'
  * и мусор уводится туда.
  */
 
-// Полка 404 читает базу через кэш Next; здесь база пуста, и полки нет —
-// как у 404 на молчащей базе (shelf() в app/[lang]/not-found.tsx)
-vi.mock('next/cache', () => ({ unstable_cache: <T>(fn: T) => fn }))
+/*
+ * Каталог, база и кэш Next — со счётчиками: граница not-found не должна
+ * трогать ни одного (сторож ниже). Кэш Next прозрачный, но пишет в журнал
+ * каждый свой вызов — так сторож видит и кэш данных из чужого модуля. По
+ * умолчанию каталог пуст, и полки нет — как у 404 на молчащей базе (shelf()
+ * в app/[lang]/not-found.tsx).
+ */
+const { cacheRuns, getDb, topCatalogGames } = vi.hoisted(() => ({
+  cacheRuns: [] as string[],
+  getDb: vi.fn(async () => ({})),
+  topCatalogGames: vi.fn(async (): Promise<SimilarGame[]> => []),
+}))
+vi.mock('next/cache', () => ({
+  unstable_cache:
+    <A extends unknown[], R>(fn: (...args: A) => Promise<R>, keyParts?: string[]) =>
+    async (...args: A) => {
+      cacheRuns.push(String(keyParts))
+      return fn(...args)
+    },
+}))
 // appBaseUrl — настоящий: метадата корня (metadataBase) берёт его оттуда же
-vi.mock('@/lib/server', async () => ({ getDb: async () => ({}), appBaseUrl: (await import('@/lib/origin')).appBaseUrl }))
-vi.mock('@/lib/db', () => ({ topCatalogGames: async () => [] }))
+vi.mock('@/lib/server', async () => ({ getDb, appBaseUrl: (await import('@/lib/origin')).appBaseUrl }))
+vi.mock('@/lib/db', () => ({ topCatalogGames }))
+// ViewTransition в react вне Next нет (его даёт канарейка React из сборки
+// Next): морф плитки полки здесь — просто её содержимое
+vi.mock('@/components/Morph', () => ({ GameMorph: ({ children }: { children: ReactNode }) => children }))
 // next/root-params вне сборки бросает при импорте (lib/i18n-server.ts)
 vi.mock('@/lib/i18n-server', () => ({ getLocale: async () => 'ru' }))
 // next/font/google — функция сборки, вне Next её нет; not-found и
@@ -40,11 +61,22 @@ const ROOT = path.join(__dirname, '..')
 const read = (...p: string[]) => fs.readFileSync(path.join(ROOT, ...p), 'utf8')
 const CYR = /[А-Яа-яЁё]/
 
+type ViewProps = Parameters<typeof NotFoundView>[0]
+
 /** Под провайдером языка — как под корневым layout: Link и поиск берут язык из него */
-async function view(locale: 'ru' | 'en'): Promise<string> {
-  const el = (await NotFoundView({ locale })) as ReactElement
+async function view(locale: 'ru' | 'en', props: Omit<ViewProps, 'locale'> = {}): Promise<string> {
+  const el = (await NotFoundView({ ...props, locale })) as ReactElement
   return renderToStaticMarkup(createElement(LocaleProvider, { locale } as ComponentProps<typeof LocaleProvider>, el))
 }
+
+/** Каталог больше одного ряда: полку, если её нарисовать, видно по ссылкам */
+const CATALOG: SimilarGame[] = Array.from({ length: 6 }, (_, i) => ({
+  appid: 100 + i,
+  name: `Game ${i}`,
+  headerImage: `https://cdn.akamai.steamstatic.com/steam/apps/${100 + i}/header.jpg`,
+  art: null,
+}))
+const gameLinks = (html: string) => html.match(/href="\/game\/\d+"/g) ?? []
 
 describe('мусорный адрес — в /_not-found, который рисует сервер', () => {
   test('правило уводит в /_not-found, а не на страницу с notFound()', () => {
@@ -111,9 +143,73 @@ describe('страница без экрана', () => {
    */
   test('граница not-found отдаёт тот же экран на языке сегмента', async () => {
     const { default: NotFound } = await import('@/app/[lang]/not-found')
-    const el = (await NotFound()) as ReactElement<{ locale: string }>
+    const el = (await NotFound()) as ReactElement<ViewProps>
     expect(el.type).toBe(NotFoundView)
     expect(el.props.locale).toBe('ru')
+  })
+})
+
+/**
+ * Граница not-found — без базы и без кэша данных.
+ *
+ * Next рисует границу not-found корневого layout вместе с КАЖДОЙ страницей
+ * под app/[lang] (проп notFound у LayoutRouter), и кэш данных с числом в
+ * revalidate, выполнившийся в ней, опускает срок всех страниц до своего.
+ * Так и было: полка 404 читала каталог через unstable_cache на сутки, и
+ * карточка игры с revalidate на неделю перегенерировалась раз в сутки, а
+ * /privacy и /support без revalidate стали ISR на сутки. Поэтому граница
+ * рисует экран без полки и не ходит ни в базу, ни в кэш — а сторож ловит и
+ * кэш, вписанный в неё через чужой модуль: next/cache здесь ведёт журнал.
+ *
+ * Каталог в этих тестах не пуст: нарисуй граница полку, её было бы видно.
+ */
+describe('граница not-found — без базы и без кэша данных', () => {
+  beforeEach(() => {
+    topCatalogGames.mockImplementation(async () => CATALOG)
+    topCatalogGames.mockClear()
+    getDb.mockClear()
+    cacheRuns.length = 0
+  })
+  afterEach(() => {
+    topCatalogGames.mockImplementation(async () => [])
+  })
+
+  test('граница не зовёт ни каталог, ни базу, ни кэш данных — и полки в ней нет', async () => {
+    const { default: NotFound } = await import('@/app/[lang]/not-found')
+    const el = (await NotFound()) as ReactElement<ViewProps>
+    expect(el.props.withShelf).toBe(false)
+    // Экран — тоже серверный и асинхронный: рисуем его тем, что вернула граница
+    const html = await view(el.props.locale as 'ru', el.props)
+    expect(html).toContain('Такой страницы нет')
+    expect(gameLinks(html)).toEqual([])
+    expect(topCatalogGames).not.toHaveBeenCalled()
+    expect(getDb).not.toHaveBeenCalled()
+    expect(cacheRuns).toEqual([])
+  })
+
+  test('сторож не слепой: экран с полкой, как у /_not-found, читает каталог и рисует ряд', async () => {
+    const html = await view('ru')
+    expect(topCatalogGames).toHaveBeenCalledTimes(1)
+    expect(html).toContain('Из каталога')
+    expect(gameLinks(html)).toHaveLength(4)
+  })
+
+  /*
+   * Кэш Next полке не нужен: /_not-found пререндерен раз на сборку, а
+   * unstable_cache хранил бы верх каталога и между деплоями (докблок shelf()).
+   */
+  test('полка читает каталог напрямую, без кэша Next', async () => {
+    await view('ru')
+    expect(cacheRuns).toEqual([])
+  })
+
+  test('молчащая база — экран открывается, просто без полки', async () => {
+    getDb.mockImplementationOnce(async () => {
+      throw new Error('TURSO_DATABASE_URL не задан')
+    })
+    const html = await view('ru')
+    expect(html).toContain('Такой страницы нет')
+    expect(gameLinks(html)).toEqual([])
   })
 })
 
