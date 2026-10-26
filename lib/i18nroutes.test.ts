@@ -296,8 +296,9 @@ describe('rewrites русской ветки', () => {
   })
 
   test('страница жанра — каждым адресом из generateStaticParams', async () => {
-    // Список жанров в правиле — то же выражение, что у страницы: разойдутся —
-    // жанр на русском адресе ушёл бы в 404
+    // Список жанров в правиле — то же выражение, что у страницы (его она
+    // отдаёт на продовой сборке): разойдутся — жанр на русском адресе ушёл бы
+    // в 404
     const page = fs.readFileSync(path.join(LANG_DIR, 'games', '[tag]', 'page.tsx'), 'utf8')
     expect(page).toContain(
       'return [...HUB_TAGS.map((tag) => ({ tag: HUB_GENRES[tag].slug })), ...HUB_FACETS.map((f) => ({ tag: f.slug }))]',

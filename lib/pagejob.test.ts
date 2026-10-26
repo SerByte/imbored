@@ -1462,7 +1462,7 @@ describe('карта сайта', () => {
     expect(rows[0].updatedAt).toBe(NOW)
   })
 
-  test('lastmod — самая поздняя из трёх отметок: заливка, обогащение, патчноут', async () => {
+  test('lastmod — обогащение или патчноут, а без них — заливка', async () => {
     // updated_at после массовой заливки у всех один и тот же, сигнал несут
     // обогащение и свежий патчноут — см. докблок sitemapGames
     const db = await freshDb()
@@ -1481,6 +1481,36 @@ describe('карта сайта', () => {
       { appid: 10, updatedAt: NOW },
       { appid: 20, updatedAt: NOW + 500 },
       { appid: 30, updatedAt: NOW + 900 },
+    ])
+  })
+
+  /*
+   * Массовая запись меты (catalog:promote, catalog:repair-names, прогрев
+   * библиотек) ставит updated_at = now каждой задетой строке. Стой он в том
+   * же MAX, что обогащение и патч, одна такая запись сдвинула бы lastmod у
+   * всей карты разом — и Bing перечитал бы её целиком.
+   */
+  test('переписанная мета lastmod обогащённой карточки не двигает', async () => {
+    const db = await freshDb()
+    await addGame(db, 10, 900)
+    await addGame(db, 20, 500)
+    await markPageEnriched(db, 10, NOW + 500)
+    await db.execute({
+      sql: `INSERT INTO news_items (appid, gid, title, url, published_at, kind, created_at, updated_at)
+            VALUES (20, 'g1', 't', 'u', ?, 'patch', ?, ?)`,
+      args: [NOW + 900, NOW, NOW],
+    })
+    // месяц спустя заливка переписала мету обеим — и третьей, необогащённой
+    await upsertGameMeta(db, meta(10, { reviewsTotal: 900 }), NOW + 30 * 86_400)
+    await upsertGameMeta(db, meta(20, { reviewsTotal: 500 }), NOW + 30 * 86_400)
+    await addGame(db, 30, 100)
+    await upsertGameMeta(db, meta(30, { reviewsTotal: 100 }), NOW + 30 * 86_400)
+
+    expect(await sitemapGames(db, 10)).toEqual([
+      { appid: 10, updatedAt: NOW + 500 },
+      { appid: 20, updatedAt: NOW + 900 },
+      // без обогащения и патчей — запасная отметка, сама запись меты
+      { appid: 30, updatedAt: NOW + 30 * 86_400 },
     ])
   })
 
