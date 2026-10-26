@@ -581,9 +581,10 @@ describe('строки для логов', () => {
 describe('роуты кронов', () => {
   const ROOT = path.join(__dirname, '..')
   const CRON_DIR = path.join(ROOT, 'app', 'api', 'cron')
+  // health и revalidate — не звенья: один ответ на вызов, без runChain и отметок
   const jobs = fs
     .readdirSync(CRON_DIR, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && e.name !== 'health')
+    .filter((e) => e.isDirectory() && e.name !== 'health' && e.name !== 'revalidate')
     .map((e) => e.name)
   const src = (job: string) => fs.readFileSync(path.join(CRON_DIR, job, 'route.ts'), 'utf8')
 

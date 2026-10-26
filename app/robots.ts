@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next'
-import { ROBOTS_DISALLOW } from '@/lib/robots'
+import { BLOCKED_CRAWLERS, ROBOTS_DISALLOW } from '@/lib/robots'
 import { appBaseUrl } from '@/lib/server'
 
 /**
@@ -21,14 +21,26 @@ import { appBaseUrl } from '@/lib/server'
  * Теперь гостя с них разворачивает proxy.ts, и индексировать там нечего тем
  * более. Если хабы когда-нибудь начнут отдавать содержание серверу, их надо
  * будет открыть — ради этого замер и записан.
+ *
+ * ВТОРАЯ ГРУППА — ЗАКРЫТО ВСЁ для ботов обучения моделей и SEO-сервисов
+ * (BLOCKED_CRAWLERS): они не приводят людей, а их обход хвоста ISR съедал
+ * лимиты Hobby — почему и кто там, в lib/robots.ts. Порядок групп краулеру
+ * не важен (он ищет свою метку), «*» первой — ради читающего файл человека и
+ * сторожа lib/robots.test.ts.
  */
 export default function robots(): MetadataRoute.Robots {
   return {
-    rules: {
-      userAgent: '*',
-      allow: '/',
-      disallow: [...ROBOTS_DISALLOW],
-    },
+    rules: [
+      {
+        userAgent: '*',
+        allow: '/',
+        disallow: [...ROBOTS_DISALLOW],
+      },
+      {
+        userAgent: [...BLOCKED_CRAWLERS],
+        disallow: '/',
+      },
+    ],
     sitemap: new URL('/sitemap.xml', appBaseUrl()).toString(),
   }
 }
