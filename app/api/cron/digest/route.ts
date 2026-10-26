@@ -67,7 +67,7 @@ export async function GET(req: Request) {
       maxDurationSec: maxDuration,
       maxLinks: MAX_LINKS,
       needsLlm: true,
-      totals: ['digested', 'сброшено'],
+      totals: ['digested', 'major', 'сброшено'],
       link: async ({ deadlineAt }) => {
         const slice = await runDigestSlice(db, { deadlineAt, limit: DIGEST_LIMIT })
         // Пересказ стоит и на карточке игры — строкой под заголовком патча,
@@ -82,8 +82,11 @@ export async function GET(req: Request) {
         // Пересказ переписывает tldr, а его рисует PatchRow — значит лента
         // после запуска выглядит иначе, даже если ни одной новой записи не
         // появилось. Тот же тег и та же логика, что в /api/cron/news: раз на
-        // запуск.
-        if ((totals.digested ?? 0) > 0) revalidateTag(NEWS_MAJOR_TAG, 'max')
+        // запуск и только если пересказ достался тому, что общая лента
+        // показывает (major, digestTouchesFeed в lib/newsjob). Пересказ
+        // хотфикса или патча игры ниже порога популярности ленту не меняет,
+        // а сброс стоит холодного чтения её записи кэша и обеих RSS-лент.
+        if ((totals.major ?? 0) > 0) revalidateTag(NEWS_MAJOR_TAG, 'max')
 
         /*
          * Страницы свежепересказанных патчей перегенерировать и объявить

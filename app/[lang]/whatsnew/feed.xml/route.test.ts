@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { setNewsDigest, setNewsDigestEn, upsertGameMeta, upsertNewsItems, type Db, type StoredNews } from '@/lib/db'
 import { freshDb, params } from '@/lib/testing/route'
-import { GET } from './route'
+import { MAJOR_TTL_SEC } from '@/lib/whatsnewcache'
+import { GET, revalidate } from './route'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
@@ -119,5 +120,40 @@ describe('/whatsnew/feed.xml: язык ленты', () => {
     // Русское тело без пересказа (Dota 2) — по-прежнему не в английской ленте
     expect(xml).not.toContain('/en/game/570/')
     expect(xml).not.toMatch(/[А-Яа-яЁё]/)
+  })
+})
+
+/**
+ * Лента — запись ISR, и перегенерация ничего не пишет, только если вывод тот
+ * же байт в байт. С lastBuildDate = «сейчас» каждая перегенерация была новой
+ * записью — раз в десять минут, по опросу ридера, в обоих языках.
+ */
+describe('/whatsnew/feed.xml: перегенерация без новых записей — тот же документ', () => {
+  const built = (sec: number) => `<lastBuildDate>${new Date(sec * 1000).toUTCString()}</lastBuildDate>`
+
+  test('lastBuildDate — дата самой свежей записи канала, а не время сборки', async () => {
+    const ru = await feed('ru')
+    const en = await feed('en')
+    vi.setSystemTime((NOW + 3 * DAY + 17) * 1000)
+    expect(await feed('ru')).toBe(ru)
+    expect(await feed('en')).toBe(en)
+    expect(ru).toContain(built(NOW - DAY))
+    // У английской свой состав, и дата — её же свежей записи: без английского
+    // у CS2 в ней остаётся одна Dota 2, двухдневная
+    await db.execute('UPDATE news_items SET tldr_en = NULL WHERE appid = 730')
+    await setNewsDigestEn(db, 570, '5700', { tldrEn: 'Hero changes before the tournament.' }, NOW)
+    const only570 = await feed('en')
+    expect(only570.match(/<item>/g)).toHaveLength(1)
+    expect(only570).toContain(built(NOW - 2 * DAY))
+  })
+
+  /*
+   * Числовой revalidate у unstable_cache опускает срок записи ISR, которая его
+   * читает, до своего (next/dist/server/web/spec-extension/unstable-cache.js).
+   * Стояло 600 у обоих — и поднятый отдельно срок ленты ничего бы не дал.
+   */
+  test('срок ленты — ровно срок cachedMajorFeed: сутки, страховка за тегом news:major', () => {
+    expect(revalidate).toBe(MAJOR_TTL_SEC)
+    expect(revalidate).toBe(86_400)
   })
 })

@@ -8,7 +8,9 @@ import {
   getUnsummarizedEn,
   setNewsDigest,
   upsertGameMeta,
+  upsertNewsItems,
   type Db,
+  type StoredNews,
 } from './db'
 import { digestLinkVerdict } from './cron'
 import type { RawNewsItem } from './news'
@@ -175,6 +177,38 @@ describe('runDigestSlice: пересказы отдельно от опроса'
 
     expect(res.digested).toBe(1)
     expect(res.cards).toEqual([730])
+  })
+
+  /*
+   * major — по нему роут сбрасывает тег общей ленты (NEWS_MAJOR_TAG): её
+   * запись кэша и обе RSS-ленты. Пересказ патча игры ниже порога
+   * популярности (библиотечные стоят в той же очереди) ленту не меняет, а
+   * вердикт «хотфикс» у крупного патча — меняет: строка из неё уходит.
+   */
+  test('major — пересказы того, что видно в общей ленте, и только они', async () => {
+    const db = await freshDb()
+    await seedPatch(db, 730, '1')
+    await seedPatch(db, 570, '1')
+    await seedGame(db, 4000, 'Игра 4000', 500)
+    await enrollNewsPoll(db, [4000], 1, NOW)
+    await runNewsSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      fetchNews: feedOf({ 4000: [post(4000, '1', 'Обновление игры', PATCH)] }),
+      digestLimit: 0,
+    })
+
+    const res = await runDigestSlice(db, {
+      nowSec: NOW + 4000,
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      digestFn: async (a: DigestArgs) =>
+        a.gameName === 'Игра 570' ? { tldr: 'Поправили одну карту.', scale: 'hotfix' as const } : okDigest(),
+    })
+
+    expect(res.digested).toBe(3)
+    expect(res.cards.sort((a, b) => a - b)).toEqual([570, 730, 4000])
+    // 730 — пересказ в ленте, 570 — ушёл из неё вердиктом; 4000 в ней не было
+    expect(res.major).toBe(2)
   })
 
   test('вердикт «не патч» убирает строку с карточки — и карточку сбрасываем', async () => {
@@ -516,6 +550,119 @@ describe('runNewsSlice', () => {
     const again = await runNewsSlice(db, { ...opts, nowSec: NOW + 200_000 })
     expect(again.polled).toBe(2)
     expect(again.cards).toEqual([])
+  })
+
+  /*
+   * rank — MAX(отзывы, онлайн) — переписывается у всех свежих постов игры
+   * после каждой сверки отзывов, а горячие игры опрашиваются ежедневно. Крон
+   * видел в этом «лента поменялась»: сбрасывал карточку и архив в обеих
+   * языковых копиях, а в конце запуска — тег общей ленты. Ни одна страница
+   * при этом не менялась.
+   */
+  test('переписанный один вес — не перемена: ни записей, ни карточек, ни сброса ленты', async () => {
+    const db = await freshDb()
+    await seedGame(db, 730, 'CS2', 9_000_000)
+    await enrollNewsPoll(db, [730], 1, NOW)
+    const opts = {
+      deadlineAt: Date.now() + ЗАПАС_MS,
+      fetchNews: feedOf({ 730: [post(730, '1', 'Обновление Counter-Strike 2', PATCH)] }),
+      digestLimit: 0,
+    }
+
+    const first = await runNewsSlice(db, { ...opts, nowSec: NOW + 4000 })
+    expect(first).toMatchObject({ inserted: 1, major: 1, cards: [730] })
+
+    // сверка отзывов сдвинула вес CS2 — следующий опрос перепишет его в строке
+    await db.execute('UPDATE games SET reviews_total = 9100000 WHERE appid = 730')
+    await db.execute('UPDATE news_poll SET next_at = 0')
+    const again = await runNewsSlice(db, { ...opts, nowSec: NOW + 200_000 })
+    expect(again.polled).toBe(1)
+    expect(again).toMatchObject({ inserted: 0, major: 0, cards: [] })
+    // а сам вес в строке свежий: по нему общая лента отсекает непопулярное
+    expect((await getGameNews(db, 730))[0]?.rank).toBe(9_100_000)
+  })
+
+  /*
+   * Карточка и архив показывают только патчи: новая новость их не меняет —
+   * кроме случая, когда ретенция (NEWS_KEEP) сняла ради неё старый патч.
+   */
+  test('новость сбрасывает карточку, только если ретенция сняла ради неё патч', async () => {
+    const db = await freshDb()
+    await seedGame(db, 730, 'CS2', 9_000_000)
+    await enrollNewsPoll(db, [730], 1, NOW)
+    // старейший пост игры — патч, за ним двадцать восемь новостей: место есть ещё на одну
+    const old = (gid: string, at: number, kind: 'patch' | 'news'): StoredNews => ({
+      appid: 730,
+      gid,
+      title: kind === 'patch' ? 'Обновление Counter-Strike 2' : 'Скидки выходного дня',
+      url: `https://store.steampowered.com/news/app/730/view/${gid}`,
+      publishedAt: at,
+      kind,
+      scale: kind === 'patch' ? 'major' : null,
+      blocks: [],
+      bodyHash: `h${gid}`,
+      rank: 9_000_000,
+    })
+    await upsertNewsItems(
+      db,
+      [old('p', NOW - 100 * DAY, 'patch'), ...Array.from({ length: 28 }, (_, i) => old(`n${i}`, NOW - 90 * DAY + i, 'news'))],
+      NOW,
+    )
+    const sale = (gid: string, at: number) => ({ ...post(730, gid, 'Скидки выходного дня', ['Скидка 50%']), publishedAt: at })
+    const opts = { deadlineAt: Date.now() + ЗАПАС_MS, digestLimit: 0 }
+
+    const fits = await runNewsSlice(db, { ...opts, nowSec: NOW + 4000, fetchNews: feedOf({ 730: [sale('s1', NOW - 10)] }) })
+    expect(fits.inserted).toBe(1)
+    expect(fits.cards).toEqual([])
+
+    await db.execute('UPDATE news_poll SET next_at = 0')
+    const overflow = await runNewsSlice(db, { ...opts, nowSec: NOW + 200_000, fetchNews: feedOf({ 730: [sale('s2', NOW - 5)] }) })
+    expect(overflow.inserted).toBe(1)
+    // тридцать первая строка вытеснила старый патч — с карточки и из архива
+    expect(overflow.cards).toEqual([730])
+    expect(await getGameNews(db, 730)).toEqual([])
+  })
+
+  /*
+   * Новость и хотфикс общая лента не показывает, игру ниже FEED_RANK_FLOOR
+   * — тоже: тег ленты из-за них не сбрасываем. Переписанную видимо запись
+   * популярной игры — сбрасываем всегда: какой она была до записи, апсерт не
+   * говорит, а крупный патч, ставший новостью, из ленты уходит.
+   */
+  test('major — только то, что может поменять общую ленту крупных патчей', async () => {
+    const db = await freshDb()
+    await seedGame(db, 730, 'CS2', 9_000_000)
+    await seedGame(db, 4000, 'Инди', 500)
+    await enrollNewsPoll(db, [730, 4000], 1, NOW)
+    const hotfix = {
+      ...post(730, '9', 'Обновление Counter-Strike 2', []),
+      blocks: [{ kind: 'p' as const, runs: [{ text: 'Карта обновлена до версии из мастерской.' }] }],
+    }
+    const sale = post(730, '2', 'Скидки выходного дня', ['Скидка 50%'])
+    const opts = { deadlineAt: Date.now() + ЗАПАС_MS, digestLimit: 0 }
+
+    const quiet = await runNewsSlice(db, {
+      ...opts,
+      nowSec: NOW + 4000,
+      fetchNews: feedOf({ 730: [sale, hotfix], 4000: [post(4000, '1', 'Обновление Инди', PATCH)] }),
+    })
+    expect(quiet.inserted).toBe(3)
+    expect(quiet.major).toBe(0)
+    // карточки — по-прежнему по патчам любого масштаба
+    expect(quiet.cards.sort((a, b) => a - b)).toEqual([730, 4000])
+
+    await db.execute('UPDATE news_poll SET next_at = 0')
+    const loud = await runNewsSlice(db, {
+      ...opts,
+      nowSec: NOW + 200_000,
+      fetchNews: feedOf({
+        730: [post(730, '1', 'Обновление Counter-Strike 2', PATCH), { ...sale, title: 'Скидки выходного дня: продлены' }, hotfix],
+        4000: [post(4000, '1', 'Обновление Инди', PATCH)],
+      }),
+    })
+    // новый крупный патч и переписанная новость популярной игры
+    expect(loud.inserted).toBe(2)
+    expect(loud.major).toBe(2)
   })
 
   test('пересказ доезжает до записи и попадает в общую ленту', async () => {
@@ -928,7 +1075,8 @@ describe('пересказ по-английски', () => {
     expect(calls[0]).toMatchObject({ mode: 'en', gameName: 'Game 730' })
     // тело — сохранённое в базе, а не новый поход в Steam
     expect(calls[0]!.body).toContain('Исправлен вылет')
-    expect(res).toMatchObject({ digested: 1, english: 1, cards: [730], hasMore: false, stopped: 'done' })
+    // major: английский пересказ крупного патча популярной игры виден на /en/whatsnew
+    expect(res).toMatchObject({ digested: 1, english: 1, major: 1, cards: [730], hasMore: false, stopped: 'done' })
     const [item] = await getGameNews(db, 730)
     // русский пересказ и масштаб — от основного пересказа: догон их не трогает
     expect(item).toMatchObject({

@@ -8355,13 +8355,55 @@ const EN_KEPT = `news_items.body_hash IS excluded.body_hash
  * сайта (sitemapNews) прыгал бы раз в неделю у страниц, не изменившихся ни
  * на байт, — шум, после которого Google перестаёт верить lastmod всего
  * сайта (см. sitemapGames).
+ *
+ * Возвращает число записанных строк — вместе с переписанными ради одного
+ * веса. Что из них видно на страницах, говорит writeNewsItems.
  */
 export async function upsertNewsItems(
   db: Db,
   items: StoredNews[],
   nowSec: number,
 ): Promise<number> {
-  if (!items.length) return 0
+  return (await writeNewsItems(db, items, nowSec)).rows
+}
+
+/**
+ * Строка, которую апсерт вставил или переписал так, что это видно на
+ * страницах: новое тело, заголовок или вид поста. Вид и масштаб — уже
+ * записанные; какими они были до записи, апсерт не знает.
+ */
+export type NewsShownWrite = { gid: string; kind: NewsKind; scale: NewsScale | null; isNew: boolean }
+
+export type NewsWrite = {
+  /** Сколько строк записано — с переписанными ради одного веса (rank) */
+  rows: number
+  /** Записанное, что видно на страницах: без строк, где сдвинулся один вес */
+  shown: NewsShownWrite[]
+}
+
+/**
+ * upsertNewsItems с ответом, ЧТО именно записано.
+ *
+ * Зачем различать. Строку переписывает и один сдвинувшийся вес (rank —
+ * MAX(отзывы, онлайн), см. getGameRanks): после каждой недельной сверки
+ * отзывов — у всех свежих постов игры, а онлайн двигают ещё и прогревы. Крон
+ * новостей видел в этом числе «лента поменялась» и на каждом таком опросе
+ * сбрасывал карточку и архив игры в обеих языковых копиях, а в конце запуска
+ * — тег общей ленты (NEWS_MAJOR_TAG): её запись кэша и обе RSS-ленты
+ * перегенерировались почти каждый час, хотя ни одна страница не поменялась.
+ *
+ * Как различаем — без второго чтения: RETURNING отдаёт строку уже после
+ * записи, и updated_at в ней — ровно ответ. Видимую перемену апсерт датирует
+ * этим опросом (nowSec), переписанный один вес оставляет прежнюю дату (CASE
+ * выше), новая строка датирована nowSec и в created_at. Строк, которые апсерт
+ * не тронул (WHERE ложен), RETURNING не отдаёт вовсе.
+ */
+export async function writeNewsItems(
+  db: Db,
+  items: StoredNews[],
+  nowSec: number,
+): Promise<NewsWrite> {
+  if (!items.length) return { rows: 0, shown: [] }
   const stmts = items.map((n) => ({
     sql: `INSERT INTO news_items (${NEWS_BASE_COLS}, tldr_at, tldr_tries, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, ?, ?)
@@ -8414,7 +8456,8 @@ export async function upsertNewsItems(
           WHERE news_items.body_hash IS NOT excluded.body_hash
              OR news_items.title IS NOT excluded.title
              OR news_items.kind IS NOT excluded.kind
-             OR news_items.rank IS NOT excluded.rank`,
+             OR news_items.rank IS NOT excluded.rank
+          RETURNING gid, kind, scale, created_at, updated_at`,
     args: [
       n.appid,
       n.gid,
@@ -8432,7 +8475,26 @@ export async function upsertNewsItems(
     ],
   }))
   const res = await db.batch(stmts, 'write')
-  return res.reduce((sum, r) => sum + Number(r.rowsAffected ?? 0), 0)
+  // Записанные строки считаем по RETURNING, а не по rowsAffected: у
+  // оператора, который отдаёт строки, локальный клиент libsql (sqlite3)
+  // rowsAffected не заполняет — там всегда 0. Строка RETURNING — ровно одна
+  // вставленная или переписанная строка
+  let rows = 0
+  const shown: NewsShownWrite[] = []
+  for (const r of res) {
+    rows += r.rows.length
+    for (const row of r.rows as unknown as Array<{
+      gid: string
+      kind: NewsKind
+      scale: NewsScale | null
+      created_at: number
+      updated_at: number
+    }>) {
+      if (Number(row.updated_at) !== nowSec) continue
+      shown.push({ gid: String(row.gid), kind: row.kind, scale: row.scale, isNew: Number(row.created_at) === nowSec })
+    }
+  }
+  return { rows, shown }
 }
 
 /**
@@ -9252,15 +9314,23 @@ export async function resetFlawedDigests(db: Db): Promise<number[] | null> {
   return [...appids]
 }
 
-/** Ретенция на игру. Держим больше, чем берём из фида, иначе вечный цикл
- *  «выкинули — перекачали — снова выкинули» на каждом опросе. */
-export async function pruneNewsForApp(db: Db, appid: number, keep = 30): Promise<void> {
-  await db.execute({
+/**
+ * Ретенция на игру. Держим больше, чем берём из фида, иначе вечный цикл
+ * «выкинули — перекачали — снова выкинули» на каждом опросе.
+ *
+ * Возвращает, сколько снятых строк были патчами: их видно на карточке и в
+ * архиве обновлений игры, и тогда крону новостей есть что сбрасывать даже
+ * ради вставленной новости (runNewsSlice). Снятые новости не видно нигде.
+ */
+export async function pruneNewsForApp(db: Db, appid: number, keep = 30): Promise<number> {
+  const res = await db.execute({
     sql: `DELETE FROM news_items WHERE appid = ? AND gid NOT IN (
             SELECT gid FROM news_items WHERE appid = ? ORDER BY published_at DESC LIMIT ?
-          )`,
+          )
+          RETURNING kind`,
     args: [appid, appid, keep],
   })
+  return (res.rows as unknown as Array<{ kind: NewsKind }>).filter((r) => r.kind === 'patch').length
 }
 
 /* ---------- очередь опроса новостей ---------- */

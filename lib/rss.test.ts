@@ -86,6 +86,26 @@ describe('rssFeed', () => {
     expect(empty).toContain('<channel>')
     expect(empty).not.toContain('<item>')
   })
+
+  /*
+   * Общая лента — запись ISR, и перегенерация без новых записей ничего не
+   * пишет, только если вывод тот же байт в байт; личная отвечает 304 по ETag
+   * от тела. «Сейчас» в lastBuildDate ломало и то и другое.
+   */
+  test('без builtAt — lastBuildDate по самой свежей записи, без записей — тега нет', () => {
+    const at = (iso: string) => Date.parse(iso) / 1000
+    const item = (publishedAt: number) => ({ title: 't', link: `l${publishedAt}`, publishedAt, description: 'd' })
+    const xml = rssFeed({
+      title: 't',
+      link: 'l',
+      description: 'd',
+      items: [item(at('2026-09-24T10:00:00Z')), item(at('2026-09-25T18:00:00Z'))],
+    })
+    expect(xml).toContain('<lastBuildDate>Fri, 25 Sep 2026 18:00:00 GMT</lastBuildDate>')
+    const empty = rssFeed({ title: 't', link: 'l', description: 'd', items: [] })
+    expect(empty).not.toContain('<lastBuildDate>')
+    expect(empty).toContain('<language>ru</language>\n\n  </channel>')
+  })
 })
 
 describe('язык ленты', () => {
