@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { ResolvingMetadata } from 'next'
 import Link from '@/components/Link'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { GameArt } from '@/components/GameArt'
 import { SearchLauncher } from '@/components/SearchLauncher'
 import { TilePending } from '@/components/TilePending'
@@ -13,8 +13,17 @@ import type { GameMeta, GameSemantics } from '@/lib/types'
 import { flight as flightOf, imageHints, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
 import { loadGenre } from './[tag]/load'
-import GenrePage, { generateMetadata, generateStaticParams } from './[tag]/page'
-import GamesHubPage, { generateMetadata as generateHubMetadata } from './page'
+import GenrePage, {
+  dynamicParams as genreDynamicParams,
+  generateMetadata,
+  generateStaticParams,
+  revalidate as genreRevalidate,
+} from './[tag]/page'
+import GamesHubPage, {
+  dynamicParams as hubDynamicParams,
+  generateMetadata as generateHubMetadata,
+  revalidate as hubRevalidate,
+} from './page'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
@@ -81,6 +90,11 @@ beforeEach(async () => {
       args: [30_000 - appid, appid],
     })
   }
+})
+
+// Пререндер жанров зависит от VERCEL_ENV (prerenderAtBuild) — тесты его подменяют
+afterEach(() => {
+  vi.unstubAllEnvs()
 })
 
 describe('хаб /games', () => {
@@ -187,6 +201,56 @@ describe('страница жанра /games/<slug>', () => {
 })
 
 /**
+ * Кэш хаба и страниц жанра — ISR Writes лимита Hobby. Неделя, а не сутки:
+ * запись хаба — ~225 блоков на язык, жанра — 55–90, и вывод расходится с
+ * прошлым почти каждый день (докблоки revalidate в page.tsx). Next читает
+ * revalidate только литералом — поэтому сверяется и сам литерал.
+ *
+ * Пререндер жанров — только на продовой сборке (prerenderAtBuild): превью
+ * пререндерили те же 68 страниц на каждой сборке. Вне прода список пустой,
+ * и страница стоит под dynamicParams = true — с false пустой список значил
+ * бы 404 на каждый жанр превью. Чужой адрес от этого 404 быть не перестал:
+ * его решает страница (notFound), а не сборка.
+ */
+describe('кэш хаба и страниц жанра', () => {
+  const literal = (file: string) =>
+    Number(
+      fs
+        .readFileSync(path.join(__dirname, file), 'utf8')
+        .match(/export const revalidate = ([\d_]+)\n/)?.[1]
+        ?.replace(/_/g, ''),
+    )
+
+  test('неделя — у хаба и у страницы жанра, литералом', () => {
+    expect(hubRevalidate).toBe(7 * 86_400)
+    expect(genreRevalidate).toBe(7 * 86_400)
+    expect(literal('page.tsx')).toBe(hubRevalidate)
+    expect(literal('[tag]/page.tsx')).toBe(genreRevalidate)
+  })
+
+  test('жанры пререндерятся только на продовой сборке, хаб остаётся закрытым по языку', () => {
+    vi.stubEnv('VERCEL_ENV', undefined)
+    expect(generateStaticParams()).toEqual([])
+    vi.stubEnv('VERCEL_ENV', 'preview')
+    expect(generateStaticParams()).toEqual([])
+    vi.stubEnv('VERCEL_ENV', 'production')
+    expect(generateStaticParams().length).toBeGreaterThan(30)
+
+    expect(genreDynamicParams).toBe(true)
+    // у хаба других параметров, кроме языка, нет: чужой язык — 404 без рендера
+    expect(hubDynamicParams).toBe(false)
+  })
+
+  test('чужой адрес под dynamicParams = true — 404 страницы, а не пустой жанр', async () => {
+    const params = (tag: string) => ({ params: Promise.resolve({ tag, lang: 'en' }) })
+    await expect(GenrePage(params('no-such-genre'))).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK;404/)
+    expect(await generateMetadata(params('no-such-genre'))).toEqual({})
+    // знакомый адрес на той же сборке без пререндера — рисуется
+    await expect(GenrePage(params('open-world'))).resolves.toBeDefined()
+  })
+})
+
+/**
  * Подборки по факту — тот же сегмент /games/<slug>, что у жанров
  * (lib/gamehub, HUB_FACETS). Здесь — то, ради чего они заведены: «с другом»
  * не отдаёт верх списка Dota 2, «на 20 минут» не называет короткой то, что
@@ -233,7 +297,8 @@ describe('подборки /games/<slug>', () => {
       return m ? [Number(m[1])] : []
     })
 
-  test('адреса подборок собираются на сборке рядом с жанрами', () => {
+  test('адреса подборок собираются на продовой сборке рядом с жанрами', () => {
+    vi.stubEnv('VERCEL_ENV', 'production')
     const slugs = generateStaticParams().map((p) => p.tag)
     for (const f of HUB_FACETS) expect(slugs).toContain(f.slug)
     expect(slugs).toContain('open-world')
@@ -388,8 +453,8 @@ describe('английские хаб и страница жанра', () => {
 
   /*
    * Подпись хаба — у страницы, а не у layout сегмента: метаданные layout
-   * наследовала бы 404 жанра (/games/<нет такого>, dynamicParams = false у
-   * [tag]), и её голова называлась бы хабом (докблок META в page.tsx).
+   * наследовала бы 404 жанра (/en/games/<нет такого>, notFound() у [tag]),
+   * и её голова называлась бы хабом (докблок META в page.tsx).
    * Строка title без своего шаблона — шаблон корня Next ставит к ней сам.
    * Русская пара — та же, что до перевода: ownAddress('/games', { title,
    * description }) у страницы.

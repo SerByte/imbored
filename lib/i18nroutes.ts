@@ -28,7 +28,10 @@ const SEG = '[^/]+'
 /** Файловая карточка маршрута (…/opengraph-image): по ней старые ссылки без /ru ходят за картинкой */
 const CARD = '/opengraph-image'
 
-/** Адреса страниц жанров — ровно generateStaticParams из app/[lang]/games/[tag]/page.tsx */
+/**
+ * Адреса страниц жанров — ровно список из generateStaticParams
+ * app/[lang]/games/[tag]/page.tsx: тот, что функция отдаёт на продовой сборке
+ */
 const GENRE_SLUGS = [...HUB_TAGS.map((tag) => HUB_GENRES[tag].slug), ...HUB_FACETS.map((f) => f.slug)]
 
 /**
@@ -50,8 +53,10 @@ const GENRE_SLUGS = [...HUB_TAGS.map((tag) => HUB_GENRES[tag].slug), ...HUB_FACE
  * Параметр — любой сегмент: есть ли такая игра, комната или выбор, решает
  * страница (её notFound() — та же оболочка, так было и до перевода у
  * /game/<нет такой>). Исключение — жанры: их список известен заранее, и
- * страница стоит под dynamicParams = false; чужой жанр здесь не
- * переписывается, иначе промах сборки упал бы в ту же [...missing].
+ * чужой жанр здесь не переписывается — он уходит в статическую /_not-found,
+ * а не в notFound() страницы (она под dynamicParams = true: вне прода жанры
+ * не пререндерятся, см. app/[lang]/games/[tag]/page.tsx), то есть без
+ * функции и без записи ISR на каждый адрес сканера.
  */
 const SECTION_SHAPES: Record<(typeof LOCALIZED_SECTIONS)[number], string> = {
   compat: `compat(?:/${SEG}(?:${CARD})?)?`,
