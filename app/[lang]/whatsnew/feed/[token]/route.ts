@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { feedLinkOwner, getGamesMetaLite, getLatestSnapshotMinutes, getRssFeedForApps } from '@/lib/db'
 import { FEED_POLL_LIMIT, FEED_POLL_WINDOW_SEC, feedTokenHash, isFeedToken } from '@/lib/feedlink'
 import { newsDescription, newsPageTitle, newsPath, newsTitleOn } from '@/lib/newspage'
@@ -53,6 +54,17 @@ import { htmlLang, isLocale, lp, tr } from '@/lib/i18n'
  * (FEED_POLL_LIMIT) отсекает утёкшую ссылку под скриптом.
  * Потолок — по steamid владельца: под этим ключом forgetUser найдёт счётчик.
  *
+ * Повторный опрос без перемен — 304 без тела. Ридеры (Feedly, Inoreader,
+ * телеграм-боты) ходят каждые четверть часа, а лента меняется от силы
+ * несколько раз в сутки: без валидатора каждый опрос вёз из функции весь
+ * XML тридцати записей. ETag — хэш самого тела, а не дат записей: пересказ,
+ * дописанный к старому патчу, меняет описание без новой даты, и Last-Modified
+ * по датам ответил бы на него 304. Тело для этого собирается как обычно —
+ * функция, база и потолок опросов стоят те же, экономится только передача.
+ * Поэтому в теле нет «сейчас»: lastBuildDate — дата самой свежей записи
+ * (rssFeed без builtAt), иначе хэш менялся бы каждую секунду. Ключ и язык в
+ * хэш входить не обязаны: ETag сверяется только с тем же адресом.
+ *
  * Журнал запросов хостинга видит путь, а с ним и ключ, — как у любой
  * секретной ссылки. Ключ даёт только чтение этой ленты и гасится
  * перевыпуском; поэтому мы его и не прячем от журнала, а делаем дешёвым
@@ -82,7 +94,35 @@ function miss(): Response {
   })
 }
 
-export async function GET(_req: Request, ctx: { params: Promise<{ lang: string; token: string }> }): Promise<Response> {
+/**
+ * Лента: Cache-Control и noindex — одни у 200 и у 304, иначе ридер, получив
+ * 304, забыл бы, сколько держать копию (RFC 9110, 15.4.5).
+ */
+const FEED_HEADERS = {
+  // Десять минут: чаще новые патчи и не приезжают, а вежливый ридер не будит
+  // функцию лишний раз
+  'Cache-Control': 'private, max-age=600',
+  'X-Robots-Tag': 'noindex',
+} as const
+
+/** Сильный ETag от тела: одинаковое тело — тот же тег на любом инстансе */
+function etagOf(body: string): string {
+  return `"${createHash('sha256').update(body).digest('base64url').slice(0, 27)}"`
+}
+
+/**
+ * If-None-Match: список тегов или «*». Сравнение слабое (RFC 9110, 13.1.2):
+ * сжатие по дороге может приписать нашему тегу W/, и ридер вернёт его таким.
+ */
+function matchesEtag(header: string | null, etag: string): boolean {
+  if (!header) return false
+  return header.split(',').some((t) => {
+    const tag = t.trim()
+    return tag === '*' || tag.replace(/^W\//, '') === etag
+  })
+}
+
+export async function GET(req: Request, ctx: { params: Promise<{ lang: string; token: string }> }): Promise<Response> {
   const { lang, token } = await ctx.params
   // Язык не из LOCALES (/_x/…) — 404: notFound() корневого layout до обработчика не доходит
   if (!isLocale(lang)) return miss()
@@ -141,7 +181,6 @@ export async function GET(_req: Request, ctx: { params: Promise<{ lang: string; 
           en: 'Major patches for games in your library, in short.',
         }),
     language: htmlLang(locale),
-    builtAt: now,
     items: items.map((item) => {
       const game = metas.get(item.appid)?.name
       // Пересказ — на языке ленты: на /en русского нет (docs/i18n.md, п. 8)
@@ -155,13 +194,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ lang: string; 
       }
     }),
   })
+  const etag = etagOf(xml)
+  if (matchesEtag(req.headers.get('If-None-Match'), etag)) {
+    return new Response(null, { status: 304, headers: { ...FEED_HEADERS, ETag: etag } })
+  }
   return new Response(xml, {
-    headers: {
-      'Content-Type': 'application/rss+xml; charset=utf-8',
-      // Десять минут — как перегенерация общей ленты: чаще новые патчи и не
-      // приезжают, а вежливый ридер не будит функцию лишний раз
-      'Cache-Control': 'private, max-age=600',
-      'X-Robots-Tag': 'noindex',
-    },
+    headers: { ...FEED_HEADERS, 'Content-Type': 'application/rss+xml; charset=utf-8', ETag: etag },
   })
 }
