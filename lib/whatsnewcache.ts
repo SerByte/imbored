@@ -46,12 +46,30 @@ import { getDb } from './server'
 export const NEWS_MAJOR_TAG = 'news:major'
 
 /**
- * Десять минут — это потолок задержки на случай, если инвалидация по тегу не
+ * Сутки — это потолок задержки на случай, если инвалидация по тегу не
  * доехала (запуск крона, снятый по сроку до своего конца, — revalidateTag там
- * раз на запуск, в конце; ручной прогон скрипта мимо роутов). Нормальный путь
- * обновления — revalidateTag, а не истечение.
+ * раз на запуск, в конце; ручной прогон скрипта мимо роутов) или перемену
+ * тег не сообщает вовсе (игра перешла порог FEED_RANK_FLOOR одним весом — см.
+ * feedTouched в lib/newsjob). Нормальный путь обновления — revalidateTag, а
+ * не истечение.
+ *
+ * Стояло десять минут, и число это не только про запись кэша. unstable_cache
+ * с числовым revalidate, прочитанный при статической генерации, опускает
+ * revalidate ВСЕЙ объемлющей записи ISR до своего, если тот меньше
+ * (next/dist/server/web/spec-extension/unstable-cache.js: workUnitStore.revalidate
+ * для 'prerender-legacy'; app-route берёт его в collectedRevalidate). Так
+ * /whatsnew/feed.xml с любым своим revalidate перегенерировался раз в десять
+ * минут в обоих языках — по опросу любого ридера. Поэтому число здесь и
+ * revalidate ленты (app/[lang]/whatsnew/feed.xml) меняются только вместе:
+ * лента со своим сроком больше этого всё равно жила бы этим. Сторожит
+ * route.test.ts ленты. false здесь тоже не капкан (Next не опускает срок
+ * записи из-за бесконечного), но оставил бы ленту без страховки вовсе.
+ *
+ * Голове (/api/whatsnew/head) и странице /whatsnew сутки ничего не меняют:
+ * обе force-dynamic, читают эту же запись и получают новое по тегу, как и
+ * раньше.
  */
-const MAJOR_TTL_SEC = 600
+export const MAJOR_TTL_SEC = 86_400
 
 async function loadMajorFeed(limit: number, minRank: number): Promise<StoredNews[]> {
   // getDb внутри кэшируемой функции — можно: она не читает ни cookies, ни

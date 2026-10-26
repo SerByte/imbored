@@ -24,8 +24,9 @@ import {
   resetFlawedDigests,
   setNewsDigest,
   setNewsDigestEn,
-  upsertNewsItems,
+  writeNewsItems,
   type Db,
+  type NewsShownWrite,
   type NewsVerdict,
   type PollOutcome,
   type PollStatus,
@@ -39,6 +40,7 @@ import { claudeNewsDigest, isPersistentOutage, llmAvailable, LLM_MIN_BUDGET_MS, 
 import { takeLlmBudget } from './llmcap'
 import { bodyHash, detectLang, fetchGameNews, isPatchNote, looksTrivial, newsText } from './news'
 import { blocksToText } from './steamhtml'
+import { FEED_RANK_FLOOR } from './whatsnewfeed'
 
 const HOUR = 3600
 const DAY = 86_400
@@ -116,13 +118,28 @@ const neutralName = (appid: number) => `App ${appid}`
 
 export type SliceResult = {
   polled: number
+  /**
+   * Записи, новые или переписанные так, что это видно на страницах (тело,
+   * заголовок, вид поста — writeNewsItems). Строки, где сдвинулся один вес
+   * (rank), сюда не входят: «записей» в отметке крона они не прибавляли
+   * ничего, кроме шума.
+   */
   inserted: number
   digested: number
   /**
+   * Сколько из записанного могло поменять общую ленту крупных патчей —
+   * /whatsnew, /api/whatsnew/head и обе RSS-ленты, все из одной записи
+   * cachedMajorFeed. Роут сбрасывает её тег (NEWS_MAJOR_TAG) только при
+   * major > 0, а не при любой записи: см. feedTouched.
+   */
+  major: number
+  /**
    * Игры, у которых опрос поменял ленту патчей карточки: роут сбрасывает их
-   * адреса в ISR (lib/gamecache) — карточку и архив обновлений игры. Лента
-   * без единого патча сюда не попадает — карточка показывает только патчи
-   * (getGameNews).
+   * адреса в ISR (lib/gamecache) — карточку и архив обновлений игры. Новая
+   * новость сюда не попадает — карточка и архив показывают только патчи
+   * (getGameNews), — разве что ретенция сняла ради неё старый патч.
+   * Переписанный один вес — тоже нет: карточка берёт из него лишь бит «в
+   * каталоге ли игра» (cardNews в lib/gamepage), см. runNewsSlice.
    *
    * Переопрос, переписавший «патч» в новость после правки классификатора,
    * карточку не меняет и сброса не требует: карточка сама сверяет каждую
@@ -222,6 +239,29 @@ export function nextPollAt(
 }
 
 /**
+ * Могла ли записанная опросом строка поменять общую ленту крупных патчей —
+ * ту, что выбирает getMajorFeedHead: kind = 'patch', scale = 'major', вес не
+ * ниже FEED_RANK_FLOOR.
+ *
+ * Новая строка — только если она сама крупный патч популярной игры: новость
+ * или хотфикс лента не покажет. Переписанная видимо — всегда, если игра
+ * проходит по весу: какой строка была до записи, апсерт не говорит, а
+ * крупный патч, ставший хотфиксом или новостью, из ленты уходит, и это тоже
+ * перемена ленты. Видимых перезаписей немного (издатель поправил пост,
+ * поменялся классификатор), так что запас здесь дешёвый.
+ *
+ * Вес — тот, что опрос записал в строку. Игра, перешедшая порог одним весом,
+ * тег не сбрасывает: строку с одним сдвинувшимся весом writeNewsItems в
+ * видимые не берёт вовсе. Такая перемена доезжает по сроку записи кэша
+ * (MAJOR_TTL_SEC в lib/whatsnewcache, сутки): порог вес пересекает редко, а
+ * переписывается он у всех свежих постов игры после каждой сверки отзывов.
+ */
+function feedTouched(w: NewsShownWrite, rank: number): boolean {
+  if (rank < FEED_RANK_FLOOR) return false
+  return !w.isNew || (w.kind === 'patch' && w.scale === 'major')
+}
+
+/**
  * Опрос + пересказ. Дедлайны у фаз РАЗНЫЕ: при общем бюджете фаза опроса
  * всегда съедала бы его целиком и пересказ не выполнялся бы никогда.
  */
@@ -258,6 +298,7 @@ export async function runNewsSlice(
 
   const outcomes: PollOutcome[] = []
   let inserted = 0
+  let major = 0
   let polled = 0
   const cards: number[] = []
   let stopped: SliceResult['stopped'] = 'done'
@@ -358,18 +399,29 @@ export async function runNewsSlice(
       }
     })
 
-    const n = await upsertNewsItems(db, rows, now)
+    const { shown } = await writeNewsItems(db, rows, now)
+    const n = shown.length
     inserted += n
-    if (n > 0) await pruneNewsForApp(db, t.appid, NEWS_KEEP)
+    major += shown.filter((w) => feedTouched(w, rank)).length
+    // Ретенцию переполняет только новая строка; переписанная её не двигает
+    const prunedPatches = shown.some((w) => w.isNew) ? await pruneNewsForApp(db, t.appid, NEWS_KEEP) : 0
     /*
-     * Карточку сбрасываем, когда строки её ленты поменялись. Точнее по счёту
-     * не сказать: upsertNewsItems переписывает и одни веса (rank), когда у
-     * игры сдвинулись отзывы, а какая строка переписана за что — не
-     * возвращает. Лишний сброс здесь ничего не пишет: вес в выводе карточки —
-     * один бит «в каталоге ли игра» (cardNews в lib/gamepage), и
-     * перегенерация с той же страницей ISR Writes не стоит.
+     * Карточку и архив сбрасываем, когда их лента патчей поменялась видимо:
+     * новый патч, переписанная запись (тело, заголовок, вид — какой она была
+     * до записи, апсерт не говорит, и патчем она могла быть) или патч, снятый
+     * ретенцией ради новой строки. Новая новость сама по себе — нет: карточка
+     * и архив показывают только патчи (getGameNews).
+     *
+     * И строки, где сдвинулся один вес (rank), — нет. Вес переписывается у
+     * всех свежих постов игры после каждой сверки отзывов, а горячие игры
+     * опрашиваются ежедневно, и каждый такой опрос стоил перегенерации
+     * карточки и архива в обеих языковых копиях — ради числа, которого на них
+     * не видно. Из веса карточка берёт один бит «в каталоге ли игра» (cardNews
+     * в lib/gamepage); через ноль вес ходит редко, и такая перемена доедет с
+     * плановой перегенерацией карточки (GAME_PAGE_REVALIDATE_SEC в
+     * lib/gamecache).
      */
-    if (n > 0 && rows.some((r) => r.kind === 'patch')) cards.push(t.appid)
+    if (prunedPatches > 0 || shown.some((w) => w.kind === 'patch' || !w.isNew)) cards.push(t.appid)
 
     const lastPubAt = Math.max(...items.map((i) => i.publishedAt))
     outcomes.push({
@@ -404,6 +456,7 @@ export async function runNewsSlice(
       english: false,
     })
     digested = d.digested
+    major += d.major
     cards.push(...d.cards)
   }
 
@@ -411,6 +464,7 @@ export async function runNewsSlice(
     polled,
     inserted,
     digested,
+    major,
     cards: [...new Set(cards)],
     hasMore: targets.length === limit && stopped !== 'blocked',
     stopped,
@@ -419,6 +473,13 @@ export async function runNewsSlice(
 
 export type DigestResult = {
   digested: number
+  /**
+   * Сколько из сделанного могло поменять общую ленту крупных патчей: пересказы
+   * записей, которые она показывает или покажет (digestTouchesFeed), и снятые
+   * битые пересказы. Роут крона пересказов сбрасывает тег ленты
+   * (NEWS_MAJOR_TAG) только при major > 0 — тем же правилом, что крон новостей.
+   */
+  major: number
   /**
    * Игры, патчам которых срез дописал пересказ или снял битый
    * (resetFlawedDigests): он стоит на карточке строкой под заголовком и делает
@@ -456,6 +517,26 @@ export type DigestResult = {
    * health тут краснеть не за что.
    */
   enCapped?: true
+}
+
+/**
+ * Виден ли пересказ записи в общей ленте крупных патчей (getMajorFeedHead):
+ * запись крупная до пересказа или стала крупной по его вердикту, а игра
+ * проходит по весу. Вердикт «хотфикс» или «не патч» у крупной записи — тоже
+ * перемена ленты: строка из неё уходит.
+ *
+ * Пересказ того, чего лента не покажет, — патча игры ниже FEED_RANK_FLOOR
+ * (библиотечные игры стоят в той же очереди, что каталожные) или
+ * некрупного, — тег не сбрасывает: сброс стоит холодного чтения тридцати тел
+ * патчей в запись кэша и перегенерации обеих RSS-лент, а на страницах от него
+ * не меняется ничего. Новизну окна (лента — тридцать самых свежих игр) не
+ * сверяем: для этого нужна голова ленты, а русский пересказ достаётся патчу
+ * в пределах часа после опроса. Старые патчи переводит английский догон, и
+ * крупные из них сбрасывают тег впустую — но догон конечен: очередь
+ * getUnsummarizedEn пустеет, а новые патчи получают оба языка одним вызовом.
+ */
+function digestTouchesFeed(item: StoredNews, verdict?: NewsVerdict): boolean {
+  return item.rank >= FEED_RANK_FLOOR && (item.scale === 'major' || verdict === 'major')
 }
 
 /**
@@ -504,10 +585,14 @@ export async function runDigestSlice(
    * Сбой уборки пересказ не останавливает — она повторится следующим звеном.
    */
   const cards = new Set<number>()
+  // Снятый битый пересказ мог стоять в общей ленте: какие из строк в ней,
+  // уборка не знает, и считаем все. Уборка разовая (TLDR_FLAW_SWEEP_KEY)
+  let major = 0
   try {
     const swept = await resetFlawedDigests(db)
     if (swept?.length) log(`  битых пересказов снято: игр ${swept.length}`)
     for (const appid of swept ?? []) cards.add(appid)
+    major += swept?.length ?? 0
   } catch (e) {
     logSwallowed('newsjob:tldr-sweep', e)
   }
@@ -517,14 +602,14 @@ export async function runDigestSlice(
   // пересказа: причина-то временная (ключ забыли положить), а отметка вечная.
   // Попытка должна засчитываться за отказ модели, а не за её отсутствие.
   if (!opts.digestFn && !llmAvailable()) {
-    return { digested: 0, cards: [...cards], hasMore: false, stopped: 'unavailable' }
+    return { digested: 0, major, cards: [...cards], hasMore: false, stopped: 'unavailable' }
   }
 
   const pending = opts.englishOnly ? [] : await getUnsummarized(db, limit)
   if (!pending.length) {
     // Карточки, с которых уборка выше сняла битые пересказы, едут в сброс и
     // тогда, когда звено целиком уходит догону
-    const swept: DigestResult = { digested: 0, cards: [...cards], hasMore: false, stopped: 'done' }
+    const swept: DigestResult = { digested: 0, major, cards: [...cards], hasMore: false, stopped: 'done' }
     if (opts.english === false) return swept
     return mergeDigest(swept, await runEnglishBackfill(db, { deadlineAt: opts.deadlineAt, now, limit, digest, log }))
   }
@@ -561,7 +646,7 @@ export async function runDigestSlice(
     // в ней, и запись должна дождаться завтрашнего бюджета в очереди.
     if (!(await takeLlmBudget(db, now))) {
       log('  суточный бюджет модели выбран, попытки не засчитаны')
-      return { digested, cards: [...cards], hasMore: false, stopped: 'capped' }
+      return { digested, major, cards: [...cards], hasMore: false, stopped: 'capped' }
     }
     const text = blocksToText(item.blocks)
     let res: DigestOutcome | null
@@ -577,7 +662,7 @@ export async function runDigestSlice(
       })
     } catch (e) {
       const down = digestDown(e, log)
-      if (down) return { digested, cards: [...cards], hasMore: false, ...down }
+      if (down) return { digested, major, cards: [...cards], hasMore: false, ...down }
       throw e
     }
     // Ответ без русского — отказ записи, как и null: так решает договор (спам
@@ -604,6 +689,7 @@ export async function runDigestSlice(
     )
     if (res && answered) {
       digested++
+      if (digestTouchesFeed(item, res.scale)) major++
       cards.add(item.appid)
       if (res.tldrEn === undefined) legacyModel = true
     }
@@ -611,7 +697,7 @@ export async function runDigestSlice(
 
   // Взяли полную пачку — значит в очереди почти наверняка ещё есть. Случай
   // «модель отвалилась» сюда не доходит: он возвращается выше по return.
-  const ru: DigestResult = { digested, cards: [...cards], hasMore: pending.length === limit, stopped }
+  const ru: DigestResult = { digested, major, cards: [...cards], hasMore: pending.length === limit, stopped }
   /*
    * Русская очередь выбрана до дна — остаток звена уходит догону, в этом же
    * срезе. Иначе догон не шёл бы почти никогда: крон пересказов приходит раз
@@ -649,6 +735,7 @@ function mergeDigest(ru: DigestResult, en: DigestResult): DigestResult {
   return {
     ...en,
     digested: ru.digested + en.digested,
+    major: ru.major + en.major,
     cards: [...new Set([...ru.cards, ...en.cards])],
   }
 }
@@ -707,17 +794,19 @@ async function runEnglishBackfill(
   const pending = (await getUnsummarizedEn(db, o.limit + skip.size))
     .filter((p) => !skip.has(newsKey(p.appid, p.gid)))
     .slice(0, o.limit)
-  if (!pending.length) return { digested: 0, cards: [], hasMore: false, stopped: 'done' }
+  if (!pending.length) return { digested: 0, major: 0, cards: [], hasMore: false, stopped: 'done' }
   const metas = await getGamesMeta(
     db,
     pending.map((p) => p.appid),
   )
 
   let digested = 0
+  let major = 0
   const cards = new Set<number>()
   let stopped: DigestResult['stopped'] = 'done'
   const result = (extra: Partial<DigestResult> = {}): DigestResult => ({
     digested,
+    major,
     cards: [...cards],
     hasMore: false,
     stopped,
@@ -770,6 +859,8 @@ async function runEnglishBackfill(
     )
     if (tldrEn) {
       digested++
+      // Масштаб догон не трогает — решает тот, что уже в строке
+      if (digestTouchesFeed(item)) major++
       cards.add(item.appid)
     }
   }

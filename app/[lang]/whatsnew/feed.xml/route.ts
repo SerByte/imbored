@@ -3,7 +3,7 @@ import { getGamesMetaLite, type StoredNews } from '@/lib/db'
 import { hasEnglishContent, newsDescription, newsPageTitle, newsPath, newsTitleOn } from '@/lib/newspage'
 import { rssFeed } from '@/lib/rss'
 import { htmlLang, lp, LOCALES, toLocale, tr, type Locale } from '@/lib/i18n'
-import { appBaseUrl, getDb, nowSec } from '@/lib/server'
+import { appBaseUrl, getDb } from '@/lib/server'
 import { cachedMajorFeed } from '@/lib/whatsnewcache'
 import { FEED_LIMIT, FEED_RANK_FLOOR } from '@/lib/whatsnewfeed'
 
@@ -12,16 +12,28 @@ import { FEED_LIMIT, FEED_RANK_FLOOR } from '@/lib/whatsnewfeed'
  *
  * Тот же кэш и те же числа (cachedMajorFeed, FEED_LIMIT, FEED_RANK_FLOOR):
  * лента в ридере и страница не расходятся, и оба крона уже сбрасывают этот
- * кэш по тегу news:major, когда появляется новое. Сама лента — статическая
- * с перегенерацией раз в десять минут: GET-ручки по умолчанию не кэшируются
- * вовсе (docs: route handlers, Caching), и каждый опрос ридера будил бы
- * функцию и базу. Число — литералом: revalidate обязан читаться статически.
+ * кэш по тегу news:major, когда в общей ленте появляется новое. Тег доходит и
+ * до самой ленты: unstable_cache кладёт свои теги в её запись ISR. Сама
+ * лента — статическая: GET-ручки по умолчанию не кэшируются вовсе (docs:
+ * route handlers, Caching), и каждый опрос ридера будил бы функцию и базу.
+ *
+ * Срок — сутки, страховка за тегом, и РОВНО срок cachedMajorFeed
+ * (MAJOR_TTL_SEC в lib/whatsnewcache): числовой revalidate кэша опускает срок
+ * этой записи до своего, так что поднять одно без другого нельзя — стояло
+ * 600 у обоих, и лента в двух языках перегенерировалась по опросу ридера раз
+ * в десять минут. Число — литералом: revalidate обязан читаться статически;
+ * равенство сторожит route.test.ts.
+ *
+ * Перегенерация без новых записей ничего не пишет, только если её вывод тот
+ * же байт в байт. Поэтому в нём нет «сейчас»: lastBuildDate — дата самой
+ * свежей записи канала (rssFeed без builtAt), а не время сборки. С nowSec()
+ * каждая перегенерация была новой записью ISR.
  *
  * Адреса — от appBaseUrl, а не из запроса: под force-static заголовки
  * запроса пустые.
  */
 export const dynamic = 'force-static'
-export const revalidate = 600
+export const revalidate = 86_400
 
 /**
  * Лента лежит под app/[lang], и route handler'у язык корневого layout не
@@ -97,7 +109,6 @@ export async function GET(_req: Request, ctx: { params: Promise<{ lang: string }
       en: 'Major patches for popular games, in short.',
     }),
     language: htmlLang(locale),
-    builtAt: nowSec(),
     items: itemsOn(items, names, locale, base),
   })
   return new Response(xml, { headers: { 'Content-Type': 'application/rss+xml; charset=utf-8' } })

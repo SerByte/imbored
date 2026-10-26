@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { getMajorFeed, setNewsDigest, upsertNewsItems, type Db, type StoredNews } from './db'
 import { freshDb } from './testing/route'
-import { NEWS_MAJOR_TAG, cachedMajorFeed } from './whatsnewcache'
+import { MAJOR_TTL_SEC, NEWS_MAJOR_TAG, cachedMajorFeed } from './whatsnewcache'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
 
@@ -58,7 +58,11 @@ describe('cachedMajorFeed: ключ не зависит от того, как с
     expect(captured.keyParts).toHaveLength(1)
     expect(captured.keyParts![0]).toMatch(/^whatsnew:major:v\d+$/)
     expect(captured.options?.tags).toEqual([NEWS_MAJOR_TAG])
-    expect(captured.options?.revalidate).toBeGreaterThan(0)
+    // Срок — экспортированный MAJOR_TTL_SEC: по нему же сверяет свой revalidate
+    // RSS-лента (app/[lang]/whatsnew/feed.xml/route.test.ts) — меньший срок
+    // кэша опустил бы до себя и срок ленты
+    expect(captured.options?.revalidate).toBe(MAJOR_TTL_SEC)
+    expect(MAJOR_TTL_SEC).toBeGreaterThan(0)
   })
 })
 

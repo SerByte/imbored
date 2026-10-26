@@ -6,6 +6,7 @@ import { acquireLease, getCatalogMeta, releaseLease, setCatalogMeta, STEAM_LEASE
 import { runNewsSlice } from '@/lib/newsjob'
 import { STEAM_PROBE_KEY } from '@/lib/steamprobe'
 import { freshDb } from '@/lib/testing/route'
+import { NEWS_MAJOR_TAG } from '@/lib/whatsnewcache'
 import { GET as health } from '../health/route'
 import { GET } from './route'
 
@@ -23,13 +24,15 @@ vi.mock('next/server', async (importOriginal) => ({
   },
 }))
 
-// Настоящие revalidateTag и revalidatePath вне сервера Next бросают; ленте в
-// этих тестах сбрасывать нечего — запуск на пустой базе ничего не вставляет, —
-// а адреса карточек копим: их сброс роут делает по итогу звена
-const { revalidated } = vi.hoisted(() => ({ revalidated: [] as string[] }))
+// Настоящие revalidateTag и revalidatePath вне сервера Next бросают. Копим и
+// то и другое: адреса карточек роут сбрасывает по итогу звена, а тег общей
+// ленты — в конце запуска, если записанное её касается
+const { revalidated, tagged } = vi.hoisted(() => ({ revalidated: [] as string[], tagged: [] as string[][] }))
 vi.mock('next/cache', async (importOriginal) => ({
   ...(await importOriginal<typeof import('next/cache')>()),
-  revalidateTag: () => {},
+  revalidateTag: (...args: string[]) => {
+    tagged.push(args)
+  },
   revalidatePath: (path: string) => {
     revalidated.push(path)
   },
@@ -78,6 +81,7 @@ beforeEach(async () => {
   })
   vi.spyOn(console, 'log').mockImplementation(() => {})
   revalidated.length = 0
+  tagged.length = 0
 })
 
 afterEach(async () => {
@@ -127,6 +131,34 @@ describe('/api/cron/news', () => {
     const mark = JSON.parse((await getCatalogMeta(db, CRON_JOBS.news.lastKey)) ?? '{}') as Record<string, unknown>
     expect(mark).not.toHaveProperty('cards')
     expect(mark).toMatchObject({ сброшено: 1, итого: { сброшено: 1 } })
+  })
+
+  /*
+   * Тег общей ленты — её запись кэша и обе RSS-ленты. Сбрасывать его стоит,
+   * только если записанное могло её поменять (major, feedTouched в
+   * lib/newsjob). Стояло «вставлено хоть что-то», а туда шли новости,
+   * хотфиксы и строки, где сдвинулся один вес: тег сбрасывался почти каждым
+   * часовым запуском.
+   */
+  test('записи, общей ленты не касающиеся, её тег не сбрасывают', async () => {
+    await digestFresh()
+    const real = (await vi.importActual<typeof import('@/lib/newsjob')>('@/lib/newsjob')).runNewsSlice
+    vi.mocked(runNewsSlice).mockImplementationOnce(async (...a) => ({ ...(await real(...a)), inserted: 7, major: 0 }))
+    await ask()
+    await settled()
+    expect(tagged).toEqual([])
+    const mark = JSON.parse((await getCatalogMeta(db, CRON_JOBS.news.lastKey)) ?? '{}') as Record<string, unknown>
+    expect(mark).toMatchObject({ итого: { inserted: 7, major: 0 } })
+  })
+
+  test('новый крупный патч популярной игры — тег общей ленты сброшен, раз на запуск', async () => {
+    await digestFresh()
+    const real = (await vi.importActual<typeof import('@/lib/newsjob')>('@/lib/newsjob')).runNewsSlice
+    vi.mocked(runNewsSlice).mockImplementationOnce(async (...a) => ({ ...(await real(...a)), inserted: 3, major: 1 }))
+    await ask()
+    await settled()
+    // 'max' — stale-while-revalidate: см. докблок в роуте
+    expect(tagged).toEqual([[NEWS_MAJOR_TAG, 'max']])
   })
 
   test('конец запуска пинает карточки, пока суточный потолок звеньев не выбран', async () => {

@@ -314,6 +314,52 @@ describe('/whatsnew/feed/[token]: кэш и поиск', () => {
   })
 })
 
+/**
+ * Ридер опрашивает ленту каждые четверть часа, а меняется она от силы
+ * несколько раз в сутки. Без валидатора каждый опрос вёз весь XML; с ETag
+ * повторный опрос без перемен — 304 без тела. Тег — от самого тела: «сейчас»
+ * в документе (lastBuildDate) менял бы его каждую секунду.
+ */
+describe('/whatsnew/feed/[token]: повторный опрос без перемен — 304', () => {
+  const pollWith = (token: string, etag: string) =>
+    GET(
+      new Request(`http://localhost/whatsnew/feed/${token}`, { headers: { 'If-None-Match': etag } }),
+      params({ lang: 'ru', token }),
+    )
+
+  test('тот же тег — 304 без тела, с теми же заголовками кэша', async () => {
+    const first = await poll(key)
+    const etag = first.headers.get('ETag') ?? ''
+    expect(etag).toMatch(/^"[\w-]+"$/)
+    // минута спустя: документ тот же, и lastBuildDate в нём — не «сейчас»
+    vi.setSystemTime((NOW + 60) * 1000)
+    const again = await pollWith(key, etag)
+    expect(again.status).toBe(304)
+    expect(await again.text()).toBe('')
+    expect(again.headers.get('ETag')).toBe(etag)
+    expect(again.headers.get('Cache-Control')).toBe(first.headers.get('Cache-Control'))
+    expect(again.headers.get('X-Robots-Tag')).toBe('noindex')
+    // сжатие по дороге может приписать тегу W/ — сравнение слабое
+    expect((await pollWith(key, `"other", W/${etag}`)).status).toBe(304)
+  })
+
+  test('лента поменялась — 200 с новым телом и новым тегом', async () => {
+    const etag = (await poll(key)).headers.get('ETag') ?? ''
+    // пересказ к уже стоящему патчу: дата записи прежняя, описание — новое
+    await setNewsDigest(db, 620, '6200', { tldr: 'Коротко: починили всё.', scale: 'major' }, NOW)
+    const changed = await pollWith(key, etag)
+    expect(changed.status).toBe(200)
+    expect(changed.headers.get('ETag')).not.toBe(etag)
+    expect(await changed.text()).toContain('<description>Коротко: починили всё.</description>')
+  })
+
+  test('отозванная ссылка — 404 и со старым тегом', async () => {
+    const etag = (await poll(key)).headers.get('ETag') ?? ''
+    await dropFeedLink(db, me)
+    expect((await pollWith(key, etag)).status).toBe(404)
+  })
+})
+
 describe('/whatsnew/feed/[token]: потолок опросов', () => {
   test('утёкшую ссылку не дёрнуть скриптом: сверх потолка — 429 с Retry-After', async () => {
     for (let i = 0; i < FEED_POLL_LIMIT; i++) expect((await poll(key)).status).toBe(200)
