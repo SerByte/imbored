@@ -437,6 +437,49 @@ describe('refreshCatalogSignals', () => {
     expect(await shown()).toEqual([289_000, 96, 9, 17_300, 96])
   })
 
+  /*
+   * Англоязычная пара людям не показывается, но по ней упорядочены карта
+   * сайта, индекс «Найти игру», полки хабов и лента главной — файлы из кэша
+   * ISR. Переписанная каждой сверкой, она двигала бы их порядок каждые сутки,
+   * поэтому порог у неё тот же, что у показанных (SHOWN_DRIFT в lib/db). А
+   * отметка сверки ставится всегда: иначе игра с прежними числами стояла бы в
+   * голове очереди вечно.
+   */
+  test('англоязычная шкала порогов тоже не дёргается от мелочи, а отметка сверки ставится всегда', async () => {
+    const db = await createDb(':memory:')
+    await pool(db, 1145360, 142_000)
+    // Возле порога мусорного хвоста (MIN_REVIEWS_TAIL, тридцать) 2% — меньше
+    // одного отзыва: здесь число переписывает любой сдвиг
+    await pool(db, 2, 40)
+    const answer = (total: number, percent: number) =>
+      reviewsStub((id) => (id === 2 ? { total: 41, percent: 90 } : { total, percent })).fn
+    const english = async (appid: number) => {
+      const r = await row(db, appid)
+      return [r.reviews_total, r.reviews_percent, r.reviews_at]
+    }
+
+    await refreshCatalogSignals(db, { fetchPrices: noPrices, deadlineAt: FAR, nowSec: NOW, fetchReviews: answer(142_783, 98) })
+    expect(await english(1145360)).toEqual([142_783, 98, NOW])
+    expect(await english(2)).toEqual([41, 90, NOW])
+
+    // Неделя: +1 500 отзывов (1%) при той же доле — порядок пула не трогаем,
+    // а сверку отмечаем: следующее звено игру не спросит
+    const week = NOW + SIGNALS_MAX_AGE_SEC + 1
+    const quiet = reviewsStub(() => ({ total: 144_283, percent: 98 }))
+    await refreshCatalogSignals(db, { fetchPrices: noPrices, deadlineAt: FAR, nowSec: week, fetchReviews: quiet.fn })
+    expect(await english(1145360)).toEqual([142_783, 98, week])
+    await refreshCatalogSignals(db, { fetchPrices: noPrices, deadlineAt: FAR, nowSec: week + 3600, fetchReviews: quiet.fn })
+    expect(quiet.calls).toHaveLength(1)
+
+    // 2% от записанного набежало — переписываем; доля сдвинулась — сразу
+    const later = week + SIGNALS_MAX_AGE_SEC + 1
+    await refreshCatalogSignals(db, { fetchPrices: noPrices, deadlineAt: FAR, nowSec: later, fetchReviews: answer(145_700, 98) })
+    expect(await english(1145360)).toEqual([145_700, 98, later])
+    const last = later + SIGNALS_MAX_AGE_SEC + 1
+    await refreshCatalogSignals(db, { fetchPrices: noPrices, deadlineAt: FAR, nowSec: last, fetchReviews: answer(145_710, 97) })
+    expect(await english(1145360)).toEqual([145_710, 97, last])
+  })
+
   test('мёртвые и вытесненные в очередь не попадают: их судьба — дело промоута', async () => {
     const db = await createDb(':memory:')
     await pool(db, 1, 100)

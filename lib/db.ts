@@ -6345,9 +6345,11 @@ export async function catalogSignalsQueue(db: Db, limit: number): Promise<Signal
  * иначе они вечно стояли бы в голове очереди и съедали бы каждую пачку.
  * Значения отзывов пишутся только тем, у кого они приехали.
  *
- * Отзывы для людей (все языки и русские) пишутся отдельным UPDATE со своим
- * условием — только когда показанное число сдвинулось заметно, см.
- * SHOWN_DRIFT. Англоязычные пороги — каждую сверку, как прежде.
+ * Каждая пара отзывов — англоязычная шкала порогов и порядка, все языки и
+ * русские — пишется отдельным UPDATE со своим условием: только когда число
+ * сдвинулось заметно или поменялась доля, см. SHOWN_DRIFT. Отметка reviews_at
+ * — своим UPDATE и всегда: «сверено сейчас» верно и тогда, когда числа
+ * остались прежними, — они отстают от Steam меньше чем на 2%.
  */
 export async function updateCatalogSignals(
   db: Db,
@@ -6368,18 +6370,20 @@ export async function updateCatalogSignals(
   nowSec: number,
 ): Promise<void> {
   const stmts = [
-    ...signals.checked.map((appid) => {
-      const r = signals.reviews.get(appid)
-      return r
-        ? {
-            sql: 'UPDATE games SET reviews_total = ?, reviews_percent = ?, reviews_at = ? WHERE appid = ?',
-            args: [r.total, r.percent, nowSec, appid],
-          }
-        : { sql: 'UPDATE games SET reviews_at = ? WHERE appid = ?', args: [nowSec, appid] }
-    }),
+    ...signals.checked.map((appid) => ({
+      sql: 'UPDATE games SET reviews_at = ? WHERE appid = ?',
+      args: [nowSec, appid],
+    })),
     ...signals.checked.flatMap((appid) => {
       const r = signals.reviews.get(appid)
       const out: Array<{ sql: string; args: Array<number | null> }> = []
+      if (r) {
+        out.push({
+          sql: `UPDATE games SET reviews_total = ?, reviews_percent = ?
+                WHERE appid = ? AND ${shownMoved('reviews_total', 'reviews_percent')}`,
+          args: [r.total, r.percent, appid, r.percent, r.total],
+        })
+      }
       if (r?.all) {
         const { total, percent, score } = r.all
         out.push({
@@ -6407,8 +6411,9 @@ export async function updateCatalogSignals(
 }
 
 /**
- * Показанное людям число отзывов переписывается, только когда сдвинулось на
- * 1/SHOWN_DRIFT (2%) или поменялась доля.
+ * Число отзывов переписывается, только когда сдвинулось на 1/SHOWN_DRIFT (2%)
+ * или поменялась доля, — у всех трёх пар сверки: показанных людям (все языки
+ * и русские) и англоязычной шкалы порогов и порядка.
  *
  * Это про ISR. Карточка игры живёт неделю и пишется заново, только если её
  * вывод разошёлся с прошлым (lib/gamecache), а кольцо печатает число отзывов
@@ -6419,6 +6424,30 @@ export async function updateCatalogSignals(
  * недель, а число на странице отстаёт не больше чем на 2%: решению «стоит ли
  * играть» эти два процента ничего не меняют. Доля — сразу при любом сдвиге:
  * «97%» вместо «98%» — уже другой факт.
+ *
+ * Англоязычная пара людям не показывается, но по ней упорядочено почти всё,
+ * что лежит в кэше: карта сайта (sitemapGames), индекс «Найти игру»
+ * (searchIndexGames), полки /games и хабов (topGamesByTags, topGamesByFacet),
+ * лента главной и полка 404 (topCatalogGames), «Похожие» по тегу и «Ещё у
+ * студии» на карточке. Переписанная каждой сверкой, она двигала порядок у
+ * седьмой части пула каждые сутки, и каждый из этих файлов выходил новым на
+ * каждой перегенерации — sitemap.xml в пять с половиной мегабайт ежедневно.
+ * С порогом порядок стоит, пока игра не сдвинется на 2%, а ничьи частичный
+ * индекс отдаёт по rowid, то есть тоже одинаково. Второй ключ в ORDER BY
+ * этого не дал бы: двигались сами числа, а не ничьи. Запросы порядка поэтому
+ * не тронуты, и их планы (чтение idx_games_pool по порядку, без сортировки)
+ * держат сторожа lib/queryplan.test.ts, как прежде.
+ *
+ * Отставания на 2% хватает всем, кто англоязычную пару читает:
+ *   • пороги живости (judgeLiveness: MIN_REVIEWS_TAIL, PANNED_MIN_SAMPLE,
+ *     PANNED_RATIO) — доля пишется при любом сдвиге, а 2% у числа возле
+ *     порога — единицы отзывов: у двухсот это четыре, а меньше пятидесяти
+ *     переписывается любой сдвиг;
+ *   • порядок и отбор пула — подбор (lib/pool), очереди пульса и догрева
+ *     онлайна в /api/prepare, вес игры в ленте патчей (getGameRanks), доверие
+ *     к новинке (confidenceMultiplier): это популярность, и 2% её не меняют;
+ *   • catalog:publish (ПО_ОТМЕТКЕ в scripts/publishsql) сверяет снимок с
+ *     reviews_at, а отметка ставится всегда: замер был, числа в пороге от него.
  */
 const SHOWN_DRIFT = 50
 

@@ -193,24 +193,28 @@ const ISLANDS = new Map<unknown, string>([
   [TrailerPreview, 'TrailerPreview'],
   // знак ожидания в плитках «Похожих» (components/GameLink)
   [TilePending, 'TilePending'],
-  // Ценник, онлайн и строка возврата — клиентские ради языка (useLocale):
-  // в кэш уходят их пропсы, и от часов они зависеть не должны
+  // Ценник и строка возврата — клиентские ради языка (useLocale): в кэш
+  // уходят их пропсы, и от часов они зависеть не должны
   [PriceTag, 'PriceTag'],
   [PriceWhere, 'PriceWhere'],
   [DiscountEnds, 'DiscountEnds'],
-  [PlayersNow, 'PlayersNow'],
   [RefundNote, 'RefundNote'],
+  // Онлайна среди островков быть не должно: строку карточки рисует сервер
+  // ступенью (PlayersAtCheck), а живой PlayersNow с точным числом и часами —
+  // для экранов вне кэша. Здесь он, чтобы его возвращение было видно
+  // островком, а не падением теста на хуке
+  [PlayersNow, 'PlayersNow'],
 ])
 
 const flight = (node: unknown) => flightOf(node, ISLANDS)
 
 /**
  * Островки, которые сервер дорисовывает в HTML той же страницы текстом, —
- * ценник, онлайн, возврат. Для кэша важны их пропсы (flight, snapshot), для
- * глаза — их текст: visible раскрывает их вызовом, как сервер в HTML, на
- * языке теста (lang выше).
+ * ценник и возврат. Для кэша важны их пропсы (flight, snapshot), для глаза —
+ * их текст: visible раскрывает их вызовом, как сервер в HTML, на языке теста
+ * (lang выше).
  */
-const PRINTED = new Set<unknown>([PriceTag, PriceWhere, DiscountEnds, PlayersNow, RefundNote])
+const PRINTED = new Set<unknown>([PriceTag, PriceWhere, DiscountEnds, RefundNote])
 const visible = (node: unknown) => flightOf(node, new Map([...ISLANDS].filter(([c]) => !PRINTED.has(c))))
 
 /** Всё, что уходит в кэш: разметка с пропсами островков и метаданные */
@@ -257,8 +261,8 @@ describe('кэш карточки игры', () => {
   })
 
   test('вывод не зависит от часов: через три дня — та же страница', async () => {
-    // Ценник и онлайн — клиентские островки, и их пропсы входят в снимок: часы
-    // онлайна (nowSec) от момента рендера зависеть не должны
+    // Ценник — клиентский островок, и его пропсы входят в снимок; онлайн часов
+    // не берёт вовсе (PlayersAtCheck), хотя замер в seed старше суток
     await seed()
     const first = await snapshot()
 
@@ -343,11 +347,36 @@ describe('кэш карточки игры', () => {
     }
   })
 
-  test('онлайн — прошедшим временем: «сейчас» из недельного кэша не бывает правдой', async () => {
+  test('онлайн — прошедшим временем и ступенью: «сейчас» из недельного кэша не бывает правдой', async () => {
     await seed()
     const text = textOf(visible(await GamePage(params)))
-    expect(text).toContain('играли')
-    expect(text).not.toContain('сейчас играют')
+    expect(text).toMatch(/онлайн при замере: больше 500\s000/)
+    expect(text).not.toMatch(/сейчас (играют|онлайн)/)
+    // точное число — только на живых экранах (components/PlayersNow)
+    expect(text).not.toMatch(/850\s123/)
+  })
+
+  /*
+   * Онлайн переписывают без порога и сверка каталога раз в неделю, и догрев
+   * /api/prepare каждые шесть часов у игр из библиотек. Точное число делало
+   * бы новой страницей почти каждую перегенерацию совместной игры — запись
+   * ISR у половины каталога каждую неделю. Ступень ряда 1–2–5 стоит неделями.
+   */
+  test('новый замер онлайна в той же ступени — та же страница, в следующей — другая', async () => {
+    await seed()
+    const first = await snapshot()
+    const measure = (ccu: number) =>
+      db.execute({ sql: 'UPDATE games SET ccu = ?, ccu_at = ? WHERE appid = ?', args: [ccu, T0, APPID] })
+    await measure(912_345)
+    expect(await snapshot()).toBe(first)
+    // Живой клиентский PlayersNow на страницу не вернулся: его пропсы с
+    // точным числом и часами легли бы в RSC-часть
+    expect(islandsOf(flight(await GamePage(params)), 'PlayersNow')).toEqual([])
+
+    // Сторож не слепой: перевалило за миллион — это уже другая строка
+    await measure(1_200_000)
+    expect(await snapshot()).not.toBe(first)
+    expect(textOf(visible(await GamePage(params)))).toMatch(/онлайн при замере: больше 1\s000\s000/)
   })
 
   /*
@@ -417,10 +446,11 @@ describe('кэш карточки игры', () => {
     // /game/711810: «0 играли» рядом с «72% из 1 886 отзывов» читалось как
     // «в неё не играл никто». И у игры без студии ноль не выпадает литералом
     await upsertGameMeta(db, game(APPID, { ccu: 0, ccuAt: T0 - 3 * DAY }), T0)
-    // онлайн — островок (useLocale): его строку видно раскрытым, как в HTML
     const text = textOf(visible(await GamePage(params)))
     expect(text).toContain('онлайн при замере: 0')
     expect(text).not.toMatch(/0\s*играли/)
+    // ниже нуля ступени нет — и «больше» перед ним тоже
+    expect(text).not.toContain('больше 0')
   })
 
   test('ноль онлайна на /en — «online at last check: 0», а не русская строка', async () => {
@@ -431,6 +461,14 @@ describe('кэш карточки игры', () => {
     const text = textOf(visible(await GamePage({ params: Promise.resolve({ appid: String(APPID), lang: 'en' }) })))
     expect(text).toContain('online at last check: 0')
     expect(text).not.toMatch(/онлайн|0\s*were playing/)
+  })
+
+  test('ступень на /en — английским числом и словами, не русскими', async () => {
+    await upsertGameMeta(db, game(APPID, { name: 'Counter-Strike 2', ccu: 1234, ccuAt: T0 - 3 * DAY }), T0)
+    lang.locale = 'en'
+    const text = textOf(visible(await GamePage({ params: Promise.resolve({ appid: String(APPID), lang: 'en' }) })))
+    expect(text).toContain('online at last check: more than 1,000')
+    expect(text).not.toMatch(/1,234|больше|при замере/)
   })
 })
 
@@ -761,8 +799,7 @@ describe('английская карточка', () => {
     for (const s of [
       'Very Positive',
       'of 1,000 reviews',
-      '850,123',
-      'were playing',
+      'online at last check: more than 500,000',
       'until Oct 14',
       'Steam page',
       'YouTube reviews',
