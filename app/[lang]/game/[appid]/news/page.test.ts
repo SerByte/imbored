@@ -40,10 +40,14 @@ beforeEach(async () => {
       categories: [1],
       reviewsTotal: 1000,
       reviewsPercent: 80,
+      art: { header: `https://cdn.example/${APPID}/header.jpg`, header2x: HEADER },
     },
     now,
   )
 })
+
+/** Шапка игры из Steam — она же превью архива в чате (gameCard в lib/site) */
+const HEADER = `https://cdn.example/${APPID}/header_2x.jpg`
 
 const ISLANDS = new Map<unknown, string>([
   [Link, 'Link'],
@@ -76,9 +80,13 @@ async function seed(items: StoredNews[], told: string[]): Promise<void> {
 const params = (appid = String(APPID), lang?: string) => ({
   params: Promise.resolve(lang ? { appid, lang } : { appid }),
 })
-/** Метаданные сегмента выше: картинка — карточка игры (app/[lang]/game/[appid]/opengraph-image.tsx) */
-const inherited = { images: [{ url: 'https://imbored.cc/game/730/opengraph-image' }] }
-const parent = Promise.resolve({ openGraph: inherited })
+/**
+ * Метаданные родителя: своих карточек у сегментов игры нет, и выше —
+ * корневая карточка сайта. Архив берёт её, только если у игры нет шапки Steam
+ */
+const ROOT_CARD = { url: 'https://imbored.cc/ru/opengraph-image?91b1f53ea01c02b3', width: 1200, height: 630, alt: 'imbored — во что поиграть' }
+const rootOg = { images: [ROOT_CARD] }
+const parent = Promise.resolve({ openGraph: rootOg })
 const meta = (appid?: string, lang?: string) => generateMetadata(params(appid, lang), parent as never)
 const render = async (lang?: string) => flightOf(await PatchArchivePage(params(undefined, lang)), ISLANDS)
 
@@ -154,8 +162,15 @@ describe('архив обновлений игры', () => {
     expect(indexed.robots).toBeUndefined()
     expect(indexed.alternates?.canonical).toBe(`/game/${APPID}/news`)
     expect(indexed.title).toBe('Обновления «Counter-Strike 2» — что изменилось в патчах')
-    // карточка для чатов — унаследованная карточка игры, а не пустота
-    expect(indexed.openGraph?.images).toEqual([{ url: 'https://imbored.cc/game/730/opengraph-image' }])
+    // карточка для чатов — шапка игры из Steam, как у самой карточки игры
+    expect(indexed.openGraph?.images).toEqual([{ url: HEADER, width: 920, height: 430, alt: 'Counter-Strike 2' }])
+  })
+
+  test('у игры без шапки Steam превью — корневая карточка от родителя, а не пустота', async () => {
+    await seed([patch('1', 1)], [])
+    await db.execute({ sql: 'UPDATE games SET art_json = NULL, header_image = NULL WHERE appid = ?', args: [APPID] })
+    expect((await meta()).openGraph?.images).toEqual([ROOT_CARD])
+    expect((await meta(undefined, 'en')).openGraph?.images).toEqual([{ ...ROOT_CARD, alt: 'imbored — what to play' }])
   })
 
   test('игра, которую каталог считает мёртвой, — вне поиска при любых пересказах', async () => {
@@ -186,8 +201,8 @@ describe('архив обновлений игры', () => {
     expect(islandsOf(link?.children, 'LinkPending')).toHaveLength(1)
   })
 
-  test('сутки ISR, и страница не читает сессию', () => {
-    expect(revalidate).toBe(86_400)
+  test('месяц ISR, и страница не читает сессию', () => {
+    expect(revalidate).toBe(30 * DAY)
     const src = fs
       .readFileSync(path.join(__dirname, 'page.tsx'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -263,32 +278,20 @@ describe('архив обновлений игры на /en', () => {
     expect(indexed.openGraph?.url).toBe(`/en/game/${APPID}/news`)
     expect(String(indexed.description)).toContain('Latest summary')
     expect(String(indexed.description)).toContain('Summary 1.')
-    // карточка игры — та же, но с английским alt
-    expect(indexed.openGraph?.images).toEqual([
-      { url: 'https://imbored.cc/game/730/opengraph-image', alt: 'Is it worth playing? — imbored' },
-    ])
+    // превью — та же шапка игры, что на русском
+    expect(indexed.openGraph?.images).toEqual([{ url: HEADER, width: 920, height: 430, alt: 'Counter-Strike 2' }])
   })
 
   /*
-   * Голову 404 браузер берёт из generateMetadata страницы: пустой объект
-   * оставлял на /en русский alt унаследованной карточки игры. Русская 404 —
-   * пустой объект, как была (тест «нет патчей, нет игры…» выше).
+   * 404 — пустой объект и на /en: голова корневая, с подписью карточки на
+   * языке адреса (rootCardOn в app/[lang]/layout.tsx). Своя запись была
+   * нужна, пока архив показывал файловую карточку игры с русским alt.
    */
-  test('нет патчей — 404 и на английском, с карточкой игры под английским alt', async () => {
+  test('нет патчей — 404 и на английском, метаданные — пустой объект', async () => {
     await seed([patch('sale', 1, { kind: 'news' })], [])
     await expect(PatchArchivePage(params(undefined, 'en'))).rejects.toThrow()
     for (const appid of [String(APPID), '570', 'abc']) {
-      const missing = await meta(appid, 'en')
-      // только openGraph: заголовок, описание и noindex 404 — корневые, как были
-      expect(Object.keys(missing), appid).toEqual(['openGraph'])
-      expect(missing.openGraph, appid).toEqual({
-        siteName: 'imbored',
-        locale: 'en_US',
-        type: 'website',
-        url: `/en/game/${appid}/news`,
-        images: [{ url: 'https://imbored.cc/game/730/opengraph-image', alt: 'Is it worth playing? — imbored' }],
-      })
-      expect(JSON.stringify(missing)).not.toMatch(CYRILLIC)
+      expect(await meta(appid, 'en'), appid).toEqual({})
     }
   })
 

@@ -307,6 +307,40 @@ function srcSetUrls(set: string): string[] {
  */
 export const SHELF_RAIL_SIZES = '(max-width: 952px) 200px, (max-width: 1257px) 21vw, 264px'
 
+/**
+ * Картинка превью в чате (og:image) у страницы игры, её архива обновлений и
+ * патча — витринная шапка игры из Steam с размерами, или null.
+ *
+ * Своя PNG-карточка у этих страниц была (opengraph-image.tsx у игры и у
+ * патча), и стоила она дороже всего остального сайта: ImageResponse отдаёт
+ * только PNG, а PNG без потерь с артом во весь кадр — около 400 КБ на
+ * карточку игры (замер сборки) и полсекунды функции на рендер. Таких адресов
+ * — по одному на каждую игру и каждый патч, на каждом языке свой, и бот
+ * превью, пришедший после деплоя или конца срока, будил рендер и запись ISR
+ * своей копии. Шапку отдаёт CDN Steam: ни рендера, ни записи ISR, ни байта из
+ * нашей функции.
+ *
+ * header_2x (920×430), иначе header (460×215): оба выше порога большой
+ * карточки X (300×157), и пропорция у обоих одна — ~2.1:1, почти 1.91:1
+ * карточки Telegram и Discord. headerImage — тот же header: каталог пишет
+ * туда либо header из GetItems (lib/catalog), либо header_image из
+ * appdetails, а это всегда шапка 460×215. Тот же порядок, что у image в
+ * JSON-LD карточки (gameJsonLd в lib/jsonld): разметка и превью показывают
+ * одну картинку.
+ *
+ * Плоский путь (legacyArtUrl) сюда не идёт: у игр после перехода Valve на
+ * хэшированные пути он отвечает 404, и в чат уехала бы пустая карточка. У игр
+ * других магазинов (appid < 0) шапки Steam нет вовсе. Обоим null — страница
+ * тогда отдаёт корневую карточку сайта (gameCard в lib/site).
+ */
+export function shareArt(game: ArtSource): { url: string; width: number; height: number } | null {
+  if (game.appid <= 0) return null
+  const art = game.art ?? {}
+  if (art.header2x) return { url: art.header2x, width: WIDTH.header2x, height: 430 }
+  const header = art.header ?? game.headerImage
+  return header ? { url: header, width: WIDTH.header, height: 215 } : null
+}
+
 /** Плоский путь как последний источник — тот же, что в конце artCandidates. */
 function candidateHeader(game: ArtSource): string | null {
   return game.appid > 0 ? legacyArtUrl(game.appid, 'header') : null

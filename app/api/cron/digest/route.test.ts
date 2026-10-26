@@ -85,23 +85,31 @@ describe('/api/cron/digest', () => {
 
   test('карточки игр с новым пересказом уходят в перегенерацию', async () => {
     // Пересказ стоит на карточке строкой под патчем, а карточка живёт в ISR
-    // неделю (lib/gamecache)
+    // месяц (lib/gamecache)
     vi.mocked(runDigestSlice).mockResolvedValueOnce({
       digested: 2,
       cards: [730, 570],
+      posts: [
+        { appid: 730, gid: '11' },
+        { appid: 570, gid: '22' },
+      ],
       hasMore: false,
       stopped: 'done',
     })
     expect((await ask()).status).toBe(202)
     await settled()
-    // и архивы обновлений тех же игр: пересказ там — главное в строке.
-    // «сброшено» ниже — по-прежнему число игр, а не адресов. Каждый адрес —
-    // в обеих языковых копиях маршрута (revalidateSitePath)
+    // и архивы обновлений тех же игр: пересказ там — главное в строке, — и
+    // страницы самих постов: «Коротко» на них от пересказа, а живут они
+    // столько же. «сброшено» ниже — по-прежнему число игр, а не адресов.
+    // Каждый адрес — в обеих языковых копиях маршрута (revalidateSitePath)
     expect(revalidated.sort()).toEqual(
-      ['/game/570', '/game/570/news', '/game/730', '/game/730/news'].flatMap(routePaths).sort(),
+      ['/game/570', '/game/570/news', '/game/570/news/22', '/game/730', '/game/730/news', '/game/730/news/11']
+        .flatMap(routePaths)
+        .sort(),
     )
     const mark = await lastMark()
     expect(mark).not.toHaveProperty('cards')
+    expect(mark).not.toHaveProperty('posts')
     expect(mark).toMatchObject({ digested: 2, сброшено: 2, итого: { digested: 2, сброшено: 2 } })
   })
 

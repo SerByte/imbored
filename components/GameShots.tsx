@@ -7,7 +7,7 @@ import { useLocale } from '@/components/LocaleProvider'
 import { webglAvailable } from '@/components/morph/gl'
 import { hasCyrillic } from '@/lib/cyrillic'
 import { tr, type Locale } from '@/lib/i18n'
-import { pickShotSize, shotUrl, type ShotSize } from '@/lib/shots'
+import { GAME_SLIDES, pickShotSize, shotUrl, type ShotSize } from '@/lib/shots'
 
 /**
  * Блок «Скриншоты» на странице игры: кадры перетекают друг в друга.
@@ -51,16 +51,6 @@ const Screenshots = dynamic(
   },
 )
 
-/**
- * Сколько кадров отдаём слайдеру.
- *
- * Движок грузит все текстуры сразу и держит их распакованными: шесть кадров
- * 1920×1080 — это уже около 50 МБ видеопамяти. У иных игр в базе лежит по два
- * десятка скриншотов, и показать их все значило бы уронить вкладку на
- * встройке. Шесть — столько же, сколько показывала сетка до слайдера.
- */
-const SLIDES = 6
-
 /** Что удалось выяснить про среду; до первого замера — null */
 type Env = { gl: boolean; size: ShotSize }
 
@@ -93,7 +83,9 @@ export function shotLabels(locale: Locale, name: string): { alt: string; label: 
 export function GameShots({ images, name }: { images: string[]; name: string }) {
   const locale = useLocale()
   const labels = shotLabels(locale, name)
-  const shots = useMemo(() => images.slice(0, SLIDES), [images])
+  // Сколько кадров и почему столько — GAME_SLIDES; страница режет список и
+  // сама, здесь — страховка на вызывающего, который не режет
+  const shots = useMemo(() => images.slice(0, GAME_SLIDES), [images])
   const wrapRef = useRef<HTMLDivElement>(null)
 
   // null — ещё не мерили: до монтирования разметка обязана совпасть с серверной

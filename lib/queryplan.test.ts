@@ -21,6 +21,7 @@ import {
   getMajorFeedHead,
   getRssFeedForApps,
   latestMajorPatchSince,
+  newsTouchedAt,
   PATCH_SINCE_MAX,
   getNeighbors,
   latestEveningPlan,
@@ -247,10 +248,20 @@ const CASES: Case[] = [
     indexes: ['idx_news_feed'],
     sortFree: false,
   },
-  // «Другие патчи» на странице патча: одна игра, свежие первыми
+  // «Предыдущие патчи» на странице патча: одна игра, раньше страницы, свежие
+  // первыми — граница published_at идёт диапазоном того же индекса, и
+  // порядок из него же (без gid в ORDER BY: тот строил бы временное дерево)
   {
     name: 'заголовки патчей игры',
-    run: (db) => getGamePatchHeads(db, 730, 7),
+    run: (db) => getGamePatchHeads(db, 730, NOW, 6),
+    indexes: ['idx_news_app'],
+    sortFree: true,
+  },
+  // Страницы постов, переписанных опросом, — в сброс ISR: посты одной игры
+  // диапазоном idx_news_app (appid, …), updated_at — остаточным фильтром
+  {
+    name: 'посты игры, переписанные опросом',
+    run: (db) => newsTouchedAt(db, 730, NOW),
     indexes: ['idx_news_app'],
     sortFree: true,
   },

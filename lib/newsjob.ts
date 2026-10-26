@@ -20,6 +20,7 @@ import {
   getGamesMeta,
   getUnsummarized,
   getUnsummarizedEn,
+  newsTouchedAt,
   pruneNewsForApp,
   resetFlawedDigests,
   setNewsDigest,
@@ -38,6 +39,7 @@ import { logSwallowed } from './errlog'
 import { claudeNewsDigest, isPersistentOutage, llmAvailable, LLM_MIN_BUDGET_MS, LlmUnavailableError } from './llm'
 import { takeLlmBudget } from './llmcap'
 import { bodyHash, detectLang, fetchGameNews, isPatchNote, looksTrivial, newsText } from './news'
+import type { PostRef } from './newspage'
 import { blocksToText } from './steamhtml'
 
 const HOUR = 3600
@@ -131,6 +133,13 @@ export type SliceResult = {
    * обновлений сверяет так же (app/game/[appid]/news/load.ts).
    */
   cards: number[]
+  /**
+   * Посты, чья страница поменялась (newsTouchedAt): опрос записал их впервые
+   * или переписал тело, заголовок, вид. Роут сбрасывает и эти адреса
+   * (resetSliceCards): страница патча живёт в ISR месяц. Переписанный один
+   * вес сюда не попадает — страница его не показывает.
+   */
+  posts: PostRef[]
   hasMore: boolean
   stopped: 'done' | 'budget' | 'blocked'
 }
@@ -260,6 +269,7 @@ export async function runNewsSlice(
   let inserted = 0
   let polled = 0
   const cards: number[] = []
+  const posts: PostRef[] = []
   let stopped: SliceResult['stopped'] = 'done'
 
   /*
@@ -370,6 +380,13 @@ export async function runNewsSlice(
      * перегенерация с той же страницей ISR Writes не стоит.
      */
     if (n > 0 && rows.some((r) => r.kind === 'patch')) cards.push(t.appid)
+    /*
+     * Страницы самих постов — только тех, у кого поменялась страница: апсерт
+     * отметил их своим nowSec (newsTouchedAt). Не по kind строки опроса:
+     * патч, ставший новостью после правки классификатора, — это страница,
+     * которая теперь отдаёт 404, и её сброс нужен так же.
+     */
+    if (n > 0) for (const gid of await newsTouchedAt(db, t.appid, now)) posts.push({ appid: t.appid, gid })
 
     const lastPubAt = Math.max(...items.map((i) => i.publishedAt))
     outcomes.push({
@@ -405,6 +422,7 @@ export async function runNewsSlice(
     })
     digested = d.digested
     cards.push(...d.cards)
+    posts.push(...d.posts)
   }
 
   return {
@@ -412,9 +430,21 @@ export async function runNewsSlice(
     inserted,
     digested,
     cards: [...new Set(cards)],
+    posts: uniquePosts(posts),
     hasMore: targets.length === limit && stopped !== 'blocked',
     stopped,
   }
+}
+
+/** Каждый пост один раз — в порядке первого появления */
+function uniquePosts(posts: readonly PostRef[]): PostRef[] {
+  const seen = new Set<string>()
+  return posts.filter((p) => {
+    const key = newsKey(p.appid, p.gid)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 export type DigestResult = {
@@ -425,9 +455,21 @@ export type DigestResult = {
    * заголовок ссылкой (indexedNewsPath) — роут сбрасывает их адреса в ISR
    * (lib/gamecache): карточку и архив обновлений. Вердикт «не патч» (scale
    * 'none') — тоже сюда: строка уходит с карточки и из архива, а карточка
-   * живёт неделю.
+   * живёт месяц.
    */
   cards: number[]
+  /**
+   * Посты, которым срез записал пересказ — русский, английский или вердикт
+   * «не патч»: их страницы роут сбрасывает тоже (resetSliceCards). На
+   * странице это «Коротко», английский заголовок, индекс и hreflang, а у
+   * вердикта — 404 вместо страницы. announceFreshPatches сбрасывает
+   * свежепересказанные и сам, но лишь крупные патчи игр каталога за
+   * девяносто дней — то, что объявляет поисковикам; хотфикс, давний пост
+   * английского догона и вердикт он не видит. Битые пересказы, снятые
+   * уборкой (resetFlawedDigests), здесь не названы: уборка отдаёт игры, а не
+   * посты, и идёт однажды на базу.
+   */
+  posts: PostRef[]
   hasMore: boolean
   /**
    * 'unavailable' — модели нет: ключ не задан или сервис отказал (тогда ещё
@@ -517,14 +559,14 @@ export async function runDigestSlice(
   // пересказа: причина-то временная (ключ забыли положить), а отметка вечная.
   // Попытка должна засчитываться за отказ модели, а не за её отсутствие.
   if (!opts.digestFn && !llmAvailable()) {
-    return { digested: 0, cards: [...cards], hasMore: false, stopped: 'unavailable' }
+    return { digested: 0, cards: [...cards], posts: [], hasMore: false, stopped: 'unavailable' }
   }
 
   const pending = opts.englishOnly ? [] : await getUnsummarized(db, limit)
   if (!pending.length) {
     // Карточки, с которых уборка выше сняла битые пересказы, едут в сброс и
     // тогда, когда звено целиком уходит догону
-    const swept: DigestResult = { digested: 0, cards: [...cards], hasMore: false, stopped: 'done' }
+    const swept: DigestResult = { digested: 0, cards: [...cards], posts: [], hasMore: false, stopped: 'done' }
     if (opts.english === false) return swept
     return mergeDigest(swept, await runEnglishBackfill(db, { deadlineAt: opts.deadlineAt, now, limit, digest, log }))
   }
@@ -535,6 +577,7 @@ export async function runDigestSlice(
   )
 
   let digested = 0
+  const posts: PostRef[] = []
   let stopped: DigestResult['stopped'] = 'done'
   /*
    * Ответила ли модель хоть раз без английского ключа вовсе — прежним
@@ -561,7 +604,7 @@ export async function runDigestSlice(
     // в ней, и запись должна дождаться завтрашнего бюджета в очереди.
     if (!(await takeLlmBudget(db, now))) {
       log('  суточный бюджет модели выбран, попытки не засчитаны')
-      return { digested, cards: [...cards], hasMore: false, stopped: 'capped' }
+      return { digested, cards: [...cards], posts, hasMore: false, stopped: 'capped' }
     }
     const text = blocksToText(item.blocks)
     let res: DigestOutcome | null
@@ -577,7 +620,7 @@ export async function runDigestSlice(
       })
     } catch (e) {
       const down = digestDown(e, log)
-      if (down) return { digested, cards: [...cards], hasMore: false, ...down }
+      if (down) return { digested, cards: [...cards], posts, hasMore: false, ...down }
       throw e
     }
     // Ответ без русского — отказ записи, как и null: так решает договор (спам
@@ -605,13 +648,14 @@ export async function runDigestSlice(
     if (res && answered) {
       digested++
       cards.add(item.appid)
+      posts.push({ appid: item.appid, gid: item.gid })
       if (res.tldrEn === undefined) legacyModel = true
     }
   }
 
   // Взяли полную пачку — значит в очереди почти наверняка ещё есть. Случай
   // «модель отвалилась» сюда не доходит: он возвращается выше по return.
-  const ru: DigestResult = { digested, cards: [...cards], hasMore: pending.length === limit, stopped }
+  const ru: DigestResult = { digested, cards: [...cards], posts, hasMore: pending.length === limit, stopped }
   /*
    * Русская очередь выбрана до дна — остаток звена уходит догону, в этом же
    * срезе. Иначе догон не шёл бы почти никогда: крон пересказов приходит раз
@@ -650,6 +694,7 @@ function mergeDigest(ru: DigestResult, en: DigestResult): DigestResult {
     ...en,
     digested: ru.digested + en.digested,
     cards: [...new Set([...ru.cards, ...en.cards])],
+    posts: uniquePosts([...ru.posts, ...en.posts]),
   }
 }
 
@@ -707,7 +752,7 @@ async function runEnglishBackfill(
   const pending = (await getUnsummarizedEn(db, o.limit + skip.size))
     .filter((p) => !skip.has(newsKey(p.appid, p.gid)))
     .slice(0, o.limit)
-  if (!pending.length) return { digested: 0, cards: [], hasMore: false, stopped: 'done' }
+  if (!pending.length) return { digested: 0, cards: [], posts: [], hasMore: false, stopped: 'done' }
   const metas = await getGamesMeta(
     db,
     pending.map((p) => p.appid),
@@ -715,10 +760,12 @@ async function runEnglishBackfill(
 
   let digested = 0
   const cards = new Set<number>()
+  const posts: PostRef[] = []
   let stopped: DigestResult['stopped'] = 'done'
   const result = (extra: Partial<DigestResult> = {}): DigestResult => ({
     digested,
     cards: [...cards],
+    posts,
     hasMore: false,
     stopped,
     english: digested,
@@ -771,6 +818,8 @@ async function runEnglishBackfill(
     if (tldrEn) {
       digested++
       cards.add(item.appid)
+      // /en получила «In short» и индекс, русская — hreflang на неё
+      posts.push({ appid: item.appid, gid: item.gid })
     }
   }
 

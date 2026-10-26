@@ -32,6 +32,7 @@ import { PRICE_TRUST_SEC } from '@/lib/discount'
 import { GAME_PAGE_REVALIDATE_SEC, PRERENDER_TOP } from '@/lib/gamecache'
 import type { Locale } from '@/lib/i18n'
 import { quizHref, roomSeedHref } from '@/lib/presets'
+import { GAME_SLIDES } from '@/lib/shots'
 import { classOfTag, flight as flightOf, islandsOf, textOf } from '@/lib/testing/flight'
 import { freshDb } from '@/lib/testing/route'
 import type { GameMeta } from '@/lib/types'
@@ -55,7 +56,7 @@ vi.mock('@/components/LocaleProvider', async (importOriginal) => ({
  * Бюджет ISR карточки игры (lib/gamecache): пререндер только в проде и
  * вывод, который не меняется от одних часов.
  *
- * Карточка живёт в кэше неделю, и перегенерация, давшая ту же страницу байт в
+ * Карточка живёт в кэше месяц, и перегенерация, давшая ту же страницу байт в
  * байт, ISR Writes не стоит. Значит, всё, что в разметке зависит от момента
  * рендера, а не от данных, — это запись на каждой перегенерации. Сломать это
  * легко и незаметно: страница рисуется так же, просто лимит тает. Поэтому
@@ -220,13 +221,21 @@ async function snapshot(): Promise<string> {
 }
 
 describe('кэш карточки игры', () => {
-  test('неделя — и та же неделя у OG-картинки', () => {
+  /*
+   * Месяц, а не неделя: свежесть держат сбросы кронов, а по часам доезжают
+   * только числа недельной сверки (GAME_PAGE_REVALIDATE_SEC в lib/gamecache).
+   * Next читает revalidate только литералом — импорта он не разберёт, —
+   * поэтому литерал страницы сверяется с константой. Тот же срок — у архива
+   * обновлений и страниц патчей: их сбрасывают те же кроны.
+   */
+  test('месяц — у карточки, архива обновлений и страниц патчей', () => {
     expect(revalidate).toBe(GAME_PAGE_REVALIDATE_SEC)
-    expect(revalidate).toBe(7 * DAY)
-    // Next читает revalidate только литералом — импорта он не разберёт
-    const og = fs.readFileSync(path.join(__dirname, 'opengraph-image.tsx'), 'utf8')
-    const literal = og.match(/export const revalidate = ([\d_]+)\n/)?.[1]
-    expect(Number(literal?.replace(/_/g, ''))).toBe(revalidate)
+    expect(revalidate).toBe(30 * DAY)
+    for (const file of [path.join('news', 'page.tsx'), path.join('news', '[gid]', 'page.tsx')]) {
+      const src = fs.readFileSync(path.join(__dirname, file), 'utf8')
+      const literal = src.match(/export const revalidate = ([\d_]+)\n/)?.[1]
+      expect(Number(literal?.replace(/_/g, '')), file).toBe(GAME_PAGE_REVALIDATE_SEC)
+    }
   })
 
   test('пререндер — только на продовой сборке: превью и локальная база пустые списки', async () => {
@@ -329,21 +338,54 @@ describe('кэш карточки игры', () => {
   })
 
   test('в островки GameArt уезжают только ссылки варианта card', async () => {
-    // Герой и «Похожие» рисуют арт вариантом card: он читает header, header2x
-    // и capsule. library_hero и hero_2x ехали в RSC и в HTML каждой из пяти
-    // тысяч карточек мёртвым грузом — по ~380 символов на игру (lib/art,
-    // trimArt «нужна на границе с клиентом»).
+    // Герой рисует арт вариантом card: он читает header, header2x и capsule.
+    // library_hero и hero_2x ехали в RSC и в HTML каждой из пяти тысяч
+    // карточек мёртвым грузом — по ~380 символов на игру (lib/art, trimArt
+    // «нужна на границе с клиентом»).
     await seed()
     const arts = islandsOf(flight(await GamePage(params)), 'GameArt')
-    // две картинки героя и шесть соседей — сторож не слепой
-    expect(arts.length).toBeGreaterThanOrEqual(8)
+    // две картинки героя — сторож не слепой
+    expect(arts).toHaveLength(2)
     for (const a of arts) {
       expect(a.variant ?? 'card').toBe('card')
       expect(Object.keys((a.art as object | null) ?? {}).sort()).toEqual(['capsule', 'header', 'header2x'])
     }
   })
 
-  test('онлайн — прошедшим временем: «сейчас» из недельного кэша не бывает правдой', async () => {
+  /*
+   * Плитки «Похожих» — серверные, как на хабе (StaticGameCardBody): у
+   * островка GameArt в RSC-части ехали headerImage, объект арта и sizes, около
+   * полутора килобайт на плитку, и всё это в каждой записи ISR карточки. У
+   * серверной в разметке остаются src, srcSet и sizes картинки.
+   */
+  test('«Похожие» — серверные плитки, без островков арта', async () => {
+    await seed()
+    const page = flight(await GamePage(params))
+    const neighbours = islandsOf(page, 'GameArt').filter((a) => a.appid !== APPID)
+    expect(neighbours).toEqual([])
+    // сторож не слепой: обложки шестерых соседей на странице есть — обычным <img>
+    const covers = JSON.stringify(page).match(/"tag":"img","key":null,"props":\{"src":"https:\/\/cdn\.example\/1\d\/header\.jpg"/g)
+    expect(covers).toHaveLength(6)
+  })
+
+  /*
+   * Кадров у игры в базе бывает до восьми, а слайдер показывает GAME_SLIDES;
+   * поток hls у трейлера не играет никто (Trailer.hls в lib/trailer). Всё, что
+   * уходит в пропсы островков, лежит в RSC-части и в каждой записи ISR.
+   */
+  test('в островки кадров и трейлера — только то, что они показывают', async () => {
+    const shots = Array.from({ length: 8 }, (_, i) => `https://cdn.example/730/s${i}.jpg`)
+    const media = 'https://video.akamai.steamstatic.com/store_trailers/730'
+    const trailer = { mp4: `${media}/micro.mp4`, webm: `${media}/micro.webm`, poster: `${media}/movie.jpg` }
+    await seed({ screenshots: shots, trailer: { ...trailer, hls: `${media}/hls_264_master.m3u8` } })
+    const page = flight(await GamePage(params))
+    const [gallery] = islandsOf(page, 'GameShots')
+    expect(gallery?.images).toEqual(shots.slice(0, GAME_SLIDES))
+    const [preview] = islandsOf(page, 'TrailerPreview')
+    expect(preview?.trailer).toEqual(trailer)
+  })
+
+  test('онлайн — прошедшим временем: «сейчас» из месячного кэша не бывает правдой', async () => {
     await seed()
     const text = textOf(visible(await GamePage(params)))
     expect(text).toContain('играли')
@@ -353,7 +395,7 @@ describe('кэш карточки игры', () => {
   /*
    * Кольцо — все языки из сверки каталога, а под ним пульс: месяц, который
    * разошёлся со всем временем, и отзывы на русском. Подписи датой, а не «месяц
-   * назад», — и вывод за неделю кэша не меняется от одних часов.
+   * назад», — и вывод за срок кэша не меняется от одних часов.
    */
   test('кольцо — все языки, под ним месяц и русские; через три дня — та же страница', async () => {
     await seed()
@@ -681,63 +723,58 @@ describe('английская карточка', () => {
   })
 
   /*
-   * alt файловой карточки один на все языки, поэтому /en ставит свой images —
-   * ту же карточку с английской подписью, а русская своего images не задаёт и
-   * получает файловую до байта (enCard в page.tsx). Размеры и тип в page.tsx —
-   * копия: если карточка сменит формат, тест это поймает.
+   * Превью — шапка игры из Steam, одна на оба языка (gameCard в lib/site).
+   * Своей PNG-карточки у сегмента больше нет: она стоила записи ISR и рендера
+   * функции на каждую игру и каждый язык (почему — shareArt в lib/art).
+   * Вернись файл — и он встал бы на страницах, где images не задан, мимо
+   * этого теста; поэтому его отсутствие сторожится здесь же.
    */
-  test('превью на /en — та же карточка маршрута, но с английским alt', async () => {
+  test('превью — шапка Steam 920×430 с названием в alt, на обоих языках', async () => {
     await seedEn()
-    const { size, contentType } = await import('./opengraph-image')
-    const meta = await generateMetadata(en())
-    expect(meta.openGraph?.images).toEqual([
-      {
-        url: `/en/game/${APPID}/opengraph-image`,
-        width: size.width,
-        height: size.height,
-        type: contentType,
-        alt: 'Is it worth playing? — imbored',
-      },
-    ])
-    // twitter:image Next дозаполняет из openGraph сам — своего тут не нужно
-    expect(meta.twitter).not.toHaveProperty('images')
-  })
-
-  test('русская страница своего images не задаёт — карточку и её alt ставит файл', async () => {
-    await seedEn()
-    const { alt } = await import('./opengraph-image')
-    expect(alt).toBe('Стоит ли играть — imbored')
-    const meta = await generateMetadata({ params: Promise.resolve({ appid: String(APPID) }) })
-    expect(meta.openGraph).not.toHaveProperty('images')
-    expect(meta.twitter).not.toHaveProperty('images')
+    for (const p of [params, en()]) {
+      const meta = await generateMetadata(p)
+      expect(meta.openGraph?.images).toEqual([
+        { url: `https://cdn.example/${APPID}/header_2x.jpg`, width: 920, height: 430, alt: 'Counter-Strike 2' },
+      ])
+      // twitter:image Next дозаполняет из openGraph сам — своего тут не нужно
+      expect(meta.twitter).not.toHaveProperty('images')
+      expect(meta.twitter).toMatchObject({ card: 'summary_large_image' })
+    }
+    expect(fs.existsSync(path.join(__dirname, 'opengraph-image.tsx'))).toBe(false)
   })
 
   /*
-   * 404 под /en/game/<appid>. Голову, которую видит браузер, клиент ставит
-   * из обычного прохода метаданных: файловая карточка сегмента плюс то, что
-   * вернул generateMetadata (докблок missingMeta в page.tsx). Пустой объект
-   * оставлял в ней на /en русский alt файла.
+   * Без header_2x — header; без шапки Steam вовсе (игра другого магазина) —
+   * корневая карточка от родителя: свой openGraph страницы заменяет корневой
+   * целиком, и без неё превью осталось бы без картинки. На /en — с английской
+   * подписью, как у корня.
    */
-  test('нет такой игры: на /en — та же карточка с английским alt, на русской — пустой объект, как был', async () => {
-    const { size, contentType } = await import('./opengraph-image')
+  test('без header_2x — header 460×215; без шапки Steam — корневая карточка', async () => {
+    await upsertGameMeta(db, game(APPID, { art: { header: `https://cdn.example/${APPID}/header.jpg` } }), T0)
+    expect((await generateMetadata(params)).openGraph?.images).toEqual([
+      { url: `https://cdn.example/${APPID}/header.jpg`, width: 460, height: 215, alt: `Игра ${APPID}` },
+    ])
+
+    const ROOT = { url: 'https://imbored.cc/ru/opengraph-image?91b1f53ea01c02b3', width: 1200, height: 630, alt: 'imbored — во что поиграть' }
+    // Родитель — корень: openGraph с одной корневой карточкой
+    const rootOg = { images: [ROOT] }
+    const parent = Promise.resolve({ openGraph: rootOg }) as never
+    await upsertGameMeta(db, game(-7, { name: 'Чужой магазин' }), T0)
+    const other = (lang?: string) => ({ params: Promise.resolve({ appid: '-7', ...(lang ? { lang } : {}) }) })
+    expect((await generateMetadata(other(), parent)).openGraph?.images).toEqual([ROOT])
+    expect((await generateMetadata(other('en'), parent)).openGraph?.images).toEqual([
+      { ...ROOT, alt: 'imbored — what to play' },
+    ])
+  })
+
+  /*
+   * 404 под /game/<appid>: голова — корневая, с корневой карточкой и подписью
+   * на языке адреса (rootCardOn в app/[lang]/layout.tsx). Своя запись была
+   * нужна, пока у сегмента стояла файловая карточка с русским alt.
+   */
+  test('нет такой игры: пустой объект на обоих языках', async () => {
     for (const appid of ['999999999', 'abc']) {
-      const meta = await generateMetadata({ params: Promise.resolve({ appid, lang: 'en' }) })
-      expect(meta.openGraph, appid).toEqual({
-        type: 'website',
-        siteName: 'imbored',
-        locale: 'en_US',
-        url: `/en/game/${appid}`,
-        images: [
-          {
-            url: `/en/game/${appid}/opengraph-image`,
-            width: size.width,
-            height: size.height,
-            type: contentType,
-            alt: 'Is it worth playing? — imbored',
-          },
-        ],
-      })
-      expect(JSON.stringify(meta)).not.toMatch(CYR)
+      expect(await generateMetadata({ params: Promise.resolve({ appid, lang: 'en' }) }), appid).toEqual({})
       expect(await generateMetadata({ params: Promise.resolve({ appid }) }), appid).toEqual({})
     }
   })

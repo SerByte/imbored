@@ -15,8 +15,6 @@ import { loadPatch, patchHeading } from './load'
 import PatchPage, { generateMetadata, revalidate } from './page'
 
 vi.mock('next/headers', () => import('@/lib/testing/headers'))
-/** Размеры карточки читаются у её модуля; рисовать её здесь незачем */
-vi.mock('next/og', () => ({ ImageResponse: class {} }))
 
 /**
  * Мост «а у меня?» со страницы патча.
@@ -28,11 +26,11 @@ vi.mock('next/og', () => ({ ImageResponse: class {} }))
  * самое здесь собирают по его собственной библиотеке. Ссылка на «Что нового»
  * — одна строка, серверная, без скрипта.
  *
- * Страница при этом остаётся одной на всех: она в ISR на сутки, и мост не
+ * Страница при этом остаётся одной на всех: она в ISR на месяц, и мост не
  * знает, кто смотрит. Гостя /whatsnew не разворачивает — показывает общую
  * ленту и сам зовёт подключить Steam, — так что и сессии здесь читать
  * незачем. Сторож ниже держит это правило в исходнике: чтение куки сделало
- * бы страницу динамической, и сутки кэша молча кончились бы.
+ * бы страницу динамической, и месяц кэша молча кончился бы.
  */
 
 const APPID = 730
@@ -123,6 +121,59 @@ describe('страница патча: мост к своей ленте', () =>
 })
 
 /**
+ * Внизу — патчи, вышедшие РАНЬШЕ этого, а не шесть свежих у игры. Свежие
+ * менялись с каждым новым патчем, и каждая сохранённая страница патча игры
+ * перерисовывалась и писалась в ISR заново; предыдущие у страницы уже не
+ * меняются (OTHERS в page.tsx).
+ */
+describe('страница патча: предыдущие патчи', () => {
+  const DAY = 86_400
+
+  async function seeded(): Promise<unknown> {
+    const now = nowSec()
+    await render()
+    await upsertNewsItems(
+      db,
+      [
+        // вышел позже страницы — в её списке его нет
+        patch('9001', now - 60),
+        ...Array.from({ length: 8 }, (_, i) => patch(String(4000 + i), now - (i + 1) * DAY)),
+        // не патч по вердикту модели — тоже мимо
+        patch('4100', now - 2 * 3600, { title: 'Распродажа' }),
+      ],
+      now,
+    )
+    await setNewsDigest(db, APPID, '4100', { tldr: '', scale: 'none' }, now)
+    return flightOf(await PatchPage({ params: Promise.resolve({ appid: String(APPID), gid: GID }) }), ISLANDS)
+  }
+
+  test('только вышедшие раньше, свежие первыми, шесть', async () => {
+    const tree = await seeded()
+    const hrefs = islandsOf(tree, 'Link')
+      .map((l) => String(l.href))
+      .filter((h) => /\/news\/\d+$/.test(h))
+    expect(hrefs).toEqual(Array.from({ length: 6 }, (_, i) => `/game/${APPID}/news/${4000 + i}`))
+    expect(textOf(tree)).toContain('Предыдущие патчи Counter-Strike 2')
+    expect(textOf(tree)).not.toContain('Другие патчи')
+  })
+
+  test('новый патч игры списка старой страницы не меняет', async () => {
+    const before = JSON.stringify(await seeded())
+    await upsertNewsItems(db, [patch('9002', nowSec())], nowSec())
+    const after = JSON.stringify(
+      flightOf(await PatchPage({ params: Promise.resolve({ appid: String(APPID), gid: GID }) }), ISLANDS),
+    )
+    expect(after).toBe(before)
+  })
+
+  test('ссылки списка — без префетча: шесть страниц на ISR ради докрутки до низа', async () => {
+    const links = islandsOf(await seeded(), 'Link').filter((l) => /\/news\/\d+$/.test(String(l.href)))
+    expect(links.length).toBeGreaterThan(0)
+    expect(links.every((l) => l.prefetch === false)).toBe(true)
+  })
+})
+
+/**
  * Префетч страницы патча не тащит её кадр туда, где стоит ссылка.
  *
  * «Читать патч» на обложке /whatsnew префетчит эту страницу, а подсказку
@@ -137,8 +188,8 @@ describe('страница патча: префетч', () => {
     expect(imageHints(page)).toEqual([])
   })
 
-  test('мост не читает сессию: страница остаётся в ISR на сутки', () => {
-    expect(revalidate).toBe(86_400)
+  test('мост не читает сессию: страница остаётся в ISR на месяц', () => {
+    expect(revalidate).toBe(30 * 86_400)
     // Без комментариев: докблоки как раз объясняют, почему здесь нет cookies()
     const src = fs
       .readFileSync(path.join(__dirname, 'page.tsx'), 'utf8')
@@ -157,7 +208,7 @@ describe('страница патча: префетч', () => {
 describe('страница патча на /en', () => {
   async function renderEn(withEnglish: boolean): Promise<unknown> {
     await render()
-    // Соседний патч с русским заголовком — для «More … patches» внизу
+    // Предыдущий патч с русским заголовком — для «Earlier … patches» внизу
     await upsertNewsItems(db, [patch('5123894512300', nowSec() - 3 * 86_400)], nowSec())
     if (withEnglish) await setNewsDigestEn(db, APPID, GID, { tldrEn: 'Fixed the netcode.' }, nowSec())
     return flightOf(
@@ -172,7 +223,7 @@ describe('страница патча на /en', () => {
     expect(text).toContain('Fixed the netcode.')
     expect(text).toContain('Update')
     expect(text).toContain("We don't have these patch notes in English")
-    expect(text).toContain('More Counter-Strike 2 patches')
+    expect(text).toContain('Earlier Counter-Strike 2 patches')
     expect(text).not.toMatch(/[А-Яа-яЁё]/)
   })
 
@@ -206,11 +257,11 @@ describe('страница патча на /en', () => {
    * Название игры — данные, и на /en оно бывает русским (games.name у части
    * верха каталога, nameSql в lib/db). На проде i18n-audit нашёл на
    * /en/game/292030/news/… три места без пометки: крошку «Ведьмак 3: Дикая
-   * Охота — Обновлённое издание», «More … patches» и «All … updates». Каждое
-   * русское название здесь — внутри lang="ru"; русская страница — без
-   * пометок, как была.
+   * Охота — Обновлённое издание», «More … patches» (теперь «Earlier …
+   * patches») и «All … updates». Каждое русское название здесь — внутри
+   * lang="ru"; русская страница — без пометок, как была.
    */
-  test('русское название игры на /en — только внутри lang="ru": крошка, h1, «More … patches», «All … updates»', async () => {
+  test('русское название игры на /en — только внутри lang="ru": крошка, h1, «Earlier … patches», «All … updates»', async () => {
     const NAME = 'Ведьмак 3: Дикая Охота'
     await render()
     await upsertNewsItems(db, [patch('5123894512300', nowSec() - 3 * 86_400)], nowSec())
@@ -236,7 +287,7 @@ describe('страница патча на /en', () => {
     expect(unmarked(tree)).not.toMatch(/[А-Яа-яЁё]/)
     const crumb = islandsOf(tree, 'Link').find((l) => l.href === `/game/${APPID}`)
     expect(crumb).toMatchObject({ lang: 'ru', children: NAME })
-    expect(textOf(tree)).toContain(`More ${NAME} patches`)
+    expect(textOf(tree)).toContain(`Earlier ${NAME} patches`)
     expect(textOf(tree)).toContain(`All ${NAME} updates`)
 
     // Русская страница — без пометок: ни одного lang="ru", и у крошки нет
@@ -439,68 +490,55 @@ describe('заголовок патча: общий «{Game} update» — цел
 })
 
 /**
- * alt файловой карточки один на все языки, поэтому /en ставит свой images —
- * ту же карточку с английской подписью. Русская страница своего images не
- * задаёт: её картинка, размеры и alt — от файла, как были.
+ * Превью патча — шапка игры из Steam, та же, что у карточки игры (gameCard в
+ * lib/site): своей PNG-карточки у патча больше нет — она стоила записи ISR и
+ * рендера функции на каждый пост и язык. Что прислали патч, говорят og:title
+ * и описание рядом с картинкой.
  */
 describe('карточка патча в чате', () => {
   const en = { params: Promise.resolve({ appid: String(APPID), gid: GID, lang: 'en' }) }
   const ru = { params: Promise.resolve({ appid: String(APPID), gid: GID }) }
+  const HEADER = `https://cdn.example/${APPID}/header_2x.jpg`
 
-  test('/en — та же карточка с английским alt; twitter берёт её из openGraph', async () => {
+  async function withArt(): Promise<void> {
     await render()
-    const { size, contentType } = await import('./opengraph-image')
-    const meta = await generateMetadata(en)
-    expect(meta.openGraph?.images).toEqual([
-      {
-        url: `/en/game/${APPID}/news/${GID}/opengraph-image`,
-        width: size.width,
-        height: size.height,
-        type: contentType,
-        alt: 'What changed in this patch — imbored',
-      },
-    ])
-    // Свои картинки у twitter отменили бы наследование от openGraph
-    expect(meta.twitter).not.toHaveProperty('images')
+    await db.execute({
+      sql: 'UPDATE games SET art_json = ? WHERE appid = ?',
+      args: [JSON.stringify({ header: `https://cdn.example/${APPID}/header.jpg`, header2x: HEADER }), APPID],
+    })
+  }
+
+  test('на обоих языках — шапка игры с названием в alt; twitter берёт её из openGraph', async () => {
+    await withArt()
+    for (const p of [ru, en]) {
+      const meta = await generateMetadata(p)
+      expect(meta.openGraph?.images).toEqual([{ url: HEADER, width: 920, height: 430, alt: 'Counter-Strike 2' }])
+      // Свои картинки у twitter отменили бы наследование от openGraph
+      expect(meta.twitter).not.toHaveProperty('images')
+    }
+    expect(fs.existsSync(path.join(__dirname, 'opengraph-image.tsx'))).toBe(false)
   })
 
-  test('русская страница своего images не задаёт — карточку ставит файл', async () => {
-    await render()
-    const meta = await generateMetadata(ru)
-    expect(meta.openGraph).toBeDefined()
-    expect(meta.openGraph).not.toHaveProperty('images')
-    expect(meta.twitter).not.toHaveProperty('images')
+  test('игры нет в каталоге — корневая карточка от родителя', async () => {
+    const now = nowSec()
+    await upsertNewsItems(db, [patch(GID, now - 3600)], now)
+    const ROOT = { url: 'https://imbored.cc/ru/opengraph-image?91b1f53ea01c02b3', width: 1200, height: 630, alt: 'imbored — во что поиграть' }
+    // Родитель — корень: openGraph с одной корневой карточкой
+    const rootOg = { images: [ROOT] }
+    const parent = Promise.resolve({ openGraph: rootOg }) as never
+    expect((await generateMetadata(ru, parent)).openGraph?.images).toEqual([ROOT])
+    expect((await generateMetadata(en, parent)).openGraph?.images).toEqual([{ ...ROOT, alt: 'imbored — what to play' }])
   })
 
   /*
-   * 404 (нет такого поста, не патч, кривой адрес): голову такой 404 браузер
-   * берёт из generateMetadata страницы, и пустой объект оставлял на /en
-   * русский alt файловой карточки. На /en — та же карточка с английским alt,
-   * на русской — пустой объект, как был.
+   * 404 (нет такого поста, не патч, кривой адрес): голова — корневая, с
+   * подписью карточки на языке адреса. Своя запись была нужна, пока у патча
+   * стояла файловая карточка с русским alt.
    */
-  test('нет такого патча: на /en — карточка с английским alt, на русской — пустой объект', async () => {
+  test('нет такого патча: пустой объект на обоих языках', async () => {
     await render()
-    const { size, contentType } = await import('./opengraph-image')
     for (const [appid, gid] of [[String(APPID), '1'], [String(APPID), 'nope'], ['abc', GID]]) {
-      const missing = await generateMetadata({ params: Promise.resolve({ appid, gid, lang: 'en' }) })
-      // только openGraph: заголовок, описание и noindex 404 — корневые, как были
-      expect(Object.keys(missing), gid).toEqual(['openGraph'])
-      expect(missing.openGraph, gid).toEqual({
-        siteName: 'imbored',
-        locale: 'en_US',
-        type: 'website',
-        url: `/en/game/${appid}/news/${gid}`,
-        images: [
-          {
-            url: `/en/game/${appid}/news/${gid}/opengraph-image`,
-            width: size.width,
-            height: size.height,
-            type: contentType,
-            alt: 'What changed in this patch — imbored',
-          },
-        ],
-      })
-      expect(JSON.stringify(missing)).not.toMatch(/[А-Яа-яЁё]/)
+      expect(await generateMetadata({ params: Promise.resolve({ appid, gid, lang: 'en' }) }), gid).toEqual({})
       expect(await generateMetadata({ params: Promise.resolve({ appid, gid }) }), gid).toEqual({})
     }
   })

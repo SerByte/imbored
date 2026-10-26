@@ -382,7 +382,7 @@ describe('адрес вне разделов', () => {
       '/_next/static/chunks/nope.js',
       '/_next/image',
       '/_next/data/build/en/play.json',
-      '/ru/game/730/opengraph-image',
+      '/ru/games/roguelike/opengraph-image',
     ]) {
       expect((await route(url)).rewrite, url).toBe(null)
     }
@@ -484,11 +484,37 @@ describe('редирект с /ru', () => {
    * круг редиректа часть краулеров не проходит, и карточка в чате пустая.
    */
   test('файловые карточки под /ru отдаются как есть, без круга', async () => {
-    for (const url of ['/ru/opengraph-image', '/ru/game/730/opengraph-image', '/ru/portrait/1/year/opengraph-image']) {
+    for (const url of ['/ru/opengraph-image', '/ru/games/roguelike/opengraph-image', '/ru/portrait/1/year/opengraph-image']) {
       const r = await route(url)
       expect(r.redirect, url).toBe(null)
       expect(r.rewrite, url).toBe(null)
     }
+  })
+
+  /*
+   * Своих карточек у игры и патча больше нет (превью — шапка Steam, shareArt
+   * в lib/art), а их старые адреса живут в кэше мессенджеров и у ботов
+   * превью. Без правила такой адрес доходил бы до динамической ловушки
+   * [...missing] — функции на каждый заход — и отвечал бы HTML-ом 404.
+   */
+  test('бывшие карточки игры и патча — постоянным редиректом на корневую карточку языка', async () => {
+    // хвост-хеш старого og:image уезжает с адресом; корневой карточке он не мешает
+    const hashed = await route('/ru/game/730/opengraph-image?bef074ffb1a98a54')
+    expect(hashed.status).toBe(308)
+    expect(hashed.redirect).toMatch(/^\/ru\/opengraph-image\?bef074ffb1a98a54/)
+    for (const [url, to] of [
+      ['/en/game/730/opengraph-image', '/en/opengraph-image'],
+      ['/ru/game/730/news/5000000000000000000/opengraph-image', '/ru/opengraph-image'],
+      ['/en/game/730/news/5000000000000000000/opengraph-image', '/en/opengraph-image'],
+      ['/game/730/opengraph-image', '/ru/opengraph-image'],
+      ['/game/730/news/1/opengraph-image', '/ru/opengraph-image'],
+    ]) {
+      expect(await route(url), url).toMatchObject({ status: 308, redirect: to })
+    }
+    // сами страницы игры и патча правило не задевает
+    expect((await route('/game/730')).redirect).toBe(null)
+    expect((await route('/game/730/news/1')).redirect).toBe(null)
+    expect((await route('/en/game/730/news/1')).redirect).toBe(null)
   })
 
   test('соседи /ru не задеты', async () => {

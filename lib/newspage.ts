@@ -37,6 +37,9 @@ export function newsPath(appid: number, gid: string): string {
   return `/game/${appid}/news/${encodeURIComponent(gid)}`
 }
 
+/** Пост, чья страница (newsPath) поменялась: так кроны передают её в сброс ISR (resetSliceCards) */
+export type PostRef = { appid: number; gid: string }
+
 /**
  * Адрес патча с меткой воронки — для «Поделиться» (как pickShareUrl у выбора).
  * На языке страницы: с /en делятся английской страницей, а не русской.
