@@ -423,8 +423,9 @@ describe('refreshCatalogSignals', () => {
 
     await refreshCatalogSignals(db, { fetchPrices: noPrices, deadlineAt: FAR, nowSec: NOW, fetchReviews: answer(286_667, 97, 16_893) })
     expect(await shown()).toEqual([286_667, 97, 9, 16_893, 96])
-    // англоязычная шкала порогов — своими колонками, как прежде
-    expect(await row(db, 1145360)).toMatchObject({ reviews_total: 142_783, reviews_percent: 98 })
+    // англоязычная шкала порогов — своими колонками, как прежде: доля новая,
+    // а число посева (142 000) от ответа меньше чем на 2% и стоит
+    expect(await row(db, 1145360)).toMatchObject({ reviews_total: 142_000, reviews_percent: 98 })
 
     // Неделя: +1 500 отзывов (0,5%) и +40 русских — показанное не трогаем
     const week = NOW + SIGNALS_MAX_AGE_SEC + 1
@@ -458,26 +459,30 @@ describe('refreshCatalogSignals', () => {
       return [r.reviews_total, r.reviews_percent, r.reviews_at]
     }
 
+    // Число посева от ответа — на 0,6%: стоит; доля пришла впервые — пишется
     await refreshCatalogSignals(db, { fetchPrices: noPrices, deadlineAt: FAR, nowSec: NOW, fetchReviews: answer(142_783, 98) })
-    expect(await english(1145360)).toEqual([142_783, 98, NOW])
+    expect(await english(1145360)).toEqual([142_000, 98, NOW])
     expect(await english(2)).toEqual([41, 90, NOW])
 
-    // Неделя: +1 500 отзывов (1%) при той же доле — порядок пула не трогаем,
-    // а сверку отмечаем: следующее звено игру не спросит
+    // Неделя: до 144 283 (1,6% от записанного) при той же доле — порядок пула
+    // не трогаем, а сверку отмечаем: следующее звено игру не спросит
     const week = NOW + SIGNALS_MAX_AGE_SEC + 1
     const quiet = reviewsStub(() => ({ total: 144_283, percent: 98 }))
     await refreshCatalogSignals(db, { fetchPrices: noPrices, deadlineAt: FAR, nowSec: week, fetchReviews: quiet.fn })
-    expect(await english(1145360)).toEqual([142_783, 98, week])
+    expect(await english(1145360)).toEqual([142_000, 98, week])
     await refreshCatalogSignals(db, { fetchPrices: noPrices, deadlineAt: FAR, nowSec: week + 3600, fetchReviews: quiet.fn })
     expect(quiet.calls).toHaveLength(1)
 
-    // 2% от записанного набежало — переписываем; доля сдвинулась — сразу
+    // 2% от записанного набежало — переписываем
     const later = week + SIGNALS_MAX_AGE_SEC + 1
     await refreshCatalogSignals(db, { fetchPrices: noPrices, deadlineAt: FAR, nowSec: later, fetchReviews: answer(145_700, 98) })
     expect(await english(1145360)).toEqual([145_700, 98, later])
+    // Доля сдвинулась — она сразу (её читают пороги), а число, сдвинувшееся
+    // меньше чем на 2%, остаётся: по нему порядок, и переход 98 → 97 его
+    // с собой не тянет
     const last = later + SIGNALS_MAX_AGE_SEC + 1
     await refreshCatalogSignals(db, { fetchPrices: noPrices, deadlineAt: FAR, nowSec: last, fetchReviews: answer(145_710, 97) })
-    expect(await english(1145360)).toEqual([145_710, 97, last])
+    expect(await english(1145360)).toEqual([145_700, 97, last])
   })
 
   test('мёртвые и вытесненные в очередь не попадают: их судьба — дело промоута', async () => {

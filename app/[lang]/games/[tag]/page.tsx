@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import Link from '@/components/Link'
-import { notFound } from 'next/navigation'
+import { notFound, permanentRedirect } from 'next/navigation'
 import { GameLink } from '@/components/GameLink'
 import { Icon } from '@/components/Icon'
 import { StaticGameCardBody } from '@/components/StaticGameCard'
@@ -12,7 +12,9 @@ import {
   HUB_FACETS,
   HUB_GENRES,
   HUB_TAGS,
+  hubFacetOf,
   hubPath,
+  hubTagOf,
   type HubFacet,
 } from '@/lib/gamehub'
 import { genreBreadcrumbLd, genreItemListLd, ldScript } from '@/lib/jsonld'
@@ -58,13 +60,15 @@ import { loadGenre, thinList, type Genre, type GenreGame } from './load'
  * Чужой адрес — по-прежнему 404, только решает его теперь страница, а не
  * сборка: loadGenre не знает такого slug (hubTagOf и hubFacetOf — без базы)
  * и отдаёт null, страница зовёт notFound(), generateMetadata — пустую
- * голову. По-русски чужой жанр сюда и не доходит: rewrites переписывают в
- * /ru/… только известные slug, остальное забирает статическая /_not-found
- * (SECTION_SHAPES и garbageRewrites в lib/i18nroutes.ts). Под /en это
- * notFound() самой страницы — та же 404 и та же цена, что у /en/game/<нет
- * такой>: рендер функцией и запись ISR на адрес (Next кладёт ответ 404 в
- * кэш вместе с кодом — status в записи, next/dist/build/templates/
- * app-page-runtime.js).
+ * голову. По-русски чужой жанр сюда почти не доходит: rewrites переписывают
+ * в /ru/… только известные slug, остальное забирает статическая /_not-found
+ * (SECTION_SHAPES и garbageRewrites в lib/i18nroutes.ts). Почти — потому что
+ * правила rewrites регистр не различают, и /games/ROGUELIKE доходит сюда как
+ * известный: его страница уводит постоянным редиректом на строчный адрес
+ * (caseFold ниже), а не кладёт 404 в кэш. Под /en чужой slug — notFound()
+ * самой страницы — та же 404 и та же цена, что у /en/game/<нет такой>:
+ * рендер функцией и запись ISR на адрес (Next кладёт ответ 404 в кэш вместе
+ * с кодом — status в записи, next/dist/build/templates/app-page-runtime.js).
  *
  * Подборка — та же страница с другим отбором: вид, порог «тонкой» страницы,
  * разметка и карточка для чатов у них общие, а выход дальше у подборки про
@@ -90,6 +94,17 @@ export function generateStaticParams(): Array<{ tag: string }> {
 }
 
 type Params = { params: Promise<{ tag: string; lang?: string }> }
+
+/**
+ * Известный slug не в своём регистре (/games/ROGUELIKE) — строчный адрес, на
+ * который его надо увести; иначе null. Без базы, тем же hubTagOf/hubFacetOf,
+ * что у loadGenre.
+ */
+function caseFold(slug: string): string | null {
+  const lower = slug.toLowerCase()
+  if (lower === slug) return null
+  return hubTagOf(lower) || hubFacetOf(lower) ? lower : null
+}
 
 /** «40 игр» / «40 games» — счёт игр жанра или подборки в описании и на странице */
 const gamesWord = (locale: Locale, n: number) => pl(locale, n, { ru: ['игра', 'игры', 'игр'], en: ['game', 'games'] })
@@ -162,6 +177,8 @@ export default async function GenrePage({ params }: Params) {
   const { tag: slug, lang } = await params
   // Адреса в разметке — на языке страницы, как её canonical
   const locale = toLocale(lang)
+  const folded = caseFold(slug)
+  if (folded) permanentRedirect(lp(locale, `/games/${folded}`))
   const genre = await loadGenre(slug, locale)
   if (!genre) notFound()
   const { title, games } = genre

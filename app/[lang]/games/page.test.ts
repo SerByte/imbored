@@ -248,6 +248,21 @@ describe('кэш хаба и страниц жанра', () => {
     // знакомый адрес на той же сборке без пререндера — рисуется
     await expect(GenrePage(params('open-world'))).resolves.toBeDefined()
   })
+
+  /*
+   * Rewrites регистр не различают, и /games/OPEN-WORLD доходит до страницы
+   * как известный жанр: без редиректа каждый такой вариант был бы рендером и
+   * своей записью 404 в ISR (caseFold в app/[lang]/games/[tag]/page.tsx).
+   */
+  test('известный жанр не в своём регистре — постоянный редирект на строчный адрес', async () => {
+    const at = (tag: string, lang: string) => ({ params: Promise.resolve({ tag, lang }) })
+    // Адрес и код редиректа Next кладёт в digest ошибки, а не в её текст
+    const digest = (p: Promise<unknown>) => p.then(() => null, (e: { digest?: string }) => e.digest ?? null)
+    expect(await digest(GenrePage(at('OPEN-World', 'en')))).toBe('NEXT_REDIRECT;replace;/en/games/open-world;308;')
+    expect(await digest(GenrePage(at('Coop', 'ru')))).toBe('NEXT_REDIRECT;replace;/games/coop;308;')
+    // чужой адрес в любом регистре — по-прежнему 404, а не редирект в никуда
+    await expect(GenrePage(at('NO-SUCH-GENRE', 'en'))).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK;404/)
+  })
 })
 
 /**

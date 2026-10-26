@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { NextConfig } from 'next'
+import { RSC_SEGMENTS_DIR_SUFFIX, RSC_SUFFIX } from 'next/dist/lib/constants'
 import { modifyRouteRegex } from 'next/dist/lib/redirect-status'
 import { getPathMatch } from 'next/dist/shared/lib/router/utils/path-match'
 import { prepareDestination } from 'next/dist/shared/lib/router/utils/prepare-destination'
@@ -456,13 +457,11 @@ describe('адрес вне разделов', () => {
       '/game/7.3e2',
       '/game/0x2DA',
       '/game/--5',
-      '/game/abc/opengraph-image',
       '/game/abc/news',
       '/game/abc/news/5000000000000000000',
       '/game/730/news/xyz',
       '/game/730/news/12a',
       '/game/730/news/-1',
-      '/game/730/news/xyz/opengraph-image',
     ]) {
       expect((await route(url)).rewrite, url).toBe('/_not-found')
     }
@@ -473,11 +472,8 @@ describe('адрес вне разделов', () => {
       '/game/730',
       '/game/4704690',
       '/game/-5',
-      '/game/-111/opengraph-image',
-      '/game/730/opengraph-image',
       '/game/730/news',
       '/game/730/news/5000000000000000000',
-      '/game/730/news/5000000000000000000/opengraph-image',
     ]) {
       expect((await route(url)).rewrite, url).toBe(`/ru${url}`)
     }
@@ -536,12 +532,13 @@ describe('номер не той формы под /en', () => {
       '/en/game/0730',
       '/en/game/730.0',
       '/en/game/7.3e2',
-      '/en/game/abc/opengraph-image',
       '/en/game/abc/news',
       '/en/game/abc/news/5000000000000000000',
       '/en/game/730/news/xyz',
       '/en/game/730/news/12a',
-      '/en/game/730/news/xyz/opengraph-image',
+      // расширение за верным номером — сканер копий и бэкапов, а не суффикс RSC
+      '/en/game/730.php',
+      '/en/game/730/news/123.html',
     ]) {
       expect((await route(url)).rewrite, url).toBe('/en/missing')
       expect(serverRoute(url), url).toEqual({ redirect: null, rewrite: '/en/missing' })
@@ -552,14 +549,12 @@ describe('номер не той формы под /en', () => {
     }
   })
 
-  test('настоящий номер не задевает: страница, карточка, архив, патч', async () => {
+  test('настоящий номер не задевает: страница, архив, патч', async () => {
     for (const url of [
       '/en/game/730',
       '/en/game/-5',
-      '/en/game/730/opengraph-image',
       '/en/game/730/news',
       '/en/game/730/news/5000000000000000000',
-      '/en/game/730/news/5000000000000000000/opengraph-image',
     ]) {
       expect((await route(url)).rewrite, url).toBe(url)
       expect(serverRoute(url), url).toEqual({ redirect: null, rewrite: url })
@@ -572,6 +567,13 @@ describe('номер не той формы под /en', () => {
    * префетч живой карточки, — поэтому верный номер — тот, за которым конец,
    * «/» или точка с буквой (NUM_END в lib/i18nroutes.ts).
    */
+  test('суффиксы RSC в правиле — те, что пишет эта версия Next', () => {
+    // NUM_END в lib/i18nroutes.ts перечисляет их по имени: сменись имя — и
+    // переходы по живым карточкам ушли бы в /en/missing
+    expect(RSC_SUFFIX).toBe('.rsc')
+    expect(RSC_SEGMENTS_DIR_SUFFIX).toBe('.segments')
+  })
+
   test('суффикс RSC за настоящим номером — не мусор', () => {
     for (const url of [
       '/en/game/730.rsc',

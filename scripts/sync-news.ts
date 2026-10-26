@@ -14,6 +14,12 @@
  *
  * По умолчанию пишет в локальный data/imbored.db. Чтобы залить в облако,
  * задайте TURSO_DATABASE_URL — как у seed:catalog и catalog:promote.
+ *
+ * Кэш сайта скрипт не сбрасывает: revalidateTag и revalidatePath работают
+ * только внутри Next. Общая лента патчей (/whatsnew, её голова и обе RSS)
+ * догонит записанное со следующим запуском крона, тронувшим крупный патч,
+ * или за сутки; карточки и страницы патчей — сбросом по адресам
+ * /api/cron/revalidate (DEPLOY.md, «Сброс кэша по адресам»).
  */
 
 import { randomUUID } from 'node:crypto'

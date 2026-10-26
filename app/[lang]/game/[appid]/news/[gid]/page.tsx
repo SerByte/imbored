@@ -397,15 +397,16 @@ export default async function PatchPage({ params }: Params) {
                 )
               })}
             </ul>
-            {/* Шесть предыдущих — перелинковка, а все хранящиеся патчи игры
-                списком — в её архиве обновлений */}
-            {game && (
-              <Link href={patchArchivePath(item.appid)} prefetch={false} className="tap link-more mt-3">
-                {oneItem(withForeignRuns(locale, tr(locale, { ru: `Все обновления «${game.name}»`, en: `All ${game.name} updates` }), [game.name]))}
-                <Icon name="arrow" size={16} />
-              </Link>
-            )}
           </section>
+        )}
+        {/* Шесть предыдущих — перелинковка, а все хранящиеся патчи игры
+            списком — в её архиве обновлений. Ссылка — и без списка: у самого
+            старого хранящегося патча предыдущих нет, а архив есть */}
+        {game && (
+          <Link href={patchArchivePath(item.appid)} prefetch={false} className="tap link-more mt-3">
+            {oneItem(withForeignRuns(locale, tr(locale, { ru: `Все обновления «${game.name}»`, en: `All ${game.name} updates` }), [game.name]))}
+            <Icon name="arrow" size={16} />
+          </Link>
         )}
       </article>
     </div>

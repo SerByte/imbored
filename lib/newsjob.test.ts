@@ -572,17 +572,20 @@ describe('runNewsSlice', () => {
     const run = (nowSec: number, items: RawNewsItem[]) =>
       runNewsSlice(db, { nowSec, deadlineAt: Date.now() + ЗАПАС_MS, fetchNews: feedOf({ 730: items }), digestLimit: 0 })
     const first = await run(NOW + 4000, [post(730, '1', 'Обновление Counter-Strike 2', PATCH), post(730, '2', 'Скидки', ['Скидка 50%'])])
-    expect(first.posts.sort((a, b) => a.gid.localeCompare(b.gid))).toEqual([
-      { appid: 730, gid: '1' },
-      { appid: 730, gid: '2' },
-    ])
+    // новая новость своей страницы не имеет (страница — только у патча), и
+    // сбрасывать у неё нечего
+    expect(first.posts).toEqual([{ appid: 730, gid: '1' }])
 
     // Сверка отзывов сдвинула вес игры: апсерт перепишет rank у постов, а не страницы
     await db.execute({ sql: 'UPDATE games SET reviews_total = ? WHERE appid = 730', args: [9_500_000] })
     await db.execute('UPDATE news_poll SET next_at = 0')
     const ranked = await run(NOW + 200_000, [post(730, '1', 'Обновление Counter-Strike 2', PATCH), post(730, '2', 'Скидки', ['Скидка 50%'])])
-    // сторож не слепой: строки правда переписаны — одним весом
-    expect(ranked.inserted).toBe(2)
+    // сторож не слепой: строки правда переписаны — одним весом, и видимой
+    // переменой (inserted) это не считается
+    const rank = await db.execute("SELECT rank FROM news_items WHERE appid = 730 AND gid = '1'")
+    expect(Number(rank.rows[0]?.rank)).toBe(9_500_000)
+    expect(ranked.inserted).toBe(0)
+    expect(ranked.cards).toEqual([])
     expect(ranked.posts).toEqual([])
 
     // Издатель поправил тело первого — его страница в сброс, второго нет
