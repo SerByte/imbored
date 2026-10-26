@@ -138,32 +138,42 @@ describe('превью в мессенджерах', () => {
   })
 
   /**
-   * openGraph.images страницы ВЫТЕСНЯЕТ карточку opengraph-image.tsx: файл
-   * Next берёт, только когда у страницы images нет (mergeStaticMetadata в
-   * next/dist/lib/metadata/resolve-metadata.js). Случайная такая строка тихо
-   * подменяет превью — однажды она уже стоила странице игры сырого баннера
-   * 920×430 вместо карточки.
+   * openGraph.images страницы ВЫТЕСНЯЕТ файловую карточку — своего сегмента
+   * или корневую (app/[lang]/opengraph-image.tsx доходит до всех, у кого нет
+   * своей): файл Next берёт, только когда у уровня images нет
+   * (mergeStaticMetadata в next/dist/lib/metadata/resolve-metadata.js).
+   * Случайная такая строка тихо подменяет превью.
+   *
+   * Сторож долго стоял слепым: в проверке «есть ли у файла свой openGraph»
+   * регулярке не хватало обратных косых (`openGraph:s*{`), и под неё не
+   * попадал ни один файл.
    */
-  test('там, где есть opengraph-image.tsx, нет случайного openGraph.images', () => {
-    // Намеренно — две страницы: на /en та же карточка того же маршрута, но с
-    // английской подписью, а alt у файловой карточки без языка. Next берёт
-    // images своего уровня вместо файла; что они ведут на свою карточку —
-    // page.test.ts рядом с каждой. Именем, а не окном в 300 знаков ниже: оно
-    // пропускало такие страницы случайно
-    const deliberate = new Set(['app/[lang]/game/[appid]/news/[gid]/page.tsx', 'app/[lang]/compat/[steamid]/page.tsx'])
-    const offenders: string[] = []
-    for (const [file, src] of appFiles()) {
-      if (!/openGraph:s*{/.test(src)) continue
-      if (deliberate.has(path.relative(ROOT, file).split(path.sep).join('/'))) continue
-      const dir = path.dirname(file)
-      const hasFile =
-        fs.existsSync(path.join(dir, 'opengraph-image.tsx')) ||
-        fs.existsSync(path.join(ROOT, 'app', '[lang]', 'opengraph-image.tsx'))
-      if (hasFile && /openGraph:\s*\{[\s\S]{0,300}?images:/.test(src)) {
-        offenders.push(path.relative(ROOT, file))
-      }
-    }
-    expect(offenders, 'images здесь подменяет карточку opengraph-image.tsx').toEqual([])
+  test('openGraph.images — только там, где картинку подменяют намеренно', () => {
+    // Намеренно:
+    //   • совместимость — на /en та же карточка маршрута с английской
+    //     подписью: alt у файловой карточки без языка;
+    //   • игра, её архив обновлений и патч — шапка игры из Steam вместо своей
+    //     PNG-карточки (gameCard в lib/site, почему — shareArt в lib/art);
+    //   • 404 вне разделов: у /_not-found сегмента [lang] нет, файл корня до
+    //     неё не доходит, и корневая карточка объявлена явно (RU_ROOT_CARD).
+    // Что они ведут куда надо — тесты рядом с каждой. Именем, а не окном в
+    // 300 знаков ниже: оно пропускало такие страницы случайно
+    const deliberate = new Set([
+      'app/global-not-found.tsx',
+      'app/[lang]/compat/[steamid]/page.tsx',
+      'app/[lang]/game/[appid]/page.tsx',
+      'app/[lang]/game/[appid]/news/page.tsx',
+      'app/[lang]/game/[appid]/news/[gid]/page.tsx',
+    ])
+    const rel = (file: string) => path.relative(ROOT, file).split(path.sep).join('/')
+    // Тесты — мимо: их openGraph — ожидания и подделки родителя, а не метаданные страниц
+    const own = appFiles().filter(([file, src]) => !/\.test\.tsx?$/.test(file) && /\bopenGraph:\s*\{/.test(src))
+    expect(own.length, 'своих openGraph не найдено — сторож ослеп').toBeGreaterThan(5)
+    const offenders = own
+      .filter(([file]) => !deliberate.has(rel(file)))
+      .filter(([, src]) => /openGraph:\s*\{[\s\S]{0,300}?(\bimages:|\bgameCard\()/.test(src))
+      .map(([file]) => rel(file))
+    expect(offenders, 'images здесь подменяет файловую карточку').toEqual([])
   })
 
   /**
@@ -199,8 +209,10 @@ describe('превью в мессенджерах', () => {
     const cached = appFiles().filter(
       ([, src]) => /export const revalidate\b/.test(src) && /\bImageResponse\b|\bisrImage\b/.test(src),
     )
-    // семь карточек динамических сегментов, итоги года и две card.png
-    expect(cached.length, 'картинок с revalidate не найдено').toBeGreaterThanOrEqual(10)
+    // пять карточек динамических сегментов (жанр, выбор, комната, портрет,
+    // совместимость), итоги года и две card.png. Карточек игры и патча больше
+    // нет: их превью — шапка Steam (shareArt в lib/art)
+    expect(cached.length, 'картинок с revalidate не найдено').toBeGreaterThanOrEqual(8)
     const offenders = cached
       .filter(([, src]) => /new ImageResponse\(/.test(src) || !/\bisrImage\(/.test(src))
       .map(([file]) => path.relative(ROOT, file).split(path.sep).join('/'))

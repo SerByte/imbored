@@ -95,10 +95,12 @@ export async function GET(req: Request) {
         // на игры.
         const slice = await runNewsSlice(db, { deadlineAt, digestLimit: 0 })
         // Карточки игр, чья лента патчей поменялась, — в перегенерацию: они
-        // живут в ISR неделю (lib/gamecache). На звено, а не на запуск:
+        // живут в ISR месяц (lib/gamecache). На звено, а не на запуск:
         // сброс ничего не рендерит сам, а отметки всё равно уходят разом,
         // когда after() закончит (withExecuteRevalidates в Next). Архив
-        // обновлений тех же игр — туда же: новый патч в нём новая строка
+        // обновлений тех же игр — туда же: новый патч в нём новая строка. И
+        // страницы постов, которые опрос переписал (posts): правка издателя
+        // иначе ждала бы их месяца
         return resetSliceCards(slice, revalidateSitePath, { archives: true })
       },
       verdict: ({ result, failed }) => newsLinkVerdict({ failed, result }),

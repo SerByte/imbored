@@ -15,7 +15,7 @@ import { navPrefetch } from '@/lib/nav'
 import { newsHeading } from '@/lib/newspage'
 import { archiveIndexable, patchArchivePath, type ArchiveItem } from '@/lib/patcharchive'
 import { appBaseUrl } from '@/lib/server'
-import { ogSite } from '@/lib/site'
+import { gameCard, ogSite } from '@/lib/site'
 import { textLangOn } from '@/lib/textlang'
 import { indexedHreflang } from './alternates'
 import { loadArchive } from './load'
@@ -36,11 +36,16 @@ import { archiveDescriptionOn, archiveHeading, archiveMonthsOn, archiveTitleOn }
  * (archiveIndexable), только считает английские пересказы: ссылку заголовка
  * на /en даёт лишь английский.
  *
- * Сутки на ISR — как у страницы патча: список меняет только крон новостей, и
- * его новые патчи и пересказы сбрасывают адрес сами (resetSliceCards с
- * archives в lib/gamecache), не дожидаясь суток.
+ * Месяц на ISR — как у карточки игры и страницы патча (GAME_PAGE_REVALIDATE_SEC
+ * в lib/gamecache, литералом: Next читает его только так). Часов в выводе нет —
+ * даты абсолютные, вес игры одним битом, — и меняют список только кроны
+ * новостей и пересказов: их новые патчи и пересказы сбрасывают адрес сами
+ * (resetSliceCards с archives), не дожидаясь срока. Сутки здесь стояли
+ * раньше и стоили перегенерации почти на каждый заход краулера: тот
+ * возвращается к адресу хвоста раз в несколько дней, то есть всегда после
+ * суток.
  */
-export const revalidate = 86_400
+export const revalidate = 2_592_000
 
 /**
  * Пустой список, и он обязателен — тот же довод, что у страницы патча: без
@@ -55,59 +60,36 @@ export async function generateStaticParams(): Promise<Array<{ appid: string }>> 
 type Params = { params: Promise<{ appid: string; lang?: string }> }
 
 /**
- * alt карточки игры на /en — тот же, что ставит сама карточка игры (EN_CARD в
- * ../page.tsx): файловая карточка сегмента выше несёт alt своего модуля, один
- * на все языки, то есть русский.
+ * parent — метадата корня: из неё корневая карточка, когда у игры нет шапки
+ * Steam (gameCard в lib/site).
  */
-const EN_CARD_ALT = 'Is it worth playing? — imbored'
-
-export async function generateMetadata({ params }: Params, parent: ResolvingMetadata): Promise<Metadata> {
+export async function generateMetadata({ params }: Params, parent?: ResolvingMetadata): Promise<Metadata> {
   const { appid, lang } = await params
   const locale = toLocale(lang)
   const archive = await loadArchive(appid, locale)
   /*
-   * 404 (архив — только у игры с патчами): голову такой 404 браузер берёт из
-   * этого ответа, и пустой объект оставлял на /en русский alt унаследованной
-   * карточки игры. Та же карточка с английским alt, что у найденного архива
-   * ниже, — как у 404 самой игры (missingMeta в ../page.tsx). Русская 404 —
-   * пустой объект, как была.
+   * 404 (архив — только у игры с патчами) — пустой объект на обоих языках, и
+   * голова у неё корневая, с подписью карточки на языке адреса — как у 404
+   * самой игры (../page.tsx). Своя запись здесь была, пока архив показывал
+   * файловую карточку игры: её alt без языка оставлял на /en русскую подпись.
    */
-  if (!archive) {
-    if (locale !== 'en') return {}
-    const images = (await parent).openGraph?.images?.map((img) =>
-      typeof img === 'object' && !(img instanceof URL) ? { ...img, alt: EN_CARD_ALT } : img,
-    )
-    return {
-      openGraph: {
-        ...ogSite(locale),
-        type: 'website',
-        url: lp(locale, `/game/${encodeURIComponent(appid)}/news`),
-        ...(images?.length ? { images } : {}),
-      },
-    }
-  }
+  if (!archive) return {}
   const { game, items } = archive
   const title = archiveTitleOn(game.name, locale)
   const description = archiveDescriptionOn(game.name, items, locale)
   const canonical = patchArchivePath(archive.appid)
   /*
-   * Своей карточки для чатов у архива нет — он показывает карточку игры
-   * (opengraph-image.tsx сегмента выше). Свой openGraph заменяет унаследованный
-   * целиком, вместе с картинкой, поэтому её берём у родителя как есть — тот же
-   * приём, что у ownAddress в lib/site. На /en — с английским alt: адрес,
-   * размеры и тип остаются от файла.
+   * Своей карточки для чатов у архива нет — он показывает ту же картинку, что
+   * карточка игры: шапку игры из Steam (gameCard в lib/site). Брать её у
+   * родителя, как раньше брали файловую карточку игры, уже нельзя: файла у
+   * сегмента выше нет, и родитель отдал бы корневую карточку сайта.
    */
-  const inherited = (await parent).openGraph?.images
-  const images =
-    locale === 'en' && inherited?.length
-      ? inherited.map((img) => (typeof img === 'object' && !(img instanceof URL) ? { ...img, alt: EN_CARD_ALT } : img))
-      : inherited
   /*
    * Какие версии архива в поиске — у каждого языка по своим пересказам
    * (archiveIndexable), и hreflang ведёт только на них (indexedHreflang).
    * Архив другого языка — своим чтением: строки приходят уже на языке
    * страницы, пересказа другого языка в них нет. Чтение своего языка — тот же
-   * вызов, что выше (cache); чужого — ещё одно раз в сутки ISR.
+   * вызов, что выше (cache); чужого — ещё одно на перегенерацию ISR.
    */
   const versions = await Promise.all(LOCALES.map((l) => loadArchive(appid, l)))
   const has = LOCALES.filter((_, i) => {
@@ -125,7 +107,7 @@ export async function generateMetadata({ params }: Params, parent: ResolvingMeta
       url: lp(locale, canonical),
       title,
       description,
-      ...(images?.length ? { images } : {}),
+      ...(await gameCard({ appid: archive.appid, ...game }, locale, parent)),
     },
   }
 }

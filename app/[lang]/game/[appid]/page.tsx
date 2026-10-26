@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, ResolvingMetadata } from 'next'
 import Link from '@/components/Link'
 import { notFound } from 'next/navigation'
 import { cache, Fragment, type ReactNode } from 'react'
@@ -16,7 +16,7 @@ import { OwnedLaunch } from '@/components/OwnedLaunch'
 import { OwnedNear } from '@/components/OwnedNear'
 import { sitemapGames } from '@/lib/db'
 import { discountTrustedUntil, discountView, lapsedRegularPrice, trustedPrice } from '@/lib/discount'
-import { trimArt } from '@/lib/art'
+import { artCandidates, trimArt } from '@/lib/art'
 import { PRERENDER_TOP, prerenderAtBuild } from '@/lib/gamecache'
 import { hubPath, hubTitle, primaryGenre } from '@/lib/gamehub'
 import { byline } from '@/lib/byline'
@@ -36,13 +36,13 @@ import { gameBreadcrumbLd, gameJsonLd, ldScript, pageNameRu } from '@/lib/jsonld
 import { patchArchivePath } from '@/lib/patcharchive'
 import { priceRegion, regionCurrency } from '@/lib/steamregion'
 import { DEFAULT_LOCALE, fmtNumber, lp, pl, toLocale, tr, type Locale } from '@/lib/i18n'
-import { localeAlternates, ogSite } from '@/lib/site'
+import { gameCard, localeAlternates, ogSite } from '@/lib/site'
 import { quizHref, roomSeedHref } from '@/lib/presets'
 import { isReplayable } from '@/lib/recommend'
 import { refundEligible } from '@/lib/refund'
 import { seedable } from '@/lib/roomseed'
 import { appBaseUrl, getDb, nowSec } from '@/lib/server'
-import { shotUrl } from '@/lib/shots'
+import { GAME_SLIDES, shotUrl } from '@/lib/shots'
 import { storeLink } from '@/lib/storelink'
 import { STORE_LABEL } from '@/lib/stores'
 import { tagLabel } from '@/lib/tagsru'
@@ -52,10 +52,12 @@ import { SectionLabel } from '@/components/Labels'
 import { TrailerPreview } from '@/components/TrailerPreview'
 import { GameCardBody } from '@/components/GameCard'
 import { GameLink } from '@/components/GameLink'
+import { StaticGameCardBody } from '@/components/StaticGameCard'
+import { shownTrailer } from '@/lib/trailer'
 import { Icon } from '@/components/Icon'
 
 /**
- * Страница кэшируется на неделю вместо force-dynamic — GAME_PAGE_REVALIDATE_SEC
+ * Страница кэшируется на месяц вместо force-dynamic — GAME_PAGE_REVALIDATE_SEC
  * в lib/gamecache, литералом, потому что Next читает его только так.
  *
  * Кэш вообще стал возможен ровно потому, что loadGamePage больше не ходит в
@@ -63,13 +65,16 @@ import { Icon } from '@/components/Icon'
  * рендере, кэшировать было нечего. Теперь всё тяжёлое наполняет крон
  * (lib/pagejob.ts), а страница только читает базу.
  *
- * Неделя, а не сутки, — ради ISR Writes (лимит Hobby выбран, см.
- * lib/gamecache). Свежесть при этом держат не часы, а события: кроны карточек,
- * новостей и пересказов сбрасывают адрес сами, когда поменяли его данные
- * (revalidateGamePages). По часам доезжает только медленное — сверка отзывов
- * и онлайна раз в неделю (lib/catalogsignals), ей неделя и есть родной шаг.
+ * Месяц, а не сутки и не неделя, — ради ISR Writes (лимит Hobby выбран; во
+ * что обходится запись и почему прежняя неделя на деле была сутками — в
+ * lib/gamecache). Свежесть при этом держат не часы, а события: кроны
+ * карточек, новостей и пересказов сбрасывают адрес сами, когда поменяли его
+ * данные (revalidateGamePages). По часам доезжает только то, что меряет
+ * недельная сверка (lib/catalogsignals), — счёт отзывов, онлайн, пульс: на
+ * карточке им можно быть старше недели, это размен за вчетверо меньше
+ * перегенераций.
  *
- * Неделя бесплатна, только пока вывод СТАБИЛЕН: перегенерация без новых
+ * Месяц бесплатен, только пока вывод СТАБИЛЕН: перегенерация без новых
  * данных обязана дать ту же страницу байт в байт, иначе Vercel пишет её
  * заново. Поэтому в разметке нет ничего, что меняется от одних часов:
  *   • онлайн — всегда прошедшим временем (PlayersAtCheck ниже);
@@ -78,19 +83,19 @@ import { Icon } from '@/components/Icon'
  * Часы остаются только на порогах, которые назначили сами данные: конец
  * скидки, выход игры. Конец скидки к тому же сбрасывает крон карточек
  * (revalidateEndedDeals в lib/gamecache): строку цены клиент гасит сам, а
- * Offer в JSON-LD иначе обещал бы акционную цену до конца недели. Сторож —
- * app/game/[appid]/page.test.ts.
+ * Offer в JSON-LD иначе обещал бы акционную цену до конца месяца. Сторож —
+ * app/[lang]/game/[appid]/page.test.ts.
  *
  * И ничего, что меняется от одного шума замеров. Сверка каталога переписывает
- * отзывы и онлайн каждую неделю, догрев — онлайн ещё чаще, а у недельной
- * карточки каждая сверка пришлась бы на перегенерацию. Поэтому замеры
+ * отзывы и онлайн каждую неделю, догрев — онлайн ещё чаще, и любой сброс
+ * карточки из крона пришёлся бы на свежий замер. Поэтому замеры
  * печатаются с порогом: отзывы — сдвигом на 2% или новой долей (SHOWN_DRIFT в
  * lib/db; им же стоит порядок «Ещё у студии» и «Похожих»), онлайн — ступенью
  * ряда 1–2–5 (PlayersAtCheck). Из того, что меряет сверка, в JSON-LD едет
  * только цена с «не продаётся» того же замера, а у цены своя ось и свой
  * сброс (revalidateEndedDeals выше).
  */
-export const revalidate = 604_800
+export const revalidate = 2_592_000
 
 /**
  * Обязателен, и не ради предрендера.
@@ -99,7 +104,7 @@ export const revalidate = 604_800
  * манифеста вовсе — то есть `revalidate` выше не значит ничего, и каждый заход
  * рендерится заново (проверено: Cache-Control приходил no-store). На продовой
  * сборке отдаём верх каталога, остальные appid досоздаются по требованию и
- * кэшируются на ту же неделю: dynamicParams по умолчанию true.
+ * кэшируются на тот же месяц: dynamicParams по умолчанию true.
  *
  * Везде, кроме прода, список пустой (prerenderAtBuild): каждая пререндеренная
  * карточка — запись ISR на каждой сборке, и превью платили за это наравне с
@@ -113,7 +118,7 @@ export const revalidate = 604_800
  * решение, а не недоделка: пререндер окупается там, где адрес посетят
  * наверняка (докблок PRERENDER_TOP), а своего верха у английской версии на
  * старте ещё нет. Первый заход на /en/game/<appid> платит холодным рендером и
- * дальше живёт в кэше ту же неделю.
+ * дальше живёт в кэше тот же месяц.
  *
  * Сборка не должна падать из-за базы: локально TURSO_DATABASE_URL может быть
  * не задан, и тогда предрендерить просто нечего.
@@ -136,62 +141,34 @@ export async function generateStaticParams({
 const loadOnce = cache(loadGamePage)
 
 /**
- * Карточка превью на /en — та же opengraph-image.tsx рядом, но с английской
- * подписью. alt файловой карточки — константа модуля, одна на все языки, и
- * на /en og:image:alt был бы русским. Свой images этого уровня Next ставит
- * вместо файла, а twitter:image дозаполняет из openGraph сам. Русская
- * страница images не объявляет и получает файловую карточку как была: адрес
- * с хешем, размеры и alt — оттуда. Хеша у английского адреса нет — его
- * ставит только файловая метадата; карточку и так перерисовывает revalidate.
- *
- * Размеры и тип — копия size и contentType карточки, а не импорт: модуль
- * карточки тянет next/og и шрифты в рендер страницы. Что они совпадают —
- * сторож в page.test.ts. Не «мёртвый images» из lib/social.test.ts: тот —
- * images, которые перекрыл бы файл, а здесь images перекрывают файл.
+ * parent — метадата корня: из неё берётся корневая карточка игре без шапки
+ * Steam (gameCard в lib/site). Тест зовёт без него.
  */
-const EN_CARD = { width: 1200, height: 630, type: 'image/png', alt: 'Is it worth playing? — imbored' }
-
-function enCard(locale: Locale, canonical: string) {
-  if (locale !== 'en') return {}
-  return { images: [{ url: lp(locale, `${canonical}/opengraph-image`), ...EN_CARD }] }
-}
-
-/**
- * Метаданные 404 под /en/game/<appid> — та же карточка с английским alt.
- *
- * Голов у такой 404 две. В HTML сервера, пустой оболочке __next_error__,
- * Next собирает голову заново по not-found: layout по пути и файлы корня
- * последним уровнем (errorMetadataItem в resolve-metadata), generateMetadata
- * страницы туда не входит, и подпись там ставит метадата границы —
- * generateMetadata в app/[lang]/not-found.tsx (docs/i18n.md, п. 10). А
- * голову, которую видит браузер, клиент ставит из обычного прохода —
- * файловая карточка сегмента плюс то, что вернул generateMetadata (замер на
- * next dev, /en/game/999999999 до и после гидрации). Пустой объект оставлял
- * в ней на /en русский alt файла («Стоит ли играть — imbored»). Так же
- * устроены 404 архива и патча (news/page.tsx, news/[gid]/page.tsx). Русская
- * 404 получает пустой объект, как была, и её голова не меняется. type и
- * siteName — корневого layout: свой
- * openGraph этого уровня заменяет его целиком; url — свой адрес, как у
- * каждого своего openGraph (lib/social.test.ts).
- */
-function missingMeta(locale: Locale, raw: string): Metadata {
-  if (locale !== 'en') return {}
-  const path = `/game/${encodeURIComponent(raw)}`
-  return { openGraph: { type: 'website', ...ogSite(locale), url: lp(locale, path), ...enCard(locale, path) } }
-}
-
-export async function generateMetadata({
-  params,
-}: {
-  params: Promise<{ appid: string; lang?: string }>
-}): Promise<Metadata> {
+export async function generateMetadata(
+  {
+    params,
+  }: {
+    params: Promise<{ appid: string; lang?: string }>
+  },
+  parent?: ResolvingMetadata,
+): Promise<Metadata> {
   const { appid: raw, lang } = await params
   const locale = toLocale(lang)
   const appid = Number(raw)
-  if (!Number.isInteger(appid) || appid === 0) return missingMeta(locale, raw)
+  /*
+   * 404 — пустой объект на обоих языках, и голова у неё корневая: openGraph
+   * корневого layout с корневой карточкой, на /en — с английской подписью
+   * (rootCardOn в app/[lang]/layout.tsx). Голов у такой 404 две: HTML сервера
+   * собирает метадата границы (generateMetadata в app/[lang]/not-found.tsx,
+   * docs/i18n.md, п. 10), а голову после гидрации — обычный проход, layout
+   * плюс этот ответ. Своя запись здесь была, пока у сегмента стояла своя
+   * файловая карточка: её alt без языка оставлял на /en русскую подпись.
+   * Карточки больше нет, и подписывать нечего.
+   */
+  if (!Number.isInteger(appid) || appid === 0) return {}
 
   const data = await loadOnce(appid, locale)
-  if (!data) return missingMeta(locale, raw)
+  if (!data) return {}
   const { meta, reviewsSummary, prosCons } = data
 
   // Описание собираем из того, что на странице и так есть, а не из шаблона:
@@ -212,17 +189,15 @@ export async function generateMetadata({
   const canonical = `/game/${appid}`
 
   /*
-   * Картинки у русской страницы здесь нет, и это не потеря, а переезд. Раньше
-   * в openGraph подставлялся сырой header-файл из Steam 920×430: чужая
-   * пропорция, которую мессенджеры режут по краям, без названия поверх и без
-   * единого следа imbored. Теперь карточку рисует opengraph-image.tsx рядом —
-   * арт во всю карточку, скрим и текст, как на самой странице.
-   *
-   * Файл Next подставляет сам, но только пока у openGraph этого уровня нет
-   * своего ключа images (resolve-metadata, mergeStaticMetadata): свой images
-   * встаёт ВМЕСТО файла. Поэтому чужой картинки здесь быть не должно, а на
-   * /en images есть — но это та же карточка, только с английским alt
-   * (enCard ниже).
+   * Картинка превью — шапка игры из Steam, 920×430, на обоих языках одна
+   * (gameCard в lib/site, почему именно она — shareArt в lib/art). Здесь
+   * стояла своя карточка, opengraph-image.tsx рядом: арт во всю карточку,
+   * скрим и текст. Она была красивее и обходилась дороже всего остального
+   * сайта: около 400 КБ PNG и полсекунды функции на рендер, своя запись ISR
+   * на каждую игру и каждый язык — и заново после каждого деплоя, кто бы из
+   * ботов превью за ней ни пришёл. Шапку отдаёт CDN Steam, без нашей функции.
+   * Цена размена — чужая пропорция (мессенджеры срежут край-другой) и
+   * название не поверх картинки, а рядом, в og:title.
    */
   /*
    * Записи, которые каталог сам считает мёртвыми, не идут в индекс.
@@ -289,7 +264,7 @@ export async function generateMetadata({
       description,
       url: lp(locale, canonical),
       type: 'article',
-      ...enCard(locale, canonical),
+      ...(await gameCard(meta, locale, parent)),
     },
     twitter: {
       card: 'summary_large_image',
@@ -303,7 +278,7 @@ export async function generateMetadata({
  * Строка цены со сроком годности — только у скидки.
  *
  * Со скидкой вся строка — акционное число, и гаснет она вместе с акцией
- * (discountTrustedUntil): страница из недельного кэша иначе обещала бы
+ * (discountTrustedUntil): страница из месячного кэша иначе обещала бы
  * «−70%» после конца распродажи. Без скидки цене верим без срока
  * (trustedPrice), и клиентский островок ей ни к чему. Разметку островок не
  * трогает — её после конца скидки освежает крон карточек сбросом адреса
@@ -409,7 +384,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   const nameRu = pageNameRu(meta, altName)
   const now = nowSec()
   // Срок — датой: отсчёт «осталось 2 дня» менял бы страницу каждые сутки и
-  // врал бы из недельного кэша (см. докблок revalidate). Подпись — на языке
+  // врал бы из месячного кэша (см. докблок revalidate). Подпись — на языке
   // страницы («until Oct 14»): её собирает сервер, ценник рисует как есть
   const deal = discountView(meta, now, { calendar: true, locale })
   // Страница переживёт скидку — после этого момента цену прячет клиент
@@ -461,7 +436,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
   /*
    * Арт героя — срезанный под card: обе его картинки рисуют этот вариант и
    * читают header, header2x и capsule. GameArt — клиентский островок, так что
-   * meta.art целиком уезжал в RSC и в HTML недельного кэша каждой карточки
+   * meta.art целиком уезжал в RSC и в HTML месячного кэша каждой карточки
    * вместе с library_hero, hero_2x и постерами, которых никто не запросит.
    *
    * Один объект на обе картинки, а не trimArt(meta.art) в каждой: Flight
@@ -673,14 +648,14 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
                   им: у игры 2011 года бывает и двести тысяч человек, и двести.
 
                   Строка — PlayersAtCheck, а не PlayersNow живых экранов, и оба
-                  отличия про недельный кэш (revalidate выше). Часов у неё нет:
+                  отличия про месячный кэш (revalidate выше). Часов у неё нет:
                   «сейчас», верное при сборке, через день было бы неправдой, и
                   подпись всегда «при замере». И число — ступенью ряда 1–2–5
                   («больше 10 000»), а не до человека: ccu переписывают без
                   порога и сверка каталога, и догрев /api/prepare, так что у
                   совместной игры точное число делало бы новой страницей почти
-                  каждую перегенерацию — запись ISR у половины каталога каждую
-                  неделю. Строку рисует сервер, язык страницы — пропом, и в
+                  каждую перегенерацию — запись ISR у половины каталога на
+                  каждом сбросе. Строку рисует сервер, язык страницы — пропом, и в
                   RSC-часть она уходит готовой разметкой, а не пропсами.
                 */}
                 <PlayersAtCheck ccu={meta.ccu ?? null} locale={locale} />
@@ -983,7 +958,8 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
           <section>
             <SectionLabel className="mb-4">{tr(locale, { ru: 'В движении', en: 'In motion' })}</SectionLabel>
             <TrailerPreview
-              trailer={meta.trailer}
+              // Без hls: его островок не играет, а пропсы лежат в каждой записи ISR (shownTrailer)
+              trailer={shownTrailer(meta.trailer)}
               name={meta.name}
               // Телефону — кадр 600×338 вместо movie_full 1920×1080: тот же
               // файл, что берёт блок «Скриншоты» ниже (см. TrailerPreview)
@@ -1081,9 +1057,11 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         {meta.screenshots && meta.screenshots.length > 0 && (
           <section>
             <SectionLabel className="mb-4">{tr(locale, { ru: 'Скриншоты', en: 'Screenshots' })}</SectionLabel>
-            {/* сколько кадров показывать, решает сам блок: это упирается в
-                бюджет видеопамяти слайдера, а не в вёрстку страницы */}
-            <GameShots images={meta.screenshots} name={meta.name} />
+            {/* сколько кадров показывать, решает бюджет видеопамяти слайдера,
+                а не вёрстка страницы (GAME_SLIDES). Режем уже здесь: кадры
+                сверх него ехали бы пропсом островка в каждую запись ISR,
+                хотя их никто не покажет */}
+            <GameShots images={meta.screenshots.slice(0, GAME_SLIDES)} name={meta.name} />
           </section>
         )}
 
@@ -1093,7 +1071,16 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
             Соседи — в основном хвост каталога вне PRERENDER_TOP, поэтому
             GameLink без префетча: шесть холодных рендеров с записью ISR на
             каждый просмотр карточки, до которой доскроллили, — не цена за
-            шесть ссылок, по которым уйдут в лучшем случае по одной. */}
+            шесть ссылок, по которым уйдут в лучшем случае по одной.
+
+            Плитки серверные (StaticGameCardBody), как на хабе и страницах
+            жанров, а не островки GameArt: у островка в RSC-части ехали
+            headerImage, объект арта и sizes — около полутора килобайт на
+            плитку против одного у серверной, и всё это в каждой записи ISR
+            карточки. Запасной цепочки по onError у серверной нет; её первый
+            кандидат у игры Steam есть всегда. Игре другого магазина без арта
+            остаётся клиентская плитка: только она рисует вместо обложки
+            заглушку с названием (ArtPlaceholder в GameArt). */}
         {/* Свои из этих же соседей — над ними: до покупки сначала то, что
             уже лежит на полке. Разметка ISR пуста, строку дорисовывает
             островок по ответу владения (lib/ownednear) */}
@@ -1105,41 +1092,46 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
               {data.similarTag ? <> · {tagLabel(data.similarTag, locale)}</> : null}
             </SectionLabel>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-6">
-              {data.similar.map((g) => (
-                <GameLink
-                  key={g.appid}
-                  appid={g.appid}
-                  transitionTypes={['nav-forward']}
-                  className="game-card block"
-                >
-                  <GameCardBody
-                    morph
+              {data.similar.map((g) => {
+                const tile = {
+                  appid: g.appid,
+                  name: g.name,
+                  headerImage: g.headerImage,
+                  // плитка — вариант card: hero и постеры ей не нужны
+                  art: trimArt(g.art),
+                  sizes: '(min-width: 768px) 33vw, 50vw',
+                  /* Чем похожи — у готовых соседей: заголовок блока у них без
+                     тега, и без этой строки «похожие» было бы голословным.
+                     Строка режется по ширине плитки, и английская не шире
+                     русской: «shared:», а не «in common:» — замер на десяти
+                     парах частых тегов, «in common:» выходил шире «общее:»
+                     на двух из них, «shared:» уже на всех */
+                  meta:
+                    g.shared && g.shared.length > 0 ? (
+                      <span className="truncate">
+                        {tr(locale, { ru: 'общее: ', en: 'shared: ' })}
+                        {g.shared
+                          .slice(0, 2)
+                          .map((t) => tagLabel(t, locale))
+                          .join(', ')}
+                      </span>
+                    ) : undefined,
+                }
+                return (
+                  <GameLink
+                    key={g.appid}
                     appid={g.appid}
-                    name={g.name}
-                    headerImage={g.headerImage}
-                    // плитка — вариант card: hero и постеры ей не нужны
-                    art={trimArt(g.art)}
-                    sizes="(min-width: 768px) 33vw, 50vw"
-                    /* Чем похожи — у готовых соседей: заголовок блока у них без
-                       тега, и без этой строки «похожие» было бы голословным.
-                       Строка режется по ширине плитки, и английская не шире
-                       русской: «shared:», а не «in common:» — замер на десяти
-                       парах частых тегов, «in common:» выходил шире «общее:»
-                       на двух из них, «shared:» уже на всех */
-                    meta={
-                      g.shared && g.shared.length > 0 ? (
-                        <span className="truncate">
-                          {tr(locale, { ru: 'общее: ', en: 'shared: ' })}
-                          {g.shared
-                            .slice(0, 2)
-                            .map((t) => tagLabel(t, locale))
-                            .join(', ')}
-                        </span>
-                      ) : undefined
-                    }
-                  />
-                </GameLink>
-              ))}
+                    transitionTypes={['nav-forward']}
+                    className="game-card block"
+                  >
+                    {artCandidates(g, 'card').length > 0 ? (
+                      <StaticGameCardBody morph locale={locale} {...tile} />
+                    ) : (
+                      <GameCardBody morph {...tile} />
+                    )}
+                  </GameLink>
+                )
+              })}
             </div>
             {/* Под сеткой, внутри её секции: отдельная секция добавила бы ещё
                 один межблочный отступ над кнопкой ниже */}
@@ -1149,7 +1141,7 @@ export default async function GamePage({ params }: { params: Promise<{ appid: st
         {/* Полки нет (у игры нет тегов), а игры студии есть — строка сама по себе */}
         {data.similar.length === 0 && data.studio && <StudioLinks studio={data.studio} locale={locale} />}
 
-        {/* /quiz, а не /play: страница кэшируется на неделю и пререндерится, то
+        {/* /quiz, а не /play: страница кэшируется на месяц и пререндерится, то
             есть про сессию тут знать нечего. Гостя /play разворачивал на
             лендинг через экран прогрева, а квиз работает обоим — участник
             выбирает настроение и попадает в ту же выдачу. */}

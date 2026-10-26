@@ -1,4 +1,5 @@
 import type { Metadata, ResolvingMetadata } from 'next'
+import { shareArt, type GameArtUrls } from './art'
 import { alternates, lp, ogLocale, toLocale, tr, type Locale } from './i18n'
 
 /**
@@ -7,7 +8,7 @@ import { alternates, lp, ogLocale, toLocale, tr, type Locale } from './i18n'
  * Отдельно от lib/og.ts намеренно: тот читает файлы шрифтов прямо при
  * загрузке, и корневой layout, лендинг и /privacy тянули бы за собой node:fs и
  * восемьдесят килобайт шрифтов ради двух строк. Здесь зависимостей нет вовсе —
- * только типы Next и чистый lib/i18n.
+ * только типы Next и чистые lib/i18n и lib/art.
  *
  * Русские константы (SITE_TITLE, SITE_DESCRIPTION, OG_SITE) остаются как
  * были: их читают манифест и JSON-LD, у которых языка нет. Страницы берут
@@ -132,6 +133,43 @@ export async function rootCard(props: unknown, parent?: ResolvingMetadata): Prom
   if (locale !== 'en' || !parent) return {}
   const images = rootCardOn(locale, (await parent)?.openGraph?.images)
   return images?.length ? { openGraph: { ...ogSite(locale), type: 'website', images } } : {}
+}
+
+/** Игра, чью шапку ставят в превью: столько, сколько читает shareArt, и название для подписи */
+type CardGame = { appid: number; name: string; art?: GameArtUrls | null; headerImage?: string | null }
+
+/**
+ * Картинка превью страниц игры, её архива обновлений и патча — кусок
+ * openGraph, который страница вливает в свой: `{ images }` или пусто.
+ *
+ * Картинка — шапка игры из Steam (shareArt в lib/art; почему не своя
+ * PNG-карточка — там же). Шапки нет — у игры другого магазина, у поста игры,
+ * которой нет в каталоге, у строки без арта, — тогда корневая карточка сайта
+ * от родителя, как у ownAddress ниже: свой openGraph страницы заменяет
+ * корневой целиком, вместе с картинкой, и без этого такая страница уходила
+ * бы в чат вовсе без превью. На en — с английской подписью (rootCardOn).
+ *
+ * alt — название игры: на шапке магазина её логотип, это и есть то, что на
+ * картинке видно. Название — данные (docs/i18n.md, п. 6), на /en оно бывает
+ * русским, и у og:title та же история: другого имени у игры нет, и обе
+ * строки его не прячут.
+ *
+ * twitter:image своего нет: Next достраивает его из openGraph сам, раз у
+ * страницы нет своего twitter.images (postProcessMetadata в resolve-metadata),
+ * — с той же подписью и размерами. Свой twitter.images отменил бы это.
+ *
+ * parent бывает не передан (тест зовёт generateMetadata одним props) — тогда
+ * без шапки картинки нет вовсе.
+ */
+export async function gameCard(
+  game: CardGame | null,
+  locale: Locale,
+  parent?: ResolvingMetadata,
+): Promise<Pick<NonNullable<Metadata['openGraph']>, 'images'>> {
+  const art = game ? shareArt(game) : null
+  if (art && game) return { images: [{ ...art, alt: game.name }] }
+  const images = parent ? rootCardOn(locale, (await parent).openGraph?.images) : undefined
+  return images?.length ? { images } : {}
 }
 
 /**

@@ -98,7 +98,6 @@ describe('теги выводятся по-русски', () => {
     'components/TagChips.tsx',
     'components/SwipeDeck.tsx',
     'app/[lang]/game/[appid]/page.tsx',
-    'app/[lang]/game/[appid]/opengraph-image.tsx',
     'app/[lang]/compat/[steamid]/page.tsx',
     'app/[lang]/play/page.tsx',
     'lib/landing.ts',

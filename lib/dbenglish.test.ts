@@ -309,7 +309,7 @@ describe('пересказ патча: английский слот', () => {
     )
     const [item] = await getGameNews(db, 730)
     expect(item).toMatchObject({ tldr: 'Починили вылет.', tldrEn: 'Fixed the crash.', titleEn: 'Update 1.2' })
-    expect(await getGamePatchHeads(db, 730)).toEqual([
+    expect(await getGamePatchHeads(db, 730, NOW)).toEqual([
       { gid: '1', title: 'Обновление 1.2', publishedAt: NOW - DAY, scale: 'major', titleEn: 'Update 1.2' },
     ])
     expect((await getNewsPage(db, 730, '1'))?.item.tldrEn).toBe('Fixed the crash.')

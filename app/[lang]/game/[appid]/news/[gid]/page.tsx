@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, ResolvingMetadata } from 'next'
 import Link from '@/components/Link'
 import { notFound } from 'next/navigation'
 import { GameArt } from '@/components/GameArt'
@@ -22,7 +22,7 @@ import { navPrefetch } from '@/lib/nav'
 import { patchArchivePath } from '@/lib/patcharchive'
 import { appBaseUrl, getDb } from '@/lib/server'
 import { LOCALES, lp, toLocale, tr } from '@/lib/i18n'
-import { ogSite } from '@/lib/site'
+import { gameCard, ogSite } from '@/lib/site'
 import { langAttr, oneItem, textLangOn, withForeignRuns } from '@/lib/textlang'
 import { indexedHreflang } from '../alternates'
 import { loadPatch, patchHeading } from './load'
@@ -37,18 +37,27 @@ import { loadPatch, patchHeading } from './load'
  * /en идёт только с английским пересказом: newsIndexable судит item.tldr
  * своего языка.
  *
- * Сутки на ISR — свой срок, а не срок карточки игры (у той неделя и сброс из
- * кронов, lib/gamecache): пост меняет только крон новостей, и редко — тело
- * правят раз-другой после публикации, пересказ пишется однажды.
+ * Месяц на ISR — срок карточки игры (GAME_PAGE_REVALIDATE_SEC в
+ * lib/gamecache, литералом: Next читает его только так), и сброс, как у неё,
+ * из кронов. Часов в выводе нет — даты абсолютные, — а меняют пост только
+ * кроны: опрос, когда издатель правит тело или заголовок, и пересказ, когда
+ * пишет «Коротко» и английский заголовок. Оба сбрасывают его адрес сами
+ * (posts в resetSliceCards; свежепересказанные — ещё и announceFreshPatches
+ * с пингом IndexNow). Новый патч игры старые страницы не меняет: внизу — только
+ * вышедшие раньше этого («Предыдущие патчи», others ниже).
+ *
+ * Сутки здесь стояли раньше и стоили перегенерации почти на каждый заход
+ * краулера: к адресу хвоста он возвращается раз в несколько дней, то есть
+ * всегда после суток, — а страница при этом не менялась.
  */
-export const revalidate = 86_400
+export const revalidate = 2_592_000
 
 /**
  * Пустой список, и он обязателен: без generateStaticParams динамический
  * сегмент не попадает в dynamicRoutes манифеста, revalidate выше не значит
  * ничего, и каждый заход рендерится заново (тот же довод — у карточки игры).
  * Пустой — значит на сборке не предрендерим ни одного поста: их тысячи, а
- * заходят на единицы. Каждый рендерится при первом заходе и живёт сутки
+ * заходят на единицы. Каждый рендерится при первом заходе и живёт свой срок
  * (docs: generate-static-params, «All paths at runtime»).
  */
 export async function generateStaticParams(): Promise<Array<{ appid: string; gid: string }>> {
@@ -58,43 +67,20 @@ export async function generateStaticParams(): Promise<Array<{ appid: string; gid
 type Params = { params: Promise<{ appid: string; gid: string; lang?: string }> }
 
 /**
- * Карточка патча на /en — та же opengraph-image.tsx рядом, но с английской
- * подписью. alt файловой карточки — статический экспорт, один на все языки
- * (next-metadata-image-loader), и на /en og:image:alt был бы русским.
- *
- * Свой images этого же уровня Next ставит вместо файловой карточки
- * (resolve-metadata, mergeStaticMetadata: файл — только пока у openGraph
- * уровня нет ключа images), а twitter берёт картинку из openGraph сам.
- * Русская страница своего images не задаёт и получает файловую карточку как
- * была: адрес с хешем, размеры и alt — оттуда. Размеры и тип — копия size и
- * contentType карточки, а не импорт: модуль карточки тянет next/og и шрифты в
- * рендер страницы. Что они совпадают — сторож в page.test.ts.
+ * parent — метадата корня: из неё корневая карточка, когда у поста нет шапки
+ * игры (игры нет в каталоге, gameCard в lib/site). Тест зовёт без него.
  */
-const EN_CARD = { width: 1200, height: 630, type: 'image/png', alt: 'What changed in this patch — imbored' }
-
-export async function generateMetadata({ params }: Params): Promise<Metadata> {
+export async function generateMetadata({ params }: Params, parent?: ResolvingMetadata): Promise<Metadata> {
   const { appid, gid, lang } = await params
   const locale = toLocale(lang)
   const page = await loadPatch(appid, gid, locale)
   /*
-   * 404 (не патч или нет такого поста): голову такой 404 браузер берёт из
-   * этого ответа, и пустой объект оставлял на /en русский alt файловой
-   * карточки рядом. Та же карточка с английским alt (EN_CARD), как у 404
-   * самой игры (missingMeta в ../../page.tsx). Русская 404 — пустой объект,
-   * как была.
+   * 404 (не патч или нет такого поста) — пустой объект на обоих языках, и
+   * голова у неё корневая, с подписью карточки на языке адреса — как у 404
+   * самой игры (../../page.tsx). Своя запись здесь была, пока у патча стояла
+   * своя файловая карточка: её alt без языка оставлял на /en русскую подпись.
    */
-  if (!page) {
-    if (locale !== 'en') return {}
-    const path = `/game/${encodeURIComponent(appid)}/news/${encodeURIComponent(gid)}`
-    return {
-      openGraph: {
-        ...ogSite(locale),
-        type: 'website',
-        url: lp(locale, path),
-        images: [{ url: `${lp(locale, path)}/opengraph-image`, ...EN_CARD }],
-      },
-    }
-  }
+  if (!page) return {}
   const { item, game } = page
 
   // С датой, если заголовок патчи игры не различает: у CS2 все они —
@@ -103,12 +89,12 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const description = newsDescription(item, game?.name, locale)
   const canonical = newsPath(item.appid, item.gid)
   /*
-   * Картинки у русской страницы здесь нет намеренно: у патча своя карточка
-   * (opengraph-image.tsx рядом), и Next подставляет её сам — но только пока
-   * у openGraph этого уровня нет своего ключа images. Раньше здесь
-   * передавалась картинка родителя, и патч разворачивался в чате карточкой
-   * игры — «СТОИТ ЛИ ИГРАТЬ» вместо того, что изменилось. На /en images есть,
-   * но это та же карточка, только с английским alt (EN_CARD выше).
+   * Картинка превью — шапка игры из Steam, та же, что у карточки игры
+   * (gameCard в lib/site). Своя PNG-карточка у патча была — заголовок и
+   * пересказ на арте игры, — и стоила своей записи ISR на каждый пост и
+   * язык, полсекунды функции на рендер и перерисовку на каждом заходе бота
+   * превью после каждого деплоя. Что это патч, а не игра, в чате говорит
+   * og:title («— что изменилось») и описание с пересказом рядом с картинкой.
    */
 
   /*
@@ -116,7 +102,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
    * (newsIndexable), и hreflang ведёт только на них (indexedHreflang).
    * Пересказы обоих языков — у русского чтения: оно отдаёт пост как лежит, с
    * tldr и tldrEn. На русской странице это тот же вызов, что выше (cache), на
-   * /en — ещё одно чтение строки раз в сутки ISR.
+   * /en — ещё одно чтение строки на перегенерацию ISR.
    */
   const stored = (await loadPatch(appid, gid, 'ru'))?.item
   const listed = game?.listed ?? false
@@ -134,13 +120,21 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
       title,
       description,
       publishedTime: new Date(item.publishedAt * 1000).toISOString(),
-      ...(locale === 'en' ? { images: [{ url: `${lp(locale, canonical)}/opengraph-image`, ...EN_CARD }] } : {}),
+      ...(await gameCard(game && { appid: item.appid, ...game }, locale, parent)),
     },
     twitter: { card: 'summary_large_image', title, description },
   }
 }
 
-/** Сколько соседних патчей показать внизу: перелинковка, а не архив */
+/**
+ * Сколько предыдущих патчей показать внизу: перелинковка, а не архив.
+ *
+ * Только вышедшие РАНЬШЕ этого, а не шесть свежих у игры. Свежие менялись с
+ * каждым новым патчем: новый вставал в голову списка, шестой уходил — и
+ * каждая сохранённая страница патча этой игры, на обоих языках, при
+ * следующем заходе перерисовывалась и писалась в ISR заново. Предыдущие
+ * у страницы уже не меняются: новый пост встаёт после неё, а не перед.
+ */
 const OTHERS = 6
 
 export default async function PatchPage({ params }: Params) {
@@ -156,9 +150,8 @@ export default async function PatchPage({ params }: Params) {
   if (!page) notFound()
   const { item, game } = page
 
-  const others = (await getGamePatchHeads(await getDb(), item.appid, OTHERS + 1))
-    .filter((h) => h.gid !== item.gid)
-    .slice(0, OTHERS)
+  // Строго раньше по времени: сам пост в список не попадает и без фильтра
+  const others = await getGamePatchHeads(await getDb(), item.appid, item.publishedAt, OTHERS)
   const gameHref = `/game/${item.appid}`
   // Заголовок поста на языке страницы: русский заголовок издателя на /en не
   // показывается — его место занимает titleEn или «{Game} update» (newsTitleOn)
@@ -374,19 +367,25 @@ export default async function PatchPage({ params }: Params) {
         {others.length > 0 && (
           <section>
             <SectionLabel as="h2" className="mb-2">
-              {/* Русское название во фразе на /en — своим <span lang="ru">
-                  (withForeignRuns), как «Все обновления» на карточке игры */}
+              {/* «Предыдущие», а не «другие»: в списке только вышедшие раньше
+                  (OTHERS). Русское название во фразе на /en — своим
+                  <span lang="ru"> (withForeignRuns), как «Все обновления» на
+                  карточке игры */}
               {game
-                ? withForeignRuns(locale, tr(locale, { ru: `Другие патчи ${game.name}`, en: `More ${game.name} patches` }), [game.name])
-                : tr(locale, { ru: 'Другие патчи', en: 'More patches' })}
+                ? withForeignRuns(locale, tr(locale, { ru: `Предыдущие патчи ${game.name}`, en: `Earlier ${game.name} patches` }), [game.name])
+                : tr(locale, { ru: 'Предыдущие патчи', en: 'Earlier patches' })}
             </SectionLabel>
             <ul className="flex flex-col">
               {others.map((o) => {
                 const title = newsHeading(newsTitleOn(o, game?.name, locale), game?.name)
                 return (
                   <li key={o.gid} className="border-b border-rule last:border-b-0">
+                    {/* Без префетча: шесть страниц патчей на ISR, и каждая
+                        ненаписанная или устаревшая рендерилась бы и писалась
+                        ради того, что читатель докрутил до низа */}
                     <Link
                       href={newsPath(item.appid, o.gid)}
+                      prefetch={false}
                       className="flex items-baseline justify-between gap-4 py-3 text-sm transition-opacity hover:opacity-70"
                     >
                       <span lang={textLangOn(locale, title, game?.name)} className="min-w-0 truncate">
@@ -398,7 +397,7 @@ export default async function PatchPage({ params }: Params) {
                 )
               })}
             </ul>
-            {/* Шесть соседних — перелинковка, а все хранящиеся патчи игры
+            {/* Шесть предыдущих — перелинковка, а все хранящиеся патчи игры
                 списком — в её архиве обновлений */}
             {game && (
               <Link href={patchArchivePath(item.appid)} prefetch={false} className="tap link-more mt-3">

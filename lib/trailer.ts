@@ -206,3 +206,16 @@ export function readTrailer(json: string | null | undefined): Trailer | undefine
   if (isSteamMedia(r.hls)) out.hls = r.hls
   return out
 }
+
+/**
+ * Трейлер в том виде, в каком его отдают островку TrailerPreview: всё, что он
+ * играет и показывает, — mp4, webm и постер, — без hls.
+ *
+ * Поток hls не показывается (см. Trailer.hls), а пропсы островка лежат в
+ * RSC-части страницы игры и в каждой её записи ISR: адрес потока, ~140 байт,
+ * ехал туда мёртвым грузом у каждой карточки с трейлером. В базе он остаётся
+ * — ради будущего режима «полный трейлер».
+ */
+export function shownTrailer({ mp4, webm, poster }: Trailer): Trailer {
+  return { mp4, ...(webm ? { webm } : {}), ...(poster ? { poster } : {}) }
+}

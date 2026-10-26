@@ -99,7 +99,8 @@ const SECTION_SHAPES: Record<(typeof LOCALIZED_SECTIONS)[number], string> = {
   compat: `compat(?:/${SEG}(?:${CARD})?)?`,
   daily: 'daily',
   explore: 'explore',
-  game: `game/${APPID}(?:${CARD}|/news(?:/${GID}(?:${CARD})?)?)?`,
+  // Своих карточек у игры и патча больше нет (retiredCardRedirects ниже)
+  game: `game/${APPID}(?:/news(?:/${GID})?)?`,
   games: `games(?:/(?:${GENRE_SLUGS.join('|')})(?:${CARD})?)?`,
   library: 'library',
   missing: 'missing',
@@ -139,7 +140,7 @@ const SITE_PATH = new RegExp(`^(?:/(?:en|ru)?|(?:/(?:en|ru))?/(?:${ROUTE_RE}))$`
 
 /**
  * Адрес страницы сайта — такой, как его видит человек: '/', '/en',
- * '/game/730', '/en/games/coop', '/game/730/opengraph-image'. И под /ru:
+ * '/game/730', '/en/games/coop', '/games/coop/opengraph-image'. И под /ru:
  * снаружи такого адреса нет (редирект), но og:image русской страницы —
  * /ru/…/opengraph-image, и скопировать его могут оттуда. Без строки
  * запроса, якоря и протокола, с точным регистром: ISR кладёт страницу по
@@ -288,6 +289,32 @@ export function garbageRewrites(): Rewrite[] {
       destination: '/_not-found',
     },
   ]
+}
+
+/**
+ * Бывшие карточки превью игры и патча — постоянным редиректом на корневую
+ * карточку своего языка.
+ *
+ * Своих opengraph-image у /game/<appid> и /game/<appid>/news/<gid> больше нет:
+ * превью у них — шапка Steam (shareArt в lib/art). А старые адреса картинок
+ * остались в кэше мессенджеров и у ботов превью, и они за ними приходят —
+ * /ru/game/730/opengraph-image?<хеш> у русских страниц, /en/…/opengraph-image
+ * у английских. Без правила такой адрес доходил бы до динамической ловушки
+ * app/[lang]/[...missing], то есть до функции на каждый заход, и отвечал бы
+ * 404 HTML вместо картинки. Редирект CDN Vercel отдаёт сам, без функции, а
+ * корневая карточка пререндерена на сборке: обновлённое превью покажет знак
+ * сайта, а не пустоту. Строка запроса (хеш) уезжает с адресом, картинке она
+ * не мешает.
+ *
+ * Без языка (/game/730/opengraph-image) — тоже: такие адреса когда-то
+ * переписывались под /ru, а форм в SECTION_SHAPES у них больше нет.
+ */
+export function retiredCardRedirects(): Redirect[] {
+  const card = (lang: string) => [
+    { source: `${lang}/game/:appid${CARD}`, destination: `${lang || '/ru'}${CARD}`, permanent: true },
+    { source: `${lang}/game/:appid/news/:gid${CARD}`, destination: `${lang || '/ru'}${CARD}`, permanent: true },
+  ]
+  return [...card(''), ...card('/ru'), ...card('/en')]
 }
 
 /**

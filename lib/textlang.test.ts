@@ -279,7 +279,7 @@ const HEADINGS: Array<{ file: string; expr: string; count: number }> = [
   // h1 страницы патча: русское название игры на /en внутри общего «{Game}
   // update» — своим <span lang="ru">, отсюда withForeignRuns вокруг heading
   { file: 'app/[lang]/game/[appid]/news/[gid]/page.tsx', expr: 'withForeignRuns(locale, heading, [game?.name])', count: 1 },
-  // «Другие патчи» внизу страницы патча
+  // «Предыдущие патчи» внизу страницы патча
   { file: 'app/[lang]/game/[appid]/news/[gid]/page.tsx', expr: 'title', count: 1 },
   // архив обновлений игры: ссылкой на страницу патча и текстом рядом со ссылкой в Steam
   { file: 'app/[lang]/game/[appid]/news/page.tsx', expr: 'heading', count: 2 },

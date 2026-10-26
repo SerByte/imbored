@@ -2563,12 +2563,34 @@ describe('страница патча', () => {
       ],
       NOW,
     )
-    const heads = await getGamePatchHeads(db, 730, 5)
+    const heads = await getGamePatchHeads(db, 730, NOW, 5)
     expect(heads).toEqual([
       { gid: 'b', title: 'Свежий', publishedAt: NOW - 100, scale: null },
       { gid: 'a', title: 'Старый', publishedAt: NOW - 300, scale: 'major' },
     ])
-    expect(await getGamePatchHeads(db, 730, 1)).toHaveLength(1)
+    expect(await getGamePatchHeads(db, 730, NOW, 1)).toHaveLength(1)
+  })
+
+  /*
+   * «Предыдущие патчи» на странице патча — строго раньше неё: так список
+   * сохранённой страницы не меняется от нового патча игры, и она не
+   * перерисовывается в ISR. Сама страница и пост той же секунды — мимо
+   * (равенство пришлось бы разбивать по gid, а это сортировка мимо индекса).
+   */
+  test('заголовки патчей игры — только вышедшие раньше границы', async () => {
+    const db = await freshDb()
+    await upsertNewsItems(
+      db,
+      [
+        newsItem({ gid: 'old', publishedAt: NOW - 300 }),
+        newsItem({ gid: 'page', publishedAt: NOW - 200 }),
+        newsItem({ gid: 'twin', publishedAt: NOW - 200 }),
+        newsItem({ gid: 'new', publishedAt: NOW - 100 }),
+      ],
+      NOW,
+    )
+    expect((await getGamePatchHeads(db, 730, NOW - 200)).map((h) => h.gid)).toEqual(['old'])
+    expect((await getGamePatchHeads(db, 730, NOW - 300)).map((h) => h.gid)).toEqual([])
   })
 
   /*
@@ -3732,7 +3754,8 @@ describe('вердикт модели «не патч» (scale = none)', () => {
     const db = await freshDb()
     await rejected(db)
     expect(await getGameNews(db, 730)).toEqual([])
-    expect(await getGamePatchHeads(db, 730)).toEqual([])
+    // граница — после поста: из списка его убирает вердикт, а не она
+    expect(await getGamePatchHeads(db, 730, NOW + 1)).toEqual([])
     expect(await getMajorFeed(db)).toEqual([])
     expect(await sitemapNews(db, NOW - 86_400, 10)).toEqual([])
     expect(await freshlyDigestedPatches(db, NOW - 86_400, 0, 10)).toEqual([])

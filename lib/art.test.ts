@@ -9,6 +9,7 @@ import {
   legacyArtUrl,
   parseStoreAssets,
   SHELF_RAIL_SIZES,
+  shareArt,
   trimArt,
 } from './art'
 
@@ -209,5 +210,28 @@ describe('SHELF_RAIL_SIZES', () => {
       expect(src, `${file}: sizes капсулы ряда — только SHELF_RAIL_SIZES`).toMatch(/sizes=\{SHELF_RAIL_SIZES\}/)
       expect(src).not.toMatch(/sizes="2\d\dpx"/)
     }
+  })
+})
+
+/*
+ * Превью страниц игры, архива и патча — шапка Steam (shareArt): своя
+ * PNG-карточка стоила записи ISR и рендера функции на каждый адрес.
+ */
+describe('shareArt', () => {
+  test('header_2x 920×430, без него — header 460×215, без арта — header_image той же шапкой', () => {
+    const art = { header: 'https://a/header.jpg', header2x: 'https://a/header_2x.jpg', hero: 'https://a/hero.jpg' }
+    expect(shareArt({ appid: 730, art })).toEqual({ url: 'https://a/header_2x.jpg', width: 920, height: 430 })
+    expect(shareArt({ appid: 730, art: { header: art.header } })).toEqual({ url: art.header, width: 460, height: 215 })
+    expect(shareArt({ appid: 730, art: null, headerImage: 'https://b/header.jpg' })).toEqual({
+      url: 'https://b/header.jpg',
+      width: 460,
+      height: 215,
+    })
+  })
+
+  test('плоского пути наугад нет, у чужого магазина шапки Steam нет — null', () => {
+    // legacyArtUrl у игр после перехода Valve на хэшированные пути отвечает 404
+    expect(shareArt({ appid: 730, art: { hero: 'https://a/hero.jpg' }, headerImage: null })).toBeNull()
+    expect(shareArt({ appid: -7, art: { header2x: 'https://a/header_2x.jpg' } })).toBeNull()
   })
 })

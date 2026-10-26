@@ -177,6 +177,9 @@ describe('runDigestSlice: пересказы отдельно от опроса'
 
     expect(res.digested).toBe(1)
     expect(res.cards).toEqual([730])
+    // И страница самого поста: «Коротко» на ней — от пересказа, а живёт она
+    // месяц (resetSliceCards сбросит её адрес)
+    expect(res.posts).toEqual([{ appid: 730, gid: '1' }])
   })
 
   /*
@@ -212,8 +215,9 @@ describe('runDigestSlice: пересказы отдельно от опроса'
   })
 
   test('вердикт «не патч» убирает строку с карточки — и карточку сбрасываем', async () => {
-    // Карточка игры живёт неделю (lib/gamecache): без сброса «дорожная
-    // карта» стояла бы на ней патчем до конца срока
+    // Карточка игры живёт месяц (lib/gamecache): без сброса «дорожная
+    // карта» стояла бы на ней патчем до конца срока. Страница поста — тоже в
+    // сброс: теперь она 404
     const db = await freshDb()
     await seedPatch(db, 730, '1')
 
@@ -224,6 +228,7 @@ describe('runDigestSlice: пересказы отдельно от опроса'
     })
 
     expect(res.cards).toEqual([730])
+    expect(res.posts).toEqual([{ appid: 730, gid: '1' }])
     expect(await getGameNews(db, 730)).toEqual([])
     expect(await getUnsummarized(db)).toEqual([])
   })
@@ -526,7 +531,7 @@ describe('runNewsSlice', () => {
 
   /*
    * cards — игры, чьи карточки роут сбросит в ISR (lib/gamecache): страница
-   * живёт неделю, и новый патч не должен ждать её конца. А игра, у которой
+   * живёт месяц, и новый патч не должен ждать её конца. А игра, у которой
    * опрос ничего не поменял или принёс одни новости без патчей, карточку не
    * трогает — её лента показывает только патчи.
    */
@@ -550,6 +555,43 @@ describe('runNewsSlice', () => {
     const again = await runNewsSlice(db, { ...opts, nowSec: NOW + 200_000 })
     expect(again.polled).toBe(2)
     expect(again.cards).toEqual([])
+    expect(again.posts).toEqual([])
+  })
+
+  /*
+   * posts — страницы постов, которые роут сбросит в ISR: страница патча живёт
+   * месяц, и правка издателя без сброса ждала бы его конца. Только те, у
+   * кого страница правда поменялась: новые, с новым телом или заголовком. Один
+   * сдвинувшийся вес игры (rank — после каждой сверки отзывов, у всех её
+   * постов) страницу не меняет, и сбрасывать её незачем.
+   */
+  test('posts — новые и переписанные посты; сдвиг одного веса — нет', async () => {
+    const db = await freshDb()
+    await seedGame(db, 730, 'CS2', 9_000_000)
+    await enrollNewsPoll(db, [730], 1, NOW)
+    const run = (nowSec: number, items: RawNewsItem[]) =>
+      runNewsSlice(db, { nowSec, deadlineAt: Date.now() + ЗАПАС_MS, fetchNews: feedOf({ 730: items }), digestLimit: 0 })
+    const first = await run(NOW + 4000, [post(730, '1', 'Обновление Counter-Strike 2', PATCH), post(730, '2', 'Скидки', ['Скидка 50%'])])
+    expect(first.posts.sort((a, b) => a.gid.localeCompare(b.gid))).toEqual([
+      { appid: 730, gid: '1' },
+      { appid: 730, gid: '2' },
+    ])
+
+    // Сверка отзывов сдвинула вес игры: апсерт перепишет rank у постов, а не страницы
+    await db.execute({ sql: 'UPDATE games SET reviews_total = ? WHERE appid = 730', args: [9_500_000] })
+    await db.execute('UPDATE news_poll SET next_at = 0')
+    const ranked = await run(NOW + 200_000, [post(730, '1', 'Обновление Counter-Strike 2', PATCH), post(730, '2', 'Скидки', ['Скидка 50%'])])
+    // сторож не слепой: строки правда переписаны — одним весом
+    expect(ranked.inserted).toBe(2)
+    expect(ranked.posts).toEqual([])
+
+    // Издатель поправил тело первого — его страница в сброс, второго нет
+    await db.execute('UPDATE news_poll SET next_at = 0')
+    const edited = await run(NOW + 400_000, [
+      post(730, '1', 'Обновление Counter-Strike 2', [...PATCH, 'Исправлена ошибка в описании изменений']),
+      post(730, '2', 'Скидки', ['Скидка 50%']),
+    ])
+    expect(edited.posts).toEqual([{ appid: 730, gid: '1' }])
   })
 
   /*
@@ -1077,6 +1119,10 @@ describe('пересказ по-английски', () => {
     expect(calls[0]!.body).toContain('Исправлен вылет')
     // major: английский пересказ крупного патча популярной игры виден на /en/whatsnew
     expect(res).toMatchObject({ digested: 1, english: 1, major: 1, cards: [730], hasMore: false, stopped: 'done' })
+    // страница поста — в сброс: на /en у неё появились «In short» и индекс, у
+    // русской — hreflang на английскую. Давние посты догона announceFreshPatches
+    // не видит (окно девяноста дней)
+    expect(res.posts).toEqual([{ appid: 730, gid: '1' }])
     const [item] = await getGameNews(db, 730)
     // русский пересказ и масштаб — от основного пересказа: догон их не трогает
     expect(item).toMatchObject({

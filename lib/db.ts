@@ -6282,7 +6282,7 @@ export async function updateGamePrices(
  * верит витрина (DEAL_UNTIL — discountOf в SQL), попал в окно.
  *
  * Для крона карточек (revalidateEndedDeals в lib/gamecache): карточка живёт в
- * ISR неделю, и собранная до этого момента обещает скидку в JSON-LD, пока её
+ * ISR месяц, и собранная до этого момента обещает скидку в JSON-LD, пока её
  * не перегенерируют.
  *
  * Без LIMIT, и это не забыто. Распродажа Steam кончается одной секундой у
@@ -6430,7 +6430,7 @@ export async function updateCatalogSignals(
  * или поменялась доля, — у всех трёх пар сверки: показанных людям (все языки
  * и русские) и англоязычной шкалы порогов и порядка.
  *
- * Это про ISR. Карточка игры живёт неделю и пишется заново, только если её
+ * Это про ISR. Карточка игры живёт месяц и пишется заново, только если её
  * вывод разошёлся с прошлым (lib/gamecache), а кольцо печатает число отзывов
  * до единицы. Сверка идёт раз в неделю, и у игры, которая прибавляет хоть
  * десяток отзывов, каждая перегенерация была бы новой страницей — запись ISR
@@ -8659,20 +8659,30 @@ export type NewsHead = {
 }
 
 /**
- * Заголовки патчей игры — для списка «Другие патчи» на странице патча.
+ * Заголовки патчей игры, вышедших раньше before, — для списка «Предыдущие
+ * патчи» на странице патча (before — её published_at), свежие первыми.
+ *
+ * Только раньше, а не свежие у игры вообще: так список сохранённой страницы
+ * не меняется от каждого нового патча — и страница не перерисовывается в
+ * ISR (почему это важно — OTHERS у страницы патча). Сам пост под строгое «<»
+ * не попадает. Пост, вышедший в ту же секунду, — тоже, и это сознательно:
+ * равенство пришлось бы разбивать по gid, а «gid DESC» в ORDER BY уже не
+ * берётся из индекса — SQLite строит под него временное дерево
+ * (lib/queryplan.test.ts). Патчи одной игры в одну секунду — редкость.
  *
  * Не getGameNews: та везёт blocks_json каждой строки, а здесь нужны только
- * заголовок и дата. Идёт по idx_news_app (appid, published_at DESC), порядок
- * приходит из индекса. Вердикт модели «не патч» отсекается тем же условием,
- * что у getGameNews: ссылка на него вела бы на 404.
+ * заголовок и дата. Идёт по idx_news_app (appid, published_at DESC): before —
+ * граница диапазона по тому же индексу, порядок приходит из него. Вердикт
+ * модели «не патч» отсекается тем же условием, что у getGameNews: ссылка на
+ * него вела бы на 404.
  */
-export async function getGamePatchHeads(db: Db, appid: number, limit = 8): Promise<NewsHead[]> {
+export async function getGamePatchHeads(db: Db, appid: number, before: number, limit = 8): Promise<NewsHead[]> {
   if (appid <= 0) return []
   const res = await db.execute({
     sql: `SELECT gid, title, published_at, scale, title_en FROM news_items
-          WHERE appid = ? AND kind = 'patch' AND scale IS NOT 'none'
+          WHERE appid = ? AND published_at < ? AND kind = 'patch' AND scale IS NOT 'none'
           ORDER BY published_at DESC LIMIT ?`,
-    args: [appid, limit],
+    args: [appid, before, limit],
   })
   return (
     res.rows as unknown as Array<{
@@ -9323,7 +9333,7 @@ const TLDR_SWEEP_PAGE = 500
  * повторит с начала: уже сброшенное второй раз не найдётся.
  *
  * Возвращает игры, у которых пересказ снят: их карточки роут сбрасывает в ISR
- * (строка под патчем на карточке живёт неделю). null — уборка уже была.
+ * (строка под патчем на карточке живёт месяц). null — уборка уже была.
  */
 export async function resetFlawedDigests(db: Db): Promise<number[] | null> {
   if (await getCatalogMeta(db, TLDR_FLAW_SWEEP_KEY)) return null

@@ -186,7 +186,7 @@ describe('robots.txt', () => {
       '/en/privacy',
       // og:image русской страницы — по внутреннему пути
       `/ru/portrait/${STEAMID}/opengraph-image`,
-      '/ru/game/730/opengraph-image',
+      '/ru/games/roguelike/opengraph-image',
     ]) {
       expect(allowed(rules, url), url).toBe(true)
     }

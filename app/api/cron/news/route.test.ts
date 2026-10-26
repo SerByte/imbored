@@ -116,20 +116,26 @@ describe('/api/cron/news', () => {
   })
 
   test('карточки игр с новыми патчами уходят в перегенерацию', async () => {
-    // Карточка живёт в ISR неделю (lib/gamecache): новый патч не должен ждать
+    // Карточка живёт в ISR месяц (lib/gamecache): новый патч не должен ждать
     // её конца
     await digestFresh()
     const real = (await vi.importActual<typeof import('@/lib/newsjob')>('@/lib/newsjob')).runNewsSlice
-    vi.mocked(runNewsSlice).mockImplementationOnce(async (...a) => ({ ...(await real(...a)), cards: [730] }))
+    vi.mocked(runNewsSlice).mockImplementationOnce(async (...a) => ({
+      ...(await real(...a)),
+      cards: [730],
+      posts: [{ appid: 730, gid: '42' }],
+    }))
     expect((await ask()).status).toBe(202)
     await settled()
     // и архив обновлений игры (/game/730/news): новый патч — новая его строка,
-    // а revalidatePath вложенный адрес сам не сбрасывает. Оба — в обеих
-    // языковых копиях маршрута (revalidateSitePath)
-    expect(revalidated.sort()).toEqual(['/game/730', '/game/730/news'].flatMap(routePaths).sort())
+    // а revalidatePath вложенный адрес сам не сбрасывает. И страница поста,
+    // который опрос переписал: правка издателя иначе ждала бы её месяца. Все
+    // — в обеих языковых копиях маршрута (revalidateSitePath)
+    expect(revalidated.sort()).toEqual(['/game/730', '/game/730/news', '/game/730/news/42'].flatMap(routePaths).sort())
     // В отметку — число, а не список: у новостей это десятки appid на звено
     const mark = JSON.parse((await getCatalogMeta(db, CRON_JOBS.news.lastKey)) ?? '{}') as Record<string, unknown>
     expect(mark).not.toHaveProperty('cards')
+    expect(mark).not.toHaveProperty('posts')
     expect(mark).toMatchObject({ сброшено: 1, итого: { сброшено: 1 } })
   })
 

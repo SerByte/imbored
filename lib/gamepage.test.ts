@@ -351,7 +351,7 @@ describe('topTagOf', () => {
   })
 
   test('при равных весах порядок не зависит от порядка ключей', () => {
-    // Страница кэшируется на неделю и пререндерится: блок «похожие» не имеет
+    // Страница кэшируется на месяц и пререндерится: блок «похожие» не имеет
     // права меняться от того, как Object.entries вернул ключи после пересборки
     const a = topTagOf(meta(1, { tags: { Zzz: 500, Aaa: 500 } }))
     const b = topTagOf(meta(1, { tags: { Aaa: 500, Zzz: 500 } }))
@@ -432,7 +432,7 @@ describe('pickSimilar', () => {
     expect(a).toHaveLength(SIMILAR_SHOWN)
     expect(new Set(a).size).toBe(SIMILAR_SHOWN)
     expect([...a].sort((x, y) => x - y)).toEqual(a)
-    // страница кэшируется на неделю: полка не должна прыгать между пересборками
+    // страница кэшируется на месяц: полка не должна прыгать между пересборками
     expect(pickSimilar(ranked, 1_593_500)).toEqual(a)
   })
 
@@ -746,7 +746,7 @@ describe('reviewPulse', () => {
     expect(reviewPulse(meta(1, { reviewsRuTotal: RU_MIN_REVIEWS - 1, reviewsRuPercent: 96 }), ring, AT)).toEqual([])
   })
 
-  test('вывод от часов внутри срока показа не зависит — недельный кэш карточки', () => {
+  test('вывод от часов внутри срока показа не зависит — месячный кэш карточки', () => {
     const m = pulse({ reviewsRuTotal: 16_893, reviewsRuPercent: 96 })
     expect(reviewPulse(m, ring, AT + 6 * 86_400)).toEqual(reviewPulse(m, ring, AT))
   })
@@ -1397,7 +1397,7 @@ describe('вход и характер', () => {
  * «Ещё у <студии>» под полкой «Похожие» — строка текстовых ссылок. Правила,
  * которые легко потерять правкой: корпоративный каталог молчит, одна игра —
  * не строка, издания и уже показанное не повторяются, порядок не зависит от
- * порядка входа (страница живёт в ISR неделю).
+ * порядка входа (страница живёт в ISR месяц).
  */
 describe('studioLine', () => {
   const page = { appid: 1, name: 'Hades', developer: 'Supergiant Games' }
