@@ -1,5 +1,4 @@
 import type { Metadata } from 'next'
-import { unstable_cache } from 'next/cache'
 import Link from '@/components/Link'
 import { Ambient } from '@/components/Ambient'
 import { StaticGameCardBody } from '@/components/StaticGameCard'
@@ -28,6 +27,13 @@ import { generateMetadata as rootMetadata } from './layout'
  * из настоящих карточек каталога — то, что здесь можно предложить прямо, без
  * входа и без объяснений.
  *
+ * Полка стоит не на каждой 404. Её рисует только /_not-found — адрес вне
+ * разделов и опечатка под русским разделом (app/global-not-found.tsx). 404
+ * из notFound() страниц (/game/<нет такой>, /en/xyz) рисует граница ниже, и
+ * там экран без полки: граница сидит в RSC каждой страницы сайта, и любой
+ * запрос к базе в ней — это запрос в рендере каждой страницы. Подробно — у
+ * shelf().
+ *
  * А раз шёл за игрой — первая створка «Найти игру по названию»
  * (components/SearchLauncher): переизданную игру или адрес с опечаткой
  * человек находит по первым буквам названия, без входа так же. Строка
@@ -44,50 +50,57 @@ import { generateMetadata as rootMetadata } from './layout'
 /** Один ряд. Больше — это уже витрина, а человек сюда не за витриной пришёл. */
 const SHELF = 4
 
-/** Из скольких верхних карточек выбираем ряд дня. */
+/** Из скольких верхних карточек выбираем ряд. */
 const POOL = 24
 
 /**
- * Верх каталога живёт в кэше Next сутки.
+ * Полка — только у /_not-found, и базу она читает сама, без кэша Next.
  *
- * Раньше каждый рендер 404 шёл в базу. Статическая 404 для опечатки в адресе
- * собирается один раз на сборке, но notFound() из динамических страниц —
- * чужой steamid в /compat и /portrait (они force-dynamic), несуществующий
- * appid в /game — рендерит эту страницу заново, и каждый такой рендер платил
- * за полку отдельным запросом к Turso. Ответ у запроса один на всех и
- * меняется медленно: верх по числу отзывов неделями стоит на месте. Сутки —
- * ровно срок ряда дня ниже, так что свежее полке и не нужно.
+ * Здесь стоял unstable_cache({ revalidate: 86_400 }), а полку рисовала и
+ * граница not-found ниже. Это был потолок срока для всего сайта. Границу
+ * not-found корневого layout Next рисует вместе с КАЖДОЙ страницей под
+ * app/[lang], и с нашедшейся тоже: готовым элементом в проп notFound у
+ * LayoutRouter (next/dist/server/app-render/create-component-tree.js), то
+ * есть внутри RSC страницы. А unstable_cache с числом в revalidate опускает
+ * срок страницы, в чьём рендере выполнился, до своего, если свой короче
+ * (next/dist/server/web/spec-extension/unstable-cache.js). Итог по манифесту
+ * сборки: карточка игры с revalidate на неделю жила сутки и отвечала
+ * s-maxage=86400, а /privacy, /support, /quiz и прочие страницы без
+ * revalidate вовсе стали ISR на сутки.
  *
- * В кэше только выборка, а перемешивание — снаружи, на каждом рендере: ряд
- * по-прежнему меняется в свою полночь, а не тогда, когда истёк кэш.
+ * И каждая такая перегенерация была записью ISR целиком. Ряд ниже тасуется
+ * по дате, а лежал он в RSC каждой страницы, так что вчерашняя и сегодняшняя
+ * копии любой страницы различались хотя бы полкой, и пропустить запись
+ * одинакового результата Vercel было не из чего. Запись карточки игры — около
+ * 224 КБ, тридцать блоков ISR по 8 КБ, и до раза в сутки на каждый адрес,
+ * куда заходит краулер.
  *
- * Пустую выборку не кэшируем: бросок не даёт unstable_cache её запомнить, а
- * shelf() ниже превращает его в пустую полку. Иначе сборка на пустой базе
- * (превью со своей свежей базой) заморозила бы 404 без полки на сутки.
+ * Поэтому граница рисует экран без полки (withShelf={false}): ни кэша данных,
+ * ни запроса к базе в ней нет, и сторожит это lib/notfound.test.ts. То же
+ * правило — для любого кэша с числовым сроком в границе, layout или template
+ * под [lang]: он снова опустит срок всех страниц до своего.
  *
- * unstable_cache, а не "use cache", — по той же причине, что в
- * lib/whatsnewcache.ts: директиве нужен cacheComponents на всё приложение.
+ * А /_not-found (app/global-not-found.tsx) пререндерен на сборке и дальше
+ * статичен до следующего деплоя: запрос к базе — один на сборку, и кэшу
+ * сберегать нечего. Вредить он стал бы: unstable_cache хранит результат и
+ * между деплоями (docs: 04-functions/unstable_cache.md), его ключ держится на
+ * тексте функции, а не на сборке, и с revalidate: false новая сборка могла бы
+ * взять верх каталога, записанный когда-то давно.
+ *
+ * Молчащая база или пустая выборка — пустая полка (catch ниже). Сборка на
+ * пустой базе (превью со своей свежей базой) так и оставит 404 без полки до
+ * следующего деплоя, и это не поломка.
  */
-const cachedTop = unstable_cache(
-  async (limit: number) => {
-    // getDb внутри: объект соединения в ключ кэша не сериализуется
-    const games = await topCatalogGames(await getDb(), limit)
-    if (games.length === 0) throw new Error('каталог пуст — полку не кэшируем')
-    return games
-  },
-  ['notfound-shelf:v1'],
-  { revalidate: 86_400 },
-)
-
 async function shelf() {
   try {
-    const games = await cachedTop(POOL)
+    const games = await topCatalogGames(await getDb(), POOL)
     if (games.length <= SHELF) return games
     /*
-     * Ряд меняется раз в сутки, а не при каждом заходе: у страницы ошибок
+     * Ряд — по дате рендера, а не новый на каждый заход: у страницы ошибок
      * должно быть постоянное лицо в пределах одного визита — иначе возврат
      * назад показывает другие игры и читается как ещё один сбой. Тот же
-     * приём и тот же генератор, что у «Игры дня».
+     * приём и тот же генератор, что у «Игры дня». На проде /_not-found
+     * рисуется раз на сборку, и ряд держится до следующего деплоя.
      */
     const rnd = mulberry32(hashString(`404:${dayKey(new Date())}`))
     const pool = [...games]
@@ -136,9 +149,12 @@ export async function generateMetadata({ params }: { params: Promise<{ lang: str
 /**
  * Язык — из сегмента [lang] (next/root-params): 404 под /en/… рисуется
  * внутри английского layout и обязан говорить по-английски.
+ *
+ * Без полки: эта граница рисуется вместе с каждой страницей сайта, и кэш
+ * данных в ней ставил потолок срока всем страницам (докблок shelf() выше).
  */
 export default async function NotFound() {
-  return <NotFoundView locale={await getLocale()} />
+  return <NotFoundView locale={await getLocale()} withShelf={false} />
 }
 
 /**
@@ -148,16 +164,18 @@ export default async function NotFound() {
  * /en/xyz, /en/quiz/xyz. HTML такого ответа в этой версии Next — пустая
  * оболочка (<html id="__next_error__">), а экран дорисовывает клиент:
  * граница not-found — клиентский error boundary, и серверный рендер React
- * его не исполняет (подробно — в app/global-not-found.tsx).
+ * его не исполняет (подробно — в app/global-not-found.tsx). Граница зовёт
+ * экран с withShelf={false}: поиск и кнопки есть, полки нет.
  *
  * Адрес вне всех разделов (/xyz, /wp-login.php) и опечатку под русским
  * разделом (/quiz/xyz) next.config уводит в /_not-found, и там этот же
  * экран рисует app/global-not-found.tsx —
- * сервером, внутри того же корневого layout. Язык там не из сегмента (его
- * у /_not-found нет), а русский явно: адрес без префикса — русский сайт.
+ * сервером, внутри того же корневого layout, и с полкой: он пререндерен раз
+ * на сборку. Язык там не из сегмента (его у /_not-found нет), а русский
+ * явно: адрес без префикса — русский сайт.
  */
-export async function NotFoundView({ locale }: { locale: Locale }) {
-  const games = await shelf()
+export async function NotFoundView({ locale, withShelf = true }: { locale: Locale; withShelf?: boolean }) {
+  const games = withShelf ? await shelf() : []
 
   return (
     <div className="relative flex-1 overflow-hidden">

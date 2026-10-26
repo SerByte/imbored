@@ -201,6 +201,38 @@ describe('корневые метаданные', () => {
 })
 
 /**
+ * Маскируемая иконка — та, что ложится на домашний экран Android. Обе версии
+ * манифеста ставят её, и Chrome с Android запрашивают её сами. GET-ручка по
+ * умолчанию не кэшируется вовсе (docs: route handlers, Caching), а next/og
+ * ставит ответу max-age=0: без force-static каждый такой запрос будил
+ * функцию и заново гонял satori с resvg ради одной и той же картинки.
+ */
+describe('маскируемая иконка', () => {
+  test('статическая и без срока: рисуется раз на сборку', async () => {
+    const route = await import('../app/maskable-icon.png/route')
+    expect(route.dynamic).toBe('force-static')
+    expect(route).not.toHaveProperty('revalidate')
+  })
+
+  test('PNG 512×512 — тот, что обещают оба манифеста', async () => {
+    const { GET } = await import('../app/maskable-icon.png/route')
+    const res = GET()
+    expect(res.headers.get('content-type')).toBe('image/png')
+    const png = Buffer.from(await res.arrayBuffer())
+    expect(png.subarray(0, 4).toString('latin1')).toBe('\x89PNG')
+    // IHDR — первый чанк: ширина и высота сразу за его длиной и типом
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([512, 512])
+    for (const m of [manifest(), manifestFor('en')]) {
+      expect(m.icons?.find((i) => i.purpose === 'maskable')).toMatchObject({
+        src: '/maskable-icon.png',
+        sizes: '512x512',
+        type: 'image/png',
+      })
+    }
+  })
+})
+
+/**
  * /favicon.ico браузеры, читалки и боты запрашивают сами, без <link rel=icon>.
  * Без файла этот адрес отдавал 404 — страницу not-found с полкой игр, 46 КБ
  * HTML на каждый такой запрос.

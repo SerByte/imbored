@@ -30,6 +30,20 @@ const K = (SIZE / GRID) * FIT
 /** Точка исходной сетки → точка холста, вокруг центра. */
 const at = (v: number) => SIZE / 2 + (v - GRID / 2) * K
 
+/**
+ * Рисуется один раз, на сборке, — как apple-icon и манифесты.
+ *
+ * GET-обработчик в этой версии Next по умолчанию не кэшируется вовсе (docs:
+ * route handlers, Caching), а next/og ставит ответу «public, max-age=0,
+ * must-revalidate», так что и CDN его не держал: каждый запрос иконки
+ * Chrome и Android (обе версии манифеста ставят её маскируемой,
+ * lib/manifest.ts) будил функцию и заново гонял satori с resvg ради одной и
+ * той же картинки. Входов у неё нет — ни базы, ни запроса, ни часов, — и
+ * пререндер даёт те же байты и те же заголовки: срок статическому ответу
+ * задаёт манифест сборки, а не max-age next/og (докблок lib/ogresponse.ts).
+ */
+export const dynamic = 'force-static'
+
 export function GET(): Response {
   return new ImageResponse(
     (
