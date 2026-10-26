@@ -251,6 +251,24 @@ describe('кэш хаба и страниц жанра', () => {
 })
 
 /**
+ * hreflang жанра и подборки — только в голове страницы: карта сайта
+ * перечисляет адреса без xhtml:link (app/sitemap.ts), и пару /games/<slug> и
+ * /en/games/<slug> поиск узнаёт отсюда.
+ */
+test('hreflang жанра и подборки — в голове страницы: обе версии и x-default на английскую', async () => {
+  for (const tag of ['open-world', 'coop']) {
+    for (const lang of ['ru', 'en']) {
+      const meta = await generateMetadata({ params: Promise.resolve({ tag, lang }) })
+      expect(meta.alternates?.languages, `${lang} ${tag}`).toEqual({
+        ru: `/games/${tag}`,
+        en: `/en/games/${tag}`,
+        'x-default': `/en/games/${tag}`,
+      })
+    }
+  }
+})
+
+/**
  * Подборки по факту — тот же сегмент /games/<slug>, что у жанров
  * (lib/gamehub, HUB_FACETS). Здесь — то, ради чего они заведены: «с другом»
  * не отдаёт верх списка Dota 2, «на 20 минут» не называет короткой то, что
