@@ -22,8 +22,34 @@ import type { LOCALIZED_SECTIONS } from './i18n'
 type Rewrite = { source: string; destination: string }
 type Redirect = { source: string; destination: string; permanent: boolean }
 
-/** Один сегмент-параметр маршрута: appid, steamid, id выбора или комнаты, gid поста, токен ленты */
+/** Один сегмент-параметр маршрута: steamid, id выбора или комнаты, токен ленты */
 const SEG = '[^/]+'
+
+/**
+ * appid в адресе карточки игры — каноническое целое: не ноль, без нулей
+ * впереди, без плюса, дроби и экспоненты. Минус — кураторский пул других
+ * магазинов (отрицательные appid, lib/gamecache). Ровно так адрес строят
+ * gamePagePath и String(appid); страница через Number() приняла бы и
+ * /game/0730, и /game/7.3e2 — каждый отдельной записью ISR той же карточки.
+ */
+const APPID = '-?[1-9]\\d*'
+
+/**
+ * gid поста — цифры: другой формы его не пишет ни один источник (PERMALINK
+ * в lib/news.ts берёт хвост ссылки Steam регуляркой \d+). isNewsGid шире —
+ * он сторожит SQL и адрес от мусора, а не описывает форму.
+ */
+const GID = '\\d+'
+
+/**
+ * Чем кончается верный номер в правиле мусора под /en (garbageRewrites):
+ * концом адреса, следующим сегментом или суффиксом RSC — .rsc и .segments/…
+ * (RSC_SUFFIX и RSC_SEGMENTS_DIR_SUFFIX в next/dist/lib/constants.js). Точка
+ * с буквой, а не точное имя суффикса: ошибиться в имени — значит увести в
+ * 404 переходы по живым карточкам, а точка с цифрой (730.0, 7.3e2) — это
+ * мусор, который Number() на странице принял бы за число.
+ */
+const NUM_END = '(?:/|$|\\.[a-z])'
 
 /** Файловая карточка маршрута (…/opengraph-image): по ней старые ссылки без /ru ходят за картинкой */
 const CARD = '/opengraph-image'
@@ -52,12 +78,21 @@ const GENRE_SLUGS = [...HUB_TAGS.map((tag) => HUB_GENRES[tag].slug), ...HUB_FACE
  * /game/<нет такой>). Исключение — жанры: их список известен заранее, и
  * страница стоит под dynamicParams = false; чужой жанр здесь не
  * переписывается, иначе промах сборки упал бы в ту же [...missing].
+ *
+ * И номера игры и поста: appid — целое (APPID), gid — цифры (GID). Есть ли
+ * такая игра, по-прежнему решает страница, но /game/abc, /game/undefined или
+ * /game/730/news/xyz она отдала бы notFound() из ISR — а notFound() ISR
+ * кэширует, и на каждый адрес, который перебирает сканер, ложилась своя
+ * запись 404, около 13 блоков ISR Writes (лимит Hobby — 200 тысяч на окно).
+ * Мимо формы такой адрес уходит в ту же статическую /_not-found, что /xyz:
+ * один ключ CDN на всех и ни одной своей записи. Двойник под /en — в
+ * garbageRewrites.
  */
 const SECTION_SHAPES: Record<(typeof LOCALIZED_SECTIONS)[number], string> = {
   compat: `compat(?:/${SEG}(?:${CARD})?)?`,
   daily: 'daily',
   explore: 'explore',
-  game: `game/${SEG}(?:${CARD}|/news(?:/${SEG}(?:${CARD})?)?)?`,
+  game: `game/${APPID}(?:${CARD}|/news(?:/${GID}(?:${CARD})?)?)?`,
   games: `games(?:/(?:${GENRE_SLUGS.join('|')})(?:${CARD})?)?`,
   library: 'library',
   missing: 'missing',
@@ -94,9 +129,10 @@ export function localeRewrites(): Rewrite[] {
 
 /**
  * Адрес вне всех разделов (/xyz, /wp-admin/setup.php, /xx/quiz,
- * /.well-known/…) и опечатка под русским разделом (/quiz/xyz — её
+ * /.well-known/…) и опечатка под русским разделом (/quiz/xyz, /game/abc — их
  * localeRewrites не переписывают) — в статическую 404 русской ветки,
- * /_not-found.
+ * /_not-found. Номер игры или поста не той формы под /en (/en/game/abc) — в
+ * пререндеренную 404 английской, /en/missing.
  *
  * afterFiles, а не beforeFiles. afterFiles идут ПОСЛЕ файлов и статических
  * маршрутов, но ДО динамических (docs: rewrites.md, порядок проверки). Файлы
@@ -117,7 +153,38 @@ export function localeRewrites(): Rewrite[] {
  * завести запись ISR на каждый адрес сканера), а сканеры приходят именно
  * сюда: /wp-login.php, /.env, /xmlrpc.php. Свою динамическую ловушку
  * получают только адреса под /en (/en/xyz, /en/quiz/xyz): у английской 404
- * свой язык, и /_not-found, русский, её не заменит.
+ * свой язык, и /_not-found, русский, её не заменит. Номер игры или поста не
+ * той формы под /en — тоже английская 404, но пререндеренная (ниже).
+ *
+ * НОМЕР НЕ ТОЙ ФОРМЫ ПОД /en — В /en/missing. Русский /game/abc доходит до
+ * ловушки сам: beforeFiles его не переписывают (APPID и GID в
+ * SECTION_SHAPES). Английский /en/game/abc переписывать некуда, он и так под
+ * /en, и маршрут /[lang]/game/[appid] нашёл бы его сам: notFound() из ISR —
+ * запись 404, около 13 блоков ISR Writes, на каждый адрес, который
+ * перебирает сканер. Поэтому первые два правила ловят ровно номер не той
+ * формы: appid не каноническим целым (/en/game/abc, /en/game/0730) и gid не
+ * цифрами (/en/game/730/news/xyz) — вместе со всем, что под ними, карточкой
+ * тоже. Цель — /en/missing: пререндеренная 404 английской ветки, один ключ
+ * на все такие адреса. Экран тот же, что у [...missing], — английская
+ * оболочка notFound(), — но без функции и без записи на каждый адрес.
+ *
+ * Правила — запретом неверного номера, а не «всё, что не форма маршрута».
+ * Запрос роутера (RSC, префетч сегментов) CDN Vercel может довести до
+ * afterFiles уже с суффиксом — /en/game/730.rsc, /en/game/730.segments/… —
+ * и правило-исключение по формам увело бы в 404 переходы и префетч живых
+ * карточек. Верный номер здесь тот, за которым конец, «/» или точка с
+ * буквой (NUM_END): суффикс RSC ему не помеха, а /en/game/730.0 и
+ * /en/game/7.3e2 — мусор. По той же причине нет общего правила «/en/… не по
+ * форме → /en/missing»: ошибка в нём ломала бы переходы по всему /en, а
+ * проверить его может только деплой.
+ *
+ * Стоят первыми, до правил регистра. Rewrite у Next помечен check: true:
+ * после него сервер ищет маршрут по новому адресу (checkTrue в
+ * next/dist/server/lib/router-utils/resolve-routes.js), а /(en)/:path+
+ * совпадает с любым /en/… и сразу находит /[lang]/game/[appid] — до правил
+ * после него дело бы не дошло. Регистр им не нужен: правила сравниваются
+ * без него, и /EN/game/abc ловится тем же правилом. Группы — безымянные,
+ * по тому же доводу, что у (en) ниже.
  *
  * Цель — /_not-found: встроенный маршрут 404, который Next собирает из
  * app/global-not-found.tsx (там — корневой layout с языком 'ru' и экран 404
@@ -167,9 +234,10 @@ export function localeRewrites(): Rewrite[] {
  * регистра (Windows) эта запись ложилась поверх записи /en, и /en отдавал
  * 404 всем серверам с общим .next.
  *
- * Первые два правила переписывают любой регистр «en» в /en. Для /en это тот
- * же адрес; /EN/play — английская страница с canonical /en/play и той же
- * записью ISR, что /en/play (ISR кладёт страницу по адресу ПОСЛЕ rewrites).
+ * Следующие два правила, после правил номера, переписывают любой регистр
+ * «en» в /en. Для /en это тот же адрес; /EN/play — английская страница с
+ * canonical /en/play и той же записью ISR, что /en/play (ISR кладёт
+ * страницу по адресу ПОСЛЕ rewrites).
  * Редиректом это не сделать: правило совпало бы и с самим /en и гоняло бы
  * его по кругу. /RU/… регистром не страдает: localeRedirects без учёта
  * регистра уводят его на адрес без префикса. Группа (en) — безымянная, чтобы
@@ -182,6 +250,8 @@ export function localeRewrites(): Rewrite[] {
  */
 export function garbageRewrites(): Rewrite[] {
   return [
+    { source: `/en/game/((?!${APPID}${NUM_END}).+)`, destination: '/en/missing' },
+    { source: `/en/game/(${APPID})/news/((?!${GID}${NUM_END}).+)`, destination: '/en/missing' },
     { source: '/(en)', destination: '/en' },
     { source: '/(en)/:path+', destination: '/en/:path+' },
     {

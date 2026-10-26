@@ -47,9 +47,19 @@ async function view(locale: 'ru' | 'en'): Promise<string> {
 }
 
 describe('мусорный адрес — в /_not-found, который рисует сервер', () => {
-  test('правило уводит в /_not-found, а не на страницу с notFound()', () => {
-    // Первые два — не 404: «en» в чужом регистре — это /en (garbageRewrites в lib/i18nroutes.ts)
-    expect(garbageRewrites().map((r) => r.destination)).toEqual(['/en', '/en/:path+', '/_not-found'])
+  test('русский мусор правило уводит в /_not-found, а не на страницу с notFound()', () => {
+    // Первые два — номер игры или поста не той формы под /en: английская 404.
+    // Она и так оболочка notFound() (у адресов под языком другой нет, см.
+    // app/[lang]/[...missing]), но пререндеренная, без записи ISR на адрес.
+    // Следующие два — не 404: «en» в чужом регистре — это /en
+    // (garbageRewrites в lib/i18nroutes.ts)
+    expect(garbageRewrites().map((r) => r.destination)).toEqual([
+      '/en/missing',
+      '/en/missing',
+      '/en',
+      '/en/:path+',
+      '/_not-found',
+    ])
   })
 
   /*

@@ -35,9 +35,10 @@ export const LANG_COOKIE_MAX_AGE_SEC = 31_536_000
  *
  * opengraph-image — не каталог, а файловая карточка корня
  * (app/[lang]/opengraph-image.tsx): её адрес тоже первый сегмент под [lang].
- * missing — не раздел, а бывшая цель мусорного правила (теперь оно ведёт в
- * /_not-found, garbageRewrites в lib/i18nroutes.ts); почему каталог ещё
- * жив — в app/[lang]/missing/page.tsx.
+ * missing — не раздел, а цель мусорных правил: прежде всех мусорных адресов
+ * (теперь они ведут в /_not-found, garbageRewrites в lib/i18nroutes.ts),
+ * сейчас — номера игры или поста не той формы под /en; почему каталог жив —
+ * в app/[lang]/missing/page.tsx.
  */
 export const LOCALIZED_SECTIONS = [
   'compat',
